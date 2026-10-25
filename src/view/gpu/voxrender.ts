@@ -7,7 +7,7 @@
 //   3. la CPU lee eso y termina con finishRender (los contornos y los colores), el mismo código que la CPU.
 // Lo que sube: los vóxeles (una lista y una rejilla 3D con el material) cuando cambia el modelo; cada render, solo
 // uniforms.
-import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
+import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, FOLIAGE_T, FOLIAGE_BACKLIT, FOLIAGE_SUN_MAX, type Palette, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
 
 const TW = 1024;                 // ancho de las texturas de lista (vóxeles, caras)
 // El render de la CPU toma la muestra de cada píxel en (i + 0.5 + 1/1024) y decide con sus funciones de arista. La
@@ -40,10 +40,26 @@ bool filled(ivec3 p) {
   return texelFetch(uGrid, q, 0).r != 0u;
 }
 vec3 nrm(vec3 v) { float l = length(v); return v / (l > 0.0 ? l : 1.0); }
+// El follaje (rampas kind 'foliage'): la luz lo cruza. uRampKind: 0 sólido, 1 follaje, 2 follaje que no se atraviesa
+uniform int uRampKind[${MAX_RAMPS}];
+uint matAt(ivec3 p) {
+  ivec3 q = p - uGridMin;
+  if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, uGridSize))) return 0u;
+  return texelFetch(uGrid, q, 0).r;
+}
+bool isFoliage(uint m) { return m != 0u && uRampKind[int(m - 1u) / 16] != 0; }
+// foliageSunDepth de palette.ts, con la misma aritmética entera
+int sunDepth(ivec3 c) {
+  uint h = (uint(c.x) * 0x8da6b343u) ^ (uint(c.y) * 0xd8163841u) ^ (uint(c.z) * 0xcb1ab31fu);
+  h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+  h = h ^ (h >> 12u);
+  return 1 + int(h % ${FOLIAGE_SUN_MAX}u);
+}
 // El rayo de inShadow (render.ts): por la rejilla hacia la luz, 96 pasos. Fuera de la rejilla y alejándose ya no
-// puede tocar nada.
+// puede tocar nada. El follaje no lo corta: hace sombra al cruzar tantas hojas como el umbral de la celda.
 bool inShadow(ivec3 c) {
   ivec3 q = c;
+  int leaves = 0, need = sunDepth(c);
   ivec3 st = ivec3(sign(uL));
   vec3 td = vec3(st.x != 0 ? abs(1.0 / uL.x) : 1e30, st.y != 0 ? abs(1.0 / uL.y) : 1e30, st.z != 0 ? abs(1.0 / uL.z) : 1e30);
   vec3 t = td * 0.5;
@@ -52,7 +68,11 @@ bool inShadow(ivec3 c) {
     if (t.x <= t.y && t.x <= t.z) { q.x += st.x; t.x += td.x; }
     else if (t.y <= t.z) { q.y += st.y; t.y += td.y; }
     else { q.z += st.z; t.z += td.z; }
-    if (filled(q)) return true;
+    uint m = matAt(q);
+    if (m != 0u) {
+      if (!isFoliage(m)) return true;
+      if (++leaves >= need) return true;
+    }
     if ((st.x > 0 && q.x > hi.x) || (st.x < 0 && q.x < lo.x) || (st.y > 0 && q.y > hi.y) || (st.y < 0 && q.y < lo.y)
       || (st.z > 0 && q.z > hi.z) || (st.z < 0 && q.z < lo.z)) return false;
   }
@@ -183,7 +203,16 @@ bool filled(ivec3 p) {
   if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, uGridSize))) return false;
   return texelFetch(uGrid, q, 0).r != 0u;
 }
-float facing(float ndl) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : 0.0; }
+// El follaje (rampas kind 'foliage'): la luz lo cruza. uRampKind: 0 sólido, 1 follaje, 2 follaje que no se atraviesa
+uniform int uRampKind[${MAX_RAMPS}];
+uint matAt(ivec3 p) {
+  ivec3 q = p - uGridMin;
+  if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, uGridSize))) return 0u;
+  return texelFetch(uGrid, q, 0).r;
+}
+bool isFoliage(uint m) { return m != 0u && uRampKind[int(m - 1u) / 16] != 0; }
+// facingOf de light3d.ts: el follaje recibe algo de luz por detrás
+float facing(float ndl, bool fol) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : fol ? -ndl * ${FOLIAGE_BACKLIT.toFixed(6)} : 0.0; }
 float spotFactor(int i, vec3 v) {
   if (uLSpot2[i].y < 0.5) return 1.0;
   float d = length(v);
@@ -194,8 +223,8 @@ float spotFactor(int i, vec3 v) {
   float t = (c - uLSpot[i].w) / (uLSpot2[i].x - uLSpot[i].w);
   return t * t * (3.0 - 2.0 * t);
 }
-// occluded() de light3d.ts (Amanatides-Woo)
-bool occluded(vec3 p0, vec3 l0) {
+// transmit() de light3d.ts (Amanatides-Woo): 0 tras un sólido, ${FOLIAGE_T} por cada vóxel de follaje
+float transmit(vec3 p0, vec3 l0) {
   vec3 p = p0 + RAY_NUDGE, l = l0 + LIGHT_NUDGE;
   vec3 d = l - p;
   ivec3 c = ivec3(floor(p)), t = ivec3(floor(l));
@@ -204,30 +233,33 @@ bool occluded(vec3 p0, vec3 l0) {
   vec3 m = vec3(st.x != 0 ? (st.x > 0 ? float(c.x) + 1.0 - p.x : p.x - float(c.x)) * dd.x : 1e30,
                 st.y != 0 ? (st.y > 0 ? float(c.y) + 1.0 - p.y : p.y - float(c.y)) * dd.y : 1e30,
                 st.z != 0 ? (st.z > 0 ? float(c.z) + 1.0 - p.z : p.z - float(c.z)) * dd.z : 1e30);
+  float tr = 1.0;
   for (int i = 0; i < 512; i++) {
-    if (c == t) return false;
-    if (m.x <= m.y && m.x <= m.z) { if (m.x > 1.0) return false; c.x += st.x; m.x += dd.x; }
-    else if (m.y <= m.z) { if (m.y > 1.0) return false; c.y += st.y; m.y += dd.y; }
-    else { if (m.z > 1.0) return false; c.z += st.z; m.z += dd.z; }
-    if (c == t) return false;
-    if (filled(c)) return true;
+    if (c == t) return tr;
+    if (m.x <= m.y && m.x <= m.z) { if (m.x > 1.0) return tr; c.x += st.x; m.x += dd.x; }
+    else if (m.y <= m.z) { if (m.y > 1.0) return tr; c.y += st.y; m.y += dd.y; }
+    else { if (m.z > 1.0) return tr; c.z += st.z; m.z += dd.z; }
+    if (c == t) return tr;
+    uint v = matAt(c);
+    if (v != 0u) { if (!isFoliage(v)) return 0.0; tr *= ${FOLIAGE_T.toFixed(6)}; }
   }
-  return false;
+  return tr;
 }
-vec3 lightAt(vec3 p, vec3 n, vec3 start) {
+vec3 lightAt(vec3 p, vec3 n, vec3 start, bool fol) {
   vec3 o = uAmbient;
   for (int i = 0; i < uNL; i++) {
     vec3 lp = uLPos[i].xyz;
     vec3 v = lp - p;
     float d = length(v);
     if (d >= uLPos[i].w || uLCol[i].w <= 0.0) continue;
-    float f = d < 1e-6 ? 1.0 : facing(dot(n, v) / d);
+    float f = d < 1e-6 ? 1.0 : facing(dot(n, v) / d, fol);
     if (f <= 0.0) continue;
     float k = 1.0 - d / uLPos[i].w;
     float att = k * k * uLCol[i].w * f * spotFactor(i, p - lp);
     if (att < 0.002) continue;
-    if (occluded(start, lp)) continue;
-    o += uLCol[i].rgb * att;
+    float tr = transmit(start, lp);
+    if (tr <= 0.0) continue;
+    o += uLCol[i].rgb * (att * tr);
   }
   return o;
 }
@@ -239,16 +271,23 @@ void main() {
     int f = pk.w & 7;                      // z*8 + cara, también con z negativa
     vec3 v = vec3(pk.y, pk.z, float((pk.w - f) / 8));
     vec3 n = DIRS[f];
-    c = lightAt(v + 0.5 + n * 0.5, n, v + 0.5 + n);
+    c = lightAt(v + 0.5 + n * 0.5, n, v + 0.5 + n, isFoliage(matAt(ivec3(v))));
   } else if (uFloor) {
     vec2 g = uG0 + (float(px.x) + 0.5) * uGX + (float(px.y) + 0.5) * uGY;
-    c = lightAt(vec3(g, 0.0), vec3(0, 0, 1), vec3(g, 0.01));
+    c = lightAt(vec3(g, 0.0), vec3(0, 0, 1), vec3(g, 0.01), false);
   } else c = uAmbient;
   oTotal = vec4(c, 1.0);
 }`;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Uniforms = Record<string, any>;
+
+// El tipo de cada rampa para los shaders: 0 sólido, 1 follaje, 2 follaje que no se atraviesa
+function rampKinds(pal: Palette): Int32Array<ArrayBuffer> {
+  const k = new Int32Array(MAX_RAMPS);
+  pal.ramps.slice(0, MAX_RAMPS).forEach((r, i) => { if (r.kind === 'foliage') k[i] = r.blocks ? 2 : 1; });
+  return k;
+}
 
 export class GpuVoxelRenderer {
   private readonly gl: WebGL2RenderingContext;
@@ -257,6 +296,7 @@ export class GpuVoxelRenderer {
   private readonly light: { prog: WebGLProgram; u: Uniforms };
   private readonly vao: WebGLVertexArrayObject;
   private readonly max3D: number;
+  private rampKinds = new Int32Array(MAX_RAMPS);
   // El modelo subido
   private modelOf: VoxelSource | null = null;
   private rev: unknown = undefined;
@@ -396,6 +436,8 @@ export class GpuVoxelRenderer {
     const lens = new Int32Array(MAX_RAMPS).fill(1);
     pal.ramps.slice(0, MAX_RAMPS).forEach((r, i) => { lens[i] = r.colors.length; });
     gl.uniform1iv(u.uRampLen, lens);
+    this.rampKinds = rampKinds(pal);
+    gl.uniform1iv(u.uRampKind, this.rampKinds);
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
@@ -492,6 +534,7 @@ export class GpuVoxelRenderer {
     bind(gl, 1, gl.TEXTURE_3D, this.tGrid, u.uGrid);
     gl.uniform3iv(u.uGridMin, this.gridMin);
     gl.uniform3iv(u.uGridSize, this.gridSize);
+    gl.uniform1iv(u.uRampKind, this.rampKinds);
     const n = lights.length;
     const pos = new Float32Array(MAX_LIGHTS * 4), col = new Float32Array(MAX_LIGHTS * 4), spot = new Float32Array(MAX_LIGHTS * 4), spot2 = new Float32Array(MAX_LIGHTS * 2);
     lights.forEach((l, i) => {

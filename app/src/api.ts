@@ -6,7 +6,7 @@
 // Coordenadas: x hacia el este, y hacia el norte, z hacia arriba (z >= 0); el pivote (0, 0, 0) en el centro del
 // lienzo. Material: un número (rampa*16 + tono + 1), "nombre" (la rampa con ese nombre, en su tono del medio, como mucho el 2),
 // "nombre:tono", [rampa, tono] o null (vacío = borrar).
-import { Model, material as mat, decode, validatePalette, type ModelFile } from '@core/index';
+import { Model, material as mat, decode, validatePalette, planFoliage, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, type ModelFile, type FoliageType, type Ramp } from '@core/index';
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob } from './preview';
@@ -18,7 +18,7 @@ import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps }
 export type Material = number | string | [number, number] | null;
 
 function ramps() {
-  return model.value.palette.ramps.map((r, index) => ({ index, name: r.name, colors: r.colors, ...(r.emissive ? { emissive: true } : {}) }));
+  return model.value.palette.ramps.map((r, index) => ({ index, name: r.name, colors: r.colors, ...(r.emissive ? { emissive: true } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) }));
 }
 
 // El material como número (0 = vacío)
@@ -54,10 +54,16 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   fill(x, y, z, material)                  cubo: la mancha de la capa z que empieza en (x, y)
   water(x, y, z, material?)                agua hasta la altura z desde esa celda vacía, de una vez
                                            (material por defecto: la rampa "agua" o "water"); da {cells, spill}
+  foliage(x0, y0, x1, y1, {type, density?, seed?, ramp?, heads?, on?})
+                                           vegetación sobre la superficie del rectángulo (type: ${FOLIAGE_TYPES.join(', ')});
+                                           hierba, flores y arbustos crecen sobre la rampa "hierba" (o la de on), juncos donde
+                                           el agua cubre 1-2 y nenúfares a ras del agua. Si faltan sus rampas (hierba-alta,
+                                           flor-*, junco, nenufar, arbusto), las añade. Da {plants, voxels, ramps}
   light(x, y, z, kind?)                    una fuente de luz (kind: ${KINDS.join(', ')}); da su id
   removeLight(idOrX, y?, z?)               la quita
   lights()                                 las fuentes
-  palette([{name, colors, emissive?}], outline?)   cambia la paleta entera (rampas de oscuro a claro; no se deshace)
+  palette([{name, colors, emissive?, kind?, blocks?}], outline?)   cambia la paleta entera (kind 'foliage': la luz la
+                                           atraviesa y se anda a través; blocks: follaje que no se atraviesa) (rampas de oscuro a claro; no se deshace)
   ramp(name, '#rrggbb', {tones?, hueShift?})        una rampa nueva generada desde un color; da su índice
   setTone(rampa, tono, '#rrggbb')          cambia un color de la paleta (lo pintado con él cambia también)
   palettes()                               las paletas de la comunidad que trae (Lospec): id, nombre, autor
@@ -130,6 +136,29 @@ export const api = {
     return fillWater(x, y, z, v);
   },
 
+  // Vegetación sobre la superficie (src/core/foliage.ts). Un paso de deshacer. Las rampas que falten se añaden.
+  foliage(x0: number, y0: number, x1: number, y1: number, o: { type: FoliageType; density?: number; seed?: number; ramp?: string; heads?: string[]; on?: string[] }) {
+    int(x0, y0, x1, y1);
+    if (!FOLIAGE_TYPES.includes(o?.type)) throw new Error(`type: ${FOLIAGE_TYPES.join(', ')}`);
+    const pal = model.value.palette;
+    const rampIndex = (name: string, add: boolean): number => {
+      let i = pal.ramps.findIndex((r) => r.name === name);
+      if (i < 0 && add && FOLIAGE_RAMPS[name]) { pal.ramps.push(structuredClone(FOLIAGE_RAMPS[name]!)); validatePalette(pal); touch(); i = pal.ramps.length - 1; }
+      if (i < 0) throw new Error(`no hay rampa "${name}"; las rampas son: ${pal.ramps.map((r) => r.name).join(', ')}`);
+      return i;
+    };
+    const defs = FOLIAGE_DEFAULTS[o.type];
+    const ramp = rampIndex(o.ramp ?? defs[0]!, !o.ramp);
+    const heads = o.type === 'flowers' ? (o.heads ?? defs.slice(1)).map((n) => rampIndex(n, !o.heads)) : undefined;
+    const on = o.on?.map((n) => rampIndex(n, false));
+    const g = editor.grid;
+    const plan = planFoliage(model.value, Math.max(g.minX, Math.min(x0, x1)), Math.max(g.minY, Math.min(y0, y1)), Math.min(g.maxX, Math.max(x0, x1)), Math.min(g.maxY, Math.max(y0, y1)), g.maxZ,
+      { type: o.type, ramp, ...(heads ? { heads } : {}), ...(on ? { on } : {}), ...(o.density !== undefined ? { density: o.density } : {}), ...(o.seed !== undefined ? { seed: o.seed } : {}) });
+    const inside = plan.voxels.filter(([x, y, z]) => x >= g.minX && x <= g.maxX && y >= g.minY && y <= g.maxY && z >= 0 && z <= g.maxZ);
+    step(() => { for (const [x, y, z, v] of inside) history.value.set(x, y, z, v); });   // sin espejo: la semilla ya decide
+    return { plants: plan.plants, voxels: inside.length, ramps: [ramp, ...(heads ?? [])].map((i) => pal.ramps[i]!.name) };
+  },
+
   light(x: number, y: number, z: number, kind: LightKind = 'torch'): string {
     int(x, y, z);
     if (!KINDS.includes(kind)) throw new Error(`tipos de luz: ${KINDS.join(', ')}`);
@@ -153,8 +182,8 @@ export const api = {
 
   // Cambia la paleta: rampas de 1 a 16 colores (#rrggbb), de oscuro a claro. No se deshace. Los vóxeles guardan el
   // índice de rampa y tono: si ya hay modelo, las rampas que usa tienen que seguir existiendo.
-  palette(rampList: Array<{ name: string; colors: string[]; emissive?: boolean }>, outline?: string) {
-    const p = { ramps: rampList.map((r) => ({ name: r.name, colors: [...r.colors], ...(r.emissive ? { emissive: true } : {}) })), ...(outline ? { outline } : {}) };
+  palette(rampList: Array<{ name: string; colors: string[]; emissive?: boolean; kind?: 'solid' | 'foliage'; blocks?: boolean }>, outline?: string) {
+    const p = { ramps: rampList.map((r): Ramp => ({ name: r.name, colors: [...r.colors], ...(r.emissive ? { emissive: true } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) })), ...(outline ? { outline } : {}) };
     validatePalette(p);
     for (const [, , , v] of model.value.entries()) {
       const d = decode(v);

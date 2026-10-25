@@ -1,5 +1,5 @@
 import { key, type VoxelSource } from './model';
-import { decode, rampOf, rgbOf, allowedColors, type Palette } from './palette';
+import { decode, rampOf, rgbOf, allowedColors, foliageTable, foliageSunDepth, hasFoliage, type Palette } from './palette';
 
 // Render de vóxeles a pixel art por software. Determinista: mismo modelo y mismas opciones, mismos bytes.
 //
@@ -168,6 +168,7 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
 
   const pal = model.palette;
   const toneCache = new Map<number, number>();
+  const fol = hasFoliage(pal) ? foliageTable(pal) : null;
 
   for (const [x, y, z, v] of model.entries()) {
     for (let f = 0; f < 6; f++) {
@@ -222,15 +223,22 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
     return out;
   }
 
-  // Rayo por la rejilla hacia la luz (DDA). Empieza en la celda vacía frente a la cara.
+  // Rayo por la rejilla hacia la luz (DDA). Empieza en la celda vacía frente a la cara. El follaje no corta el rayo:
+  // la celda queda en sombra si cruza tantas hojas como su umbral (foliageSunDepth), así la sombra sale moteada.
   function inShadow(cx: number, cy: number, cz: number): boolean {
     let x = cx, y = cy, z = cz;
+    let leaves = 0;
+    const need = fol ? foliageSunDepth(cx, cy, cz) : 0;
     const sx = Math.sign(Lm[0]), sy = Math.sign(Lm[1]), sz = Math.sign(Lm[2]);
     const tdx = sx ? Math.abs(1 / Lm[0]) : Infinity, tdy = sy ? Math.abs(1 / Lm[1]) : Infinity, tdz = sz ? Math.abs(1 / Lm[2]) : Infinity;
     let tx = tdx / 2, ty = tdy / 2, tz = tdz / 2;
     for (let i = 0; i < 96; i++) {
       if (tx <= ty && tx <= tz) { x += sx; tx += tdx; } else if (ty <= tz) { y += sy; ty += tdy; } else { z += sz; tz += tdz; }
-      if (filled(x, y, z)) return true;
+      const v = model.get(x, y, z);
+      if (v) {
+        if (!fol || !fol[v]) return true;
+        if (++leaves >= need) return true;
+      }
     }
     return false;
   }

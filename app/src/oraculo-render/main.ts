@@ -9,6 +9,7 @@ import { Model, render, box, material, camera, lightField3D, type ModelFile, typ
 import { GpuVoxelRenderer } from '../../../src/view/gpu/voxrender';
 import { sampleScene } from '../../../src/samples/basic';
 import { medievalScene } from '../../../src/samples/medieval';
+import { vegetationScene } from '../../../src/samples/vegetacion';
 import { loadPxl, paletteFromPxl, stackFromPxl, pxlDirectives, applyDirectives } from '../../../src/pxl/bridge';
 import maiaFile from '../../../models/maia/maia.json';
 import antorcha from '../../../models/luces/antorcha.json';
@@ -41,11 +42,12 @@ const models: Array<[string, Model]> = [
   ['antorcha', Model.fromJSON(antorcha as unknown as ModelFile)],
   ['raro', raro()],
   ['paisaje', paisaje()],
+  ['vegetacion', vegetationScene()],
 ];
 
 // Opciones: las de la vista previa, la exportación, el editor 3D (zoom) y el juego (oblicua, plana)
 function cases(name: string): Array<[string, RenderOptions]> {
-  const big = name === 'paisaje' || name === 'raro';
+  const big = name === 'paisaje' || name === 'raro' || name === 'vegetacion';
   const W = big ? 260 : 64, H = big ? 220 : 48, oy = big ? 150 : 42;
   const base = { width: W, height: H, originX: Math.floor(W / 2), originY: oy, pick: true };
   const list: Array<[string, RenderOptions]> = [];

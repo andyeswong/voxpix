@@ -1,6 +1,7 @@
 import type { VoxelSource } from './model';
 import { unkey } from './model';
 import { DIR_VECTORS, type Camera, type Rendered } from './render';
+import { FOLIAGE_BACKLIT, FOLIAGE_T, foliageTable, hasFoliage } from './palette';
 
 // Luces de punto en el ESPACIO DEL MODELO (2.5D): cada fuente está en una celda (x, y, z) en vóxeles, y la luz
 // se calcula por cara de vóxel (distancia, ángulo con la cara y sombra contra los propios vóxeles) y por
@@ -42,8 +43,9 @@ export const RAY_NUDGE = [1 / 1024, 2 / 1024, 3 / 1024] as const;
 // menudo justo en el borde de una celda, y la celda donde termina el rayo dependería del redondeo
 export const LIGHT_NUDGE = [3 / 1024, 1 / 1024, 2 / 1024] as const;
 
-// Cuánto recibe una cara según su ángulo con la luz: de lado aún recibe algo, de espaldas nada
-const facing = (ndl: number) => (ndl > 0 ? 0.35 + 0.65 * ndl : 0);
+// Cuánto recibe una cara según su ángulo con la luz: de lado aún recibe algo, de espaldas nada (el follaje, algo:
+// la luz le llega por detrás a través de la hoja)
+export const facingOf = (ndl: number, foliage: boolean): number => (ndl > 0 ? 0.35 + 0.65 * ndl : foliage ? -ndl * FOLIAGE_BACKLIT : 0);
 
 export function lightField3D(
   model: VoxelSource,
@@ -56,13 +58,14 @@ export function lightField3D(
   if (!img.pickKey || !img.pickFace) throw new Error('lightField3D necesita un render con pick: true');
   const { width: W, height: H } = img;
   const total = new Float32Array(W * H * 3);
-  const filled = (x: number, y: number, z: number) => model.get(x, y, z) !== 0;
+  const fol = hasFoliage(model.palette) ? foliageTable(model.palette) : null;
   const faceCache = new Map<string, [number, number, number]>();
 
-  // ¿Hay un vóxel entre el punto p (en el aire) y la luz? Recorre la rejilla (Amanatides-Woo). El rayo sale un poco
-  // desplazado (RAY_NUDGE): desde el centro de una celda pasa a menudo justo por una arista, y ahí el redondeo decide
-  // por qué lado; la GPU (src/view/gpu/shaders.ts) desplaza igual, así las dos rutas dan lo mismo.
-  function occluded(px0: number, py0: number, pz0: number, l: PointLight3D): boolean {
+  // Cuánta luz llega del punto p (en el aire) a la luz: 0 si hay un sólido en medio, FOLIAGE_T por cada vóxel de
+  // follaje que cruza. Recorre la rejilla (Amanatides-Woo). El rayo sale un poco desplazado (RAY_NUDGE): desde el
+  // centro de una celda pasa a menudo justo por una arista, y ahí el redondeo decide por qué lado; la GPU
+  // (src/view/gpu/voxrender.ts) desplaza igual, así las dos rutas dan lo mismo.
+  function transmit(px0: number, py0: number, pz0: number, l: PointLight3D): number {
     const px = px0 + RAY_NUDGE[0], py = py0 + RAY_NUDGE[1], pz = pz0 + RAY_NUDGE[2];
     const lx = l.x + LIGHT_NUDGE[0], ly = l.y + LIGHT_NUDGE[1], lz = l.z + LIGHT_NUDGE[2];
     const dx = lx - px, dy = ly - py, dz = lz - pz;
@@ -73,29 +76,34 @@ export function lightField3D(
     let mx = sx ? (sx > 0 ? x + 1 - px : px - x) * ddx : Infinity;
     let my = sy ? (sy > 0 ? y + 1 - py : py - y) * ddy : Infinity;
     let mz = sz ? (sz > 0 ? z + 1 - pz : pz - z) * ddz : Infinity;
+    let t = 1;
     for (let i = 0; i < 512; i++) {
-      if (x === tx && y === ty && z === tz) return false;
-      if (mx <= my && mx <= mz) { if (mx > 1) return false; x += sx; mx += ddx; }
-      else if (my <= mz) { if (my > 1) return false; y += sy; my += ddy; }
-      else { if (mz > 1) return false; z += sz; mz += ddz; }
-      if (x === tx && y === ty && z === tz) return false;
-      if (filled(x, y, z)) return true;
+      if (x === tx && y === ty && z === tz) return t;
+      if (mx <= my && mx <= mz) { if (mx > 1) return t; x += sx; mx += ddx; }
+      else if (my <= mz) { if (my > 1) return t; y += sy; my += ddy; }
+      else { if (mz > 1) return t; z += sz; mz += ddz; }
+      if (x === tx && y === ty && z === tz) return t;
+      const v = model.get(x, y, z);
+      if (v) { if (!fol || !fol[v]) return 0; t *= FOLIAGE_T; }
     }
-    return false;
+    return t;
   }
 
-  function lightAt(p: [number, number, number], n: readonly [number, number, number], start: [number, number, number]): [number, number, number] {
+  function lightAt(p: [number, number, number], n: readonly [number, number, number], start: [number, number, number], foliage = false): [number, number, number] {
     const out: [number, number, number] = [ambient[0], ambient[1], ambient[2]];
     for (const l of lights) {
       const vx = l.x - p[0], vy = l.y - p[1], vz = l.z - p[2];
       const d = Math.hypot(vx, vy, vz);
       if (d >= l.radius || l.intensity <= 0) continue;
-      const f = d < 1e-6 ? 1 : facing((n[0] * vx + n[1] * vy + n[2] * vz) / d);
+      const f = d < 1e-6 ? 1 : facingOf((n[0] * vx + n[1] * vy + n[2] * vz) / d, foliage);
       if (f <= 0) continue;
       const k = 1 - d / l.radius;
-      const att = k * k * l.intensity * f * spotFactor(l.spot ?? null, p[0] - l.x, p[1] - l.y, p[2] - l.z);
+      let att = k * k * l.intensity * f * spotFactor(l.spot ?? null, p[0] - l.x, p[1] - l.y, p[2] - l.z);
       if (att < 0.002) continue;
-      if (occluded(start[0], start[1], start[2], l)) continue;
+      // (por detrás, el rayo cruza la propia hoja: ya cuenta como una hoja más)
+      const t = transmit(start[0], start[1], start[2], l);
+      if (t <= 0) continue;
+      att *= t;
       out[0] += l.color[0] * att; out[1] += l.color[1] * att; out[2] += l.color[2] * att;
     }
     return out;
@@ -113,7 +121,8 @@ export function lightField3D(
         const [x, y, z] = unkey(k);
         const n = DIR_VECTORS[f]!;
         const p: [number, number, number] = [x + 0.5 + n[0] * 0.5, y + 0.5 + n[1] * 0.5, z + 0.5 + n[2] * 0.5];
-        hit = lightAt(p, n, [x + 0.5 + n[0], y + 0.5 + n[1], z + 0.5 + n[2]]);
+        const v = model.get(x, y, z);
+        hit = lightAt(p, n, [x + 0.5 + n[0], y + 0.5 + n[1], z + 0.5 + n[2]], !!fol && !!fol[v]);
         faceCache.set(ck, hit);
       }
       c = hit;

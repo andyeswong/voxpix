@@ -7,6 +7,10 @@ export interface Ramp {
   name: string;
   colors: string[];          // '#rrggbb', de oscuro a claro
   emissive?: boolean;        // da luz propia: la luz del mundo no la oscurece (neones, plasma, hojas de energía)
+  // 'foliage': hierba, flores, hojas. Se ve igual que un sólido, pero la luz la atraviesa atenuándose (sombra
+  // moteada), recibe algo de luz por detrás, el agua no la cuenta como fondo y se atraviesa andando (salvo blocks)
+  kind?: 'solid' | 'foliage';
+  blocks?: boolean;          // follaje que no se atraviesa (arbustos); la luz lo cruza igual
 }
 
 export interface Palette {
@@ -19,6 +23,30 @@ export interface Palette {
 export const MAX_TONES = 16;
 // Rampas como mucho: el material de un vóxel (rampa*16 + tono + 1) cabe en 16 bits con margen (la GPU lo guarda así)
 export const MAX_RAMPS = 64;
+
+// ---- follaje (vegetación): la luz lo cruza atenuándose
+// Luces puntuales: lo que queda de la luz tras cruzar un vóxel de follaje
+export const FOLIAGE_T = 0.5;
+// Luz por detrás que recibe una cara de follaje (por |n·l|): una antorcha detrás de la hierba le ilumina el borde
+export const FOLIAGE_BACKLIT = 0.25;
+// El sol (sombra binaria): cada celda deja pasar la luz por entre 1 y FOLIAGE_SUN_MAX hojas, según un hash de su
+// posición. Es entero, así que la CPU y la GPU dan exactamente la misma sombra moteada.
+export const FOLIAGE_SUN_MAX = 4;
+export function foliageSunDepth(x: number, y: number, z: number): number {
+  let h = (Math.imul(x | 0, 0x8da6b343) ^ Math.imul(y | 0, 0xd8163841) ^ Math.imul(z | 0, 0xcb1ab31f)) >>> 0;
+  h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
+  h = (h ^ (h >>> 12)) >>> 0;
+  return 1 + (h % FOLIAGE_SUN_MAX);
+}
+
+// Tabla por material (rampa*16 + tono + 1) para los bucles calientes: 0 sólido, 1 follaje, 2 follaje que no se
+// atraviesa
+export function foliageTable(p: Palette): Uint8Array {
+  const t = new Uint8Array(MAX_RAMPS * MAX_TONES + 1);
+  p.ramps.forEach((r, i) => { if (r.kind === 'foliage') t.fill(r.blocks ? 2 : 1, i * MAX_TONES + 1, (i + 1) * MAX_TONES + 1); });
+  return t;
+}
+export const hasFoliage = (p: Palette): boolean => p.ramps.some((r) => r.kind === 'foliage');
 
 export function material(ramp: number, tone: number): number {
   if (ramp < 0 || tone < 0 || tone >= MAX_TONES) throw new Error(`material fuera de rango: rampa ${ramp}, tono ${tone}`);

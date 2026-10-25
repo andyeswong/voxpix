@@ -6,3 +6,4 @@ export * from './render';
 export * from './history';
 export * from './light3d';
 export * from './color';
+export * from './foliage';

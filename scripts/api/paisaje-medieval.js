@@ -13,7 +13,7 @@
     { name: 'piedra', colors: ['#2e2f38', '#4a4c58', '#6c6f7c', '#9a9dab'] },
     { name: 'madera', colors: ['#2b1b12', '#4a2f1d', '#6e4729', '#94643a'] },
     { name: 'agua', colors: ['#16324d', '#1f4f78', '#2f74a6', '#5fa8d6'] },
-    { name: 'hojas', colors: ['#1f3a22', '#2f5a2f', '#46803c', '#6aa64f'] },
+    { name: 'hojas', colors: ['#1f3a22', '#2f5a2f', '#46803c', '#6aa64f'], kind: 'foliage' },   // la luz la atraviesa
     { name: 'tejado', colors: ['#4a1c1c', '#6e2a24', '#93402f', '#b85a3c'] },
     { name: 'arena', colors: ['#6b5a3a', '#8c7650', '#ad9466', '#cdb581'] },
   ]);
@@ -112,6 +112,17 @@
   const lago = vp.water(lake.x, lake.y, 2);
   lap(`agua: río ${rio.cells} celdas (${rio.spill ? 'sale por el borde' : 'cerrado'}), lago ${lago.cells}`);
 
+  // Vegetación (las rampas que falten se añaden solas): arbustos, hierba y flores en los prados (la hierba, más densa
+  // junto al agua), juncos donde el agua cubre poco y nenúfares solo en el lago
+  const veg = vp.batch(() => [
+    vp.foliage(-64, -64, 63, 63, { type: 'bush', seed: 13 }),
+    vp.foliage(-64, -64, 63, 63, { type: 'grass', seed: 11 }),
+    vp.foliage(-64, -64, 63, 63, { type: 'flowers', seed: 12 }),
+    vp.foliage(-64, -64, 63, 63, { type: 'reeds', seed: 14 }),
+    vp.foliage(lake.x - lake.r, lake.y - lake.r, lake.x + lake.r, lake.y + lake.r, { type: 'lilies', seed: 15 }),
+  ]);
+  lap(`vegetación: ${veg.map((v, i) => `${['arbustos', 'hierba', 'flores', 'juncos', 'nenúfares'][i]} ${v.plants}`).join(', ')}`);
+
   // Luces: antorchas en la puerta y el puente, braseros en la torre, faroles en las casas
   vp.light(cx - 3, cy - 16, base + 5, 'torch'); vp.light(cx + 3, cy - 16, base + 5, 'torch');
   vp.light(cx - 5, cy - 5, base + 18, 'brazier'); vp.light(cx + 4, cy + 4, base + 18, 'brazier');
@@ -121,7 +132,7 @@
 
   // De noche, y el PNG
   vp.view({ yaw: -30, elevation: 35, lit: true, ambient: 0.35 });
-  const png = await vp.png({ scale: 2 });
+  const png = await vp.png({ scale: 4 });
   lap(`PNG ${png.name}`);
   return JSON.stringify({ log, info: { ...vp.info(), ramps: undefined }, png });
 })()
