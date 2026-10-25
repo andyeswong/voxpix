@@ -5,6 +5,10 @@ water, and export it as pixel-art sprites. Underneath there is a deterministic r
 engine (dynamic lighting, water, entities, CPU and GPU compositing) you can build a game on. TypeScript, Vue 3 and
 WebGL2. MIT licensed.
 
+**AI-driven.** VoxPix is built by a team of AI agents (Claude Code) directed by a human, and it is made to be driven
+by AI agents too: everything the editor does is available, without a mouse, through `window.voxpix`. See
+[docs/ia.md](docs/ia.md).
+
 VoxPix es un editor de vóxeles que pinta pixel art. Se modela por capas o sobre el modelo en 3D, se ilumina con
 fuentes de luz, se le echa agua y sale en sprites de pixel art: uno por ángulo, en hojas o en PNG. Debajo hay un
 núcleo de render determinista y un motor de mundo 2.5D (luz dinámica, agua, entidades y composición por CPU y por
@@ -19,6 +23,31 @@ estanque, árboles y luces (`src/samples/medieval.ts`).
   <img src="docs/img/rotacion-muestra.gif" alt="La escena de muestra girando" height="245">
   <img src="docs/img/rotacion-paisaje-noche.gif" alt="El paisaje de 128 x 128 girando de noche, con sus 11 luces" height="245">
 </p>
+
+## AI-driven: hecho por agentes, para agentes
+
+- **Hecho por agentes de IA.** El código, los modelos de ejemplo, las pruebas y la documentación los escriben
+  agentes de IA (sesiones de Claude Code) que trabajan como un equipo, cada uno con su papel, bajo la dirección de
+  una persona que decide qué se hace y aprueba el arte. Para que no sea solo plausible:
+  - cada atajo de la GPU se compara píxel a píxel con la CPU;
+  - todo es determinista;
+  - se mide antes de optimizar.
+- **Para que lo usen agentes.** `window.voxpix` hace sin ratón todo lo que hacen las herramientas. Los formatos son
+  texto (`.voxpix.json`, `.px.js`) y las salidas se pueden comprobar midiendo píxeles. Un agente hace un paisaje
+  de 128 x 128 en 0,08 s de ediciones.
+
+Más en [docs/ia.md](docs/ia.md).
+
+## Documentación
+
+[docs/](docs/README.md):
+- [el editor](docs/editor.md);
+- [la API para agentes](docs/api-agentes.md);
+- [IA](docs/ia.md);
+- [el render](docs/render.md);
+- [el motor del mundo](docs/motor.md);
+- [la línea de comandos](docs/linea-de-comandos.md);
+- [las pruebas](docs/pruebas.md).
 
 ## Capturas
 
@@ -69,8 +98,8 @@ CPU, que da los mismos píxeles, solo que más despacio.
 
 `window.voxpix` hace sin ratón lo mismo que las herramientas: pintar, cajas, rellenos, agua, luces, paleta, lienzo,
 abrir y guardar, vista y PNG. Cualquier cosa que controle un navegador (la consola, Playwright o CDP) puede
-construir modelos con ella. `voxpix.help()` la explica, y `scripts/api/` trae la guía y un ejemplo que hace un
-paisaje medieval de 128 x 128.
+construir modelos con ella. `voxpix.help()` la explica; la referencia está en [docs/api-agentes.md](docs/api-agentes.md)
+y `scripts/api/` trae un ejemplo que hace un paisaje medieval de 128 x 128.
 
 ## La línea de comandos
 
@@ -127,7 +156,7 @@ En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y
 `node_modules/voxpix/vendor/pxl/src/core/index.ts` si usas el puente con pxl). Las piezas para un juego:
 `world/state` (el mundo y sus entidades), `world/build` y `world/bake` (construir y hornear un escenario),
 `view/compositor` (el cuadro por GPU o CPU, con `prewarm`), `runtime/runtime` (el tick y el bucle fijo) y
-`worldgen` (mapas por semilla).
+`worldgen` (mapas por semilla). La guía completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
 
 ## Agradecimientos
 

@@ -4,7 +4,7 @@
 // voxpix.help() devuelve esta guía en texto.
 //
 // Coordenadas: x hacia el este, y hacia el norte, z hacia arriba (z >= 0); el pivote (0, 0, 0) en el centro del
-// lienzo. Material: un número (rampa*16 + tono + 1), "nombre" (la rampa con ese nombre, tono 2 o el del medio),
+// lienzo. Material: un número (rampa*16 + tono + 1), "nombre" (la rampa con ese nombre, en su tono del medio, como mucho el 2),
 // "nombre:tono", [rampa, tono] o null (vacío = borrar).
 import { Model, material as mat, decode, validatePalette, type ModelFile } from '@core/index';
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
