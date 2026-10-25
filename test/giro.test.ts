@@ -143,6 +143,38 @@ describe('WorldView', () => {
     }
   });
 
+  it('dar la vuelta entera vuelve a la misma imagen, píxel a píxel, con rehorneados por trozos en cada giro', () => {
+    const st = oddWorld();
+    const same = (a: ReturnType<typeof bakeWorld>, b: ReturnType<typeof bakeWorld>) =>
+      Buffer.from(a.rgba).equals(Buffer.from(b.rgba)) && Buffer.from(a.depth.buffer).equals(Buffer.from(b.depth.buffer)) && Buffer.from(a.pick.buffer).equals(Buffer.from(b.pick.buffer));
+    // Los 4 giros guardados (modo caché), cada uno con su horneado
+    const views = Q.map((q) => new WorldView(st, q));
+    const baked = views.map((v) => bakeWorld(v.bakeable(), { topZ: 20 }));
+    const first = { rgba: baked[0]!.rgba.slice(), depth: baked[0]!.depth.slice(), pick: baked[0]!.pick.slice() } as ReturnType<typeof bakeWorld>;
+    // En cada giro el mundo cambia (se rompe la torre, se levanta un muro, se repara la torre, se quita el muro) y solo
+    // se rehornea la vista que se ve
+    const edits: Array<() => void> = [
+      () => { for (let z = 1; z < 9; z++) st.solid.set(4, 16, z, 0); },
+      () => { for (let z = 1; z < 6; z++) for (let y = 9; y < 14; y++) st.solid.set(20, y, z, material(0, 2)); },
+      () => { for (let z = 1; z < 9; z++) st.solid.set(4, 16, z, material(0, 3)); },
+      () => { for (let z = 1; z < 6; z++) for (let y = 9; y < 14; y++) st.solid.set(20, y, z, 0); },
+    ];
+    for (let k = 0; k < 4; k++) {
+      const q = (k + 1) % 4;
+      edits[k]!();
+      const rs = views[q]!.frame();
+      rebakeChanged(baked[q]!, rs.lights);
+      expect(same(baked[q]!, bakeWorld(views[q]!.bakeable(), { topZ: 20 })), `giro ${q}`).toBe(true);
+    }
+    // De vuelta en el giro 0, con el mundo como al principio: la misma imagen que la primera vez
+    expect(same(baked[0]!, first)).toBe(true);
+    // Y los otros giros, que se quedaron atrás varios cambios, se ponen al día al volver a verlos
+    for (const q of [1, 2, 3]) {
+      rebakeChanged(baked[q]!, views[q]!.frame().lights);
+      expect(same(baked[q]!, bakeWorld(views[q]!.bakeable(), { topZ: 20 })), `giro ${q} al volver`).toBe(true);
+    }
+  });
+
   it('las luces van a su sitio en la vista con el mismo id (el mismo parpadeo)', () => {
     const st = oddWorld();
     for (const q of Q) {
