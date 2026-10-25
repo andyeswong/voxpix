@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoxPix · multitud</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0c12; color: #d9d7e8; font: 13px system-ui, sans-serif; overflow: hidden; }
+    canvas { image-rendering: pixelated; display: block; margin: 0 auto; }
+    #hud { position: fixed; left: 10px; top: 8px; text-shadow: 0 1px 0 #000; white-space: pre; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hud">Horneando…</div>
+  <script type="module" src="./src/multitud/main.ts"></script>
+</body>
+</html>

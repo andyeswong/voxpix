@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoxPix · escenario</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0c12; color: #d9d7e8; font: 13px system-ui, sans-serif; overflow: hidden; }
+    canvas { image-rendering: pixelated; display: block; margin: 0 auto; }
+    #hud { position: fixed; left: 10px; top: 8px; text-shadow: 0 1px 0 #000; white-space: pre; pointer-events: none; }
+    #mode { position: fixed; right: 10px; top: 8px; font: inherit; color: #fff; cursor: pointer; padding: 6px 12px;
+      border-style: solid; border-width: 8px; border-image: url(./src/assets/ui/btn.png) 4 fill / 8px stretch; image-rendering: pixelated; background: none; }
+    #mode:hover { border-image-source: url(./src/assets/ui/btn_hover.png); }
+    #mode.on, #outline.on { border-image-source: url(./src/assets/ui/btn_on.png); }
+    #outline { position: fixed; right: 10px; top: 52px; font: inherit; color: #fff; cursor: pointer; padding: 6px 12px;
+      border-style: solid; border-width: 8px; border-image: url(./src/assets/ui/btn.png) 4 fill / 8px stretch; image-rendering: pixelated; background: none; }
+    #outline:hover { border-image-source: url(./src/assets/ui/btn_hover.png); }
+    #loading { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(13,12,18,.82); font-size: 16px; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hud"></div>
+  <button id="mode" title="Cambiar entre el modo 2D del juego y el modo vóxel (V)">Modo vóxel</button>
+  <button id="outline" title="Contorno: exterior, interior (con su tono o negro) o ninguno (C)">Contorno: no</button>
+  <div id="loading">Horneando el escenario en vóxeles…</div>
+  <script type="module" src="./src/escena/main.ts"></script>
+</body>
+</html>

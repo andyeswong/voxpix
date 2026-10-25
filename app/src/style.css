@@ -1,0 +1,69 @@
+/* VoxPix, interfaz "Dribbble moderna" (Andrés, 2026-10-24): el lienzo a pantalla completa y encima, flotando,
+   píldoras y tarjetas oscuras redondeadas con un solo acento (el violeta de MAIA). Los iconos siguen siendo pixel
+   art (app/icons/icons.px.js con pxl). Referencias en Sync: arte/voxpix/gui/. */
+:root {
+  --bg: #111017; --stage: #15141c; --grid: rgba(255, 255, 255, 0.035);
+  --panel: #1c1b24; --panel-2: #24232e; --panel-3: #2d2c39; --line: #2f2e3b; --line-2: #3a3948;
+  --text: #ecebf4; --muted: #8e8ca6; --faint: #5f5d75;
+  --accent: #8c78d8; --accent-2: #a996ff; --accent-ink: #15121f;
+  --r-pill: 999px; --r-card: 18px; --r-ctl: 10px;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif; font-size: 13px; color: var(--text); background: var(--bg);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; overflow: hidden; }
+button, select, input { font: inherit; color: inherit; }
+canvas { image-rendering: pixelated; display: block; }
+label { color: var(--muted); }
+
+/* Botones: redondos y planos */
+button, .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 36px; padding: 0 14px; border-radius: var(--r-pill);
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--text);
+  cursor: pointer; line-height: 1; white-space: nowrap; transition: background .12s, border-color .12s, color .12s;
+}
+button:hover, .btn:hover { background: var(--panel-3); border-color: var(--line-2); }
+button:active, .btn:active { transform: translateY(1px); }
+button.on { background: color-mix(in srgb, var(--accent) 22%, var(--panel-2)); border-color: var(--accent); color: #fff; }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600; }
+button.primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
+button.ghost { background: transparent; border-color: transparent; }
+button.ghost:hover { background: var(--panel-3); }
+button:disabled { opacity: .35; cursor: default; transform: none; }
+button.round { width: 40px; height: 40px; min-height: 0; padding: 0; }
+.btn input[type=file] { display: none; }
+
+/* Superficies flotantes */
+.pill { display: flex; align-items: center; gap: 4px; padding: 5px; border-radius: var(--r-pill); background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card); box-shadow: var(--shadow); }
+.card h2 { margin: 0; font-size: 14px; font-weight: 600; }
+
+/* Control segmentado */
+.seg { display: inline-flex; padding: 3px; gap: 2px; border-radius: var(--r-ctl); background: var(--bg); border: 1px solid var(--line); }
+.seg button { min-height: 28px; padding: 0 12px; border-radius: 8px; background: transparent; border-color: transparent; color: var(--muted); }
+.seg button.on { background: var(--panel-3); color: var(--text); border-color: var(--line-2); }
+
+/* Fila de propiedad: etiqueta, línea de puntos y valor (como Motion studio) */
+.field { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; min-height: 34px; }
+.field > label::after { content: ""; }
+.field .dots { border-bottom: 1px dashed var(--line-2); height: 1px; align-self: center; }
+.value { min-width: 56px; padding: 6px 10px; border-radius: var(--r-ctl); background: var(--bg); border: 1px solid var(--line); text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Interruptor */
+.switch { position: relative; width: 38px; height: 22px; min-height: 0; padding: 0; border-radius: 999px; background: var(--panel-3); border: 1px solid var(--line-2); }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--muted); transition: left .15s, background .15s; }
+.switch.on { background: color-mix(in srgb, var(--accent) 45%, var(--panel-3)); border-color: var(--accent); }
+.switch.on::after { left: 18px; background: #fff; }
+
+input[type=range] { accent-color: var(--accent); width: 100%; }
+input[type=number], input[type=text], select {
+  background: var(--bg); border: 1px solid var(--line); border-radius: var(--r-ctl); padding: 6px 10px; min-height: 32px;
+}
+select { padding-right: 24px; }
+
+.hint { color: var(--muted); font-size: 12px; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: var(--panel-3); border-radius: 8px; }
+::-webkit-scrollbar-track { background: transparent; }

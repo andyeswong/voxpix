@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@core/*": [
+        "src/core/*"
+      ],
+      "pxl-core": [
+        "vendor/pxl/src/core/index.ts"
+      ]
+    }
+  }
+}
