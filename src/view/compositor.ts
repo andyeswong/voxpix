@@ -26,6 +26,9 @@ export interface Compositor {
   // primer cuadro en que aparecen no pague su render. `o` como en frame (cuentan el contorno y si hay luces). Con
   // budgetMs se para al pasarlo y devuelve cuántos quedan; se vuelve a llamar en el cuadro siguiente.
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number;
+  // Sube un horneado sin pintar (en la GPU: sus texturas y los pesos de sus luces), para hacerlo fuera de la partida.
+  // La GPU guarda los últimos 4 horneados subidos: volver a uno (otro giro de la cámara) no lo vuelve a subir.
+  upload(b: Baked): void;
 }
 
 export function createCompositor(canvas: HTMLCanvasElement, opts: { prefer?: 'gpu' | 'cpu' } = {}): Compositor {
@@ -64,6 +67,9 @@ class CpuPath implements Compositor {
     this.g.putImageData(new ImageData(frame2D(s, b, { ...o, detail: o.detail ?? 'bajo' }) as Uint8ClampedArray<ArrayBuffer>, o.vw, o.vh), 0, 0);
     this.stats.frameMs = performance.now() - t0;
   }
+
+  // La CPU no sube nada
+  upload(_b: Baked): void { /* nada */ }
 
   // En la CPU basta con dejar el render de cada sprite en la caché de frame2d
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs = Infinity): number {
@@ -113,6 +119,8 @@ class GpuPath implements Compositor {
 
   get kind(): 'gpu' | 'cpu' { return this.gpu ? 'gpu' : 'cpu'; }
   get canvas(): HTMLCanvasElement { return this.cpu?.canvas ?? this.glCanvas; }
+
+  upload(b: Baked): void { this.gpu?.upload(b); }
 
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number {
     if (this.gpu) return this.gpu.prewarm(b, o, list, budgetMs);

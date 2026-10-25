@@ -65,13 +65,17 @@ export class GpuCompositor {
   private tDepth: WebGLTexture | null = null;
   private tFace: WebGLTexture | null = null;
   private tWorldY: WebGLTexture | null = null;
-  private worldY = new Float32Array(0);
+  private worldY: Float32Array<ArrayBuffer> = new Float32Array(0);
   // La cara de cada píxel tal como se sube: con materiales que reciben luz por detrás, cara + 8 * código, y el
   // código elige su valor en backVals (0 = nada); si la paleta no tiene, b.face tal cual
   private faceUp: Int8Array | null = null;
-  private backVals = new Float32Array(16);
+  private backVals: Float32Array<ArrayBuffer> = new Float32Array(16);
   private tWeights: WebGLTexture | null = null;
   private weightZones: BakedLight[] = [];
+  // Los otros horneados ya subidos (los giros guardados de una vista girada, el nivel anterior...): volver a uno solo
+  // cambia lo que se enlaza y lo pone al día por su número de serie. Como mucho bakedKeep, se sueltan los más viejos.
+  private bakedCache = new Map<Baked, BakedGpu>();
+  bakedKeep = 4;
   // Entidades: el atlas de sprites (una capa por modelo y giro), el de sus cuerpos sin girar (para el rayo de su
   // propia luz) y los cuerpos girados de las que dan sombra de verdad
   private sprites = new Map<string, number>();
@@ -368,30 +372,50 @@ export class GpuCompositor {
 
   // ---- lo que se sube
 
+  // Sube un horneado (y los pesos de sus luces) sin pintar nada: para hacerlo fuera de la partida (al quedar listo un
+  // giro, en la tienda) y que el primer cuadro con él no lo pague
+  upload(b: Baked): void {
+    this.syncBaked(b);
+    this.syncWeights(b);
+  }
+
   private syncBaked(b: Baked): void {
     const gl = this.gl;
     const pub = b.published;
     if (this.baked !== b || !this.tColor) {
+      // El que estaba se guarda (con sus pesos); si el nuevo ya se subió antes, se recupera y se pone al día abajo
+      if (this.baked && this.tColor) this.bakedCache.set(this.baked, { serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth!, tFace: this.tFace!, tWorldY: this.tWorldY!, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones });
       this.baked = b;
-      for (const t of [this.tColor, this.tDepth, this.tFace, this.tWorldY]) if (t) gl.deleteTexture(t);
-      this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
-      this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
-      this.backVals = backlitCodes(b);
-      this.faceUp = this.backVals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
-      if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
-      this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face);
-      this.worldY = new Float32Array(b.width * b.height);
-      fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
-      this.tWorldY = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, this.worldY);
-      this.bakedSerial = pub.serial;
-      this.weightZones = [];
-      return;
+      const hit = this.bakedCache.get(b);
+      this.bakedCache.delete(b);
+      while (this.bakedCache.size > Math.max(0, this.bakedKeep - 1)) {
+        const [old, e] = this.bakedCache.entries().next().value!;
+        for (const t of [e.tColor, e.tDepth, e.tFace, e.tWorldY, e.tWeights]) if (t) gl.deleteTexture(t);
+        this.bakedCache.delete(old);
+      }
+      if (hit) ({ serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth, tFace: this.tFace, tWorldY: this.tWorldY, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones } = hit);
+      else {
+        this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
+        this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
+        this.backVals = backlitCodes(b);
+        this.faceUp = this.backVals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+        if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
+        this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face);
+        this.worldY = new Float32Array(b.width * b.height);
+        fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
+        this.tWorldY = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, this.worldY);
+        this.bakedSerial = pub.serial;
+        this.tWeights = null;              // los pesos del que se fue se quedaron guardados con él
+        this.weightZones = [];
+        return;
+      }
     }
     if (pub.serial === this.bakedSerial) return;
+    const tColor = this.tColor!;
     const oldest = pub.rects[0]?.serial ?? Infinity;
     if (oldest > this.bakedSerial + 1) {
       // Se quedó atrás: todo de nuevo
-      subImage(gl, this.tColor, 0, 0, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
+      subImage(gl, tColor, 0, 0, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, b.depth, b.width, 1);
       if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
@@ -400,7 +424,7 @@ export class GpuCompositor {
     } else for (const r of pub.rects) {
       if (r.serial <= this.bakedSerial) continue;
       const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
-      subImage(gl, this.tColor, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
+      subImage(gl, tColor, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
       if (this.faceUp) fillFace(b, this.faceUp, this.backVals, r.x0, r.y0, r.x1, r.y1);
       subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
@@ -803,6 +827,12 @@ function backlitCodes(b: Baked): Float32Array<ArrayBuffer> {
     if (v > 0 && !out.slice(1, n + 1).includes(v)) { if (n >= 15) throw new Error('más de 15 valores de luz por detrás en la paleta'); out[++n] = v; }
   }
   return out;
+}
+
+// Lo subido de un horneado que no es el de este cuadro (GpuCompositor.bakedCache)
+interface BakedGpu {
+  serial: number; tColor: WebGLTexture; tDepth: WebGLTexture; tFace: WebGLTexture; tWorldY: WebGLTexture;
+  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: BakedLight[];
 }
 
 // La cara con el código de su luz por detrás (+8 * código)

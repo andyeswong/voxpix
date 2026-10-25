@@ -69,7 +69,8 @@ interface Scenario {
   warm?: (s: WorldState) => WarmItem[];
   // (gpuFrame compone un cuadro en la GPU sin compararlo)
   // (view es la vista girada: tras tocar el mundo, view.frame() la pone al día)
-  after?: (s: WorldState, b: Baked, gpuFrame: () => void, view: WorldView) => void;
+  // (gpuOther pinta un cuadro de la GPU con OTRO horneado: el giro 1 del mismo mundo)
+  after?: (s: WorldState, b: Baked, gpuFrame: () => void, view: WorldView, gpuOther: () => void) => void;
 }
 
 // Vegetación en un mundo generado (spec de KALADIN): hierba, flores y arbustos sobre la hierba, hierba sumergida en
@@ -139,6 +140,18 @@ const SCENARIOS: Scenario[] = [
       const x0 = Math.floor(296 / TILE) * TILE, y0 = Math.floor(135 / TILE) * TILE;
       for (let z = 1; z < 48; z++) for (let y = y0; y < y0 + TILE; y++) for (let x = x0; x < x0 + TILE; x++) if (s.solid.get(x, y, z)) s.solid.set(x, y, z, 0);
       rebakeChanged(b, view.frame().lights);
+    },
+  },
+  {
+    // Los horneados guardados en la GPU (bakedKeep): se pinta con este, luego con el del giro 1, se rompe la columna y
+    // se rehornea ESTE mientras está guardado; al volver, la GPU lo pone al día por su número de serie
+    name: 'medieval columna rota, ida y vuelta a otro horneado', theme: 'medieval', ticks: 120,
+    after: (s, b, gpuFrame, view, gpuOther) => {
+      gpuOther();
+      const x0 = Math.floor(296 / TILE) * TILE, y0 = Math.floor(135 / TILE) * TILE;
+      for (let z = 1; z < 48; z++) for (let y = y0; y < y0 + TILE; y++) for (let x = x0; x < x0 + TILE; x++) if (s.solid.get(x, y, z)) s.solid.set(x, y, z, 0);
+      rebakeChanged(b, view.frame().lights);
+      gpuOther();
     },
   },
   {
@@ -313,7 +326,16 @@ async function run(): Promise<void> {
     const ambient = THEMES[sc.theme].ambient;
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient, ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
-    if (sc.after) { gpu.read(view.frame(), b, o, 'color'); sc.after(state, b, () => gpu.read(view.frame(), b, o, 'color'), view); }
+    if (sc.after) {
+      gpu.read(view.frame(), b, o, 'color');
+      let other: { v: WorldView; b: Baked } | null = null;
+      const gpuOther = () => {
+        if (!other) { const v = new WorldView(state, 1); other = { v, b: bakeWorld(v.bakeable(), { topZ: TOPZ, incline: INCLINE }) }; }
+        rebakeChanged(other.b, other.v.frame().lights);
+        gpu.read(other.v.frame(), other.b, { ...o, vx: 0, vy: 0 }, 'color');
+      };
+      sc.after(state, b, () => gpu.read(view.frame(), b, o, 'color'), view, gpuOther);
+    }
     const rs: RenderState = view.frame();
     const c0 = performance.now();
     const parts = frame2DParts(rs, b, o);
