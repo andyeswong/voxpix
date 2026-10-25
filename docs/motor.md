@@ -145,7 +145,11 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
   está `bakeWorldJob`, el horneado entero por pasos, igual byte a byte que `bakeWorld`.
 - `app/giro.html` mide las dos formas en cada máquina (`?modo=cache`: los otros 3 en segundo plano; sin modo: hornear
   al girar, con un cuadro de transición antes).
-- Las paredes que dependen del lado de la cámara son contenido: el nivel decide qué construir.
+- Las paredes que dependen del lado de la cámara son contenido: el juego las decide con un vestido.
+  `new WorldView(state, q, { dress })` (o `prepareViewJob(state, q, opciones, { dress })`) llama a
+  `dress(view, null)` antes de hornear, y `dress(view, trozos)` cada vez que el mundo cambia donde hay vestido. El
+  vestido cambia `view.static`, que es la copia de la vista (también en el giro 0: el mundo no se toca). Con
+  `view.hideLight` esconde luces, que entonces ni se hornean ni se pintan.
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
 

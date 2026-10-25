@@ -20,8 +20,10 @@
 // ViewCamera es el único sitio que sabe cómo se pasa del mundo a la vista: otra cámara sería otra implementación de
 // esta clase, sin tocar el render ni el juego.
 //
-// Las paredes y lo que cambia con el lado de la cámara son CONTENIDO: el nivel decide qué construir para cada lado
-// (o se hornea un nivel distinto por giro). El motor no decide qué pared es alta.
+// Las paredes y lo que cambia con el lado de la cámara son CONTENIDO: el motor no decide qué pared es alta. El juego
+// lo hace con un vestido (ViewDress): new WorldView(state, q, { dress }) o prepareViewJob(..., { dress }). El vestido
+// cambia la copia de la vista (nunca el mundo), se vuelve a aplicar donde el mundo cambia y puede esconder luces
+// (view.hideLight), que entonces ni se hornean ni se pintan.
 import { CHUNK, StaticVoxels, type Entity, type RenderState, type WaterSurface, type DropSource, type WorldState } from './state';
 import type { WorldLight } from './build';
 import type { Bakeable, Baked, ViewJob } from './bake';
@@ -166,6 +168,13 @@ class DropsView implements DropSource {
   draw(...args: Parameters<DropSource['draw']>): void { drawDrops(this.d, this.n, ...args); }
 }
 
+// Vestir la vista: el contenido que depende del lado de la cámara (bajar la pared de delante, quitar lo que tapa).
+// Se llama sobre view.static (la copia de la vista, nunca el mundo) con changed = null la primera vez, antes de
+// hornear, y después con los trozos de la vista que se acaban de volver a copiar del mundo (lo vestido en ellos se
+// perdió). Puede poner view.hideLight para las luces que cuelgan de lo quitado: no se hornean ni se pintan.
+export type ViewDress = (view: WorldView, changed: readonly number[] | null) => void;
+export interface WorldViewOptions { dress?: ViewDress }
+
 export class WorldView implements RenderState {
   readonly camera: ViewCamera;
   readonly static: StaticVoxels;
@@ -176,26 +185,34 @@ export class WorldView implements RenderState {
   private synced: number;
   private readonly waterView: WaterView | null = null;
   private readonly dropsView: DropsView | null = null;
+  private readonly dress: ViewDress | null;
+  // Las luces que esta vista no enseña (las de lo que el vestido quitó): ni se hornean ni se pintan
+  hideLight: ((light: WorldLight) => boolean) | null = null;
 
-  // pre: los vóxeles ya girados (los de prepareViewJob) y el reloj del mundo cuando se empezaron a copiar
-  constructor(readonly state: WorldState, quarter: Quarter, pre?: { static: StaticVoxels; since: number }) {
+  // pre: los vóxeles ya copiados (los de prepareViewJob) y el reloj del mundo cuando se empezaron a copiar
+  constructor(readonly state: WorldState, quarter: Quarter, opts: WorldViewOptions = {}, pre?: { static: StaticVoxels; since: number }) {
     const src = state.solid;
     this.camera = new ViewCamera(quarter, src.width, src.depth);
+    this.dress = opts.dress ?? null;
+    // Sin girar y sin vestir, el render ve el estado de verdad, sin copias. Vestida, la vista tiene su copia también
+    // en el giro 0: el vestido no toca nunca el mundo de la simulación.
+    this.static = quarter === 0 && !this.dress ? src : pre?.static ?? rotatedStatic(src, this.camera);
     if (quarter === 0) {
-      // Lo de siempre: el render ve el estado de verdad, sin copias
-      this.static = src;
       this.water = state.water;
       this.drops = state.drops;
     } else {
-      this.static = pre?.static ?? rotatedStatic(src, this.camera);
       this.waterView = state.water ? new WaterView(state.water, this.camera) : null;
       this.dropsView = new DropsView(state.drops, this.camera);
       this.water = this.waterView;
       this.drops = this.dropsView;
     }
-    this.synced = pre && quarter !== 0 ? pre.since : src.clock;
+    this.synced = pre ? pre.since : src.clock;
     this.refresh();
+    this.dress?.(this, null);
   }
+
+  // ¿La vista tiene su propia copia de los vóxeles? (girada o vestida)
+  get copied(): boolean { return this.static !== this.state.solid; }
 
   get quarter(): Quarter { return this.camera.quarter; }
   get palette(): Palette { return this.state.palette; }
@@ -209,26 +226,33 @@ export class WorldView implements RenderState {
 
   // Pone la vista al día con el mundo y la devuelve para el render: los vóxeles que cambiaron (el rehorneado los
   // encuentra con sus versiones, como siempre), las entidades, las luces, el agua y las gotas de este cuadro
-  frame(): RenderState { this.refresh(); return this.quarter === 0 ? this.state : this; }
+  frame(): RenderState { this.refresh(); return this.copied || this.hideLight ? this : this.state; }
 
   private refresh(): void {
     const st = this.state, cam = this.camera;
-    if (this.quarter === 0) { this.entities = st.entities; this.lights = st.lights; return; }
     const src = st.solid;
-    this.static.palette = src.palette;
-    // Los trozos del mundo que cambiaron: se copian girados
-    for (const c of src.changedSince(this.synced)) {
-      const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
-      for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {
-        const [vx, vy] = cam.cellToView(x, y);
-        for (let z = src.zMin; z <= src.zMax; z++) this.static.set(vx, vy, z, src.get(x, y, z));
+    if (this.copied) {
+      this.static.palette = src.palette;
+      // Los trozos del mundo que cambiaron: se copian girados, y se vuelven a vestir los de la vista que tocan
+      const changed = src.changedSince(this.synced);
+      const touched = new Set<number>();
+      for (const c of changed) {
+        const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
+        for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {
+          const [vx, vy] = cam.cellToView(x, y);
+          for (let z = src.zMin; z <= src.zMax; z++) this.static.set(vx, vy, z, src.get(x, y, z));
+          touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
+        }
       }
+      this.synced = src.clock;
+      if (touched.size && this.dress) this.dress(this, [...touched]);
     }
-    this.synced = src.clock;
+    const hide = this.hideLight;
+    if (this.quarter === 0) { this.entities = st.entities; this.lights = hide ? st.lights.filter((l) => !hide(l)) : st.lights; return; }
     // Entidades: su celda y su giro en la vista (la entidad del mundo no se toca)
     this.entities = st.entities.map((e) => { const [x, y] = cam.cellToView(e.x, e.y); return { ...e, x, y, yaw: cam.yawToView(e.yaw) }; });
     // Luces: su punto y su foco en la vista (el mismo id: el mismo parpadeo)
-    this.lights = st.lights.map((l) => {
+    this.lights = (hide ? st.lights.filter((l) => !hide(l)) : st.lights).map((l) => {
       const [x, y] = cam.pointToView(l.x, l.y);
       const dir = l.dir ? [...cam.dirToView(l.dir[0], l.dir[1]), l.dir[2]] as const : undefined;
       return { ...l, x, y, ...(dir ? { dir } : {}) };
@@ -264,11 +288,11 @@ export class WorldView implements RenderState {
 //
 //   const prep = prepareViewJob(state, 2, { topZ: 40, incline: 0.5 });
 //   budget.push(prep.job);                          // y al girar: const r = prep.result() (si es null, aún no está)
-export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Parameters<typeof bakeWorld>[1] = {}): { job: ViewJob; result(): { view: WorldView; baked: Baked } | null } {
+export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Parameters<typeof bakeWorld>[1] = {}, viewOpts: WorldViewOptions = {}): { job: ViewJob; result(): { view: WorldView; baked: Baked } | null } {
   const src = state.solid;
   const cam = new ViewCamera(quarter, src.width, src.depth);
   const since = src.clock;
-  const rotated = quarter === 0 ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
+  const rotated = quarter === 0 && !viewOpts.dress ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
   const nChunks = src.cols * src.rows;
   let c = 0;
   let done: { view: WorldView; baked: Baked } | null = null;
@@ -286,7 +310,7 @@ export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Pa
         if (performance.now() >= deadline) return false;
       }
       // 2) la vista (con el agua girada) y el horneado, que sigue en esta misma llamada si queda plazo
-      if (!view) { view = new WorldView(state, quarter, rotated ? { static: rotated, since } : undefined); if (performance.now() >= deadline) return false; }
+      if (!view) { view = new WorldView(state, quarter, viewOpts, rotated ? { static: rotated, since } : undefined); if (performance.now() >= deadline) return false; }
       if (!bake) { bake = bakeWorldJob(view.bakeable(), bakeOpts, `bake:${quarter}`); if (performance.now() >= deadline) return false; }
       if (!bake.job.run(deadline)) return false;
       done = { view, baked: bake.baked };

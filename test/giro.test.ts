@@ -227,3 +227,66 @@ describe('hornear sin congelar la vista', () => {
     }
   });
 });
+
+describe('vestir la vista según el lado de la cámara', () => {
+  // Un vestido de prueba: la franja de delante de la vista (las 4 filas más cercanas a la cámara) se queda a ras de
+  // suelo, y la luz l1 deja de verse
+  const FRONT = 4;
+  const calls: Array<readonly number[] | null> = [];
+  const dress = (v: WorldView, changed: readonly number[] | null) => {
+    calls.push(changed);
+    const s = v.static;
+    for (let y = 0; y < FRONT; y++) for (let x = 0; x < s.width; x++) for (let z = 1; z <= s.zMax; z++) if (s.get(x, y, z)) s.set(x, y, z, 0);
+    v.hideLight = (l) => l.id === 'l1';
+  };
+  const same = (a: ReturnType<typeof bakeWorld>, b: ReturnType<typeof bakeWorld>) =>
+    Buffer.from(a.rgba).equals(Buffer.from(b.rgba)) && Buffer.from(a.depth.buffer).equals(Buffer.from(b.depth.buffer)) && a.lights.length === b.lights.length;
+
+  it('el vestido va sobre la copia de la vista, también en el giro 0: el mundo no se toca', () => {
+    for (const q of Q) {
+      const st = oddWorld();
+      const before = [...st.solid.entries()].length;
+      const v = new WorldView(st, q, { dress });
+      expect(v.copied).toBe(true);
+      expect([...st.solid.entries()].length).toBe(before);
+      // La franja de delante quedó a ras de suelo y hay menos vóxeles en la vista que en el mundo (el muro del sureste,
+      // o la torre, o lo que caiga delante en este giro)
+      for (let x = 0; x < v.static.width; x++) for (let y = 0; y < FRONT; y++) expect(v.static.get(x, y, 1)).toBe(0);
+      expect(v.frame()).toBe(v);
+      expect(v.frame().lights.some((l) => l.id === 'l1')).toBe(false);
+      expect(v.bakeable().lights.some((l) => l.id === 'l1')).toBe(false);
+    }
+  });
+
+  it('si cambia el mundo donde hay vestido, se vuelve a vestir y el rehorneado da lo mismo que hornear de nuevo', () => {
+    for (const q of Q) {
+      const st = oddWorld();
+      const v = new WorldView(st, q, { dress });
+      const b = bakeWorld(v.bakeable(), { topZ: 20 });
+      // Algo nuevo en el mundo justo donde cae la franja de delante de esta vista
+      const [wx, wy] = v.camera.cellToWorld(10, 1);
+      calls.length = 0;
+      for (let z = 1; z < 7; z++) st.solid.set(wx, wy, z, material(0, 2));
+      const rs = v.frame();
+      expect(calls.length).toBe(1);
+      expect(calls[0]!.length).toBeGreaterThan(0);
+      expect(v.static.get(10, 1, 3)).toBe(0);                        // vestido otra vez
+      expect(st.solid.get(wx, wy, 3)).toBe(material(0, 2));          // y en el mundo sigue
+      rebakeChanged(b, rs.lights);
+      expect(same(b, bakeWorld(new WorldView(st, q, { dress }).bakeable(), { topZ: 20 })), `giro ${q}`).toBe(true);
+    }
+  });
+
+  it('prepareViewJob con vestido da lo mismo que la vista vestida horneada de golpe', () => {
+    for (const q of Q) {
+      const st = oddWorld();
+      const prep = prepareViewJob(st, q, { topZ: 20 }, { dress });
+      while (!prep.job.run(0)) { /* por pasos */ }
+      const { view, baked } = prep.result()!;
+      expect(view.copied).toBe(true);
+      expect(baked.lights.some((l) => l.light.id === 'l1')).toBe(false);
+      expect(bakeWorld(new WorldView(st, q).bakeable(), { topZ: 20 }).lights.some((l) => l.light.id === 'l1')).toBe(true);   // sin vestido, sí
+      expect(same(baked, bakeWorld(new WorldView(st, q, { dress }).bakeable(), { topZ: 20 }))).toBe(true);
+    }
+  });
+});
