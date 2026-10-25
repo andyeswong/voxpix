@@ -97,14 +97,21 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
   const b: Baked = {
     width: W, height: H, rgba: new Uint8ClampedArray(W * H * 4), depth: new Float32Array(W * H), face: new Int8Array(W * H).fill(-1), pick: new Float64Array(W * H).fill(NaN),
     options, cam: camera(options), lights: [], version: world.model.clock, ms: { render: 0, light: 0 },
-    source: world.model, occ: new Uint8Array(0), topZ,          // la rejilla de sombras se reserva en su paso (son MB)
+    source: world.model, occ: new Uint8Array(world.width * world.depth * gridZ(topZ)), topZ,
     published: { serial: 0, rects: [] },
   };
   // La imagen se pinta por franjas de columnas directamente en el horneado (nadie lo ve todavía: no hace falta doble búfer)
   const rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: H - 1 };
   const buf: RectBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, w: W, h: H };
   const lights = world.lights.filter((l) => l.baked !== false);
-  let col = 0, occRow = -1, li = 0, row = 0, band = BAKE_BAND, rows = LIGHT_BAND;
+  // Lo que cuesta cada columna de píxeles: los vóxeles de su columna x (y la de al lado, que también se mira), de la
+  // rejilla de alturas. Con eso y lo que se va midiendo (ms por vóxel), cada franja se corta para que tarde lo que
+  // toca, también al pasar de columnas vacías a una pared larga
+  const vox = new Float64Array(W + 1);
+  const hgt = world.model.height, zMin = world.model.zMin;
+  for (let y = 0; y < world.depth; y++) for (let x = 0; x < world.width; x++) vox[x + 1] = vox[x + 1]! + Math.max(0, hgt[y * world.width + x]! - zMin);
+  const colCost = (c: number) => 1 + vox[c]! + (c > 0 ? vox[c - 1]! : 0);
+  let col = 0, occRow = 0, li = 0, cell = 0, msPerVox = -1, msPerCell = -1;
   let zone: BakedLight | null | undefined;
   const job: ViewJob = {
     key,
@@ -112,32 +119,33 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
       do {
         const t = performance.now();
         if (col <= rect.x1) {
-          const c1 = Math.min(rect.x1, col + band - 1);
+          // La primera franja, de una columna (para medir); luego, las columnas que quepan en BAKE_STEP_MS
+          let c1 = col, cost = colCost(col);
+          if (msPerVox > 0) while (c1 < rect.x1 && c1 - col < 64 && (cost + colCost(c1 + 1)) * msPerVox <= BAKE_STEP_MS) cost += colCost(++c1);
           renderColumns(b, rect, buf, col, c1);
           col = c1 + 1;
-          // Franjas más estrechas donde hay mucho que pintar (una pared larga girada cae entera en pocas columnas)
           const ms = performance.now() - t;
-          if (ms > BAKE_STEP_MS && band > 1) band = Math.max(1, band >> 1);
-          else if (ms < BAKE_STEP_MS / 4 && band < 32) band <<= 1;
+          const rate = ms / cost;
+          msPerVox = msPerVox < 0 ? rate : msPerVox * 0.7 + rate * 0.3;
           b.ms.render += ms;
-        } else if (occRow < 0) {
-          b.occ = new Uint8Array(world.width * world.depth * gridZ(topZ));
-          occRow = 0;
         } else if (occRow < world.depth) {
           const y1 = Math.min(world.depth, occRow + CHUNK) - 1;
           fillOcc(b, 0, occRow, world.width - 1, y1);
           occRow = y1 + 1;
         } else if (li < lights.length) {
-          if (zone === undefined) { zone = lightZone(b, lights[li]!); row = 0; }
-          if (zone && row < zone.rect.h) {
-            const r1 = Math.min(zone.rect.h, row + rows);
-            weightRows(b, zone, row, r1);
-            row = r1;
-            const ms = performance.now() - t;
-            if (ms > BAKE_STEP_MS && rows > 1) rows = Math.max(1, rows >> 1);
-            else if (ms < BAKE_STEP_MS / 4 && rows < 64) rows <<= 1;
+          if (zone === undefined) { zone = lightZone(b, lights[li]!); cell = 0; msPerCell = -1; }
+          const n = zone ? zone.rect.w * zone.rect.h : 0;
+          if (zone && cell < n) {
+            // Trozos de píxeles de la zona según lo que se va midiendo de esta luz (el primero, pequeño, para medir;
+            // en una máquina lenta, menos de una fila)
+            const want = msPerCell > 0 ? Math.max(16, Math.floor(BAKE_STEP_MS / msPerCell)) : 64;
+            const c1 = Math.min(n, cell + want);
+            weightCells(b, zone, cell, c1);
+            const rate = (performance.now() - t) / (c1 - cell);
+            msPerCell = msPerCell < 0 ? rate : msPerCell * 0.7 + rate * 0.3;
+            cell = c1;
           }
-          if (!zone || row >= zone.rect.h) { if (zone) b.lights.push(zone); zone = undefined; li++; }
+          if (!zone || cell >= n) { if (zone) b.lights.push(zone); zone = undefined; li++; }
           b.ms.light += performance.now() - t;
         }
         if (col > rect.x1 && occRow >= world.depth && li >= lights.length) {
@@ -150,8 +158,7 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
   };
   return { baked: b, job };
 }
-const BAKE_BAND = 8;      // columnas de píxeles del primer paso del horneado entero (luego se adapta)
-const BAKE_STEP_MS = 2;   // lo que se busca que tarde cada paso
+const BAKE_STEP_MS = 2;   // lo que se busca que tarde cada paso del horneado entero
 
 // Calienta el camino del rehorneado (el JIT compila renderColumns al usarlo): si no, la primera vez que algo se
 // rompe en la partida, sus primeras franjas cuestan 4-7 ms en vez de ~1. Se renderizan unas franjas de prueba en
@@ -233,12 +240,17 @@ function lightZone(b: Baked, l: WorldLight): BakedLight | null {
 // Calcula las filas [j0, j1) de los pesos de una zona (escribe en zone.weight). La caché por cara solo vale dentro de
 // la llamada: el resultado no depende de cómo se trocee.
 function weightRows(b: Baked, zone: BakedLight, j0: number, j1: number): BakedLight {
+  return weightCells(b, zone, j0 * zone.rect.w, j1 * zone.rect.w);
+}
+// Lo mismo por píxeles de la zona en orden de lectura, [c0, c1): para trocear más fino que una fila
+function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number): BakedLight {
   const { light: l, rect, weight } = zone;
   const p = resolveLight(l, 0);
   const r = p.radius;
   const fol = foliageOf(b.source.palette);
   const cache = new Map<number, number>();
-  for (let j = j0; j < j1; j++) for (let i = 0; i < rect.w; i++) {
+  for (let c = c0; c < c1; c++) {
+    const j = Math.floor(c / rect.w), i = c - j * rect.w;
     const idx = (rect.y + j) * b.width + rect.x + i;
     const k = b.pick[idx]!;
     if (Number.isNaN(k)) continue;

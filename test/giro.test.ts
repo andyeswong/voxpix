@@ -207,6 +207,26 @@ describe('hornear sin congelar la vista', () => {
     expect(same(baked, ref)).toBe(true);
   }, 120000);
 
+  it('prepareViewJob va por etapas (copy, view, alloc, bake, done) y run() no cruza de una a otra en la misma llamada', () => {
+    for (const q of Q) {
+      const st = oddWorld();
+      const prep = prepareViewJob(st, q, { topZ: 20 });
+      const seen: string[] = [prep.stage()];
+      for (;;) {
+        const before = prep.stage();
+        const finished = prep.job.run(Infinity);                // aun con todo el plazo del mundo
+        const after = prep.stage();
+        if (after !== before) {
+          expect(finished, `${before} -> ${after}`).toBe(after === 'done' && before === 'bake');
+          seen.push(after);
+        }
+        if (finished) break;
+      }
+      expect(seen).toEqual(q === 0 ? ['view', 'alloc', 'bake', 'done'] : ['copy', 'view', 'alloc', 'bake', 'done']);
+      expect(prep.result()).not.toBeNull();
+    }
+  });
+
   it('prepareViewJob con el mundo cambiando a medias: al acabar, ponerse al día da lo mismo que hornear de nuevo', () => {
     for (const q of Q) {
       const st = oddWorld();

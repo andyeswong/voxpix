@@ -288,7 +288,16 @@ export class WorldView implements RenderState {
 //
 //   const prep = prepareViewJob(state, 2, { topZ: 40, incline: 0.5 });
 //   budget.push(prep.job);                          // y al girar: const r = prep.result() (si es null, aún no está)
-export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Parameters<typeof bakeWorld>[1] = {}, viewOpts: WorldViewOptions = {}): { job: ViewJob; result(): { view: WorldView; baked: Baked } | null } {
+//
+// Etapas (prep.stage()), y run() no pasa de una a otra en la misma llamada, para que el juego decida dónde cae cada
+// una (p. ej. en la partida solo 'bake', y el resto en los respiros):
+//   'copy'  la copia girada de los vóxeles, por trozos (reserva memoria que se queda: puede despertar al recolector);
+//   'view'  la vista: el vestido entero y la rejilla del agua girada, de una vez;
+//   'alloc' la reserva de los búferes del horneado (imagen, profundidad, vóxel, cara y rejilla de sombras), de una vez;
+//   'bake'  el horneado por pasos que se adaptan a lo que tardan;
+//   'done'.
+export type PrepStage = 'copy' | 'view' | 'alloc' | 'bake' | 'done';
+export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Parameters<typeof bakeWorld>[1] = {}, viewOpts: WorldViewOptions = {}): { job: ViewJob; stage(): PrepStage; result(): { view: WorldView; baked: Baked } | null } {
   const src = state.solid;
   const cam = new ViewCamera(quarter, src.width, src.depth);
   const since = src.clock;
@@ -302,20 +311,35 @@ export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Pa
     key: `view:${quarter}`,
     run(deadline) {
       if (done) return true;
-      // 1) la copia girada, un trozo del mundo cada vez
-      while (rotated && c < nChunks) {
-        const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
-        for (const [x, y, z, v] of src.entries({ x0: cx, y0: cy, x1: cx + CHUNK - 1, y1: cy + CHUNK - 1 })) { const [vx, vy] = cam.cellToView(x, y); rotated.set(vx, vy, z, v); }
-        c++;
-        if (performance.now() >= deadline) return false;
+      switch (stage()) {
+        case 'copy':
+          // La copia girada, un trozo del mundo cada vez; al acabarla, se para (la etapa siguiente, en otra llamada)
+          while (rotated && c < nChunks) {
+            const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
+            for (const [x, y, z, v] of src.entries({ x0: cx, y0: cy, x1: cx + CHUNK - 1, y1: cy + CHUNK - 1 })) { const [vx, vy] = cam.cellToView(x, y); rotated.set(vx, vy, z, v); }
+            c++;
+            if (performance.now() >= deadline) break;
+          }
+          return false;
+        case 'view':
+          view = new WorldView(state, quarter, viewOpts, rotated ? { static: rotated, since } : undefined);
+          return false;
+        case 'alloc':
+          bake = bakeWorldJob(view!.bakeable(), bakeOpts, `bake:${quarter}`);
+          return false;
+        default:
+          if (!bake!.job.run(deadline)) return false;
       }
-      // 2) la vista (con el agua girada) y el horneado, que sigue en esta misma llamada si queda plazo
-      if (!view) { view = new WorldView(state, quarter, viewOpts, rotated ? { static: rotated, since } : undefined); if (performance.now() >= deadline) return false; }
-      if (!bake) { bake = bakeWorldJob(view.bakeable(), bakeOpts, `bake:${quarter}`); if (performance.now() >= deadline) return false; }
-      if (!bake.job.run(deadline)) return false;
-      done = { view, baked: bake.baked };
+      done = { view: view!, baked: bake!.baked };
       return true;
     },
   };
-  return { job, result: () => done };
+  function stage(): PrepStage {
+    if (done) return 'done';
+    if (rotated && c < nChunks) return 'copy';
+    if (!view) return 'view';
+    if (!bake) return 'alloc';
+    return 'bake';
+  }
+  return { job, stage, result: () => done };
 }
