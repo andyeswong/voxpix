@@ -82,6 +82,78 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
   return b;
 }
 
+// El horneado entero como un trabajo que se reanuda (ViewJob), para hornear sin congelar la vista: otro giro de la
+// cámara, el nivel siguiente. Mientras el trabajo no acaba, `baked` está a medias y no se enseña; al acabar es el
+// mismo, byte a byte, que el de bakeWorld (hay prueba). Lo que cambie en el mundo mientras tanto lo recoge después
+// rebakeChangedJobs, como siempre: la versión horneada es la del principio.
+export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>[1] = {}, key = 'bake'): { baked: Baked; job: ViewJob } {
+  const topZ = opts.topZ ?? 40;
+  const incline = opts.incline ?? 0.5;
+  const originY = Math.ceil(world.depth * incline) + topZ;
+  const options: RenderOptions = {
+    width: world.width + 2, height: originY + 2 + BASIN_DEPTH, originX: 0, originY,
+    yaw: 0, oblique: { y: incline, z: 1 }, pivot: [0, 0, 0], smooth: 0, shadows: false, ao: true, outline: opts.outline ?? 'none', ...(opts.outlineColor ? { outlineColor: opts.outlineColor } : {}), pick: true,
+  };
+  const W = options.width!, H = options.height!;
+  const b: Baked = {
+    width: W, height: H, rgba: new Uint8ClampedArray(W * H * 4), depth: new Float32Array(W * H), face: new Int8Array(W * H).fill(-1), pick: new Float64Array(W * H).fill(NaN),
+    options, cam: camera(options), lights: [], version: world.model.clock, ms: { render: 0, light: 0 },
+    source: world.model, occ: new Uint8Array(0), topZ,          // la rejilla de sombras se reserva en su paso (son MB)
+    published: { serial: 0, rects: [] },
+  };
+  // La imagen se pinta por franjas de columnas directamente en el horneado (nadie lo ve todavía: no hace falta doble búfer)
+  const rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: H - 1 };
+  const buf: RectBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, w: W, h: H };
+  const lights = world.lights.filter((l) => l.baked !== false);
+  let col = 0, occRow = -1, li = 0, row = 0, band = BAKE_BAND, rows = LIGHT_BAND;
+  let zone: BakedLight | null | undefined;
+  const job: ViewJob = {
+    key,
+    run(deadline) {
+      do {
+        const t = performance.now();
+        if (col <= rect.x1) {
+          const c1 = Math.min(rect.x1, col + band - 1);
+          renderColumns(b, rect, buf, col, c1);
+          col = c1 + 1;
+          // Franjas más estrechas donde hay mucho que pintar (una pared larga girada cae entera en pocas columnas)
+          const ms = performance.now() - t;
+          if (ms > BAKE_STEP_MS && band > 1) band = Math.max(1, band >> 1);
+          else if (ms < BAKE_STEP_MS / 4 && band < 32) band <<= 1;
+          b.ms.render += ms;
+        } else if (occRow < 0) {
+          b.occ = new Uint8Array(world.width * world.depth * gridZ(topZ));
+          occRow = 0;
+        } else if (occRow < world.depth) {
+          const y1 = Math.min(world.depth, occRow + CHUNK) - 1;
+          fillOcc(b, 0, occRow, world.width - 1, y1);
+          occRow = y1 + 1;
+        } else if (li < lights.length) {
+          if (zone === undefined) { zone = lightZone(b, lights[li]!); row = 0; }
+          if (zone && row < zone.rect.h) {
+            const r1 = Math.min(zone.rect.h, row + rows);
+            weightRows(b, zone, row, r1);
+            row = r1;
+            const ms = performance.now() - t;
+            if (ms > BAKE_STEP_MS && rows > 1) rows = Math.max(1, rows >> 1);
+            else if (ms < BAKE_STEP_MS / 4 && rows < 64) rows <<= 1;
+          }
+          if (!zone || row >= zone.rect.h) { if (zone) b.lights.push(zone); zone = undefined; li++; }
+          b.ms.light += performance.now() - t;
+        }
+        if (col > rect.x1 && occRow >= world.depth && li >= lights.length) {
+          b.ms.render = Math.round(b.ms.render); b.ms.light = Math.round(b.ms.light);
+          return true;
+        }
+      } while (performance.now() < deadline);
+      return false;
+    },
+  };
+  return { baked: b, job };
+}
+const BAKE_BAND = 8;      // columnas de píxeles del primer paso del horneado entero (luego se adapta)
+const BAKE_STEP_MS = 2;   // lo que se busca que tarde cada paso
+
 // Calienta el camino del rehorneado (el JIT compila renderColumns al usarlo): si no, la primera vez que algo se
 // rompe en la partida, sus primeras franjas cuestan 4-7 ms en vez de ~1. Se renderizan unas franjas de prueba en
 // búferes de usar y tirar; no se publica nada.

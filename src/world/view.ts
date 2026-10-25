@@ -24,8 +24,8 @@
 // (o se hornea un nivel distinto por giro). El motor no decide qué pared es alta.
 import { CHUNK, StaticVoxels, type Entity, type RenderState, type WaterSurface, type DropSource, type WorldState } from './state';
 import type { WorldLight } from './build';
-import type { Bakeable, Baked } from './bake';
-import { worldPointAt } from './bake';
+import type { Bakeable, Baked, ViewJob } from './bake';
+import { bakeWorld, bakeWorldJob, worldPointAt } from './bake';
 import { unkey, type Palette } from '../core';
 import { drawWater, WATER_CELL, type WaterLayer } from './water';
 import { drawDrops, MAX_DROPS } from './particles';
@@ -177,7 +177,8 @@ export class WorldView implements RenderState {
   private readonly waterView: WaterView | null = null;
   private readonly dropsView: DropsView | null = null;
 
-  constructor(readonly state: WorldState, quarter: Quarter) {
+  // pre: los vóxeles ya girados (los de prepareViewJob) y el reloj del mundo cuando se empezaron a copiar
+  constructor(readonly state: WorldState, quarter: Quarter, pre?: { static: StaticVoxels; since: number }) {
     const src = state.solid;
     this.camera = new ViewCamera(quarter, src.width, src.depth);
     if (quarter === 0) {
@@ -186,13 +187,13 @@ export class WorldView implements RenderState {
       this.water = state.water;
       this.drops = state.drops;
     } else {
-      this.static = rotatedStatic(src, this.camera);
+      this.static = pre?.static ?? rotatedStatic(src, this.camera);
       this.waterView = state.water ? new WaterView(state.water, this.camera) : null;
       this.dropsView = new DropsView(state.drops, this.camera);
       this.water = this.waterView;
       this.drops = this.dropsView;
     }
-    this.synced = src.clock;
+    this.synced = pre && quarter !== 0 ? pre.since : src.clock;
     this.refresh();
   }
 
@@ -254,4 +255,43 @@ export class WorldView implements RenderState {
     const [x, y] = this.camera.pointToWorld(p[0], p[1]);
     return [x, y, p[2]];
   }
+}
+
+// Un giro preparado sin congelar la vista: la copia girada de los vóxeles (por trozos del mundo) y su horneado, como
+// UN trabajo que se reanuda (ViewJob; la cola con presupuesto de la vista lo reparte entre cuadros). Para tener los
+// otros giros listos en segundo plano o hornear el siguiente antes de girar. Mientras no acaba, result() da null.
+// Lo que cambie en el mundo mientras tanto lo recogen después view.frame() y rebakeChangedJobs, como siempre.
+//
+//   const prep = prepareViewJob(state, 2, { topZ: 40, incline: 0.5 });
+//   budget.push(prep.job);                          // y al girar: const r = prep.result() (si es null, aún no está)
+export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Parameters<typeof bakeWorld>[1] = {}): { job: ViewJob; result(): { view: WorldView; baked: Baked } | null } {
+  const src = state.solid;
+  const cam = new ViewCamera(quarter, src.width, src.depth);
+  const since = src.clock;
+  const rotated = quarter === 0 ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
+  const nChunks = src.cols * src.rows;
+  let c = 0;
+  let done: { view: WorldView; baked: Baked } | null = null;
+  let bake: { baked: Baked; job: ViewJob } | null = null;
+  let view: WorldView | null = null;
+  const job: ViewJob = {
+    key: `view:${quarter}`,
+    run(deadline) {
+      if (done) return true;
+      // 1) la copia girada, un trozo del mundo cada vez
+      while (rotated && c < nChunks) {
+        const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
+        for (const [x, y, z, v] of src.entries({ x0: cx, y0: cy, x1: cx + CHUNK - 1, y1: cy + CHUNK - 1 })) { const [vx, vy] = cam.cellToView(x, y); rotated.set(vx, vy, z, v); }
+        c++;
+        if (performance.now() >= deadline) return false;
+      }
+      // 2) la vista (con el agua girada) y el horneado, que sigue en esta misma llamada si queda plazo
+      if (!view) { view = new WorldView(state, quarter, rotated ? { static: rotated, since } : undefined); if (performance.now() >= deadline) return false; }
+      if (!bake) { bake = bakeWorldJob(view.bakeable(), bakeOpts, `bake:${quarter}`); if (performance.now() >= deadline) return false; }
+      if (!bake.job.run(deadline)) return false;
+      done = { view, baked: bake.baked };
+      return true;
+    },
+  };
+  return { job, result: () => done };
 }

@@ -3,9 +3,12 @@
 import { describe, it, expect } from 'vitest';
 import { Model, material, box } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
-import { bakeWorld, rebakeChanged } from '../src/world/bake';
+import { bakeWorld, bakeWorldJob, rebakeChanged } from '../src/world/bake';
 import { entitySprite } from '../src/world/frame2d';
-import { ViewCamera, WorldView, type Quarter } from '../src/world/view';
+import { ViewCamera, WorldView, prepareViewJob, type Quarter } from '../src/world/view';
+import { generateLayout } from '../src/worldgen';
+import { THEMES } from '../src/content/themes';
+import { buildWorldState } from '../src/world/build';
 
 const PAL = { ramps: [
   { name: 'suelo', colors: ['#202020', '#404040', '#606060', '#808080', '#a0a0a0'] },
@@ -182,6 +185,45 @@ describe('WorldView', () => {
       const l = v.frame().lights[0]!;
       expect(l.id).toBe('l1');
       expect(v.camera.pointToWorld(l.x, l.y)).toEqual([10.5, 8.25]);
+    }
+  });
+});
+
+describe('hornear sin congelar la vista', () => {
+  const same = (a: ReturnType<typeof bakeWorld>, b: ReturnType<typeof bakeWorld>) =>
+    a.width === b.width && a.height === b.height && Buffer.from(a.rgba).equals(Buffer.from(b.rgba)) && Buffer.from(a.depth.buffer).equals(Buffer.from(b.depth.buffer)) &&
+    Buffer.from(a.pick.buffer).equals(Buffer.from(b.pick.buffer)) && Buffer.from(a.face.buffer).equals(Buffer.from(b.face.buffer)) && Buffer.from(a.occ).equals(Buffer.from(b.occ)) &&
+    a.lights.length === b.lights.length && a.lights.every((l, i) => l.light.id === b.lights[i]!.light.id && JSON.stringify(l.rect) === JSON.stringify(b.lights[i]!.rect) && Buffer.from(l.weight.buffer).equals(Buffer.from(b.lights[i]!.weight.buffer)));
+
+  it('bakeWorldJob, troceado al mínimo, da lo mismo que bakeWorld (un mundo con luces y agua)', () => {
+    const layout = generateLayout(THEMES.medieval.spec, 7);
+    const { world } = buildWorldState(layout, 'medieval');
+    const ref = bakeWorld(world, { topZ: 40, incline: 0.5 });
+    const { baked, job } = bakeWorldJob(world, { topZ: 40, incline: 0.5 });
+    let steps = 0;
+    while (!job.run(0)) steps++;
+    expect(steps).toBeGreaterThan(100);
+    expect(ref.lights.length).toBeGreaterThan(3);
+    expect(same(baked, ref)).toBe(true);
+  }, 120000);
+
+  it('prepareViewJob con el mundo cambiando a medias: al acabar, ponerse al día da lo mismo que hornear de nuevo', () => {
+    for (const q of Q) {
+      const st = oddWorld();
+      const prep = prepareViewJob(st, q, { topZ: 20 });
+      let steps = 0;
+      while (!prep.job.run(0)) {
+        expect(prep.result()).toBeNull();
+        // Cambios en mitad del trabajo: mientras se copian los vóxeles (6 trozos) y ya horneando
+        if (steps === 2) for (let z = 1; z < 9; z++) st.solid.set(4, 16, z, 0);
+        if (steps === 10) for (let z = 1; z < 6; z++) st.solid.set(30, 20, z, material(0, 2));
+        steps++;
+      }
+      expect(steps).toBeGreaterThan(10);
+      const { view, baked } = prep.result()!;
+      rebakeChanged(baked, view.frame().lights);
+      const fresh = new WorldView(st, q);
+      expect(same(baked, bakeWorld(fresh.bakeable(), { topZ: 20 })), `giro ${q}`).toBe(true);
     }
   });
 });

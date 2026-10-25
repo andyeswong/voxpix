@@ -93,6 +93,13 @@ export class StaticVoxels implements VoxelSource {
     return out;
   }
 
+  // Lo que ocupan los vóxeles en memoria (los trozos reservados y la rejilla de alturas)
+  get byteLength(): number {
+    let n = this.height.byteLength + this.versions.byteLength;
+    for (const d of this.chunks) if (d) n += d.byteLength;
+    return n;
+  }
+
   // ¿Hay algún sólido en la columna?
   hasColumn(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.width && y < this.depth && this.height[y * this.width + x]! > this.zMin;

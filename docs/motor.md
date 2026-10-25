@@ -138,9 +138,13 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 
 - `view.camera` (`ViewCamera`) es lo único que sabe pasar del mundo a la vista y al revés: celdas, puntos,
   direcciones y giros.
-- Cada giro es un horneado. Rehornear al girar tarda lo que un horneado (en la Alienware, ~0,7 s en un mundo de 640 x
-  480) y guardar los 4 ocupa ~19 MB cada uno. `app/giro.html` lo mide en cada máquina; si se rehornea, pinta antes un
-  cuadro de transición.
+- Cada giro es un horneado y, salvo el 0, una copia girada de los vóxeles. En un mundo de 640 x 480, un giro tarda
+  ~0,7-1 s en hornearse y ocupa ~19 MB de horneado más ~32 MB de vóxeles girados (los 4 guardados, ~170 MB).
+- Para no congelar la vista, `prepareViewJob(state, q, opciones)` prepara un giro como un trabajo que se reanuda
+  (`ViewJob`): se mete en la cola con presupuesto (`FrameBudget`) y `result()` da `{ view, baked }` al acabar. Debajo
+  está `bakeWorldJob`, el horneado entero por pasos, igual byte a byte que `bakeWorld`.
+- `app/giro.html` mide las dos formas en cada máquina (`?modo=cache`: los otros 3 en segundo plano; sin modo: hornear
+  al girar, con un cuadro de transición antes).
 - Las paredes que dependen del lado de la cámara son contenido: el nivel decide qué construir.
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
