@@ -15,6 +15,11 @@ estanque, árboles y luces (`src/samples/medieval.ts`).
 
 ![El editor en 3D con la escena de muestra y la vista previa iluminada](docs/img/editor-3d.png)
 
+<p align="center">
+  <img src="docs/img/rotacion-muestra.gif" alt="La escena de muestra girando" height="245">
+  <img src="docs/img/rotacion-paisaje-noche.gif" alt="El paisaje de 128 x 128 girando de noche, con sus 11 luces" height="245">
+</p>
+
 ## Capturas
 
 **El editor por capas.** Cada altura z se pinta vista desde arriba, con la capa de debajo en fantasma. La vista
@@ -75,6 +80,10 @@ paisaje medieval de 128 x 128.
     npm run voxpix -- import-pxl arte.px.js --stack <prefijo> modelo.json      # capas <prefijo>_zNN
 
 Sin `--size`, el encuadre se ajusta al modelo: 64x48 si cabe; si no, uno que lo contiene en cualquier giro.
+
+Un GIF del modelo dando una vuelta (los de arriba salen de aquí; `--luz` lo ilumina con las fuentes del modelo):
+
+    npx tsx --tsconfig tsconfig.runtime.json scripts/gif-rotacion.ts <modelo.voxpix.json|sample> salida.gif [--cuadros 36] [--escala 3] [--luz]
 
 ## Cómo está hecho
 
