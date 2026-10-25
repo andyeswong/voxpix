@@ -370,8 +370,11 @@ export function buildWorld(layout: Layout, theme: WorldTheme): World {
 import { WorldState } from './state';
 import { WaterLayer } from './water';
 
-export function buildWorldState(layout: Layout, theme: WorldTheme): { world: World; state: WorldState } {
+// decorate: cambia el mundo antes de crear el agua y el estado (vegetación con planFoliage, decorados del juego...).
+// Si añade rampas, que ponga en world.model.palette una paleta NUEVA.
+export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void } = {}): { world: World; state: WorldState } {
   const world = buildWorld(layout, theme);
+  opts.decorate?.(world);
   const water = new WaterLayer(world, theme);
   const state = new WorldState(world.model, world.lights, water, { seed: layout.seed, fountain: world.fountain });
   state.warmUp();
