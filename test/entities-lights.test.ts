@@ -229,3 +229,20 @@ describe('tinte de entidad (destello de golpe)', () => {
     expect(frame2D(state, b, o)).toEqual(plain);
   });
 });
+
+describe('vista que se sale de la imagen horneada (pantalla en vertical)', () => {
+  it('una luz dinámica cerca del borde no revienta, y lo de fuera es fondo', () => {
+    const { state, body, bake } = world();
+    const b = bake();
+    state.entities.add({ model: body, x: 40, y: 2, z: 1, facing: 0, castsShadow: true });
+    state.lights.add({ kind: 'torch', x: 40, y: 3, z: 8 });
+    // Más alta y más ancha que la imagen, empezando fuera por arriba y por la izquierda
+    const o = { vx: -20, vy: -40, vw: b.width + 40, vh: b.height + 80, time: 0, lights: true, ambient: AMB };
+    const img = frame2D(state, b, o);
+    const px = (x: number, y: number) => [img[(y * o.vw + x) * 4]!, img[(y * o.vw + x) * 4 + 1]!, img[(y * o.vw + x) * 4 + 2]!];
+    const inside = [20 + (b.width >> 1), 40 + b.options.originY - 10] as const;   // el suelo, cerca del borde de abajo
+    expect(px(0, 0)).not.toEqual(px(...inside));       // fuera (fondo) y dentro (suelo) no son lo mismo
+    expect(px(5, 5)).toEqual(px(0, 0));                // todo lo de fuera, igual
+    expect(px(o.vw - 1, o.vh - 1)).toEqual(px(0, 0));
+  });
+});

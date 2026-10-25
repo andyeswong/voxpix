@@ -60,10 +60,15 @@ export function shadeLayers(total: Float32Array, o: Frame2DOptions): LightLayers
 export function frame2DParts(state: WorldState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null } {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
-  const depthBuf = new Float32Array(vw * vh);
+  const depthBuf = new Float32Array(vw * vh).fill(Infinity);
+  // La vista puede salirse de la imagen horneada (una pantalla en vertical, más alta que el nivel): lo de fuera es
+  // fondo, sin profundidad. Solo se copia lo que cae dentro.
+  const cx0 = Math.max(0, vx), cx1 = Math.min(b.width, vx + vw);
   for (let y = 0; y < vh; y++) {
-    depthBuf.set(b.depth.subarray((vy + y) * b.width + vx, (vy + y) * b.width + vx + vw), y * vw);
-    view.set(b.rgba.subarray(((vy + y) * b.width + vx) * 4, ((vy + y) * b.width + vx + vw) * 4), y * vw * 4);
+    const sy = vy + y;
+    if (sy < 0 || sy >= b.height || cx0 >= cx1) continue;
+    depthBuf.set(b.depth.subarray(sy * b.width + cx0, sy * b.width + cx1), y * vw + cx0 - vx);
+    view.set(b.rgba.subarray((sy * b.width + cx0) * 4, (sy * b.width + cx1) * 4), (y * vw + cx0 - vx) * 4);
   }
   const bg = o.background ?? BACKGROUND;
   for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
@@ -360,8 +365,9 @@ export function screenBox(b: Baked, x: number, y: number, z: number, r: number, 
     const [sx, sy] = b.cam.project(x + dx, y + dy, zz);
     x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
   }
-  const ix0 = Math.max(o.vx, Math.floor(x0)), iy0 = Math.max(o.vy, Math.floor(y0));
-  const ix1 = Math.min(o.vx + o.vw - 1, Math.ceil(x1)), iy1 = Math.min(o.vy + o.vh - 1, Math.ceil(y1));
+  // Recortada a la vista Y a la imagen horneada: la vista puede salirse de la imagen (FERN, el Flip en vertical)
+  const ix0 = Math.max(o.vx, 0, Math.floor(x0)), iy0 = Math.max(o.vy, 0, Math.floor(y0));
+  const ix1 = Math.min(o.vx + o.vw - 1, b.width - 1, Math.ceil(x1)), iy1 = Math.min(o.vy + o.vh - 1, b.height - 1, Math.ceil(y1));
   return ix0 > ix1 || iy0 > iy1 ? null : [ix0, iy0, ix1, iy1];
 }
 
