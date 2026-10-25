@@ -69,7 +69,7 @@ requestAnimationFrame(loop);
 | `worldgen`, `content/themes`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente) y tres temas: `oficina`, `medieval` y `cyberpunk`, con sus paletas y su luz ambiente. |
 | `world/build` | `buildWorldState(layout, tema)`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. |
 | `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas y su huella (`hash`, `snapshot`, `restore`). |
-| `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo lo que cambió. |
+| `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo lo que cambió. Ojo: `baked.rgba` es la imagen SIN luz; la luz horneada está en `baked.lights[].weight` (un peso por píxel de su zona) y se suma al componer cada cuadro. Para comprobar un cambio de luz, mira los pesos o el cuadro compuesto, no `rgba`. |
 | `view/compositor` | `createCompositor(canvas)`: compone cada cuadro (escenario, entidades con su luz por cara y sus sombras, agua, gotas). GPU con WebGL2 o CPU de reserva con el mismo resultado. Si la GPU pierde el contexto, sigue la CPU. |
 | `world/frame3d` | El modo vóxel: el mismo estado visto en 3D. |
 | `runtime/runtime`, `runtime/body` | El tick determinista (entrada -> cuerpos con colisión -> eventos -> mundo), `FixedLoop` para pasar de tiempo real a ticks fijos y `Runtime`, un personaje controlable con su luz de mano. |
