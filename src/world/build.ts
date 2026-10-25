@@ -4,6 +4,7 @@ import { material, type Palette } from '../core';
 import { StaticVoxels } from './state';
 import { WALL, TILE, NORTH, type Layout } from '../worldgen';
 import type { SourceKind } from '../lighting/lights';
+import { THEMES } from '../content/themes';
 
 export type WorldTheme = 'medieval' | 'cyberpunk' | 'oficina';
 
@@ -115,7 +116,8 @@ export interface Fountain {
 // Profundidad máxima de la cuenca según el tamaño de la masa de agua (KIND_ID: 1 charco, 2 lago, 3 océano)
 const BASIN_MAX = [0, 2, 4, 7];
 
-export function buildWorld(layout: Layout, theme: WorldTheme): World {
+// fountain: si lleva la fuente (por defecto, lo que diga el tema: solo el medieval)
+export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?: boolean } = {}): World {
   const pal = worldPalette(theme);
   const W = layout.cols * TILE, D = layout.rows * TILE;
   const model = new StaticVoxels(pal, W, D, -10, 48);
@@ -264,7 +266,7 @@ export function buildWorld(layout: Layout, theme: WorldTheme): World {
 
   // ---- fuente: en el sitio libre (3x3 losetas sin pared, columna, mueble ni agua) más cercano a la salida
   let fountain: Fountain | null = null;
-  {
+  if (opts.fountain ?? THEMES[theme].fountain) {
     let best: [number, number] | null = null, bd = Infinity;
     const free = (cx: number, cy: number) => {
       if (cx < 1 || cy < 1 || cx >= layout.cols - 1 || cy >= layout.rows - 1) return false;
@@ -372,8 +374,8 @@ import { WaterLayer } from './water';
 
 // decorate: cambia el mundo antes de crear el agua y el estado (vegetación con planFoliage, decorados del juego...).
 // Si añade rampas, que ponga en world.model.palette una paleta NUEVA.
-export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void } = {}): { world: World; state: WorldState } {
-  const world = buildWorld(layout, theme);
+export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void; fountain?: boolean } = {}): { world: World; state: WorldState } {
+  const world = buildWorld(layout, theme, opts.fountain === undefined ? {} : { fountain: opts.fountain });
   opts.decorate?.(world);
   const water = new WaterLayer(world, theme);
   const state = new WorldState(world.model, world.lights, water, { seed: layout.seed, fountain: world.fountain });

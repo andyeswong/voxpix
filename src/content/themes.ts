@@ -12,6 +12,7 @@ export interface Theme {
   name: string;
   files: { nivel: string; muros: string };   // en demo/public/img
   material: string;                          // animación del material suelto
+  fountain: boolean;                         // ¿lleva la fuente (pilón con agua y fuego)? Solo el medieval
   ambient: readonly [number, number, number];
   spec: GeneratorSpec;
   water?: Palettes;                          // sin esto, los colores de agua por defecto
@@ -22,6 +23,7 @@ const MEDIEVAL: Theme = {
   id: 'medieval', name: 'Medieval',
   files: { nivel: 'medieval_nivel', muros: 'medieval_muros' },
   material: 'moneda',
+  fountain: true,
   ambient: [0.4, 0.46, 0.64],
   spec: {
     cols: 40, rows: 30,
@@ -42,6 +44,7 @@ const CYBERPUNK: Theme = {
   id: 'cyberpunk', name: 'Cyberpunk',
   files: { nivel: 'cyber_nivel', muros: 'cyber_muros' },
   material: 'chip-suelto',
+  fountain: false,
   ambient: [0.42, 0.46, 0.66],
   spec: {
     cols: 40, rows: 30,
@@ -68,6 +71,7 @@ const OFICINA: Theme = {
   id: 'oficina', name: 'Oficina',
   files: { nivel: 'oficina_nivel', muros: 'oficina_muros' },
   material: 'clip-suelto',
+  fountain: false,
   ambient: [0.7, 0.72, 0.8],
   spec: {
     cols: 40, rows: 30,
