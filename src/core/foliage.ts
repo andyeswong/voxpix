@@ -18,6 +18,9 @@ export interface FoliageOptions {
   on?: readonly number[];        // rampas sobre las que crece (hierba, flores, arbustos); por defecto las de hierba
   water?: readonly number[];     // rampas de agua; por defecto las que se llaman agua o water
   zMin?: number;                 // hasta dónde bajar buscando la superficie (0 por defecto; las cuencas del juego, menos)
+  // El agua como fluido aparte (el juego): la profundidad en cada columna (0 = seca), encima del vóxel más alto.
+  // Con ella, juncos y nenúfares la ven aunque no haya vóxeles de agua (worldWaterDepth de src/world/build.ts)
+  waterDepth?: (x: number, y: number) => number;
 }
 
 export interface FoliageSource {
@@ -25,7 +28,7 @@ export interface FoliageSource {
   get(x: number, y: number, z: number): number;
 }
 
-export const FOLIAGE_DENSITY: Record<FoliageType, number> = { grass: 0.35, flowers: 0.06, reeds: 0.35, lilies: 0.1, bush: 0.005 };
+export const FOLIAGE_DENSITY: Record<FoliageType, number> = { grass: 0.35, flowers: 0.06, reeds: 0.35, lilies: 0.012, bush: 0.005 };
 
 // Las rampas que la herramienta busca por nombre, y las que añade si faltan
 export const FOLIAGE_RAMPS: Record<string, Ramp> = {
@@ -84,7 +87,12 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
     const ramp = decode(src.get(x, y, z)).ramp;
     let depth = 0;
     if (water.has(ramp)) { let g = z; while (g >= zMin && src.get(x, y, g) && water.has(decode(src.get(x, y, g)).ramp)) g--; depth = z - g; }
-    return { z, ramp, depth, wet: water.has(ramp) };
+    else if (o.waterDepth) {
+      // El fluido: las celdas de agua (vacías en el modelo) van encima del vóxel más alto, como si fueran vóxeles
+      const d = Math.round(o.waterDepth(x, y));
+      if (d >= 1) return { z: z + d, ramp, depth: d, wet: true, fluid: true };
+    }
+    return { z, ramp, depth, wet: water.has(ramp), fluid: false };
   };
   // Distancia (en columnas, hasta `max`) a la orilla: desde tierra, al agua más cercana; desde el agua, a la tierra
   const toShore = (x: number, y: number, wet: boolean, max: number) => {
@@ -145,10 +153,21 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
         break;
       }
       case 'lilies': {
-        // Nenúfares: una hoja a ras del agua (sustituye la capa de arriba), donde el agua es honda de 1 o más
+        // Nenúfares: una hoja de 2 a 4 vóxeles a ras del agua, donde es honda de 1 o más. Con agua de vóxeles sustituye
+        // la capa de arriba; con agua fluida (que se pinta encima de la escena) flota justo por encima
         if (!s.wet || s.depth < 1 || r0 >= density) break;
-        put(x, y, s.z, mat(o.ramp, r1 < 0.25 ? 3 : 1 + Math.floor(r2 * 2)));
-        plants++;
+        const bits = Math.floor(r2 * 8) | 1;
+        let n = 0;
+        for (const [k, dx, dy] of [[0, 0, 0], [1, 1, 0], [2, 0, 1], [4, 1, 1]] as const) {
+          if (k && !(bits & k)) continue;
+          const t = k ? surface(x + dx, y + dy) : s;
+          if (!t || !t.wet || t.depth < 1 || t.z !== s.z) continue;
+          const z = t.fluid ? t.z + 1 : t.z;
+          if (t.fluid && !empty(x + dx, y + dy, z)) continue;
+          put(x + dx, y + dy, z, mat(o.ramp, k === 0 && r1 < 0.25 ? 3 : 1 + ((dx + dy + Math.floor(r1 * 4)) % 2)));
+          n++;
+        }
+        if (n) plants++;
         break;
       }
     }

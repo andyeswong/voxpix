@@ -372,6 +372,16 @@ export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?:
 import { WorldState } from './state';
 import { WaterLayer } from './water';
 
+// La profundidad del agua de partida en cada columna (0 = seca), para colocar cosas antes de que exista el WaterLayer
+// (planFoliage con waterDepth: juncos y nenúfares). El fondo es el suelo sin follaje.
+export function worldWaterDepth(world: World): (x: number, y: number) => number {
+  return (x, y) => {
+    if (x < 0 || y < 0 || x >= world.width || y >= world.depth) return 0;
+    const i = y * world.width + x;
+    return world.wet[i] ? Math.max(0, world.waterTop[i]! - world.model.floorAt(x, y)) : 0;
+  };
+}
+
 // decorate: cambia el mundo antes de crear el agua y el estado (vegetación con planFoliage, decorados del juego...).
 // Si añade rampas, que ponga en world.model.palette una paleta NUEVA.
 export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void; fountain?: boolean } = {}): { world: World; state: WorldState } {

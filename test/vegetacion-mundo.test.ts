@@ -5,12 +5,12 @@ import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { generateLayout } from '../src/worldgen';
 import { THEMES } from '../src/content/themes';
-import { buildWorldState, type World } from '../src/world/build';
+import { buildWorldState, worldWaterDepth, type World } from '../src/world/build';
 import { bakeWorld } from '../src/world/bake';
 import { frame2D } from '../src/world/frame2d';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WaterLayer } from '../src/world/water';
-import { render, camera, lightField3D, material, unkey, FOLIAGE_RAMPS } from '../src/core';
+import { render, camera, lightField3D, material, unkey, planFoliage, FOLIAGE_RAMPS } from '../src/core';
 import { medievalScene } from '../src/samples/medieval';
 
 const h = (a: ArrayBufferView) => createHash('sha256').update(new Uint8Array(a.buffer, a.byteOffset, a.byteLength)).digest('hex').slice(0, 16);
@@ -103,5 +103,21 @@ describe('follaje en el mundo', () => {
     const fol = lightUnder('foliage'), solid = lightUnder('solid'), none = lightUnder('none');
     expect(fol).toBeGreaterThan(solid);
     expect(fol).toBeLessThan(none);
+  });
+
+  it('con el agua como fluido (el juego), juncos en la orilla poco honda y nenúfares a ras del agua', () => {
+    let world!: World;
+    buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval', { decorate: (w) => { world = w; } });
+    const m = world.model, depth = worldWaterDepth(world);
+    const pal = { ...m.palette, ramps: [...m.palette.ramps, structuredClone(FOLIAGE_RAMPS.junco!), structuredClone(FOLIAGE_RAMPS.nenufar!)] };
+    m.palette = pal;
+    const all = [0, 0, m.width - 1, m.depth - 1] as const;
+    const reeds = planFoliage(m, ...all, m.zMax, { type: 'reeds', ramp: pal.ramps.length - 2, zMin: m.zMin, waterDepth: depth, density: 1 });
+    const lilies = planFoliage(m, ...all, m.zMax, { type: 'lilies', ramp: pal.ramps.length - 1, zMin: m.zMin, waterDepth: depth, density: 0.2 });
+    expect(reeds.plants).toBeGreaterThan(20);
+    expect(lilies.plants).toBeGreaterThan(20);
+    for (const [x, y] of reeds.voxels) { const d = Math.round(depth(x, y)); expect(d).toBeGreaterThanOrEqual(1); expect(d).toBeLessThanOrEqual(2); }
+    // Con el agua fluida, el nenúfar flota justo encima de la superficie (el agua se pinta encima de la escena)
+    for (const [x, y, z] of lilies.voxels) expect(z).toBe(m.floorAt(x, y) + Math.round(depth(x, y)));
   });
 });
