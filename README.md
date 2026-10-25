@@ -86,6 +86,10 @@ CPU, que da los mismos píxeles, solo que más despacio.
   gira, el del medio mueve y la rueda acerca.
 - **Herramientas:** lápiz, borrar, repintar, cuentagotas, caja, cubo de pintura, fuentes de luz, fluido (verter,
   grifo o llenar hasta un nivel) y espejo.
+- **Paleta por rampas** editable:
+  - rampas generadas desde un color, con giro de tono como en el pixel art;
+  - cada tono con su selector de color;
+  - las paletas de la comunidad (PICO-8, Endesga, AAP-64...) o un `.hex`/`.gpl` de Lospec.
 - **Vista previa** con giro, elevación, contorno exterior o interior e iluminación con las fuentes del modelo, como
   en el juego.
 - **Exportar:** sprites para pxl (N ángulos o capas), el modelo (`.voxpix.json`) y PNG de una vista o de una hoja
@@ -164,6 +168,9 @@ En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y
   VoxPix es una implementación propia, no un clon, y no usa su código.
 - **[pxl](https://github.com/crsolver/claude-pxl)**, de crsolver (MIT): el formato `.px.js` y su compilador, que van
   dentro de este repo (`vendor/pxl`). Con pxl se dibujan los iconos y se intercambia arte con VoxPix.
+- Las paletas que trae el editor son de sus autores, publicadas en [Lospec](https://lospec.com/palette-list): PICO-8
+  (Lexaloffle Games), Sweetie 16 (GrafxKid), Endesga 32 y 64 (ENDESGA), Apollo (AdamCYounis), AAP-64 (Adigun A.
+  Polack) y Resurrect 64 (Kerrie Lake).
 - [Vue](https://vuejs.org/), [Vite](https://vite.dev/), [TypeScript](https://www.typescriptlang.org/),
   [Vitest](https://vitest.dev/) y [Zod](https://zod.dev/).
 

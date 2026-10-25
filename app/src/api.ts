@@ -12,6 +12,8 @@ import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob } from './preview';
 import { loadPxl, paletteFromPxl, stackFromPxl, stackPrefixes, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
 import { SOURCE_PRESETS } from '../../src/lighting';
+import { PRESET_PALETTES } from '../../src/samples/palettes';
+import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps } from './paletteOps';
 
 export type Material = number | string | [number, number] | null;
 
@@ -55,7 +57,13 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   light(x, y, z, kind?)                    una fuente de luz (kind: ${KINDS.join(', ')}); da su id
   removeLight(idOrX, y?, z?)               la quita
   lights()                                 las fuentes
-  palette([{name, colors, emissive?}], outline?)   cambia la paleta (rampas de oscuro a claro; no se deshace)
+  palette([{name, colors, emissive?}], outline?)   cambia la paleta entera (rampas de oscuro a claro; no se deshace)
+  ramp(name, '#rrggbb', {tones?, hueShift?})        una rampa nueva generada desde un color; da su índice
+  setTone(rampa, tono, '#rrggbb')          cambia un color de la paleta (lo pintado con él cambia también)
+  palettes()                               las paletas de la comunidad que trae (Lospec): id, nombre, autor
+  loadPalette(id | ['#rrggbb', ...], 'añadir' | 'reemplazar')   las agrupa en rampas; reemplazar recolorea lo
+                                           pintado al color más parecido
+  removeUnusedRamps()                      quita las rampas que nadie usa
   canvas(w, d, h, crop?)                   tamaño del lienzo (crop: borra lo que quede fuera)
   newModel(name, w, d, h)                  modelo vacío con la paleta actual
   load(json)                               abre un .voxpix.json (objeto o texto)
@@ -156,6 +164,31 @@ export const api = {
     touch();
     return ramps();
   },
+
+  // Una rampa nueva generada desde un color (las sombras giran hacia el frío y las luces hacia el cálido)
+  ramp(name: string, base: string, o: { tones?: number; hueShift?: number } = {}): number {
+    if (!/^#[0-9a-f]{6}$/i.test(base)) throw new Error(`color como '#rrggbb', no ${base}`);
+    return addRampFromColor(name, base, { tones: o.tones ?? 5, hueShift: o.hueShift ?? 22 });
+  },
+
+  setTone(ramp: number | string, tone: number, hex: string): void {
+    const rs = model.value.palette.ramps;
+    const r = typeof ramp === 'number' ? ramp : rs.findIndex((x) => x.name === ramp);
+    if (!rs[r]) throw new Error(`no hay rampa ${ramp}; las rampas son: ${rs.map((x) => x.name).join(', ')}`);
+    if (!rs[r]!.colors[tone]) throw new Error(`la rampa ${rs[r]!.name} tiene tonos 0..${rs[r]!.colors.length - 1}`);
+    if (!/^#[0-9a-f]{6}$/i.test(hex)) throw new Error(`color como '#rrggbb', no ${hex}`);
+    setToneOp(r, tone, hex);
+  },
+
+  palettes() { return PRESET_PALETTES.map((p) => ({ id: p.id, name: p.name, author: p.author, colors: p.colors.length })); },
+
+  loadPalette(src: string | string[], mode: 'añadir' | 'reemplazar' = 'añadir'): number {
+    const preset = typeof src === 'string' ? PRESET_PALETTES.find((p) => p.id === src) : null;
+    if (typeof src === 'string' && !preset) throw new Error(`no hay paleta "${src}"; hay: ${PRESET_PALETTES.map((p) => p.id).join(', ')}`);
+    return loadColors(preset ? preset.colors : (src as string[]), mode, preset?.name);
+  },
+
+  removeUnusedRamps(): number { return removeUnusedRamps(); },
 
   canvas(w: number, d: number, h: number, crop = false) { setGridSize(w, d, h, crop); return api.info().canvas; },
 

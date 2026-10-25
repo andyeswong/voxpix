@@ -17,6 +17,8 @@ export interface Palette {
 // Un vóxel guarda material = rampa * 16 + tono base. 0 es vacío, así que la rampa 0 tono 0 no existe:
 // se reserva el valor 0 y se suma 1.
 export const MAX_TONES = 16;
+// Rampas como mucho: el material de un vóxel (rampa*16 + tono + 1) cabe en 16 bits con margen (la GPU lo guarda así)
+export const MAX_RAMPS = 64;
 
 export function material(ramp: number, tone: number): number {
   if (ramp < 0 || tone < 0 || tone >= MAX_TONES) throw new Error(`material fuera de rango: rampa ${ramp}, tono ${tone}`);
@@ -51,6 +53,7 @@ export function allowedColors(p: Palette): Set<string> {
 
 export function validatePalette(p: Palette): void {
   if (!p.ramps.length) throw new Error('paleta sin rampas');
+  if (p.ramps.length > MAX_RAMPS) throw new Error(`demasiadas rampas: ${p.ramps.length} (como mucho ${MAX_RAMPS})`);
   for (const r of p.ramps) {
     if (!r.colors.length || r.colors.length > MAX_TONES) throw new Error(`rampa ${r.name}: entre 1 y ${MAX_TONES} tonos`);
     for (const c of r.colors) rgbOf(c);

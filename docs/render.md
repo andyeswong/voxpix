@@ -12,8 +12,9 @@ del modelo, está en el origen.
 
 ## La paleta: rampas
 
-Una paleta es una lista de **rampas**. Cada rampa es un material con sus tonos, de oscuro a claro (de 1 a 16), y
-puede ser emisiva (brilla sola: no la oscurece la luz del mundo).
+Una paleta es una lista de **rampas** (hasta 64). Cada rampa es un material con sus tonos, de oscuro a claro (de 1
+a 16), y puede ser emisiva (brilla sola: no la oscurece la luz del mundo). `src/core/color.ts` genera rampas desde un
+color (`rampFromColor`, con giro de tono en OKLCH) y agrupa una lista de colores suelta en rampas (`groupIntoRamps`).
 
 ```json
 { "ramps": [ { "name": "piedra", "colors": ["#2e2f38", "#4a4c58", "#6c6f7c", "#9a9dab"] },

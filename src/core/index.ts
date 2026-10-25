@@ -5,3 +5,4 @@ export * from './tools';
 export * from './render';
 export * from './history';
 export * from './light3d';
+export * from './color';

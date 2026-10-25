@@ -56,6 +56,27 @@ El color no se elige suelto: se elige una **rampa** (un material, del oscuro al 
 mueve el tono dentro de la rampa según la luz, así que la imagen solo tiene colores de la paleta. Ver
 [El render](render.md).
 
+Los tonos de la rampa elegida están en la barra de abajo; ▴ abre la paleta completa, con tres pestañas:
+
+- **Rampas:** elegir rampa y tono. Con *Editar* se cambia la paleta:
+  - un clic en un tono abre el selector de color, y lo pintado con él cambia también;
+  - el clic derecho quita el tono (lo pintado pasa al más parecido de la rampa);
+  - **+** añade un tono más oscuro al principio o más claro al final;
+  - se puede renombrar la rampa, subirla, bajarla y hacerla emisiva (**✦**: brilla sola);
+  - **✕** borra la rampa (lo pintado con ella pasa al color más parecido de las demás);
+  - *Quitar sin usar* quita las rampas que ningún vóxel usa.
+- **Nueva:** una rampa generada desde un color. Eliges el color base, cuántos tonos y cuánto giran. Las sombras
+  giran hacia el frío y las luces hacia el cálido, como hace a mano un pixel artist, en vez de solo oscurecer. El
+  color base queda dentro de la rampa.
+- **Paletas:** paletas de pixel art de [Lospec](https://lospec.com/palette-list), con sus autores: PICO-8, Sweetie
+  16, Endesga 32, Apollo, Endesga 64, AAP-64 y Resurrect 64. También un archivo `.hex` o `.gpl`, o colores pegados.
+  Se agrupan en rampas solas, siguiendo cómo las diseñó su autor (de oscuro a claro, aunque giren de tono). Hay dos
+  opciones:
+  - *Añadir* pone sus rampas detrás de las tuyas;
+  - *Reemplazar* cambia la paleta entera, y lo pintado pasa al color más parecido de la nueva.
+
+Todo cambio de paleta se deshace con Ctrl+Z, junto con los vóxeles que tocó. Caben hasta 64 rampas de hasta 16 tonos.
+
 ## Vista previa e iluminación
 
 La vista previa es el mismo render que se exporta. El encuadre es el de los sprites (64x48 con el pivote en 32,42)

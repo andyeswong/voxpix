@@ -31,6 +31,11 @@ el resultado se ve en la app, como si lo hiciera una persona.
 | `info()` | objeto | Nombre, vóxeles, lienzo, rampas, luces, tipos de luz, la vista y si se renderiza en la GPU o en la CPU. |
 | `newModel(name, w, d, h)` | `info()` | Un modelo vacío con la paleta actual y un lienzo de w x d x h. Quita las luces. |
 | `palette([{ name, colors, emissive? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola. No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene. |
+| `ramp(name, '#rrggbb', { tones?, hueShift? })` | índice | Una rampa nueva generada desde un color: de 2 a 16 tonos (por defecto 5), con las sombras girando hacia el frío y las luces hacia el cálido (`hueShift` en grados, por defecto 22). Se deshace. |
+| `setTone(rampa, tono, '#rrggbb')` | - | Cambia un color de la paleta; lo pintado con él cambia también. `rampa` es el índice o el nombre. |
+| `palettes()` | lista | Las paletas de la comunidad que trae: `id`, nombre, autor y cuántos colores. |
+| `loadPalette(id \| ['#rrggbb', ...], 'añadir' \| 'reemplazar')` | rampas | Una paleta (por su `id`, o colores sueltos), agrupada en rampas. `añadir` las pone detrás; `reemplazar` cambia la paleta entera y lo pintado pasa al color más parecido. |
+| `removeUnusedRamps()` | cuántas | Quita las rampas que ningún vóxel usa. |
 | `canvas(w, d, h, crop?)` | lienzo | Cambia el tamaño del lienzo. Con `crop`, borra lo que queda fuera. |
 | `load(json)` | `info()` | Abre un `.voxpix.json`, como objeto o como texto. |
 | `save()` | objeto | El `.voxpix.json` del modelo, con sus luces. |

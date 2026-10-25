@@ -7,7 +7,7 @@
 //   3. la CPU lee eso y termina con finishRender (los contornos y los colores), el mismo código que la CPU.
 // Lo que sube: los vóxeles (una lista y una rejilla 3D con el material) cuando cambia el modelo; cada render, solo
 // uniforms.
-import { finishRender, renderBasis, key, SMOOTH_EPS, RAY_NUDGE, LIGHT_NUDGE, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
+import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
 
 const TW = 1024;                 // ancho de las texturas de lista (vóxeles, caras)
 // El render de la CPU toma la muestra de cada píxel en (i + 0.5 + 1/1024) y decide con sus funciones de arista. La
@@ -29,7 +29,7 @@ uniform vec3 uView, uL;
 uniform bool uFlat, uShadows, uAo;
 uniform float uSmooth;
 uniform vec2 uTh;                // lit, mid
-uniform int uRampLen[16];
+uniform int uRampLen[${MAX_RAMPS}];
 out int oShade;
 const ivec3 DIRS[6] = ivec3[6](ivec3(1, 0, 0), ivec3(-1, 0, 0), ivec3(0, 1, 0), ivec3(0, -1, 0), ivec3(0, 0, 1), ivec3(0, 0, -1));
 const ivec3 PU[6] = ivec3[6](ivec3(0, 1, 0), ivec3(0, 1, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0));
@@ -313,7 +313,7 @@ export class GpuVoxelRenderer {
     const rows = Math.max(1, Math.ceil(n / TW));
     const vox = new Int16Array(TW * rows * 4);
     vox.set(list);
-    const grid = new Uint8Array(size[0] * size[1] * size[2]);
+    const grid = new Uint16Array(size[0] * size[1] * size[2]);
     for (let i = 0; i < n; i++) {
       const x = list[i * 4]! - x0, y = list[i * 4 + 1]! - y0, z = list[i * 4 + 2]! - z0;
       grid[(z * size[1] + y) * size[0] + x] = list[i * 4 + 3]!;
@@ -322,7 +322,7 @@ export class GpuVoxelRenderer {
     this.tVox = tex(gl, gl.TEXTURE_2D);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA16I, TW, rows, 0, gl.RGBA_INTEGER, gl.SHORT, vox);
     this.tGrid = tex(gl, gl.TEXTURE_3D);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8UI, size[0], size[1], size[2], 0, gl.RED_INTEGER, gl.UNSIGNED_BYTE, grid);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R16UI, size[0], size[1], size[2], 0, gl.RED_INTEGER, gl.UNSIGNED_SHORT, grid);
     // El tono de cada cara: una textura de TW de ancho con 6 caras por vóxel
     const toneRows = Math.max(1, Math.ceil((n * 6) / TW));
     if (toneRows !== this.toneRows || !this.tTone) {
@@ -393,8 +393,8 @@ export class GpuVoxelRenderer {
     gl.uniform1i(u.uAo, (o.ao ?? true) ? 1 : 0);
     gl.uniform1f(u.uSmooth, o.smooth ?? 0.6);
     gl.uniform2f(u.uTh, th.lit, th.mid);
-    const lens = new Int32Array(16).fill(1);
-    pal.ramps.slice(0, 16).forEach((r, i) => { lens[i] = r.colors.length; });
+    const lens = new Int32Array(MAX_RAMPS).fill(1);
+    pal.ramps.slice(0, MAX_RAMPS).forEach((r, i) => { lens[i] = r.colors.length; });
     gl.uniform1iv(u.uRampLen, lens);
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

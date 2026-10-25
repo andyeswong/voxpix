@@ -372,7 +372,7 @@ aside.dragging :deep(header) { cursor: grabbing; }
 .dot { width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset; }
 .dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
 .more { min-height: 44px; border-radius: 14px; color: var(--muted); }
-.palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 400px; padding: 16px; }
+.palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 460px; padding: 16px; max-height: calc(100vh - 250px); overflow-y: auto; }
 .status { left: 16px; bottom: 16px; display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .backend { min-height: 22px; padding: 0 8px; font-size: 11px; color: var(--muted); border-radius: 8px; }
 .modal { position: fixed; inset: 0; z-index: 10; display: grid; place-items: center; background: rgba(8, 7, 12, .6); backdrop-filter: blur(4px); }
