@@ -15,6 +15,6 @@ export default defineConfig({
   server: { host: '0.0.0.0', port: 5190 },
   build: {
     outDir: 'dist', emptyOutDir: true,
-    rollupOptions: { input: { main: fileURLToPath(new URL('./index.html', import.meta.url)), escena: fileURLToPath(new URL('./escena.html', import.meta.url)), oraculo: fileURLToPath(new URL('./oraculo.html', import.meta.url)), 'oraculo-render': fileURLToPath(new URL('./oraculo-render.html', import.meta.url)), multitud: fileURLToPath(new URL('./multitud.html', import.meta.url)) } },
+    rollupOptions: { input: { main: fileURLToPath(new URL('./index.html', import.meta.url)), escena: fileURLToPath(new URL('./escena.html', import.meta.url)), oraculo: fileURLToPath(new URL('./oraculo.html', import.meta.url)), 'oraculo-render': fileURLToPath(new URL('./oraculo-render.html', import.meta.url)), multitud: fileURLToPath(new URL('./multitud.html', import.meta.url)), giro: fileURLToPath(new URL('./giro.html', import.meta.url)) } },
   },
 });

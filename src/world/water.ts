@@ -13,6 +13,7 @@ import type { Baked } from './bake';
 import { worldPalette, M } from './build';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
+export const WATER_CELL = CELL;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const REFLECT = 0.38;                             // cuánto del reflejo se ve (de arriba, el agua refleja poco)
 const MARCH = 40;                                 // píxeles que sube como mucho el rayo reflejado (de 2 en 2, y afina al dar con algo)
@@ -21,8 +22,8 @@ export class WaterLayer {
   readonly sim: ShallowWater;
   readonly gw: number;
   readonly gh: number;
-  private tones: Array<[number, number, number]>;
-  private basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
+  readonly tones: Array<[number, number, number]>;
+  readonly basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   private fountainOut: number[] = [];             // desagüe
 
@@ -119,118 +120,132 @@ export class WaterLayer {
     for (let i = 0; i < basin.length; i++) if (!basin[i] && sim.depth[i]! > 0) sim.depth[i] = sim.depth[i]! < 0.03 ? 0 : sim.depth[i]! - soak * Math.max(0.25, sim.depth[i]!);
   }
 
-  // Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
-  // (mundo + personajes); `total` (opcional) es la luz por píxel de la vista, que aquí se completa.
-  // `worldLights`: todas las luces del mundo (fijas y dinámicas)
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true): void {
-    const { sim, gw, gh, world } = this;
-    const a = b.options.oblique?.y ?? 1;
-    const originY = b.options.originY;
-    const f1 = b.cam.fwd[1], f2 = b.cam.fwd[2];
-    // El rayo reflejado sube por la misma columna de pantalla: por píxel avanza tPerPx, y su profundidad crece dPerT por t
-    const tPerPx = 1 / (a * f1 - f2), dPerT = f1 * f1 - f2 * f2;
-    const lights = worldLights.map((l) => {
-      const p = resolveLight(l, time);
-      return { x: l.x, y: l.y, z: l.z, r: p.radius, c: p.color, k: p.intensity, spot: p.spot };
-    });
-    // Hacia la cámara (para el brillo especular)
-    const vlen = Math.hypot(f1, f2), Vy = -f1 / vlen, Vz = -f2 / vlen;
-    // Lo de debajo y de alrededor, tal como estaba antes del agua (para el reflejo y la refracción)
-    const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null;
-    const white = this.tones[4]!;
-    // Altura de la superficie de una vecina (los bordes secos o sólidos cuentan como la propia celda)
-    const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);
+    drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect);
+  }
+}
 
-    const gx0 = Math.max(0, Math.floor(vx / CELL) - 1), gx1 = Math.min(gw - 1, Math.ceil((vx + vw) / CELL) + 1);
-    // Filas de celdas que pueden caer en la vista (la superficie va de z = -12 a 12)
-    const yOf = (sy: number, z: number) => (originY - sy - z) / a;
-    const gy0 = Math.max(0, Math.floor(yOf(vy + vh, -12) / CELL) - 2), gy1 = Math.min(gh - 1, Math.ceil(yOf(vy, 12) / CELL) + 2);
-    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
-      const i = gy * gw + gx;
-      const d = sim.depth[i]!;
-      if (sim.solid[i] || d < 0.04) continue;
-      const zs = sim.ground[i]! + d;
-      const north = gy * CELL + CELL, south = gy * CELL;
-      const sy0 = Math.round(originY - a * north - zs), sy1 = Math.max(sy0 + 1, Math.round(originY - a * south - zs));
-      const ymid = (north + south) / 2;
-      const depthHere = ymid * f1 + zs * f2;
-      // Normal y curvatura de la superficie
-      const sE = gx < gw - 1 ? sAt(i + 1, zs) : zs, sW = gx > 0 ? sAt(i - 1, zs) : zs;
-      const sN = gy < gh - 1 ? sAt(i + gw, zs) : zs, sS = gy > 0 ? sAt(i - gw, zs) : zs;
-      const sx = (sE - sW) / (2 * CELL), sy = (sN - sS) / (2 * CELL);
-      const lap = (sE + sW + sS + sN - 4 * zs) / (CELL * CELL);
-      const nx = -sx, ny = -sy, nz = 1, nl = Math.hypot(nx, ny, nz);
-      const key = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;
-      let tone = d > 4.5 ? 2 : 3;
-      if (key > 0.04) tone += 1; else if (key < -0.04) tone -= 1;
-      const steep = Math.hypot(sx, sy);
-      if (steep > 0.45) tone = 4;                                         // espuma en las crestas
-      if (d < 0.6 && !this.basin[i]) tone = 3;                            // suelo mojado: una película clara
-      tone = Math.max(0, Math.min(4, tone));
-      const tc = this.tones[tone]!, r = tc[0], g = tc[1], bl = tc[2];
-      // Opaca donde es honda; la trama (transparencia) solo en la orilla y en el suelo mojado
-      const alpha = !this.basin[i] ? Math.min(0.6, d) : d >= 1.5 ? 1 : Math.min(1, 0.45 + d * 0.35 + (tone === 4 ? 0.4 : 0));
-      // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
-      let lr = ambient[0] * 1.25, lg = ambient[1] * 1.25, lb = ambient[2] * 1.3, spec = 0, sr = 0, sg = 0, sb = 0;
-      const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
-      if (total) for (const l of lights) {
-        const cx = gx * CELL + 1, cy = gy * CELL + 1;
-        const dx = l.x - cx, dy = l.y - cy, dz = l.z - zs;
-        if (dx > l.r || dx < -l.r || dy > l.r || dy < -l.r) continue;
-        const dist = Math.hypot(dx, dy, dz);
-        if (dist >= l.r) continue;
-        const kk = (1 - dist / l.r) ** 2 * l.k * spotFactor(l.spot, -dx, -dy, -dz);
-        if (kk <= 0) continue;
-        const Lx = dx / dist, Ly = dy / dist, Lz = dz / dist;
-        const ndl = Math.max(0, (nx * Lx + ny * Ly + nz * Lz) / nl);
-        lr += l.c[0] * kk * (0.4 + 0.6 * ndl); lg += l.c[1] * kk * (0.4 + 0.6 * ndl); lb += l.c[2] * kk * (0.4 + 0.6 * ndl);
-        // Blinn-Phong: el vector medio entre la luz y la cámara
-        const hx = Lx, hy = Ly + Vy, hz = Lz + Vz, hl = Math.hypot(hx, hy, hz);
-        const ndh = Math.max(0, (nx * hx + ny * hy + nz * hz) / (nl * hl));
-        const sp = ndh ** 160 * kk * 3;                                   // brillo concentrado: destellos, no manchas
-        if (sp > 0.02) { spec += sp; sr += l.c[0] * sp; sg += l.c[1] * sp; sb += l.c[2] * sp; }
-      }
-      const shift = Math.max(-2, Math.min(2, Math.round(sx * 5)));        // las ondas desplazan el fondo y el reflejo
-      for (let sy = sy0; sy < sy1; sy++) {
-        const ty = sy - vy;
-        if (ty < 0 || ty >= vh) continue;
-        for (let px = gx * CELL; px < gx * CELL + CELL; px++) {
-          const tx = px - vx;
-          if (tx < 0 || tx >= vw) continue;
-          const t = ty * vw + tx;
-          if (depthHere >= srcDepth[t]! - 0.3) continue;                // lo que hay delante (orilla, personaje) tapa el agua
-          const o = t * 4, q = t * 3;
-          if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alpha) {
-            // Se ve el fondo a través del agua: refractado, algo azulado y con las cáusticas
-            const t2 = ty * vw + Math.max(0, Math.min(vw - 1, tx + shift));
-            view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05);
-            if (total && srcTotal) for (let c = 0; c < 3; c++) total[q + c] = ambient[c]! + (srcTotal[t2 * 3 + c]! - ambient[c]!) * caustic;
-            continue;
-          }
-          // Superficie: su color, el reflejo de lo que tiene encima y el brillo de las fuentes
-          let cr = r, cg = g, cb = bl, ltr = lr + sr, ltg = lg + sg, ltb = lb + sb;
-          const col = Math.max(0, Math.min(vw - 1, tx + shift));
-          if (reflect) for (let k = 2; k <= MARCH; k += 2) {
-            if (ty - k < 0) break;
-            const sdk = srcDepth[(ty - k) * vw + col]!;
-            if (!(sdk !== Infinity && sdk < depthHere + k * tPerPx * dPerT - 0.5)) continue;
-            // Dio con algo: ¿ya lo tocaba un píxel antes?
-            const k1 = k - 1, prev = srcDepth[(ty - k1) * vw + col]!;
-            const kk = prev !== Infinity && prev < depthHere + k1 * tPerPx * dPerT - 0.5 ? k1 : k;
-            const rt = (ty - kk) * vw + col;
-            {
-              const m = REFLECT * (tone === 4 ? 0.3 : 1);
-              cr += (srcView[rt * 4]! - cr) * m; cg += (srcView[rt * 4 + 1]! - cg) * m; cb += (srcView[rt * 4 + 2]! - cb) * m;
-              if (srcTotal) { ltr += (srcTotal[rt * 3]! - ltr) * m; ltg += (srcTotal[rt * 3 + 1]! - ltg) * m; ltb += (srcTotal[rt * 3 + 2]! - ltb) * m; }
-              break;
-            }
-          }
-          if (spec > 0.35) { cr = white[0]; cg = white[1]; cb = white[2]; }
-          view[o] = cr; view[o + 1] = cg; view[o + 2] = cb;
-          depthBuf[t] = depthHere;
-          if (total) { total[q] = ltr; total[q + 1] = ltg; total[q + 2] = ltb; }
+// La rejilla que dibuja drawWater: la del simulador del mundo (WaterLayer) o la de una vista girada (view.ts)
+export interface WaterGrid {
+  readonly gw: number;
+  readonly gh: number;
+  readonly sim: { readonly depth: Float32Array; readonly ground: Float32Array; readonly solid: Uint8Array };
+  readonly basin: Uint8Array;
+  readonly tones: ReadonlyArray<readonly [number, number, number]>;
+}
+
+// Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
+// (mundo + personajes); `total` (opcional) es la luz por píxel de la vista, que aquí se completa.
+// `worldLights`: todas las luces del mundo (fijas y dinámicas)
+export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true): void {
+  const { sim, gw, gh } = w;
+  const a = b.options.oblique?.y ?? 1;
+  const originY = b.options.originY;
+  const f1 = b.cam.fwd[1], f2 = b.cam.fwd[2];
+  // El rayo reflejado sube por la misma columna de pantalla: por píxel avanza tPerPx, y su profundidad crece dPerT por t
+  const tPerPx = 1 / (a * f1 - f2), dPerT = f1 * f1 - f2 * f2;
+  const lights = worldLights.map((l) => {
+    const p = resolveLight(l, time);
+    return { x: l.x, y: l.y, z: l.z, r: p.radius, c: p.color, k: p.intensity, spot: p.spot };
+  });
+  // Hacia la cámara (para el brillo especular)
+  const vlen = Math.hypot(f1, f2), Vy = -f1 / vlen, Vz = -f2 / vlen;
+  // Lo de debajo y de alrededor, tal como estaba antes del agua (para el reflejo y la refracción)
+  const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null;
+  const white = w.tones[4]!;
+  // Altura de la superficie de una vecina (los bordes secos o sólidos cuentan como la propia celda)
+  const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);
+
+  const gx0 = Math.max(0, Math.floor(vx / CELL) - 1), gx1 = Math.min(gw - 1, Math.ceil((vx + vw) / CELL) + 1);
+  // Filas de celdas que pueden caer en la vista (la superficie va de z = -12 a 12)
+  const yOf = (sy: number, z: number) => (originY - sy - z) / a;
+  const gy0 = Math.max(0, Math.floor(yOf(vy + vh, -12) / CELL) - 2), gy1 = Math.min(gh - 1, Math.ceil(yOf(vy, 12) / CELL) + 2);
+  for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+    const i = gy * gw + gx;
+    const d = sim.depth[i]!;
+    if (sim.solid[i] || d < 0.04) continue;
+    const zs = sim.ground[i]! + d;
+    const north = gy * CELL + CELL, south = gy * CELL;
+    const sy0 = Math.round(originY - a * north - zs), sy1 = Math.max(sy0 + 1, Math.round(originY - a * south - zs));
+    const ymid = (north + south) / 2;
+    const depthHere = ymid * f1 + zs * f2;
+    // Normal y curvatura de la superficie
+    const sE = gx < gw - 1 ? sAt(i + 1, zs) : zs, sW = gx > 0 ? sAt(i - 1, zs) : zs;
+    const sN = gy < gh - 1 ? sAt(i + gw, zs) : zs, sS = gy > 0 ? sAt(i - gw, zs) : zs;
+    const sx = (sE - sW) / (2 * CELL), sy = (sN - sS) / (2 * CELL);
+    const lap = (sE + sW + sS + sN - 4 * zs) / (CELL * CELL);
+    const nx = -sx, ny = -sy, nz = 1, nl = Math.hypot(nx, ny, nz);
+    const key = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;
+    let tone = d > 4.5 ? 2 : 3;
+    if (key > 0.04) tone += 1; else if (key < -0.04) tone -= 1;
+    const steep = Math.hypot(sx, sy);
+    if (steep > 0.45) tone = 4;                                         // espuma en las crestas
+    if (d < 0.6 && !w.basin[i]) tone = 3;                            // suelo mojado: una película clara
+    tone = Math.max(0, Math.min(4, tone));
+    const tc = w.tones[tone]!, r = tc[0], g = tc[1], bl = tc[2];
+    // Opaca donde es honda; la trama (transparencia) solo en la orilla y en el suelo mojado
+    const alpha = !w.basin[i] ? Math.min(0.6, d) : d >= 1.5 ? 1 : Math.min(1, 0.45 + d * 0.35 + (tone === 4 ? 0.4 : 0));
+    // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
+    let lr = ambient[0] * 1.25, lg = ambient[1] * 1.25, lb = ambient[2] * 1.3, spec = 0, sr = 0, sg = 0, sb = 0;
+    const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
+    if (total) for (const l of lights) {
+      const cx = gx * CELL + 1, cy = gy * CELL + 1;
+      const dx = l.x - cx, dy = l.y - cy, dz = l.z - zs;
+      if (dx > l.r || dx < -l.r || dy > l.r || dy < -l.r) continue;
+      const dist = Math.hypot(dx, dy, dz);
+      if (dist >= l.r) continue;
+      const kk = (1 - dist / l.r) ** 2 * l.k * spotFactor(l.spot, -dx, -dy, -dz);
+      if (kk <= 0) continue;
+      const Lx = dx / dist, Ly = dy / dist, Lz = dz / dist;
+      const ndl = Math.max(0, (nx * Lx + ny * Ly + nz * Lz) / nl);
+      lr += l.c[0] * kk * (0.4 + 0.6 * ndl); lg += l.c[1] * kk * (0.4 + 0.6 * ndl); lb += l.c[2] * kk * (0.4 + 0.6 * ndl);
+      // Blinn-Phong: el vector medio entre la luz y la cámara
+      const hx = Lx, hy = Ly + Vy, hz = Lz + Vz, hl = Math.hypot(hx, hy, hz);
+      const ndh = Math.max(0, (nx * hx + ny * hy + nz * hz) / (nl * hl));
+      const sp = ndh ** 160 * kk * 3;                                   // brillo concentrado: destellos, no manchas
+      if (sp > 0.02) { spec += sp; sr += l.c[0] * sp; sg += l.c[1] * sp; sb += l.c[2] * sp; }
+    }
+    const shift = Math.max(-2, Math.min(2, Math.round(sx * 5)));        // las ondas desplazan el fondo y el reflejo
+    for (let sy = sy0; sy < sy1; sy++) {
+      const ty = sy - vy;
+      if (ty < 0 || ty >= vh) continue;
+      for (let px = gx * CELL; px < gx * CELL + CELL; px++) {
+        const tx = px - vx;
+        if (tx < 0 || tx >= vw) continue;
+        const t = ty * vw + tx;
+        if (depthHere >= srcDepth[t]! - 0.3) continue;                // lo que hay delante (orilla, personaje) tapa el agua
+        const o = t * 4, q = t * 3;
+        if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alpha) {
+          // Se ve el fondo a través del agua: refractado, algo azulado y con las cáusticas
+          const t2 = ty * vw + Math.max(0, Math.min(vw - 1, tx + shift));
+          view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05);
+          if (total && srcTotal) for (let c = 0; c < 3; c++) total[q + c] = ambient[c]! + (srcTotal[t2 * 3 + c]! - ambient[c]!) * caustic;
+          continue;
         }
+        // Superficie: su color, el reflejo de lo que tiene encima y el brillo de las fuentes
+        let cr = r, cg = g, cb = bl, ltr = lr + sr, ltg = lg + sg, ltb = lb + sb;
+        const col = Math.max(0, Math.min(vw - 1, tx + shift));
+        if (reflect) for (let k = 2; k <= MARCH; k += 2) {
+          if (ty - k < 0) break;
+          const sdk = srcDepth[(ty - k) * vw + col]!;
+          if (!(sdk !== Infinity && sdk < depthHere + k * tPerPx * dPerT - 0.5)) continue;
+          // Dio con algo: ¿ya lo tocaba un píxel antes?
+          const k1 = k - 1, prev = srcDepth[(ty - k1) * vw + col]!;
+          const kk = prev !== Infinity && prev < depthHere + k1 * tPerPx * dPerT - 0.5 ? k1 : k;
+          const rt = (ty - kk) * vw + col;
+          {
+            const m = REFLECT * (tone === 4 ? 0.3 : 1);
+            cr += (srcView[rt * 4]! - cr) * m; cg += (srcView[rt * 4 + 1]! - cg) * m; cb += (srcView[rt * 4 + 2]! - cb) * m;
+            if (srcTotal) { ltr += (srcTotal[rt * 3]! - ltr) * m; ltg += (srcTotal[rt * 3 + 1]! - ltg) * m; ltb += (srcTotal[rt * 3 + 2]! - ltb) * m; }
+            break;
+          }
+        }
+        if (spec > 0.35) { cr = white[0]; cg = white[1]; cb = white[2]; }
+        view[o] = cr; view[o + 1] = cg; view[o + 2] = cb;
+        depthBuf[t] = depthHere;
+        if (total) { total[q] = ltr; total[q + 1] = ltg; total[q + 2] = ltb; }
       }
     }
   }

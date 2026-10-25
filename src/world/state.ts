@@ -280,6 +280,31 @@ export class ModelRegistry {
 
 export interface ViewRegion { x0: number; y0: number; x1: number; y1: number }
 
+// Lo que el render 2D lee del mundo (frame2D, el compositor de la GPU): el estado de verdad lo cumple, y también una
+// vista girada (view.ts), que da lo mismo en ejes de la vista
+export interface WaterSurface {
+  readonly gw: number;
+  readonly gh: number;
+  readonly sim: { readonly depth: Float32Array; readonly ground: Float32Array; readonly solid: Uint8Array };
+  readonly toneColors: ReadonlyArray<readonly [number, number, number]>;
+  isBasin(i: number): boolean;
+  draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean): void;
+}
+export interface DropSource {
+  readonly count: number;
+  at(k: number): [number, number, number];
+  draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
+    color: readonly [number, number, number], light: readonly [number, number, number]): void;
+}
+export interface RenderState {
+  readonly entities: readonly Entity[];
+  readonly lights: readonly WorldLight[];
+  readonly water: WaterSurface | null;
+  readonly drops: DropSource;
+  readonly palette: Palette;
+}
+
 export class WorldState {
   palette: Palette;
   readonly entities = new EntityList();

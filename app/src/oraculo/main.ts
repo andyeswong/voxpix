@@ -15,7 +15,10 @@ import { buildWorldState, type WorldTheme } from '../../../src/world/build';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
-import type { WorldState } from '../../../src/world/state';
+import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
+import type { World } from '../../../src/world/build';
+import { WaterLayer } from '../../../src/world/water';
+import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
 import maiaFile from '../../../models/maia/maia.json';
@@ -52,6 +55,8 @@ interface Scenario {
   name: string;
   lightCap?: number;      // tope de luces por entidad (entityLightCap)
   theme: WorldTheme;
+  quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
+  crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   pos?: [number, number];
   ticks: number;
   stompEvery?: number;
@@ -61,7 +66,22 @@ interface Scenario {
   // Modelos para precalentar en la GPU (Compositor.prewarm) antes del primer cuadro
   warm?: (s: WorldState) => WarmItem[];
   // (gpuFrame compone un cuadro en la GPU sin compararlo)
-  after?: (s: WorldState, b: Baked, gpuFrame: () => void) => void;
+  // (view es la vista girada: tras tocar el mundo, view.frame() la pone al día)
+  after?: (s: WorldState, b: Baked, gpuFrame: () => void, view: WorldView) => void;
+}
+
+// Un trozo de un mundo generado, con su agua y sus luces: así hay mundos rectangulares de lados impares
+function cropWorld(w: World, x0: number, y0: number, cw: number, cd: number): World {
+  const src = w.model;
+  const model = new StaticVoxels(src.palette, cw, cd, src.zMin, src.zMax);
+  for (const [x, y, z, v] of src.entries()) if (x >= x0 && y >= y0 && x < x0 + cw && y < y0 + cd) model.set(x - x0, y - y0, z, v);
+  const wet = new Uint8Array(cw * cd), waterTop = new Int8Array(cw * cd);
+  for (let y = 0; y < cd; y++) for (let x = 0; x < cw; x++) { const j = (y + y0) * w.width + x + x0; wet[y * cw + x] = w.wet[j]!; waterTop[y * cw + x] = w.waterTop[j]!; }
+  const inside = (x: number, y: number) => x >= x0 && y >= y0 && x < x0 + cw && y < y0 + cd;
+  const lights = w.lights.filter((l) => inside(l.x, l.y)).map((l) => ({ ...l, x: l.x - x0, y: l.y - y0 }));
+  const f = w.fountain;
+  const fountain = f && inside(f.x - f.radius - 2, f.y - f.radius - 2) && inside(f.x + f.radius + 2, f.y + f.radius + 2) ? { ...f, x: f.x - x0, y: f.y - y0 } : null;
+  return { model, lights, width: cw, depth: cd, wet, waterTop, fountain };
 }
 
 const SCENARIOS: Scenario[] = [
@@ -72,10 +92,10 @@ const SCENARIOS: Scenario[] = [
   { name: 'medieval lago sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false },
   {
     name: 'medieval columna rota', theme: 'medieval', ticks: 120,
-    after: (s, b) => {
+    after: (s, b, _f, view) => {
       const x0 = Math.floor(296 / TILE) * TILE, y0 = Math.floor(135 / TILE) * TILE;
       for (let z = 1; z < 48; z++) for (let y = y0; y < y0 + TILE; y++) for (let x = x0; x < x0 + TILE; x++) if (s.solid.get(x, y, z)) s.solid.set(x, y, z, 0);
-      rebakeChanged(b, s.lights);
+      rebakeChanged(b, view.frame().lights);
     },
   },
   {
@@ -140,10 +160,22 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
-function viewOf(s: WorldState, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
+// La vista girada (condición de MAIA): los escenarios con lo que depende del lado de la cámara (luces horneadas y la
+// fachada norte, agua y gotas, rehorneado, entidades giradas con luz dinámica, el foco) en los otros 3 cuartos, y un
+// mundo rectangular de lados impares con agua en los 4
+const TURNED = ['medieval salida', 'medieval lago con pisotones', 'medieval columna rota', 'oficina entidades y luz dinámica', 'medieval linterna'];
+for (const name of TURNED) {
+  const base = SCENARIOS.find((s) => s.name === name)!;
+  for (const q of [1, 2, 3] as Quarter[]) SCENARIOS.push({ ...base, name: `${name}, giro ${q}`, quarter: q });
+}
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
+}
+
+function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
   const feet = b.cam.project(x + 0.5, y, z);
   const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
-  const top = Math.floor(b.cam.project(0, s.depth - 1 - 2 * TILE, 32)[1]);
+  const top = Math.max(0, Math.floor(b.cam.project(0, depth - 1 - 2 * TILE, 32)[1]));
   const vy = Math.max(top, Math.min(b.height - VH, Math.floor(feet[1]) - VH / 2 - 12));
   return { vx, vy };
 }
@@ -210,28 +242,35 @@ async function run(): Promise<void> {
     out.textContent += `${sc.name}…\n`;
     await new Promise((r) => setTimeout(r, 0));
     const layout = generateLayout(THEMES[sc.theme].spec, 7);
-    const { world, state } = buildWorldState(layout, sc.theme);
-    const b = bakeWorld(world, { topZ: TOPZ, incline: INCLINE });
+    let { world, state } = buildWorldState(layout, sc.theme);
+    if (sc.crop) {
+      world = cropWorld(world, ...sc.crop);
+      state = new WorldState(world.model, world.lights, new WaterLayer(world, sc.theme), { seed: layout.seed, fountain: world.fountain });
+      state.warmUp();
+    }
+    const view = new WorldView(state, sc.quarter ?? 0);
+    const b = bakeWorld(view.bakeable(), { topZ: TOPZ, incline: INCLINE });
     const spawn = sc.pos ? { x: sc.pos[0], y: sc.pos[1] } : { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };
     const rt = new Runtime(state, spawn, { radius: 4, speed: 70, model: maiaModel });
     sc.setup?.(state, rt);
     for (let t = 1; t <= sc.ticks; t++) rt.step(sc.stompEvery && t % sc.stompEvery === 0 ? { ...NO_INPUT, stomp: true } : NO_INPUT);
-    const maia = state.entities.get(rt.entityId!)!;
-    const { vx, vy } = viewOf(state, b, maia.x, maia.y, maia.z);
+    const maia = view.frame().entities.find((e) => e.id === rt.entityId)!;
+    const { vx, vy } = viewOf(view.camera.viewDepth, b, maia.x, maia.y, maia.z);
     const ambient = THEMES[sc.theme].ambient;
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient, ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
-    if (sc.after) { gpu.read(state, b, o, 'color'); sc.after(state, b, () => gpu.read(state, b, o, 'color')); }
+    if (sc.after) { gpu.read(view.frame(), b, o, 'color'); sc.after(state, b, () => gpu.read(view.frame(), b, o, 'color'), view); }
+    const rs: RenderState = view.frame();
     const c0 = performance.now();
-    const parts = frame2DParts(state, b, o);
+    const parts = frame2DParts(rs, b, o);
     const layers = parts.total ? shadeLayers(parts.total, o) : null;
     const cpuFinal = layers ? applyLayers(parts.view, layers) : parts.view;
     const c1 = performance.now();
-    const gFinal = gpu.read(state, b, o, 'frame');
+    const gFinal = gpu.read(rs, b, o, 'frame');
     const c2 = performance.now();
-    const gColor = gpu.read(state, b, o, 'color');
-    const gMul = gpu.read(state, b, o, 'multiply');
-    const gAdd = gpu.read(state, b, o, 'add');
+    const gColor = gpu.read(rs, b, o, 'color');
+    const gMul = gpu.read(rs, b, o, 'multiply');
+    const gAdd = gpu.read(rs, b, o, 'add');
     const empty = new Uint8ClampedArray(VW * VH * 4);
     const r = compare(sc.name, { color: parts.view, mul: layers?.multiply ?? empty, add: layers?.add ?? empty, final: cpuFinal },
       { color: gColor, mul: gMul, add: gAdd, final: gFinal }, ambient, o.lights, [c1 - c0, c2 - c1], parts.total);

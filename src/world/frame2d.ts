@@ -3,10 +3,10 @@
 import { render, camera, lightField3D, rgbOf, spotFactor, type PointLight3D, type Rendered, type Spot } from '../core';
 import { resolveLight } from './lightutil';
 import { buildLayers, applyLayers, type LightLayers } from '../lighting/shade';
-import { lightView, worldPointAt, type Baked } from './bake';
+import { lightView, worldPointAt, unprojector, rowP, worldYAt, type Baked } from './bake';
 import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
-import type { WorldState, Entity } from './state';
+import type { RenderState, Entity } from './state';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -45,7 +45,7 @@ function cacheTouch(model: object, ck: string, id: string): void {
 // Cuántos renders de entidad hay guardados (para medir)
 export const entityRenderCount = (): number => entityLru.size;
 
-export function frame2D(state: WorldState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
+export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
   const { view, total } = frame2DParts(state, b, o);
   return total ? applyLayers(view, shadeLayers(total, o)) : view;
 }
@@ -57,7 +57,7 @@ export function shadeLayers(total: Float32Array, o: Frame2DOptions): LightLayers
 
 // El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
 // hace lo mismo; la prueba del oráculo compara los dos.
-export function frame2DParts(state: WorldState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null } {
+export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null } {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
   const depthBuf = new Float32Array(vw * vh).fill(Infinity);
@@ -137,7 +137,7 @@ export function frame2DParts(state: WorldState, b: Baked, o: Frame2DOptions): { 
 export const BACKGROUND = [13, 12, 18] as const;
 
 // El color de las gotas (el tono claro del agua) y su luz
-export function dropLook(state: WorldState, ambient: readonly [number, number, number]): { color: [number, number, number]; light: [number, number, number] } | null {
+export function dropLook(state: RenderState, ambient: readonly [number, number, number]): { color: [number, number, number]; light: [number, number, number] } | null {
   const wr = state.palette.ramps.find((r) => r.name === 'agua');
   return wr ? { color: rgbOf(wr.colors[4] ?? wr.colors[0]!), light: [ambient[0] * 1.7, ambient[1] * 1.7, ambient[2] * 1.8] } : null;
 }
@@ -146,7 +146,7 @@ export function dropLook(state: WorldState, ambient: readonly [number, number, n
 // castsShadow 'always' (el personaje), y el resto de los huecos, las true de pies más cercanos al centro de la vista;
 // las demás solo llevan la de contacto. En el orden de la lista de entidades.
 export const MAX_CASTERS = 8;
-export function shadowCasters(state: WorldState, b: Baked, o: Frame2DOptions): Entity[] {
+export function shadowCasters(state: RenderState, b: Baked, o: Frame2DOptions): Entity[] {
   const cx = o.vx + o.vw / 2, cy = o.vy + o.vh / 2;
   const cand = state.entities.map((e, i) => {
     const [sx, sy] = b.cam.project(Math.round(e.x) + 0.5, Math.round(e.y), e.z);
@@ -216,7 +216,7 @@ export function onView(d: EntitySprite, o: Frame2DOptions): boolean {
 
 // La luz por píxel de una entidad, iluminada por cara con las fuentes del mundo (en los ejes de su modelo, sin girar)
 // Las luces del mundo en los ejes del modelo de una entidad (sin girar), con su índice en state.lights
-function entityLocalLights(state: WorldState, d: EntitySprite, o: Frame2DOptions): Array<PointLight3D & { index: number }> {
+function entityLocalLights(state: RenderState, d: EntitySprite, o: Frame2DOptions): Array<PointLight3D & { index: number }> {
   const { e, X, Y, Z, bob } = d;
   const c = Math.cos((e.yaw * Math.PI) / 180), sn = Math.sin((e.yaw * Math.PI) / 180);
   return state.lights.map((l, index) => {
@@ -232,7 +232,7 @@ function entityLocalLights(state: WorldState, d: EntitySprite, o: Frame2DOptions
 // la primera). Devuelve sus índices en state.lights, o null si no hay tope. La GPU recibe lo mismo como máscara por
 // entidad, así las dos rutas eligen igual. `radii`: el radio de cada luz, calculado una vez por cuadro (con una
 // multitud, resolver las luces por entidad costaba más que dibujarlas).
-export function entityLightPick(state: WorldState, d: EntitySprite, o: Frame2DOptions, radii?: readonly number[]): number[] | null {
+export function entityLightPick(state: RenderState, d: EntitySprite, o: Frame2DOptions, radii?: readonly number[]): number[] | null {
   const cap = o.entityLightCap;
   if (cap === undefined) return null;
   const ex = d.X + 0.5, ey = d.Y, ez = d.Z + d.bob;
@@ -252,7 +252,7 @@ export function entityLightPick(state: WorldState, d: EntitySprite, o: Frame2DOp
   return best.sort((a, b) => a - b);
 }
 
-export function entityLight(state: WorldState, d: EntitySprite, o: Frame2DOptions): Float32Array {
+export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptions): Float32Array {
   const pick = entityLightPick(state, d, o);
   const lights: PointLight3D[] = entityLocalLights(state, d, o)
     .filter((l) => Math.hypot(l.x, l.y) < l.radius + 20 && (!pick || pick.includes(l.index)));
@@ -285,7 +285,7 @@ export function emissiveMask(d: EntitySprite): Uint8Array | null {
   return mask;
 }
 
-export function entityDraw(state: WorldState, b: Baked, e: Entity, o: Frame2DOptions): EntityDraw {
+export function entityDraw(state: RenderState, b: Baked, e: Entity, o: Frame2DOptions): EntityDraw {
   const d = entitySprite(b, e, o);
   return { ...d, etotal: o.lights ? entityLight(state, d, o) : null };
 }
@@ -376,20 +376,20 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
   const box = screenBox(b, l.x, l.y, l.z, p.radius, o);
   if (!box) return;
   const [x0, y0, x1, y1] = box;
-  // Sin asignaciones por píxel (con una multitud llevando luces, esto corre millones de veces): el punto del mundo de
-  // worldPointAt y la aportación de contribution, en línea y con la misma aritmética, y fuera del radio se descarta
-  // antes de la raíz
-  const a = b.options.oblique?.y ?? 1, f1 = b.cam.fwd[1], f2 = b.cam.fwd[2], O = b.options.originY, den = a * f2 - f1;
+  // Sin asignaciones por píxel (con una multitud llevando luces, esto corre millones de veces): el punto del mundo con
+  // la inversa de bake.ts (unprojector, la misma de worldPointAt) y la aportación de contribution en línea, y fuera
+  // del radio se descarta antes de la raíz
+  const u = unprojector(b);
   const r = p.radius, r2 = r * r, [cr, cg, cb] = p.color;
   for (let sy = y0; sy <= y1; sy++) {
-    const P = O - (sy + 0.5);
+    const P = rowP(u, sy);
     for (let sx = x0; sx <= x1; sx++) {
       const idx = sy * b.width + sx;
       const f = b.face[idx]!;
       if (f < 0) continue;
       const d = b.depth[idx]!;
       if (d === Infinity) continue;
-      const wy = (P * f2 - d) / den, wz = P - a * wy;
+      const wy = worldYAt(u, P, d), wz = P - u.a * wy;
       const dx = l.x - sx, dy = l.y - wy, dz = l.z - wz;
       const dd = dx * dx + dy * dy + dz * dz;
       if (dd >= r2) continue;
@@ -454,7 +454,7 @@ function blockedByBody(occ: ReturnType<typeof occupancy>, P: [number, number, nu
 
 export const SHADOW_REACH = 48;     // hasta dónde se busca sombra alrededor de la entidad (en planta)
 
-function castShadow(state: WorldState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions): void {
+function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions): void {
   const occ = occupancy(e.model, e.yaw);
   const ex = Math.round(e.x), ey = Math.round(e.y), ez = e.z;
   // Las luces que llegan a la zona de la entidad

@@ -14,7 +14,8 @@ import { DIR_VECTORS, unkey } from '../../core';
 import { resolveLight } from '../../world/lightutil';
 import { entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
-import type { WorldState } from '../../world/state';
+import type { RenderState } from '../../world/state';
+import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
 import { FRAG_CONTACT, FRAG_DROPS, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
@@ -159,7 +160,7 @@ export class GpuCompositor {
   }
 
   // Pinta el cuadro en el lienzo
-  frame(state: WorldState, b: Baked, o: Frame2DOptions): void {
+  frame(state: RenderState, b: Baked, o: Frame2DOptions): void {
     this.frameNo++;
     this.compose(state, b, o);
     const gl = this.gl;
@@ -168,7 +169,7 @@ export class GpuCompositor {
   }
 
   // Para la prueba del oráculo: una salida del cuadro en RGBA, fila 0 arriba (como frame2D)
-  read(state: WorldState, b: Baked, o: Frame2DOptions, what: GpuOutput = 'frame'): Uint8Array {
+  read(state: RenderState, b: Baked, o: Frame2DOptions, what: GpuOutput = 'frame'): Uint8Array {
     const gl = this.gl;
     this.frameNo++;
     this.compose(state, b, o);
@@ -190,7 +191,7 @@ export class GpuCompositor {
 
   // ---- los pasos
 
-  private compose(state: WorldState, b: Baked, o: Frame2DOptions): void {
+  private compose(state: RenderState, b: Baked, o: Frame2DOptions): void {
     const gl = this.gl;
     let up = performance.now();
     this.syncBaked(b);
@@ -412,7 +413,7 @@ export class GpuCompositor {
   }
 
   // Las sombras de verdad: las MAX_CASTERS entidades de shadowCasters, con su cuerpo girado (cuartos de vuelta)
-  private setCasters(state: WorldState, b: Baked, o: Frame2DOptions, lights: WorldState['lights'][number][]): void {
+  private setCasters(state: RenderState, b: Baked, o: Frame2DOptions, lights: WorldLight[]): void {
     const u = this.scene.u, gl = this.gl;
     const ents = o.lights ? shadowCasters(state, b, o) : [];
     const box = new Int32Array(MAX_CASTERS * 4), pos = new Float32Array(MAX_CASTERS * 3);
@@ -437,7 +438,7 @@ export class GpuCompositor {
   }
 
   // Las entidades a la capa de entidades (color, su luz, profundidad, con z-buffer) y sus sombras de contacto
-  private drawEntities(state: WorldState, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number): void {
+  private drawEntities(state: RenderState, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, E.fbo);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
@@ -697,7 +698,7 @@ export class GpuCompositor {
   private occSlabs = new Map<object, { ax: number; size: [number, number, number]; data: Uint8Array }>();
   private occW = 0;
 
-  private syncWater(state: WorldState, b: Baked, o: Frame2DOptions): boolean {
+  private syncWater(state: RenderState, b: Baked, o: Frame2DOptions): boolean {
     const gl = this.gl;
     const wl = state.water;
     if (!wl) return false;
@@ -718,11 +719,11 @@ export class GpuCompositor {
     return true;
   }
 
-  private waterTones(state: WorldState): Float32Array {
+  private waterTones(state: RenderState): Float32Array {
     return new Float32Array(state.water!.toneColors.flat());
   }
 
-  private projectDrops(state: WorldState, b: Baked, o: Frame2DOptions): number {
+  private projectDrops(state: RenderState, b: Baked, o: Frame2DOptions): number {
     const gl = this.gl;
     const dr = state.drops;
     if (this.dropsData.length < dr.count * 3) this.dropsData = new Float32Array(Math.max(256, dr.count * 2) * 3);

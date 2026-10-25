@@ -120,6 +120,31 @@ state.waterAt(x, y);                        // { depth, surface } o null
 state.groundAt(x, y); state.solidAt(x, y, z);
 ```
 
+## Girar la cámara
+
+La cámara oblicua gira en cuartos de vuelta con `WorldView` (`src/world/view.ts`). La simulación no se entera: la
+vista le da al render un estado ya girado (vóxeles, entidades, luces, agua y gotas) y el render no cambia.
+
+```ts
+const view = new WorldView(state, 1);                 // 0 sur (lo de siempre), 1 este, 2 norte, 3 oeste
+const baked = bakeWorld(view.bakeable(), { topZ: 40, incline: 0.5 });
+// cada cuadro
+const rs = view.frame();                              // pone la vista al día con el mundo
+for (const j of rebakeChangedJobs(baked, rs.lights)) budget.push(j);
+compositor.frame(rs, baked, opciones);
+// puntero y toques: coordenadas del MUNDO
+view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
+```
+
+- `view.camera` (`ViewCamera`) es lo único que sabe pasar del mundo a la vista y al revés: celdas, puntos,
+  direcciones y giros.
+- Cada giro es un horneado. Rehornear al girar tarda lo que un horneado (en la Alienware, ~0,7 s en un mundo de 640 x
+  480) y guardar los 4 ocupa ~19 MB cada uno. `app/giro.html` lo mide en cada máquina; si se rehornea, pinta antes un
+  cuadro de transición.
+- Las paredes que dependen del lado de la cámara son contenido: el nivel decide qué construir.
+- Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
+- El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
+
 ## Determinismo
 
 `state.step()` avanza 1/60 s fijos, sin reloj ni `Math.random`: el azar es un generador con semilla dentro del

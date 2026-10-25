@@ -4,6 +4,7 @@ import type { Baked } from './bake';
 import type { WaterLayer } from './water';
 
 const MAX = 1200;
+export const MAX_DROPS = MAX;
 const GRAVITY = 260;          // vóxeles/s²
 
 export class Drops {
@@ -63,17 +64,22 @@ export class Drops {
   // Dibuja las gotas en la vista con prueba de profundidad. `color` es el tono claro del agua.
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     color: readonly [number, number, number], light: readonly [number, number, number]): void {
-    const d = this.d;
-    for (let k = 0; k < this.n; k++) {
-      const o = k * 8;
-      const [sx, sy, depth] = b.cam.project(d[o]!, d[o + 1]!, d[o + 2]!);
-      const tx = Math.floor(sx) - vx, ty = Math.floor(sy) - vy;
-      if (tx < 0 || ty < 0 || tx >= vw || ty >= vh) continue;
-      const t = ty * vw + tx;
-      if (depth >= depthBuf[t]! - 0.3) continue;
-      view[t * 4] = color[0]; view[t * 4 + 1] = color[1]; view[t * 4 + 2] = color[2];
-      depthBuf[t] = depth;
-      if (total) { total[t * 3] = light[0]; total[t * 3 + 1] = light[1]; total[t * 3 + 2] = light[2]; }
-    }
+    drawDrops(this.d, this.n, b, view, depthBuf, total, vx, vy, vw, vh, color, light);
+  }
+}
+
+// Las gotas de un búfer (x, y, z en las 3 primeras de cada 8): las del mundo o las de una vista girada (view.ts)
+export function drawDrops(d: Float32Array, n: number, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
+  color: readonly [number, number, number], light: readonly [number, number, number]): void {
+  for (let k = 0; k < n; k++) {
+    const o = k * 8;
+    const [sx, sy, depth] = b.cam.project(d[o]!, d[o + 1]!, d[o + 2]!);
+    const tx = Math.floor(sx) - vx, ty = Math.floor(sy) - vy;
+    if (tx < 0 || ty < 0 || tx >= vw || ty >= vh) continue;
+    const t = ty * vw + tx;
+    if (depth >= depthBuf[t]! - 0.3) continue;
+    view[t * 4] = color[0]; view[t * 4 + 1] = color[1]; view[t * 4 + 2] = color[2];
+    depthBuf[t] = depth;
+    if (total) { total[t * 3] = light[0]; total[t * 3 + 1] = light[1]; total[t * 3 + 2] = light[2]; }
   }
 }

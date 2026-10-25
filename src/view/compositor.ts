@@ -6,7 +6,7 @@
 // y su lienzo vuelve a su sitio. Si no vuelve, se queda la CPU.
 import { frame2D, entitySprite, warmEntity, HEADINGS, type Frame2DOptions } from '../world/frame2d';
 import type { Baked } from '../world/bake';
-import type { WorldState } from '../world/state';
+import type { RenderState } from '../world/state';
 import { GpuCompositor, type WarmItem } from './gpu/compositor';
 export type { WarmItem };
 
@@ -21,7 +21,7 @@ export interface Compositor {
   // El lienzo donde pinta ahora (cambia si la GPU pierde el contexto o no arranca después de pedirlo)
   readonly canvas: HTMLCanvasElement;
   readonly stats: CompositorStats;
-  frame(state: WorldState, b: Baked, o: Frame2DOptions): void;
+  frame(state: RenderState, b: Baked, o: Frame2DOptions): void;
   // Prepara por adelantado los sprites de esos modelos (en la GPU, también subidos con sus cuerpos), para que el
   // primer cuadro en que aparecen no pague su render. `o` como en frame (cuentan el contorno y si hay luces). Con
   // budgetMs se para al pasarlo y devuelve cuántos quedan; se vuelve a llamar en el cuadro siguiente.
@@ -56,7 +56,7 @@ class CpuPath implements Compositor {
     this.g = g;
   }
 
-  frame(s: WorldState, b: Baked, o: Frame2DOptions): void {
+  frame(s: RenderState, b: Baked, o: Frame2DOptions): void {
     const t0 = performance.now();
     const c = this.canvas;
     if (c.width !== o.vw || c.height !== o.vh) { c.width = o.vw; c.height = o.vh; }
@@ -119,7 +119,7 @@ class GpuPath implements Compositor {
     return this.cpu ? this.cpu.prewarm(b, o, list, budgetMs) : 0;
   }
 
-  frame(s: WorldState, b: Baked, o: Frame2DOptions): void {
+  frame(s: RenderState, b: Baked, o: Frame2DOptions): void {
     if (this.gpu) {
       const t0 = performance.now();
       this.gpu.frame(s, b, o);

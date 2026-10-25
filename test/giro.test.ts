@@ -1,0 +1,155 @@
+// La vista girada en cuartos de vuelta (src/world/view.ts): la transformación y sus inversas, los vóxeles girados al
+// día con el mundo, el rehorneado, el puntero (lo que se toca cae en el vóxel correcto) y el giro de las entidades.
+import { describe, it, expect } from 'vitest';
+import { Model, material, box } from '../src/core';
+import { StaticVoxels, WorldState } from '../src/world/state';
+import { bakeWorld, rebakeChanged } from '../src/world/bake';
+import { entitySprite } from '../src/world/frame2d';
+import { ViewCamera, WorldView, type Quarter } from '../src/world/view';
+
+const PAL = { ramps: [
+  { name: 'suelo', colors: ['#202020', '#404040', '#606060', '#808080', '#a0a0a0'] },
+  { name: 'agua', colors: ['#0e1a2e', '#16304a', '#1f4a66', '#2f6a86', '#5a9ab4'] },
+] };
+const Q: Quarter[] = [0, 1, 2, 3];
+
+// Un mundo rectangular de lados impares, con algo distinto en cada esquina para que un giro mal hecho se note
+function oddWorld(): WorldState {
+  const W = 37, D = 23;
+  const s = new StaticVoxels(structuredClone(PAL), W, D, -4, 16);
+  for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) s.set(x, y, 0, material(0, (x * 7 + y * 3) % 5));
+  for (let z = 1; z < 9; z++) for (let y = 15; y < 19; y++) for (let x = 3; x < 6; x++) s.set(x, y, z, material(0, 3));   // torre al noroeste
+  for (let z = 1; z < 4; z++) for (let x = 25; x < 35; x++) s.set(x, 2, z, material(0, 4));                               // muro bajo al sureste
+  return new WorldState(s, [{ id: 'l1', kind: 'torch', x: 10.5, y: 8.25, z: 6 }], null);
+}
+
+describe('ViewCamera', () => {
+  it('celdas, puntos, direcciones y giros vuelven con sus inversas en los 4 cuartos', () => {
+    for (const q of Q) {
+      const c = new ViewCamera(q, 37, 23);
+      expect([c.viewWidth, c.viewDepth]).toEqual(q % 2 ? [23, 37] : [37, 23]);
+      for (const [x, y] of [[0, 0], [36, 22], [5, 17], [12.25, 3.75]] as const) {
+        const [vx, vy] = c.cellToView(x, y);
+        expect(c.cellToWorld(vx, vy)).toEqual([x, y]);
+        const [px, py] = c.pointToView(x, y);
+        expect(c.pointToWorld(px, py)).toEqual([x, y]);
+        if (Number.isInteger(x)) { expect(vx).toBeGreaterThanOrEqual(0); expect(vx).toBeLessThan(c.viewWidth); expect(vy).toBeGreaterThanOrEqual(0); expect(vy).toBeLessThan(c.viewDepth); }
+      }
+      expect(c.dirToWorld(...c.dirToView(0.6, -0.8))).toEqual([0.6, -0.8]);
+      for (const yaw of [0, 45, 90, 270]) expect(c.yawToWorld(c.yawToView(yaw))).toBe(yaw);
+    }
+  });
+
+  it('girar un cuarto 4 veces seguidas vuelve al mismo sitio (y el lado largo se alterna)', () => {
+    let W = 37, D = 23, x = 4, y = 17, px = 4.5, py = 17.25;
+    for (let k = 0; k < 4; k++) {
+      const c = new ViewCamera(1, W, D);
+      [x, y] = c.cellToView(x, y);
+      [px, py] = c.pointToView(px, py);
+      [W, D] = [c.viewWidth, c.viewDepth];
+    }
+    expect([x, y, px, py, W, D]).toEqual([4, 17, 4.5, 17.25, 37, 23]);
+  });
+
+  it('la celda y el punto coinciden: el centro de la celda va al centro de su celda girada', () => {
+    for (const q of Q) {
+      const c = new ViewCamera(q, 37, 23);
+      const [cx, cy] = c.cellToView(8, 3);
+      expect(c.pointToView(8.5, 3.5)).toEqual([cx + 0.5, cy + 0.5]);
+    }
+  });
+});
+
+describe('WorldView', () => {
+  it('los vóxeles girados son los del mundo, en los 4 cuartos', () => {
+    const st = oddWorld();
+    for (const q of Q) {
+      const v = new WorldView(st, q);
+      let n = 0;
+      for (const [x, y, z, val] of st.solid.entries()) {
+        const [vx, vy] = v.camera.cellToView(x, y);
+        expect(v.static.get(vx, vy, z)).toBe(val);
+        n++;
+      }
+      expect(v.static.width * v.static.depth).toBe(37 * 23);
+      let m = 0;
+      for (const _ of v.static.entries()) m++;
+      expect(m).toBe(n);
+    }
+  });
+
+  it('lo que cambia en el mundo llega a la vista, y el rehorneado da lo mismo que hornear de nuevo', () => {
+    for (const q of [1, 2, 3] as Quarter[]) {
+      const st = oddWorld();
+      const v = new WorldView(st, q);
+      const b = bakeWorld(v.bakeable(), { topZ: 20 });
+      // Se rompe la torre y se levanta otra cosa en el mundo
+      for (let z = 1; z < 9; z++) st.solid.set(4, 16, z, 0);
+      for (let z = 1; z < 6; z++) st.solid.set(20, 11, z, material(0, 2));
+      const rs = v.frame();
+      rebakeChanged(b, rs.lights);
+      const fresh = bakeWorld(v.bakeable(), { topZ: 20 });
+      expect(Buffer.from(b.rgba).equals(Buffer.from(fresh.rgba))).toBe(true);
+      expect(Buffer.from(b.depth.buffer).equals(Buffer.from(fresh.depth.buffer))).toBe(true);
+      const [vx, vy] = v.camera.cellToView(20, 11);
+      expect(v.static.get(vx, vy, 3)).toBe(material(0, 2));
+    }
+  });
+
+  it('el puntero: cada píxel cae en un vóxel que existe en el mundo, y el punto exacto está en ese vóxel', () => {
+    const st = oddWorld();
+    for (const q of Q) {
+      const v = new WorldView(st, q);
+      const b = bakeWorld(v.bakeable(), { topZ: 20 });
+      let checked = 0;
+      for (let sy = 0; sy < b.height; sy++) for (let sx = 0; sx < b.width; sx++) {
+        const vox = v.voxelAt(b, sx, sy);
+        if (!vox) continue;
+        const [x, y, z] = vox;
+        expect(st.solid.get(x, y, z), `cuarto ${q}, píxel ${sx},${sy}`).not.toBe(0);
+        const p = v.pointAt(b, sx, sy)!;
+        expect(p[0]).toBeGreaterThanOrEqual(x - 0.51); expect(p[0]).toBeLessThanOrEqual(x + 1.51);
+        expect(p[1]).toBeGreaterThanOrEqual(y - 0.51); expect(p[1]).toBeLessThanOrEqual(y + 1.51);
+        checked++;
+      }
+      expect(checked).toBeGreaterThan(200);
+      // Lo más alto del mundo (la torre del noroeste) se toca en su sitio
+      let tower = 0;
+      for (let sy = 0; sy < b.height; sy++) for (let sx = 0; sx < b.width; sx++) { const vox = v.voxelAt(b, sx, sy); if (vox && vox[2] === 8) { expect(vox[0]).toBeGreaterThanOrEqual(3); expect(vox[0]).toBeLessThan(6); expect(vox[1]).toBeGreaterThanOrEqual(15); expect(vox[1]).toBeLessThan(19); tower++; } }
+      expect(tower).toBeGreaterThan(0);
+    }
+  });
+
+  it('una entidad que mira al este se pinta mirando a la cámara desde el este, de espaldas desde el oeste y de lado desde el norte', () => {
+    const st = oddWorld();
+    const body = new Model({ ramps: [{ name: 'c', colors: ['#400000', '#800000', '#c00000'] }, { name: 'cara', colors: ['#ffffff'] }] });
+    box(body, -2, -1, 0, 2, 1, 6, material(0, 1));
+    body.set(1, -1, 5, material(1, 0));                 // un ojo en la cara (el frente es -y), algo descentrado
+    st.entities.add({ model: body, x: 18, y: 11, z: 1, facing: 90 });
+    const expected: Record<Quarter, number> = { 0: 90, 1: 0, 2: 270, 3: 180 };
+    for (const q of Q) {
+      const v = new WorldView(st, q);
+      const rs = v.frame();
+      const e = rs.entities[0]!;
+      expect(e.yaw).toBe(expected[q]);
+      const b = bakeWorld(v.bakeable(), { topZ: 20 });
+      const o = { vx: 0, vy: 0, vw: 64, vh: 64, time: 0, lights: false, ambient: [1, 1, 1] as const };
+      const ref = entitySprite(b, { ...e, yaw: expected[q] }, o).img;
+      expect(Buffer.from(entitySprite(b, e, o).img.rgba).equals(Buffer.from(ref.rgba))).toBe(true);
+      // Desde el este (cuarto 1) se le ve la cara: el ojo blanco está en el sprite; desde el oeste (3), no
+      const white = (img: { rgba: Uint8ClampedArray }) => { for (let i = 0; i < img.rgba.length; i += 4) if (img.rgba[i] === 255 && img.rgba[i + 1] === 255 && img.rgba[i + 3]) return true; return false; };
+      if (q === 1) expect(white(ref)).toBe(true);
+      if (q === 3) expect(white(ref)).toBe(false);
+    }
+  });
+
+  it('las luces van a su sitio en la vista con el mismo id (el mismo parpadeo)', () => {
+    const st = oddWorld();
+    for (const q of Q) {
+      const v = new WorldView(st, q);
+      const l = v.frame().lights[0]!;
+      expect(l.id).toBe('l1');
+      expect(v.camera.pointToWorld(l.x, l.y)).toEqual([10.5, 8.25]);
+    }
+  });
+});

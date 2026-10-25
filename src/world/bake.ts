@@ -348,13 +348,21 @@ export function lightView(b: Baked, vx: number, vy: number, vw: number, vh: numb
   return total;
 }
 
-// El punto del mundo que se ve en un píxel de la imagen horneada (de su profundidad: en la proyección oblicua la
-// pantalla y la profundidad son dos ecuaciones lineales en y, z). null si ahí no hay nada.
+// La inversa de la proyección oblicua de la imagen horneada: de una fila de píxeles y su profundidad, el punto del
+// mundo (en la proyección oblicua la pantalla y la profundidad son dos ecuaciones lineales en y, z). UNA sola fórmula:
+// la usan worldPointAt, la luz dinámica de la CPU (por píxel, sin crear nada) y fillWorldY de la GPU.
+export interface Unproject { a: number; O: number; f2: number; den: number }
+export function unprojector(b: Baked): Unproject {
+  const a = b.options.oblique?.y ?? 1, f1 = b.cam.fwd[1], f2 = b.cam.fwd[2];
+  return { a, O: b.options.originY, f2, den: a * f2 - f1 };
+}
+export const rowP = (u: Unproject, sy: number): number => u.O - (sy + 0.5);                  // = a*y + z de la fila
+export const worldYAt = (u: Unproject, P: number, d: number): number => (P * u.f2 - d) / u.den;
+
+// El punto del mundo que se ve en un píxel de la imagen horneada. null si ahí no hay nada.
 export function worldPointAt(b: Baked, sx: number, sy: number): [number, number, number] | null {
   const d = b.depth[sy * b.width + sx]!;
   if (d === Infinity) return null;
-  const a = b.options.oblique?.y ?? 1, f1 = b.cam.fwd[1], f2 = b.cam.fwd[2];
-  const P = b.options.originY - (sy + 0.5);            // = a*y + z
-  const y = (P * f2 - d) / (a * f2 - f1);
-  return [sx, y, P - a * y];
+  const u = unprojector(b), P = rowP(u, sy), y = worldYAt(u, P, d);
+  return [sx, y, P - u.a * y];
 }
