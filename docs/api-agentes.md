@@ -30,7 +30,8 @@ el resultado se ve en la app, como si lo hiciera una persona.
 |---|---|---|
 | `info()` | objeto | Nombre, vóxeles, lienzo, rampas, luces, tipos de luz, la vista y si se renderiza en la GPU o en la CPU. |
 | `newModel(name, w, d, h)` | `info()` | Un modelo vacío con la paleta actual y un lienzo de w x d x h. Quita las luces. |
-| `palette([{ name, colors, emissive?, kind?, blocks? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola; `kind: 'foliage'` la hace follaje (la luz la atraviesa) y `blocks` hace que ese follaje no se atraviese andando. No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene. |
+| `palette([{ name, colors, emissive?, material?, props? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola. `material` es uno de los de `materials()` y `props` ajusta sus propiedades (ver Materiales). No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene, o si el material o una propiedad no existen. |
+| `materials()` | lista | Los materiales con todas sus propiedades. |
 | `ramp(name, '#rrggbb', { tones?, hueShift? })` | índice | Una rampa nueva generada desde un color: de 2 a 16 tonos (por defecto 5), con las sombras girando hacia el frío y las luces hacia el cálido (`hueShift` en grados, por defecto 22). Se deshace. |
 | `setTone(rampa, tono, '#rrggbb')` | - | Cambia un color de la paleta; lo pintado con él cambia también. `rampa` es el índice o el nombre. |
 | `palettes()` | lista | Las paletas de la comunidad que trae: `id`, nombre, autor y cuántos colores. |
@@ -72,6 +73,32 @@ El espejo de la interfaz (M) también se aplica a `set`, `voxels`, `box` y `fill
 | `view({ yaw, elevation, outline, lit, ambient })` | la vista | La vista previa, que también es lo que sale en el PNG. `outline`: `outer`, `both` o `none`. `lit` enciende la iluminación; `ambient` va de 0,1 a 1. |
 | `png({ sheet?, scale? })` | promesa de `{name, base64}` | El PNG de la vista, o la hoja de 8 ángulos con `sheet: true`, con fondo transparente, un encuadre que contiene el modelo entero y luz si `lit`. |
 | `tool(name)` | - | Cambia la herramienta de la interfaz, para que quien mire vea qué haces: `pen`, `erase`, `paint`, `pick`, `box`, `fill`, `light` o `fluid`. |
+
+## Materiales
+
+Cada rampa es un material: un juego de propiedades que el motor lee por separado (la luz, el agua, el paso). Sin
+`material` ni `props`, una rampa es sólida.
+
+| Propiedad | Qué hace | Sólido |
+|---|---|---|
+| `light` | cuánta luz deja pasar cada vóxel (0 = opaco) | 0 |
+| `backlit` | luz que recibe una cara iluminada por detrás | 0 |
+| `bed` | en el juego, el agua lo cuenta como fondo y pared | `true` |
+| `blocks` | en el juego, bloquea el paso (jugador, entidades, disparos) | `true` |
+| `emissive` | brilla solo | `false` |
+| `reflect` | **NO IMPLEMENTADO**: reservado para los reflejos (metal, agua). Hoy no lo pinta ningún render: no lo uses esperando reflejos | 0 |
+
+| Material | Para qué | Propiedades |
+|---|---|---|
+| `solido` | lo de siempre | las del sólido |
+| `follaje` | hierba, flores, hojas | `light` 0,5, `backlit` 0,25, `bed` y `blocks` no |
+| `arbusto` | follaje que no se atraviesa | como el follaje, con `blocks` |
+| `vidrio` | translúcido: ventanas, mamparas | `light` 0,85 (pasa la luz; se ve como un bloque de su color, no a través) |
+| `metal` | metal | `reflect` 0,6 (reservado) |
+
+```js
+vp.palette([...vp.info().ramps, { name: 'cristal-azul', colors: ['#24465a', '#3f7a96', '#7ab8d6'], material: 'vidrio', props: { light: 0.6 } }]);
+```
 
 ## Un ejemplo corto
 

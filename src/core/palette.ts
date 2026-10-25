@@ -3,7 +3,7 @@
 // rampa. Así el render solo puede producir colores de la paleta (condición de MAIA) y el sombreado
 // conserva el matiz que eligió el artista.
 
-import type { MaterialProps } from './materials';
+import { rampMaterial, type MaterialProps } from './materials';
 
 export interface Ramp {
   name: string;
@@ -29,11 +29,8 @@ export const MAX_TONES = 16;
 // Rampas como mucho: el material de un vóxel (rampa*16 + tono + 1) cabe en 16 bits con margen (la GPU lo guarda así)
 export const MAX_RAMPS = 64;
 
-// ---- follaje (vegetación): la luz lo cruza atenuándose
-// Luces puntuales: lo que queda de la luz tras cruzar un vóxel de follaje
-export const FOLIAGE_T = 0.5;
-// Luz por detrás que recibe una cara de follaje (por |n·l|): una antorcha detrás de la hierba le ilumina el borde
-export const FOLIAGE_BACKLIT = 0.25;
+// ---- follaje (vegetación): sus números viven en materials.ts, con el resto de materiales
+export { FOLIAGE_T, FOLIAGE_BACKLIT } from './materials';
 // El sol (sombra binaria): cada celda deja pasar la luz por entre 1 y FOLIAGE_SUN_MAX hojas, según un hash de su
 // posición. Es entero, así que la CPU y la GPU dan exactamente la misma sombra moteada.
 export const FOLIAGE_SUN_MAX = 4;
@@ -81,6 +78,7 @@ export function validatePalette(p: Palette): void {
   for (const r of p.ramps) {
     if (!r.colors.length || r.colors.length > MAX_TONES) throw new Error(`rampa ${r.name}: entre 1 y ${MAX_TONES} tonos`);
     for (const c of r.colors) rgbOf(c);
+    rampMaterial(r);                    // un material que no existe falla aquí, con la lista
   }
   if (p.outline) rgbOf(p.outline);
 }

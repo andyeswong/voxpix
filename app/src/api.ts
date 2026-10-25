@@ -65,6 +65,8 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   palette([{name, colors, emissive?, material?, props?}], outline?)   cambia la paleta entera. material: ${Object.keys(MATERIALS).join(', ')}
                                            (follaje: la luz lo atraviesa y se anda a través; vidrio: pasa la luz, no el agua
                                            ni el jugador); props ajusta {light, backlit, bed, blocks, emissive, reflect} (rampas de oscuro a claro; no se deshace)
+  materials()                              los materiales que puede llevar una rampa, con sus propiedades
+                                           (reflect está reservado: todavía no refleja nada)
   ramp(name, '#rrggbb', {tones?, hueShift?})        una rampa nueva generada desde un color; da su índice
   setTone(rampa, tono, '#rrggbb')          cambia un color de la paleta (lo pintado con él cambia también)
   palettes()                               las paletas de la comunidad que trae (Lospec): id, nombre, autor
@@ -194,6 +196,11 @@ export const api = {
     model.value.palette = p;
     touch();
     return ramps();
+  },
+
+  // Los materiales con sus propiedades completas (las que no dicen son las del sólido)
+  materials() {
+    return Object.keys(MATERIALS).map((name) => ({ name, ...rampMaterial({ name, colors: ['#000000'], material: name }) }));
   },
 
   // Una rampa nueva generada desde un color (las sombras giran hacia el frío y las luces hacia el cálido)

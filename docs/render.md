@@ -35,7 +35,7 @@ material nuevo es una fila de datos en `MATERIALS`, no código nuevo en cada ren
 | `bed` | el agua lo cuenta como fondo y pared | sí |
 | `blocks` | bloquea el paso (jugador, entidades, disparos) | sí |
 | `emissive` | brilla solo | no |
-| `reflect` | cuánto refleja (reservado: aún no lo pinta ningún render) | 0 |
+| `reflect` | **NO IMPLEMENTADO**: reservado para los reflejos; hoy no lo pinta ningún render | 0 |
 
 | Material | Propiedades |
 |---|---|

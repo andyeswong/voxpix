@@ -16,7 +16,9 @@ describe('las propiedades de una rampa', () => {
     expect(rampMaterial(r({ kind: 'foliage' }))).toEqual(rampMaterial(r({ material: 'follaje' })));
     expect(rampMaterial(r({ kind: 'foliage', blocks: true }))).toEqual(rampMaterial(r({ material: 'arbusto' })));
     expect(rampMaterial(r({ emissive: true })).emissive).toBe(true);
-    expect(() => rampMaterial(r({ material: 'plastilina' }))).toThrow(/material desconocido/);
+    expect(() => rampMaterial(r({ material: 'plastilina' }))).toThrow('no hay material "plastilina" (rampa r); los materiales son: solido, follaje, arbusto, vidrio, metal');
+    expect(() => rampMaterial(r({ props: { brillo: 1 } as never }))).toThrow(/propiedad "brillo"/);
+    expect(() => new Model({ ramps: [r({ material: 'plastilina' })] })).toThrow(/no hay material/);
     expect(Object.keys(MATERIALS)).toEqual(expect.arrayContaining(['solido', 'follaje', 'arbusto', 'vidrio', 'metal']));
   });
 

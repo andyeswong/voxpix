@@ -9,7 +9,12 @@
 //
 // Compatibilidad: una rampa sin material ni props es SOLID (el comportamiento de siempre, byte a byte), y las rampas
 // viejas con kind: 'foliage' (y blocks) son 'follaje' (o 'arbusto').
-import { FOLIAGE_T, FOLIAGE_BACKLIT, MAX_RAMPS, MAX_TONES, type Palette, type Ramp } from './palette';
+import { MAX_RAMPS, MAX_TONES, type Palette, type Ramp } from './palette';
+
+// El follaje: lo que queda de la luz tras cruzar un vóxel, y la luz que recibe una cara por detrás (por |n·l|: una
+// antorcha detrás de la hierba le ilumina el borde)
+export const FOLIAGE_T = 0.5;
+export const FOLIAGE_BACKLIT = 0.25;
 
 export interface MaterialProps {
   light: number;      // 0..1: cuánta luz deja pasar cada vóxel (0 = opaco: la corta)
@@ -34,7 +39,8 @@ export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>
 // Las propiedades de una rampa: las del sólido, encima las de su material, encima sus props
 export function rampMaterial(r: Ramp): MaterialProps {
   const name = r.material ?? (r.kind === 'foliage' ? (r.blocks ? 'arbusto' : 'follaje') : undefined);
-  if (name !== undefined && !MATERIALS[name]) throw new Error(`material desconocido: ${name} (hay: ${Object.keys(MATERIALS).join(', ')})`);
+  if (name !== undefined && !MATERIALS[name]) throw new Error(`no hay material "${name}" (rampa ${r.name}); los materiales son: ${Object.keys(MATERIALS).join(', ')}`);
+  for (const k of Object.keys(r.props ?? {})) if (!(k in SOLID)) throw new Error(`la rampa ${r.name} tiene la propiedad "${k}", que no existe; las propiedades son: ${Object.keys(SOLID).join(', ')}`);
   return { ...SOLID, ...(name ? MATERIALS[name] : {}), ...(r.emissive ? { emissive: true } : {}), ...(r.props ?? {}) };
 }
 
