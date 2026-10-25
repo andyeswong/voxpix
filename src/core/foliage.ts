@@ -26,6 +26,11 @@ export interface FoliageOptions {
 export interface FoliageSource {
   readonly palette: Palette;
   get(x: number, y: number, z: number): number;
+  // Si la tiene (StaticVoxels): la altura de la cara de arriba de cada columna (índice y * width + x), para no buscar
+  // la superficie desde zMax
+  readonly height?: Int16Array;
+  readonly width?: number;
+  readonly depth?: number;
 }
 
 export const FOLIAGE_DENSITY: Record<FoliageType, number> = { grass: 0.35, flowers: 0.06, reeds: 0.35, lilies: 0.012, bush: 0.005 };
@@ -80,8 +85,27 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
 
   // La superficie de una columna: el vóxel más alto, su rampa, y si es agua, cuánta y dónde está el fondo
   const zMin = o.zMin ?? 0;
-  const surface = (x: number, y: number) => {
+  type Surface = { z: number; ramp: number; depth: number; wet: boolean; fluid: boolean } | null;
+  // Cada columna se mira una vez (la orilla la consulta mucho): con rejilla de alturas, en un array por columna
+  const seen = new Map<number, Surface>();
+  const seenArr: Array<Surface | undefined> | null = src.height && src.width && src.depth ? new Array(src.width * src.depth) : null;
+  const surface = (x: number, y: number): Surface => {
+    if (seenArr) {
+      if (x < 0 || y < 0 || x >= src.width! || y >= src.depth!) return null;
+      const i = y * src.width! + x;
+      let s = seenArr[i];
+      if (s === undefined) seenArr[i] = s = scan(x, y);
+      return s;
+    }
+    const k = (y + 32768) * 65536 + (x + 32768);
+    let s = seen.get(k);
+    if (s === undefined) seen.set(k, (s = scan(x, y)));
+    return s;
+  };
+  const H = src.height, HW = src.width ?? 0, HD = src.depth ?? 0;
+  const scan = (x: number, y: number): Surface => {
     let z = zMax;
+    if (H) { if (x < 0 || y < 0 || x >= HW || y >= HD) return null; z = Math.min(zMax, H[y * HW + x]! - 1); }
     while (z >= zMin && !src.get(x, y, z)) z--;
     if (z < zMin) return null;
     const ramp = decode(src.get(x, y, z)).ramp;
@@ -112,8 +136,7 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
     switch (o.type) {
       case 'grass': case 'flowers': case 'bush': {
         if (s.wet || !on.has(s.ramp)) break;
-        const boost = o.type === 'grass' && toShore(x, y, false, 3) ? 2 : 1;
-        if (r0 >= density * boost) break;
+        if (r0 >= density * 2 || (r0 >= density && !(o.type === 'grass' && toShore(x, y, false, 3)))) break;   // junto al agua, el doble
         const z = s.z + 1;
         if (o.type === 'grass') {
           if (!empty(x, y, z)) break;

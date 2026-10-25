@@ -14,6 +14,7 @@ import { frame3D } from '../../../src/world/frame3d';
 import type { WorldState, Entity } from '../../../src/world/state';
 import { FixedLoop, NO_INPUT, Runtime, type TickInput, type CarryConfig } from '../../../src/runtime/runtime';
 import maiaFile from '../../../models/maia/maia.json';
+import { decorate } from './decor';
 import linterna from '../../../models/luces/linterna.json';
 import linternaNeon from '../../../models/luces/linterna-neon.json';
 import antorcha from '../../../models/luces/antorcha.json';
@@ -112,13 +113,16 @@ let moving = false;            // para el bote al andar (vista)
 let stomp = false;             // Espacio: se gasta en el siguiente tick
 const keys = new Set<string>();
 let bakeMs = 0;
+let deco = q.get('deco') !== 'no';     // ?deco=no: el escenario sin vegetación ni vidrio (G lo cambia)
 
 function rebuild(): void {
   loading.style.display = 'flex';
   setTimeout(() => {
     const t0 = performance.now();
     layout = generateLayout(THEMES[theme].spec, seed);
-    ({ world, state } = buildWorldState(layout, theme));
+    // La decoración del tema (decor.ts): vegetación en el medieval, cubículos de vidrio en oficina y cyberpunk. G la quita
+    const lay = layout;
+    ({ world, state } = buildWorldState(layout, theme, deco ? { decorate: (w) => decorate(w, theme, { x: lay.spawn.x, y: w.depth - 1 - lay.spawn.y }, seed) } : {}));
     baked = bakeWorld(world, { topZ: TOPZ, incline: INCLINE, outline, outlineColor });
     // La salida viene del worldgen (filas hacia abajo): se pasa a ejes del modelo una vez, aquí
     let spawn = { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };
@@ -210,7 +214,7 @@ function loop(now: number): void {
   showRoute();
   hud.textContent = `VoxPix · un solo mundo en vóxeles · ${theme} · semilla ${seed}\n` +
     `horneado ${bakeMs} ms${baked ? ` (render ${baked.ms.render}, luces ${baked.ms.light})` : ''} · cuadro ${avg.toFixed(1)} ms (${compositor.kind}) · luces ${lightsOn ? 'sí' : 'no'} · gotas ${state?.drops.count ?? 0}\n` +
-    (mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · V modo vóxel`
+    (mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · G ${theme === 'medieval' ? 'vegetación' : 'vidrio'} ${deco ? 'sí' : 'no'} · V modo vóxel`
       : `MODO VÓXEL · WASD andar · arrastrar = girar · rueda = zoom · C contorno · V vuelve al modo 2D`);
   next(loop);
 }
@@ -260,6 +264,7 @@ addEventListener('keydown', (e) => {
   if (k === 't') { theme = THEME_IDS[(THEME_IDS.indexOf(theme) + 1) % THEME_IDS.length]!; rebuild(); }
   if (k === 'l') { lightsOn = !lightsOn; vox.dirty = true; }
   if (k === 'c') cycleOutline();
+  if (k === 'g') { deco = !deco; rebuild(); }
   if (k === 'v') toggleMode();
   if (k === ' ') { stomp = true; e.preventDefault(); }
 });
