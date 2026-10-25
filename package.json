@@ -3,6 +3,12 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "imports": {
+    "#pxl-core": {
+      "types": "./vendor/pxl-core.types.d.ts",
+      "default": "./vendor/pxl/src/core/index.ts"
+    }
+  },
   "description": "Voxel models to pixel art in the browser: editor, CPU/GPU renderer and a 2.5D voxel-world engine.",
   "scripts": {
     "test": "vitest run",

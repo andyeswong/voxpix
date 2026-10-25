@@ -6,7 +6,7 @@
 //   van de oscuro a claro) y sus sprites (para pasarlos a vóxeles).
 // - Exportar: un render de VoxPix se escribe como .px.js (pal + ramps + un sprite por ángulo + una hoja), que
 //   `pxl build` convierte en PNG, hoja + JSON y vistas previas, igual que el resto del arte del equipo.
-import { Project, toHex, channels, type Img } from 'pxl-core';
+import { Project, toHex, channels, type Img } from '#pxl-core';   // importación del paquete (package.json "imports"): funciona también instalado en node_modules
 import { Model, material, rgbOf, decode, type Palette, type Ramp } from '../core';
 
 // ---------------------------------------------------------------- importar

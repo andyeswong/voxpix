@@ -70,8 +70,8 @@ function hash(x: number, y: number, z: number, seed: number): number {
 }
 
 export const WALL_H = 32;          // alto de la pared norte (la fachada del juego mide 32)
-const SIDE_WALL_H = 12;            // paredes de los lados: bajas, como tapas (en el juego solo se ve la tapa)
-const SOUTH_WALL_H = 6;            // la del sur, más baja: si no, taparía el suelo de delante
+export const SIDE_WALL_H = 12;           // paredes de los lados: bajas, como tapas (en el juego solo se ve la tapa)
+export const SOUTH_WALL_H = 6;           // la del sur, más baja: si no, taparía el suelo de delante
 const COLUMN_H = 34;
 
 // Una luz del mundo, en coordenadas del MODELO (vóxeles)
