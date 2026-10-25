@@ -13,6 +13,29 @@ GPU) sobre el que se puede hacer un juego.
 La app arranca con una escena de muestra: un rincón medieval de 32 x 32 vóxeles con torre, casa, río, puente,
 estanque, árboles y luces (`src/samples/medieval.ts`).
 
+![El editor en 3D con la escena de muestra y la vista previa iluminada](docs/img/editor-3d.png)
+
+## Capturas
+
+**El editor por capas.** Cada altura z se pinta vista desde arriba, con la capa de debajo en fantasma. La vista
+previa de la derecha es el mismo render que se exporta.
+
+![Edición por capas](docs/img/editor-capas.png)
+
+**Lo que sale.** Este paisaje de 128 x 128 está hecho solo con la API para agentes (`scripts/api/paisaje-medieval.js`):
+terreno, río, lago, castillo, casas, árboles y 11 luces, exportado de noche y en sus 8 ángulos.
+
+![Paisaje medieval de noche, exportado como PNG](docs/img/paisaje-noche.png)
+
+![El mismo paisaje en 8 ángulos](docs/img/paisaje-8-angulos.png)
+
+**El motor del mundo** (`app/escena.html`). Un escenario generado por semilla, con MAIA andando con su antorcha, luces
+dinámicas, sombras y agua. Abajo, el mismo mundo en el modo 2D, compuesto por la GPU, y en el modo vóxel.
+
+![El mundo en el modo 2D](docs/img/mundo-2d.png)
+
+![El mismo mundo en el modo vóxel](docs/img/mundo-voxel.png)
+
 ## Empezar
 
     npm install
