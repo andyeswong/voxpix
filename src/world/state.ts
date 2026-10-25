@@ -11,7 +11,7 @@
 // world.step()). step() avanza 1/60 s fijo, sin reloj ni Math.random: el azar es un mulberry32 del estado, sembrado
 // con la semilla de la partida. Misma semilla y mismos eventos dan la misma huella (hash).
 import type { Palette, VoxelSource } from '../core';
-import { decode, key, unkey, foliageOf } from '../core';
+import { decode, key, unkey, materialsOf, type MaterialTable } from '../core';
 import type { WorldLight, Fountain } from './build';
 import type { WaterLayer } from './water';
 import { Drops } from './particles';
@@ -83,15 +83,16 @@ export class StaticVoxels implements VoxelSource {
     this.fgrid = null;
   }
 
-  // ---- el follaje (rampas kind 'foliage'): no es suelo para el agua, y el que no bloquea se atraviesa andando.
-  // Las dos alturas se calculan por columna al pedirlas; sin follaje en la paleta son la rejilla height.
-  private fgrid: { fol: Uint8Array; floor: Int16Array; walk: Int16Array; dirty: Uint8Array } | null = null;
+  // ---- los materiales (materials.ts): lo que no es fondo (bed) no cuenta para el agua, y lo que no bloquea (blocks)
+  // se atraviesa andando. Las dos alturas se calculan por columna al pedirlas; si la paleta no tiene materiales
+  // especiales son la rejilla height.
+  private fgrid: { mt: MaterialTable; floor: Int16Array; walk: Int16Array; dirty: Uint8Array } | null = null;
   private foliageGrid() {
-    const fol = foliageOf(this.palette);
-    if (!fol) return null;
-    if (this.fgrid?.fol !== fol) {
+    const mt = materialsOf(this.palette);
+    if (!mt) return null;
+    if (this.fgrid?.mt !== mt) {
       const n = this.width * this.depth;
-      this.fgrid = { fol, floor: new Int16Array(n), walk: new Int16Array(n), dirty: new Uint8Array(n).fill(1) };
+      this.fgrid = { mt, floor: new Int16Array(n), walk: new Int16Array(n), dirty: new Uint8Array(n).fill(1) };
     }
     return this.fgrid;
   }
@@ -100,8 +101,8 @@ export class StaticVoxels implements VoxelSource {
     for (let z = this.height[h]! - 1; z >= this.zMin && (floor === this.zMin || walk === this.zMin); z--) {
       const v = this.get(x, y, z);
       if (!v) continue;
-      if (floor === this.zMin && !g.fol[v]) floor = z + 1;
-      if (walk === this.zMin && g.fol[v] !== 1) walk = z + 1;
+      if (floor === this.zMin && g.mt.bed[v]) floor = z + 1;
+      if (walk === this.zMin && g.mt.blocks[v]) walk = z + 1;
     }
     g.floor[h] = floor; g.walk[h] = walk; g.dirty[h] = 0;
   }
@@ -124,8 +125,8 @@ export class StaticVoxels implements VoxelSource {
   // ¿Bloquea el paso este valor de vóxel? (todo lo lleno, menos el follaje que se atraviesa)
   blocks(v: number): boolean {
     if (!v) return false;
-    const fol = foliageOf(this.palette);
-    return !fol || fol[v] !== 1;
+    const mt = materialsOf(this.palette);
+    return !mt || mt.blocks[v] === 1;
   }
 
   chunkOf(x: number, y: number): number {

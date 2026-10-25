@@ -4,6 +4,7 @@
 // la superficie. Las formas son de pixel art (un vóxel = un píxel): matas de 1 o 2, flores de tallo y cabeza,
 // arbustos de radio 2 o 3.
 import { decode, material, type Palette, type Ramp } from './palette';
+import { rampMaterial } from './materials';
 
 export type FoliageType = 'grass' | 'flowers' | 'reeds' | 'lilies' | 'bush';
 export const FOLIAGE_TYPES: readonly FoliageType[] = ['grass', 'flowers', 'reeds', 'lilies', 'bush'];
@@ -28,14 +29,14 @@ export const FOLIAGE_DENSITY: Record<FoliageType, number> = { grass: 0.35, flowe
 
 // Las rampas que la herramienta busca por nombre, y las que añade si faltan
 export const FOLIAGE_RAMPS: Record<string, Ramp> = {
-  'hierba-alta': { name: 'hierba-alta', colors: ['#24452a', '#3b6a33', '#5c923f', '#8fbf55'], kind: 'foliage' },
-  'flor-roja': { name: 'flor-roja', colors: ['#5a1424', '#a32638', '#e0504a'], kind: 'foliage' },
-  'flor-amarilla': { name: 'flor-amarilla', colors: ['#6b4a12', '#c08a1e', '#f2cf4a'], kind: 'foliage' },
-  'flor-blanca': { name: 'flor-blanca', colors: ['#6c6a78', '#b9b6c4', '#f1eee8'], kind: 'foliage' },
-  'flor-lila': { name: 'flor-lila', colors: ['#3d2457', '#71449a', '#b07ad8'], kind: 'foliage' },
-  junco: { name: 'junco', colors: ['#2a3a1e', '#4a5e2c', '#71843d', '#9fae58'], kind: 'foliage' },
-  nenufar: { name: 'nenufar', colors: ['#173b2a', '#2a6040', '#3f8a52', '#6db36a'], kind: 'foliage' },
-  arbusto: { name: 'arbusto', colors: ['#183522', '#28532d', '#3f7535', '#6a9a45'], kind: 'foliage', blocks: true },
+  'hierba-alta': { name: 'hierba-alta', colors: ['#24452a', '#3b6a33', '#5c923f', '#8fbf55'], material: 'follaje' },
+  'flor-roja': { name: 'flor-roja', colors: ['#5a1424', '#a32638', '#e0504a'], material: 'follaje' },
+  'flor-amarilla': { name: 'flor-amarilla', colors: ['#6b4a12', '#c08a1e', '#f2cf4a'], material: 'follaje' },
+  'flor-blanca': { name: 'flor-blanca', colors: ['#6c6a78', '#b9b6c4', '#f1eee8'], material: 'follaje' },
+  'flor-lila': { name: 'flor-lila', colors: ['#3d2457', '#71449a', '#b07ad8'], material: 'follaje' },
+  junco: { name: 'junco', colors: ['#2a3a1e', '#4a5e2c', '#71843d', '#9fae58'], material: 'follaje' },
+  nenufar: { name: 'nenufar', colors: ['#173b2a', '#2a6040', '#3f8a52', '#6db36a'], material: 'follaje' },
+  arbusto: { name: 'arbusto', colors: ['#183522', '#28532d', '#3f7535', '#6a9a45'], material: 'arbusto' },
 };
 // Qué rampas usa cada tipo por defecto (la primera, la planta; en las flores, el resto son las cabezas)
 export const FOLIAGE_DEFAULTS: Record<FoliageType, readonly string[]> = {
@@ -48,7 +49,7 @@ export const FOLIAGE_DEFAULTS: Record<FoliageType, readonly string[]> = {
 
 const GRASSY = /^(hierba|grass|pasto|c[eé]sped|prado)$/i;
 const WATERY = /^(agua|water)$/i;
-export const grassRamps = (p: Palette): number[] => p.ramps.flatMap((r, i) => (GRASSY.test(r.name) && r.kind !== 'foliage' ? [i] : []));
+export const grassRamps = (p: Palette): number[] => p.ramps.flatMap((r, i) => (GRASSY.test(r.name) && rampMaterial(r).bed ? [i] : []));
 export const waterRamps = (p: Palette): number[] => p.ramps.flatMap((r, i) => (WATERY.test(r.name) ? [i] : []));
 
 // Hash de una celda en [0, 1): sin Math.random, para que la misma semilla dé lo mismo

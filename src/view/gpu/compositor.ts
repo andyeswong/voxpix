@@ -12,8 +12,9 @@
 //     (dónde va, qué sprite) y la tabla de luces.
 import { DIR_VECTORS, unkey } from '../../core';
 import { resolveLight } from '../../world/lightutil';
-import { leafAt, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, foliageOf, type Baked, type BakedLight } from '../../world/bake';
+import { backlitAt, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
+import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
+import { materialsOf } from '../../core';
 import type { RenderState } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
@@ -65,8 +66,10 @@ export class GpuCompositor {
   private tFace: WebGLTexture | null = null;
   private tWorldY: WebGLTexture | null = null;
   private worldY = new Float32Array(0);
-  // La cara de cada píxel tal como se sube: con follaje, cara + 8 (el shader le da luz por detrás); sin follaje, b.face
+  // La cara de cada píxel tal como se sube: con materiales que reciben luz por detrás, cara + 8 * código, y el
+  // código elige su valor en backVals (0 = nada); si la paleta no tiene, b.face tal cual
   private faceUp: Int8Array | null = null;
+  private backVals = new Float32Array(16);
   private tWeights: WebGLTexture | null = null;
   private weightZones: BakedLight[] = [];
   // Entidades: el atlas de sprites (una capa por modelo y giro), el de sus cuerpos sin girar (para el rayo de su
@@ -259,6 +262,7 @@ export class GpuCompositor {
     gl.uniform1f(s.u.uF1, b.cam.fwd[1]);
     gl.uniform1f(s.u.uF2, b.cam.fwd[2]);
     gl.uniform3fv(s.u.uDirs, DIR_VECTORS.flat());
+    gl.uniform1fv(s.u.uBack, this.backVals);
     // Luces horneadas (lightView)
     const rect = new Int32Array(MAX_BAKED * 4), ck = new Float32Array(MAX_BAKED * 3);
     for (let i = 0; i < nb; i++) {
@@ -372,8 +376,9 @@ export class GpuCompositor {
       for (const t of [this.tColor, this.tDepth, this.tFace, this.tWorldY]) if (t) gl.deleteTexture(t);
       this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
       this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
-      this.faceUp = foliageOf(b.source.palette) ? new Int8Array(b.width * b.height) : null;
-      if (this.faceUp) fillFace(b, this.faceUp, 0, 0, b.width - 1, b.height - 1);
+      this.backVals = backlitCodes(b);
+      this.faceUp = this.backVals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+      if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
       this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face);
       this.worldY = new Float32Array(b.width * b.height);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
@@ -388,7 +393,7 @@ export class GpuCompositor {
       // Se quedó atrás: todo de nuevo
       subImage(gl, this.tColor, 0, 0, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, b.depth, b.width, 1);
-      if (this.faceUp) fillFace(b, this.faceUp, 0, 0, b.width - 1, b.height - 1);
+      if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tWorldY!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
@@ -397,7 +402,7 @@ export class GpuCompositor {
       const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
       subImage(gl, this.tColor, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
-      if (this.faceUp) fillFace(b, this.faceUp, r.x0, r.y0, r.x1, r.y1);
+      if (this.faceUp) fillFace(b, this.faceUp, this.backVals, r.x0, r.y0, r.x1, r.y1);
       subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
       subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
@@ -787,12 +792,26 @@ function fillWorldY(b: Baked, out: Float32Array, x0: number, y0: number, x1: num
   }
 }
 
-// La cara con el follaje marcado (+8)
-function fillFace(b: Baked, out: Int8Array, x0: number, y0: number, x1: number, y1: number): void {
-  const fol = foliageOf(b.source.palette);
+// Los valores distintos de luz por detrás de la paleta (como mucho 15), en la posición de su código (0 = nada)
+function backlitCodes(b: Baked): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(16);
+  const mt = materialsOf(b.source.palette);
+  if (!mt) return out;
+  let n = 0;
+  for (const m of mt.ramps) {
+    const v = Math.fround(m.backlit);
+    if (v > 0 && !out.slice(1, n + 1).includes(v)) { if (n >= 15) throw new Error('más de 15 valores de luz por detrás en la paleta'); out[++n] = v; }
+  }
+  return out;
+}
+
+// La cara con el código de su luz por detrás (+8 * código)
+function fillFace(b: Baked, out: Int8Array, vals: Float32Array, x0: number, y0: number, x1: number, y1: number): void {
+  const mt = materialsOf(b.source.palette);
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const i = sy * b.width + sx, f = b.face[i]!;
-    out[i] = f >= 0 && leafAt(b, fol, i) ? f + 8 : f;
+    const back = f >= 0 ? backlitAt(b, mt, i) : 0;
+    out[i] = back > 0 ? f + 8 * vals.indexOf(back, 1) : f;
   }
 }
 

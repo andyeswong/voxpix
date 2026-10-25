@@ -6,7 +6,7 @@
 // Coordenadas: x hacia el este, y hacia el norte, z hacia arriba (z >= 0); el pivote (0, 0, 0) en el centro del
 // lienzo. Material: un número (rampa*16 + tono + 1), "nombre" (la rampa con ese nombre, en su tono del medio, como mucho el 2),
 // "nombre:tono", [rampa, tono] o null (vacío = borrar).
-import { Model, material as mat, decode, validatePalette, planFoliage, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, type ModelFile, type FoliageType, type Ramp } from '@core/index';
+import { Model, material as mat, decode, validatePalette, planFoliage, rampMaterial, MATERIALS, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, type ModelFile, type FoliageType, type Ramp, type MaterialProps } from '@core/index';
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob } from './preview';
@@ -18,7 +18,7 @@ import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps }
 export type Material = number | string | [number, number] | null;
 
 function ramps() {
-  return model.value.palette.ramps.map((r, index) => ({ index, name: r.name, colors: r.colors, ...(r.emissive ? { emissive: true } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) }));
+  return model.value.palette.ramps.map((r, index) => ({ index, name: r.name, colors: r.colors, ...(r.emissive ? { emissive: true } : {}), ...(r.material ? { material: r.material } : {}), ...(r.props ? { props: { ...r.props } } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) }));
 }
 
 // El material como número (0 = vacío)
@@ -62,8 +62,9 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   light(x, y, z, kind?)                    una fuente de luz (kind: ${KINDS.join(', ')}); da su id
   removeLight(idOrX, y?, z?)               la quita
   lights()                                 las fuentes
-  palette([{name, colors, emissive?, kind?, blocks?}], outline?)   cambia la paleta entera (kind 'foliage': la luz la
-                                           atraviesa y se anda a través; blocks: follaje que no se atraviesa) (rampas de oscuro a claro; no se deshace)
+  palette([{name, colors, emissive?, material?, props?}], outline?)   cambia la paleta entera. material: ${Object.keys(MATERIALS).join(', ')}
+                                           (follaje: la luz lo atraviesa y se anda a través; vidrio: pasa la luz, no el agua
+                                           ni el jugador); props ajusta {light, backlit, bed, blocks, emissive, reflect} (rampas de oscuro a claro; no se deshace)
   ramp(name, '#rrggbb', {tones?, hueShift?})        una rampa nueva generada desde un color; da su índice
   setTone(rampa, tono, '#rrggbb')          cambia un color de la paleta (lo pintado con él cambia también)
   palettes()                               las paletas de la comunidad que trae (Lospec): id, nombre, autor
@@ -182,9 +183,10 @@ export const api = {
 
   // Cambia la paleta: rampas de 1 a 16 colores (#rrggbb), de oscuro a claro. No se deshace. Los vóxeles guardan el
   // índice de rampa y tono: si ya hay modelo, las rampas que usa tienen que seguir existiendo.
-  palette(rampList: Array<{ name: string; colors: string[]; emissive?: boolean; kind?: 'solid' | 'foliage'; blocks?: boolean }>, outline?: string) {
-    const p = { ramps: rampList.map((r): Ramp => ({ name: r.name, colors: [...r.colors], ...(r.emissive ? { emissive: true } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) })), ...(outline ? { outline } : {}) };
+  palette(rampList: Array<{ name: string; colors: string[]; emissive?: boolean; material?: string; props?: Partial<MaterialProps>; kind?: 'solid' | 'foliage'; blocks?: boolean }>, outline?: string) {
+    const p = { ramps: rampList.map((r): Ramp => ({ name: r.name, colors: [...r.colors], ...(r.emissive ? { emissive: true } : {}), ...(r.material ? { material: r.material } : {}), ...(r.props ? { props: { ...r.props } } : {}), ...(r.kind === 'foliage' ? { kind: 'foliage' as const } : {}), ...(r.blocks ? { blocks: true } : {}) })), ...(outline ? { outline } : {}) };
     validatePalette(p);
+    p.ramps.forEach(rampMaterial);                       // un material desconocido falla aquí, con la lista
     for (const [, , , v] of model.value.entries()) {
       const d = decode(v);
       if (!p.ramps[d.ramp] || d.tone >= p.ramps[d.ramp]!.colors.length) throw new Error(`el modelo usa la rampa ${d.ramp} tono ${d.tone}, que la paleta nueva no tiene`);

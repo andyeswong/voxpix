@@ -3,14 +3,19 @@
 // rampa. Así el render solo puede producir colores de la paleta (condición de MAIA) y el sombreado
 // conserva el matiz que eligió el artista.
 
+import type { MaterialProps } from './materials';
+
 export interface Ramp {
   name: string;
   colors: string[];          // '#rrggbb', de oscuro a claro
   emissive?: boolean;        // da luz propia: la luz del mundo no la oscurece (neones, plasma, hojas de energía)
-  // 'foliage': hierba, flores, hojas. Se ve igual que un sólido, pero la luz la atraviesa atenuándose (sombra
-  // moteada), recibe algo de luz por detrás, el agua no la cuenta como fondo y se atraviesa andando (salvo blocks)
+  // El material de la rampa (src/core/materials.ts): un nombre de MATERIALS ('follaje', 'vidrio', 'metal'...) y,
+  // si hace falta, propiedades sueltas encima. Sin nada, sólido.
+  material?: string;
+  props?: Partial<MaterialProps>;
+  // Forma vieja (sigue valiendo): kind 'foliage' es el material 'follaje', y con blocks, 'arbusto'
   kind?: 'solid' | 'foliage';
-  blocks?: boolean;          // follaje que no se atraviesa (arbustos); la luz lo cruza igual
+  blocks?: boolean;
 }
 
 export interface Palette {
@@ -37,23 +42,6 @@ export function foliageSunDepth(x: number, y: number, z: number): number {
   h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d) >>> 0;
   h = (h ^ (h >>> 12)) >>> 0;
   return 1 + (h % FOLIAGE_SUN_MAX);
-}
-
-// Tabla por material (rampa*16 + tono + 1) para los bucles calientes: 0 sólido, 1 follaje, 2 follaje que no se
-// atraviesa
-export function foliageTable(p: Palette): Uint8Array {
-  const t = new Uint8Array(MAX_RAMPS * MAX_TONES + 1);
-  p.ramps.forEach((r, i) => { if (r.kind === 'foliage') t.fill(r.blocks ? 2 : 1, i * MAX_TONES + 1, (i + 1) * MAX_TONES + 1); });
-  return t;
-}
-export const hasFoliage = (p: Palette): boolean => p.ramps.some((r) => r.kind === 'foliage');
-// La tabla de una paleta, guardada por paleta (null si no tiene follaje). Si se cambian sus rampas, la paleta tiene
-// que ser otro objeto (así lo hacen la app y el motor)
-const folCache = new WeakMap<Palette, Uint8Array | null>();
-export function foliageOf(p: Palette): Uint8Array | null {
-  let t = folCache.get(p);
-  if (t === undefined) folCache.set(p, (t = hasFoliage(p) ? foliageTable(p) : null));
-  return t;
 }
 
 export function material(ramp: number, tone: number): number {

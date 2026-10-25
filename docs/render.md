@@ -22,15 +22,41 @@ color (`rampFromColor`, con giro de tono en OKLCH) y agrupa una lista de colores
   "outline": "#0d0c12" }
 ```
 
-Una rampa puede ser **follaje** (`"kind": "foliage"`: hierba, flores, hojas). Se ve igual que un sólido, pero:
-- las luces lo atraviesan: cada vóxel de follaje deja pasar `FOLIAGE_T` (0,5) de la luz;
-- sus caras reciben algo de luz por detrás (`FOLIAGE_BACKLIT`, 0,25);
-- la sombra del sol sale moteada: cada celda deja pasar el sol por entre 1 y 4 hojas, según un hash entero de su
-  posición, así la CPU y la GPU dan la misma sombra;
-- en el mundo del juego, el agua no lo cuenta como fondo y se atraviesa andando (salvo con `"blocks": true`, los
-  arbustos).
+### Materiales
 
-Un modelo sin rampas de follaje da exactamente la misma imagen que antes de que existiera (`test/vegetacion-mundo.test.ts`).
+Cada rampa es un **material**: un juego de propiedades que el motor lee por separado (`src/core/materials.ts`). Nadie
+pregunta "¿es follaje?": la luz pregunta cuánta luz deja pasar, el agua si es fondo y la colisión si bloquea. Un
+material nuevo es una fila de datos en `MATERIALS`, no código nuevo en cada render.
+
+| Propiedad | Qué hace | Sólido |
+|---|---|---|
+| `light` | cuánta luz deja pasar cada vóxel (0 = opaco) | 0 |
+| `backlit` | luz que recibe una cara iluminada por detrás | 0 |
+| `bed` | el agua lo cuenta como fondo y pared | sí |
+| `blocks` | bloquea el paso (jugador, entidades, disparos) | sí |
+| `emissive` | brilla solo | no |
+| `reflect` | cuánto refleja (reservado: aún no lo pinta ningún render) | 0 |
+
+| Material | Propiedades |
+|---|---|
+| `solido` | las del sólido (lo que es una rampa sin material) |
+| `follaje` | `light` 0,5, `backlit` 0,25, ni fondo ni bloquea: hierba, flores, hojas |
+| `arbusto` | como el follaje, pero bloquea el paso |
+| `vidrio` | `light` 0,85: pasa la luz; es fondo para el agua y bloquea el paso |
+| `metal` | `reflect` 0,6 (cuando haya reflejos) |
+
+```json
+{ "name": "vidrio", "colors": ["#24465a", "#3f7a96", "#7ab8d6"], "material": "vidrio" }
+{ "name": "cristal-azul", "colors": ["..."], "material": "vidrio", "props": { "light": 0.6 } }
+```
+
+- Las luces cruzan lo que deja pasar luz multiplicando su `light`, en la CPU y en la GPU.
+- La sombra del sol (sí o no) va en enteros para que la CPU y la GPU den lo mismo: cada vóxel gasta
+  `round(-log2(light) * 4)` unidades del rayo y la celda queda en sombra al gastar un umbral de 4 a 16 que sale de un
+  hash de su posición. Bajo una copa sale moteada.
+- Las rampas viejas con `"kind": "foliage"` (y `"blocks": true`) son `follaje` (y `arbusto`).
+- Una paleta sin materiales especiales da exactamente la misma imagen que antes de que existieran
+  (`test/vegetacion-mundo.test.ts`, con las huellas del motor anterior).
 
 Un vóxel guarda su material como un número: `rampa * 16 + tono + 1` (0 es vacío). La luz del render no multiplica
 colores: **mueve el tono dentro de la rampa**. Por eso la imagen solo tiene colores de la paleta, y

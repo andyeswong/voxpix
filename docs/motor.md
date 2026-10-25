@@ -90,9 +90,10 @@ state.entities.remove(id);
 - `castsShadow`: `true` compite por las sombras de verdad (como mucho 8 por cuadro, las más cercanas al centro de la
   vista); `'always'` la reserva siempre (el personaje).
 - Las rampas `emissive` del modelo brillan solas.
-- Las rampas de follaje (`kind: 'foliage'`) del escenario dejan pasar la luz horneada (sombra a través de la copa) y
-  reciben luz por detrás, también de las luces dinámicas. `groundAt`, `solidAt` y `raycast` atraviesan la hierba, no
-  los arbustos (`blocks`), y el agua se apoya en `floorAt`, el suelo sin follaje. `planFoliage` (src/core) coloca
+- Los materiales del escenario (docs/render.md, Materiales) mandan en el mundo: la luz horneada atraviesa lo que deja
+  pasar luz (follaje, vidrio) y las caras con `backlit` reciben luz por detrás, también de las luces dinámicas.
+  `groundAt`, `solidAt` y `raycast` atraviesan lo que no bloquea (la hierba; no los arbustos ni el vidrio), y el agua
+  se apoya en `floorAt`, el suelo sin lo que no es fondo (el follaje). `planFoliage` (src/core) coloca
   vegetación en cualquier cosa con `palette` y `get`, también en un `StaticVoxels`.
 - El sprite de cada modelo y giro se guarda (con tope: los menos usados se sueltan). Conviene girar en los 8 rumbos
   (`HEADINGS` de `world/frame2d`) y precalentar con `compositor.prewarm` lo que vaya a salir, para que el primer

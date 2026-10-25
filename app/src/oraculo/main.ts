@@ -58,6 +58,7 @@ interface Scenario {
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
+  glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
   pos?: [number, number];
   ticks: number;
   stompEvery?: number;
@@ -93,6 +94,23 @@ function vegetate(w: World, at: [number, number]): void {
     if (d <= 1 && ((x * 7 + y * 13 + z * 5) % 11) > 1 && !m.get(x, y, z)) m.set(x, y, z, material(ri('hojas'), Math.min(4, 1 + Math.floor((z - g - 6) / 2.5))));
   }
   w.lights.push({ id: 'veg-antorcha', kind: 'torch', x: tx + 0.5, y: ty + 12.5, z: g + 9 }, { id: 'veg-detras', kind: 'lantern', x: tx - 9.5, y: ty + 0.5, z: g + 3 });
+}
+
+// Vidrio (sistema de materiales) en un mundo generado: mamparas de vidrio alrededor de la salida, con una lámpara
+// horneada dentro; la luz sale por el vidrio y no por la piedra
+function glaze(w: World, at: [number, number]): void {
+  const m = w.model;
+  m.palette = { ...m.palette, ramps: [...m.palette.ramps, { name: 'vidrio', colors: ['#24465a', '#3f7a96', '#7ab8d6'], material: 'vidrio' }] };
+  const v = material(m.palette.ramps.length - 1, 1), [cx, cy] = at;
+  for (let k = -14; k <= 14; k++) {
+    if ((k + 14) % 9 === 4) continue;                                       // huecos de puerta
+    for (const [x, y] of [[cx + k, cy - 14], [cx + k, cy + 14], [cx - 14, cy + k], [cx + 14, cy + k]] as const) {
+      const g = m.walkAt(x, y);                                             // el suelo, antes de poner nada
+      if (g > 2) continue;                                                  // solo sobre el suelo
+      for (let z = g; z < g + 11; z++) if (!m.get(x, y, z)) m.set(x, y, z, v);
+    }
+  }
+  w.lights.push({ id: 'vidrio-lampara', kind: 'lamp', x: cx + 0.5, y: cy + 0.5, z: m.walkAt(cx, cy) + 8 });
 }
 
 // Un trozo de un mundo generado, con su agua y sus luces: así hay mundos rectangulares de lados impares
@@ -201,6 +219,7 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
     setup: (s, rt) => { const p = rt.player; s.lights.add({ kind: 'lantern', x: p.x + 6, y: p.y + 9, z: p.z + 4 }); },
   });
 }
+for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `oficina vidrio, giro ${q}`, theme: 'oficina', ticks: 60, quarter: q, glass: true });
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
 }
@@ -276,9 +295,10 @@ async function run(): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
     const layout = generateLayout(THEMES[sc.theme].spec, 7);
     let { world, state } = buildWorldState(layout, sc.theme);
-    if (sc.crop || sc.veg) {
+    if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
       if (sc.veg) vegetate(world, [204, 184]);
+      if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world, sc.theme), { seed: layout.seed, fountain: world.fountain });
       state.warmUp();
     }

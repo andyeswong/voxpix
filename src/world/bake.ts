@@ -5,7 +5,7 @@
 // Si cambian vóxeles a mitad de partida, rebake() rehace SOLO lo afectado: el recuadro de pantalla de los trozos
 // cambiados, la rejilla de sombras de esas columnas y los pesos de las luces que los alcanzan. El resultado es el
 // mismo, byte a byte, que hornear el mundo entero de nuevo (hay prueba).
-import { render, camera, unkey, DIR_VECTORS, FOLIAGE_T, facingOf, foliageOf, type RenderOptions, type Camera, type VoxelSource } from '../core';
+import { render, camera, unkey, decode, DIR_VECTORS, facingOf, materialsOf, type RenderOptions, type Camera, type VoxelSource } from '../core';
 import { resolveLight } from './lightutil';
 import { CHUNK, type StaticVoxels } from './state';
 import type { WorldLight } from './build';
@@ -175,23 +175,24 @@ function warmUp(b: Baked): void {
 const gridZ = (topZ: number) => topZ + 2 + BASIN_DEPTH;
 const Z0 = -BASIN_DEPTH;
 
-export { foliageOf };
 
-// La rejilla de sombras: 1 sólido, 2 follaje (la luz lo cruza atenuándose)
+// La rejilla de sombras: 0 vacío, 1 opaco, 2 + rampa si deja pasar luz (follaje, vidrio: materials.ts)
 function fillOcc(b: Baked, x0: number, y0: number, x1: number, y1: number): void {
   const GW = b.source.width, GD = b.source.depth, GZ = gridZ(b.topZ);
-  const fol = foliageOf(b.source.palette);
+  const mt = materialsOf(b.source.palette);
   for (let z = 0; z < GZ; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) b.occ[(z * GD + y) * GW + x] = 0;
   for (const [x, y, z0, v] of b.source.entries({ x0, y0, x1, y1 })) {
     const z = z0 - Z0;
-    if (z >= 0 && z < GZ) b.occ[(z * GD + y) * GW + x] = fol && fol[v] ? 2 : 1;
+    if (z >= 0 && z < GZ) b.occ[(z * GD + y) * GW + x] = mt && mt.light[v] ? 2 + decode(v).ramp : 1;
   }
 }
 
-// Cuánta luz llega de p a la luz: 0 tras un sólido, FOLIAGE_T por cada vóxel de follaje (1 si nada se cruza)
+// Cuánta luz llega de p a la luz: 0 tras algo opaco, y por cada vóxel que deja pasar luz, lo que deja pasar
+// (MaterialProps.light de su rampa); 1 si no se cruza nada
 function transmit(b: Baked, px: number, py: number, pz: number, lx: number, ly: number, lz: number): number {
   const GW = b.source.width, GD = b.source.depth, GZ = gridZ(b.topZ);
   const cell = (x: number, y: number, z0: number) => { const z = z0 - Z0; return x >= 0 && y >= 0 && z >= 0 && x < GW && y < GD && z < GZ ? b.occ[(z * GD + y) * GW + x]! : 0; };
+  const mt = materialsOf(b.source.palette);
   let t = 1;
   const dx = lx - px, dy = ly - py, dz = lz - pz;
   let x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
@@ -209,7 +210,7 @@ function transmit(b: Baked, px: number, py: number, pz: number, lx: number, ly: 
     if (x === tx && y === ty && z === tz) return t;
     const c = cell(x, y, z);
     if (c === 1) return 0;
-    if (c === 2) t *= FOLIAGE_T;
+    if (c >= 2) t *= mt!.light[(c - 2) * 16 + 1]!;
   }
   return t;
 }
@@ -247,7 +248,7 @@ function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number): BakedL
   const { light: l, rect, weight } = zone;
   const p = resolveLight(l, 0);
   const r = p.radius;
-  const fol = foliageOf(b.source.palette);
+  const mt = materialsOf(b.source.palette);
   const cache = new Map<number, number>();
   for (let c = c0; c < c1; c++) {
     const j = Math.floor(c / rect.w), i = c - j * rect.w;
@@ -265,8 +266,8 @@ function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number): BakedL
       const d = Math.hypot(ax, ay, az);
       w = 0;
       if (d < r) {
-        const leaf = !!fol && !!fol[b.source.get(vx, vy, vz)];
-        const fa = d < 1e-6 ? 1 : facingOf((n[0] * ax + n[1] * ay + n[2] * az) / d, leaf);
+        const back = mt ? mt.backlit[b.source.get(vx, vy, vz)]! : 0;
+        const fa = d < 1e-6 ? 1 : facingOf((n[0] * ax + n[1] * ay + n[2] * az) / d, back);
         const k2 = 1 - d / r;
         if (fa > 0) {
           const t = transmit(b, vx + 0.5 + n[0], vy + 0.5 + n[1], vz + 0.5 + n[2], l.x, l.y, l.z);

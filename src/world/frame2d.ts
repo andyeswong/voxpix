@@ -1,9 +1,9 @@
 // Un cuadro del modo 2D del juego a partir del ESTADO DEL MUNDO: lo estático horneado (una vez por nivel), y
 // encima, con la misma cámara, prueba de profundidad y luz: las entidades, el agua y las gotas.
-import { render, camera, lightField3D, rgbOf, spotFactor, facingOf, type PointLight3D, type Rendered, type Spot } from '../core';
+import { render, camera, lightField3D, rgbOf, spotFactor, facingOf, materialsOf, type MaterialTable, type PointLight3D, type Rendered, type Spot } from '../core';
 import { resolveLight } from './lightutil';
 import { buildLayers, applyLayers, type LightLayers } from '../lighting/shade';
-import { lightView, worldPointAt, unprojector, rowP, worldYAt, foliageOf, type Baked } from './bake';
+import { lightView, worldPointAt, unprojector, rowP, worldYAt, type Baked } from './bake';
 import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
@@ -347,22 +347,23 @@ function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions):
 // ---- luces dinámicas y sombras de entidades (sobre la imagen horneada: cada píxel sabe qué punto del mundo es y
 // qué cara se ve)
 
-// ¿Es follaje lo que se ve en el píxel idx de la imagen horneada? (las caras de follaje reciben luz por detrás)
-export function leafAt(b: Baked, fol: Uint8Array | null, idx: number): boolean {
-  if (!fol) return false;
+// La luz por detrás (MaterialProps.backlit) del material que se ve en el píxel idx de la imagen horneada (0 si no
+// tiene: un sólido, o una paleta sin materiales especiales)
+export function backlitAt(b: Baked, mt: MaterialTable | null, idx: number): number {
+  if (!mt) return 0;
   const k = b.pick[idx]!;
-  if (Number.isNaN(k)) return false;
+  if (Number.isNaN(k)) return 0;
   const [x, y, z] = unkey(k);
-  return fol[b.source.get(x, y, z)] !== 0;
+  return mt.backlit[b.source.get(x, y, z)]!;
 }
 
 // Aportación (color * peso) de una luz en el punto P con normal n, sin sombras. La misma fórmula que el horneado.
-function contribution(l: { x: number; y: number; z: number; radius: number; intensity: number; spot: Spot | null }, P: [number, number, number], n: readonly number[], leaf: boolean): number {
+function contribution(l: { x: number; y: number; z: number; radius: number; intensity: number; spot: Spot | null }, P: [number, number, number], n: readonly number[], back: number): number {
   const dx = l.x - P[0], dy = l.y - P[1], dz = l.z - P[2];
   const d = Math.hypot(dx, dy, dz);
   if (d >= l.radius) return 0;
   const k = 1 - d / l.radius;
-  return k * k * l.intensity * (d < 1e-6 ? 1 : facingOf((n[0]! * dx + n[1]! * dy + n[2]! * dz) / d, leaf)) * spotFactor(l.spot, -dx, -dy, -dz);
+  return k * k * l.intensity * (d < 1e-6 ? 1 : facingOf((n[0]! * dx + n[1]! * dy + n[2]! * dz) / d, back)) * spotFactor(l.spot, -dx, -dy, -dz);
 }
 
 // Recuadro de la vista que puede tocar una esfera de radio r alrededor de (x, y, z)
@@ -387,7 +388,7 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
   // la inversa de bake.ts (unprojector, la misma de worldPointAt) y la aportación de contribution en línea, y fuera
   // del radio se descarta antes de la raíz
   const u = unprojector(b);
-  const fol = foliageOf(b.source.palette);
+  const mt = materialsOf(b.source.palette);
   const r = p.radius, r2 = r * r, [cr, cg, cb] = p.color;
   for (let sy = y0; sy <= y1; sy++) {
     const P = rowP(u, sy);
@@ -404,7 +405,7 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
       // contribution(), en línea
       const dist = Math.hypot(dx, dy, dz), n = DIR_VECTORS[f]!, k = 1 - dist / r;
       const ndl = dist < 1e-6 ? 1 : (n[0] * dx + n[1] * dy + n[2] * dz) / dist;
-      const w = k * k * p.intensity * (dist < 1e-6 ? 1 : facingOf(ndl, ndl <= 0 && leafAt(b, fol, idx))) * (p.spot ? spotFactor(p.spot, -dx, -dy, -dz) : 1);
+      const w = k * k * p.intensity * (dist < 1e-6 ? 1 : facingOf(ndl, ndl <= 0 ? backlitAt(b, mt, idx) : 0)) * (p.spot ? spotFactor(p.spot, -dx, -dy, -dz) : 1);
       if (!w) continue;
       const q = ((sy - o.vy) * o.vw + (sx - o.vx)) * 3;
       total[q] = total[q]! + cr * w; total[q + 1] = total[q + 1]! + cg * w; total[q + 2] = total[q + 2]! + cb * w;
@@ -473,7 +474,7 @@ function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array
   const box = screenBox(b, ex, ey, ez, SHADOW_REACH, o);
   if (!box) return;
   const baked = new Map(b.lights.map((bl) => [bl.light.id, bl] as const));
-  const fol = foliageOf(b.source.palette);
+  const mt = materialsOf(b.source.palette);
   const [x0, y0, x1, y1] = box;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const f = b.face[sy * b.width + sx]!;
@@ -493,7 +494,7 @@ function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array
       if (bl) {
         const r = bl.rect, lx = sx - r.x, ly = sy - r.y;
         if (lx >= 0 && ly >= 0 && lx < r.w && ly < r.h) w = bl.weight[ly * r.w + lx]! * (p.intensity / bl.intensity);
-      } else w = contribution(p, P, n, leafAt(b, fol, sy * b.width + sx));
+      } else w = contribution(p, P, n, backlitAt(b, mt, sy * b.width + sx));
       if (!w) continue;
       total[q] = Math.max(0, total[q]! - p.color[0] * w);
       total[q + 1] = Math.max(0, total[q + 1]! - p.color[1] * w);

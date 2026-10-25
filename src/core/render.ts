@@ -1,5 +1,6 @@
 import { key, type VoxelSource } from './model';
-import { decode, rampOf, rgbOf, allowedColors, foliageTable, foliageSunDepth, hasFoliage, type Palette } from './palette';
+import { decode, rampOf, rgbOf, allowedColors, foliageSunDepth, type Palette } from './palette';
+import { materialsOf, SUN_UNIT, SUN_OPAQUE } from './materials';
 
 // Render de vóxeles a pixel art por software. Determinista: mismo modelo y mismas opciones, mismos bytes.
 //
@@ -168,7 +169,7 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
 
   const pal = model.palette;
   const toneCache = new Map<number, number>();
-  const fol = hasFoliage(pal) ? foliageTable(pal) : null;
+  const mt = materialsOf(pal);
 
   for (const [x, y, z, v] of model.entries()) {
     for (let f = 0; f < 6; f++) {
@@ -223,12 +224,13 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
     return out;
   }
 
-  // Rayo por la rejilla hacia la luz (DDA). Empieza en la celda vacía frente a la cara. El follaje no corta el rayo:
-  // la celda queda en sombra si cruza tantas hojas como su umbral (foliageSunDepth), así la sombra sale moteada.
+  // Rayo por la rejilla hacia la luz (DDA). Empieza en la celda vacía frente a la cara. Lo que deja pasar luz
+  // (follaje, vidrio) no corta el rayo: gasta sus unidades de sol (materials.ts) y la celda queda en sombra al gastar
+  // su umbral (foliageSunDepth), así la sombra sale moteada.
   function inShadow(cx: number, cy: number, cz: number): boolean {
     let x = cx, y = cy, z = cz;
-    let leaves = 0;
-    const need = fol ? foliageSunDepth(cx, cy, cz) : 0;
+    let spent = 0;
+    const need = mt ? foliageSunDepth(cx, cy, cz) * SUN_UNIT : 0;
     const sx = Math.sign(Lm[0]), sy = Math.sign(Lm[1]), sz = Math.sign(Lm[2]);
     const tdx = sx ? Math.abs(1 / Lm[0]) : Infinity, tdy = sy ? Math.abs(1 / Lm[1]) : Infinity, tdz = sz ? Math.abs(1 / Lm[2]) : Infinity;
     let tx = tdx / 2, ty = tdy / 2, tz = tdz / 2;
@@ -236,8 +238,10 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
       if (tx <= ty && tx <= tz) { x += sx; tx += tdx; } else if (ty <= tz) { y += sy; ty += tdy; } else { z += sz; tz += tdz; }
       const v = model.get(x, y, z);
       if (v) {
-        if (!fol || !fol[v]) return true;
-        if (++leaves >= need) return true;
+        const c = mt ? mt.sun[v]! : SUN_OPAQUE;
+        if (c === SUN_OPAQUE) return true;
+        spent += c;
+        if (spent >= need) return true;
       }
     }
     return false;

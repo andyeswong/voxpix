@@ -26,6 +26,17 @@ function paisaje(): Model {
   return m;
 }
 
+// Vidrio (sistema de materiales): un cuarto con paredes de vidrio y de piedra, el suelo alrededor; las luces del
+// oráculo caen dentro y fuera, así la luz atraviesa el vidrio y no la piedra
+function vidrio(): Model {
+  const m = new Model({ ramps: [{ name: 'suelo', colors: ['#202030', '#404050', '#606070', '#8a8a9a'] }, { name: 'piedra', colors: ['#2e2f38', '#4a4c58', '#6c6f7c'] }, { name: 'vidrio', colors: ['#24465a', '#3f7a96', '#7ab8d6'], material: 'vidrio' }] }, 'vidrio');
+  box(m, -16, -16, 0, 16, 16, 0, material(0, 2));
+  box(m, -8, -8, 1, 8, -8, 9, material(2, 1)); box(m, -8, 8, 1, 8, 8, 9, material(1, 1));
+  box(m, -8, -8, 1, -8, 8, 9, material(2, 1)); box(m, 8, -8, 1, 8, 8, 9, material(1, 1));
+  box(m, -8, -8, 10, 8, 8, 10, material(2, 2));                  // techo de vidrio: el sol lo atraviesa
+  return m;
+}
+
 // Casos raros: coordenadas negativas lejos del origen, una pared de un vóxel y vóxeles sueltos
 function raro(): Model {
   const m = new Model({ ramps: [{ name: 'a', colors: ['#202030', '#505070', '#9090b0', '#d0d0f0'] }, { name: 'b', colors: ['#402010', '#a05020', '#f0a050'] }] }, 'raro');
@@ -43,6 +54,7 @@ const models: Array<[string, Model]> = [
   ['raro', raro()],
   ['paisaje', paisaje()],
   ['vegetacion', vegetationScene()],
+  ['vidrio', vidrio()],
 ];
 
 // Opciones: las de la vista previa, la exportación, el editor 3D (zoom) y el juego (oblicua, plana)
