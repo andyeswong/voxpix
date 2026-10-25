@@ -47,6 +47,14 @@ export function foliageTable(p: Palette): Uint8Array {
   return t;
 }
 export const hasFoliage = (p: Palette): boolean => p.ramps.some((r) => r.kind === 'foliage');
+// La tabla de una paleta, guardada por paleta (null si no tiene follaje). Si se cambian sus rampas, la paleta tiene
+// que ser otro objeto (así lo hacen la app y el motor)
+const folCache = new WeakMap<Palette, Uint8Array | null>();
+export function foliageOf(p: Palette): Uint8Array | null {
+  let t = folCache.get(p);
+  if (t === undefined) folCache.set(p, (t = hasFoliage(p) ? foliageTable(p) : null));
+  return t;
+}
 
 export function material(ramp: number, tone: number): number {
   if (ramp < 0 || tone < 0 || tone >= MAX_TONES) throw new Error(`material fuera de rango: rampa ${ramp}, tono ${tone}`);

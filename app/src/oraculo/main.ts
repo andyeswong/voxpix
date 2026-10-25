@@ -10,7 +10,7 @@
 // más de un nivel de luz o en más de ±2 de color.
 import { generateLayout, TILE } from '../../../src/worldgen';
 import { THEMES } from '../../../src/content/themes';
-import { Model, box, material, type ModelFile } from '@core/index';
+import { Model, box, material, planFoliage, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
 import { buildWorldState, type WorldTheme } from '../../../src/world/build';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
@@ -57,6 +57,7 @@ interface Scenario {
   theme: WorldTheme;
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
+  veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   pos?: [number, number];
   ticks: number;
   stompEvery?: number;
@@ -68,6 +69,30 @@ interface Scenario {
   // (gpuFrame compone un cuadro en la GPU sin compararlo)
   // (view es la vista girada: tras tocar el mundo, view.frame() la pone al día)
   after?: (s: WorldState, b: Baked, gpuFrame: () => void, view: WorldView) => void;
+}
+
+// Vegetación en un mundo generado (spec de KALADIN): hierba, flores y arbustos sobre la hierba, hierba sumergida en
+// el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
+function vegetate(w: World, at: [number, number]): void {
+  const m = w.model;
+  const names = ['hierba-alta', 'flor-roja', 'flor-amarilla', 'arbusto'];
+  m.palette = { ...m.palette, ramps: [...m.palette.ramps, ...names.map((n) => structuredClone(FOLIAGE_RAMPS[n]!)), { name: 'hojas', colors: ['#14301f', '#1f4a2a', '#2f6b32', '#4f8f3c', '#86b84e'], kind: 'foliage' }] };
+  const ri = (n: string) => m.palette.ramps.findIndex((r) => r.name === n);
+  const put = (plan: { voxels: Array<[number, number, number, number]> }, keep?: (x: number, y: number) => boolean) => { for (const [x, y, z, v] of plan.voxels) if (!keep || keep(x, y)) m.set(x, y, z, v); };
+  const all = [0, 0, m.width - 1, m.depth - 1] as const;
+  put(planFoliage(m, ...all, m.zMax, { type: 'bush', ramp: ri('arbusto'), seed: 3, zMin: m.zMin }));
+  put(planFoliage(m, ...all, m.zMax, { type: 'grass', ramp: ri('hierba-alta'), seed: 4, zMin: m.zMin, density: 0.3 }));
+  put(planFoliage(m, ...all, m.zMax, { type: 'flowers', ramp: ri('hierba-alta'), heads: [ri('flor-roja'), ri('flor-amarilla')], seed: 5, zMin: m.zMin }));
+  // Sumergida: hierba en el fondo de las columnas que empiezan con agua
+  put(planFoliage(m, ...all, m.zMax, { type: 'grass', ramp: ri('hierba-alta'), seed: 6, zMin: m.zMin, density: 0.5, on: m.palette.ramps.map((_, i) => i) }), (x, y) => w.wet[y * m.width + x] === 1);
+  // El árbol y su antorcha
+  const [tx, ty] = at, g = m.walkAt(tx, ty);
+  for (let z = g; z <= g + 7; z++) for (let y = ty; y <= ty + 1; y++) for (let x = tx; x <= tx + 1; x++) m.set(x, y, z, material(ri('madera'), 1));
+  for (let z = g + 6; z <= g + 14; z++) for (let y = ty - 7; y <= ty + 8; y++) for (let x = tx - 7; x <= tx + 8; x++) {
+    const d = Math.hypot((x - tx - 0.5) / 7.5, (y - ty - 0.5) / 7.5, (z - g - 10) / 4.5);
+    if (d <= 1 && ((x * 7 + y * 13 + z * 5) % 11) > 1 && !m.get(x, y, z)) m.set(x, y, z, material(ri('hojas'), Math.min(4, 1 + Math.floor((z - g - 6) / 2.5))));
+  }
+  w.lights.push({ id: 'veg-antorcha', kind: 'torch', x: tx + 0.5, y: ty + 12.5, z: g + 9 }, { id: 'veg-detras', kind: 'lantern', x: tx - 9.5, y: ty + 0.5, z: g + 3 });
 }
 
 // Un trozo de un mundo generado, con su agua y sus luces: así hay mundos rectangulares de lados impares
@@ -168,6 +193,14 @@ for (const name of TURNED) {
   const base = SCENARIOS.find((s) => s.name === name)!;
   for (const q of [1, 2, 3] as Quarter[]) SCENARIOS.push({ ...base, name: `${name}, giro ${q}`, quarter: q });
 }
+// Vegetación (condición de MAIA): transmisión por la copa, contraluz y follaje sumergido, con una luz dinámica
+// llevada y pisotones en el lago, en los 4 giros
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({
+    name: `medieval vegetación, giro ${q}`, theme: 'medieval', pos: [172, 170], ticks: 200, stompEvery: 42, quarter: q, veg: true,
+    setup: (s, rt) => { const p = rt.player; s.lights.add({ kind: 'lantern', x: p.x + 6, y: p.y + 9, z: p.z + 4 }); },
+  });
+}
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
 }
@@ -243,8 +276,9 @@ async function run(): Promise<void> {
     await new Promise((r) => setTimeout(r, 0));
     const layout = generateLayout(THEMES[sc.theme].spec, 7);
     let { world, state } = buildWorldState(layout, sc.theme);
-    if (sc.crop) {
-      world = cropWorld(world, ...sc.crop);
+    if (sc.crop || sc.veg) {
+      if (sc.crop) world = cropWorld(world, ...sc.crop);
+      if (sc.veg) vegetate(world, [204, 184]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world, sc.theme), { seed: layout.seed, fountain: world.fountain });
       state.warmUp();
     }

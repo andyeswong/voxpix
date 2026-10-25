@@ -36,7 +36,8 @@ export class WaterLayer {
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
     this.basin = new Uint8Array(this.gw * this.gh);
     const { wet, waterTop, width: W } = world;
-    const height = world.model.height, zMin = world.model.zMin;
+    const zMin = world.model.zMin;
+    const height = (x: number, y: number) => world.model.floorAt(x, y);   // el follaje no es fondo: el agua lo cubre
     const WALL_Z = 8;
     for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
       const i = gy * this.gw + gx;
@@ -46,8 +47,9 @@ export class WaterLayer {
         const x = gx * CELL + dx, y = gy * CELL + dy;
         if (x >= W || y >= world.depth) continue;
         const j = y * W + x;
-        if (height[j]! <= zMin) hole = true;
-        g = Math.max(g, height[j]!);
+        const hh = height(x, y);
+        if (hh <= zMin) hole = true;
+        g = Math.max(g, hh);
         if (wet[j]) { anyWet = true; top = Math.max(top, waterTop[j]!); }
       }
       this.sim.ground[i] = g;

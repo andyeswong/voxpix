@@ -4,6 +4,7 @@
 //
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
+import { FOLIAGE_BACKLIT } from '../../core';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -92,15 +93,15 @@ layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oLight;
 layout(location = 2) out vec4 oDepth;
 
-float facing(float ndl) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : 0.0; }
+float facing(float ndl, bool leaf) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : leaf ? -ndl * ${FOLIAGE_BACKLIT.toFixed(6)} : 0.0; }
 
-float contribution(int i, vec3 P, vec3 n) {
+float contribution(int i, vec3 P, vec3 n, bool leaf) {
   vec4 lp = lightPos(i);
   vec3 dd = lp.xyz - P;
   float d = length(dd);
   if (d >= lp.w) return 0.0;
   float k = 1.0 - d / lp.w;
-  return k * k * lightCol(i).w * (d < 1e-6 ? 1.0 : facing(dot(n, dd) / d)) * spot(i, -dd);
+  return k * k * lightCol(i).w * (d < 1e-6 ? 1.0 : facing(dot(n, dd) / d, leaf)) * spot(i, -dd);
 }
 
 bool blockedByBody(int e, vec3 P, vec3 L) {
@@ -142,8 +143,10 @@ void main() {
       float w = texelFetch(uWeights, ivec3(l, i), 0).r;
       if (w != 0.0) total += uBakedColorK[i] * w;
     }
-    int f = texelFetch(uFace, s, 0).r;
-    if (f >= 0) {
+    int fr = texelFetch(uFace, s, 0).r;
+    if (fr >= 0) {
+      int f = fr & 7;
+      bool leaf = fr >= 8;                     // follaje: recibe luz por detrás (compositor.ts, fillFace)
       // El punto del mundo que se ve aquí (worldPointAt) y su normal
       float Pp = uOriginY - (float(s.y) + 0.5);
       float wy = texelFetch(uWorldY, s, 0).r;
@@ -151,7 +154,7 @@ void main() {
       vec3 n = uDirs[f];
       for (int i = 0; i < uNLights; i++) {
         if (lightMeta(i).z == 0.0) continue;
-        float w = contribution(i, P, n);
+        float w = contribution(i, P, n, leaf);
         if (w != 0.0) total += lightCol(i).rgb * w;
       }
       for (int e = 0; e < uNEnt; e++) {
@@ -170,7 +173,7 @@ void main() {
             ivec4 r = uBakedRect[layer];
             ivec2 l = s - r.xy;
             if (l.x >= 0 && l.y >= 0 && l.x < r.z && l.y < r.w) w = texelFetch(uWeights, ivec3(l, layer), 0).r * lightMeta(i).y;
-          } else w = contribution(i, P, n);
+          } else w = contribution(i, P, n, leaf);
           if (w == 0.0) continue;
           total = max(vec3(0.0), total - lightCol(i).rgb * w);
         }

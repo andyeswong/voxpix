@@ -11,7 +11,7 @@
 // world.step()). step() avanza 1/60 s fijo, sin reloj ni Math.random: el azar es un mulberry32 del estado, sembrado
 // con la semilla de la partida. Misma semilla y mismos eventos dan la misma huella (hash).
 import type { Palette, VoxelSource } from '../core';
-import { decode, key, unkey } from '../core';
+import { decode, key, unkey, foliageOf } from '../core';
 import type { WorldLight, Fountain } from './build';
 import type { WaterLayer } from './water';
 import { Drops } from './particles';
@@ -60,6 +60,7 @@ export class StaticVoxels implements VoxelSource {
     if (data[i] === value) return;
     data[i] = value;
     this.versions[c] = ++this.clock;
+    if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
     // Rejilla de alturas: subir es directo; si se vacía el de arriba del todo, se busca el siguiente hacia abajo
     const h = y * this.width + x;
     if (value && z + 1 > this.height[h]!) this.height[h] = z + 1;
@@ -79,6 +80,52 @@ export class StaticVoxels implements VoxelSource {
     cs.forEach((c, i) => { this.chunks[i] = c.data ? c.data.slice() : null; this.versions[i] = c.version; });
     this.height.fill(this.zMin);
     for (const [x, y, z] of this.entries()) { const h = y * this.width + x; if (z + 1 > this.height[h]!) this.height[h] = z + 1; }
+    this.fgrid = null;
+  }
+
+  // ---- el follaje (rampas kind 'foliage'): no es suelo para el agua, y el que no bloquea se atraviesa andando.
+  // Las dos alturas se calculan por columna al pedirlas; sin follaje en la paleta son la rejilla height.
+  private fgrid: { fol: Uint8Array; floor: Int16Array; walk: Int16Array; dirty: Uint8Array } | null = null;
+  private foliageGrid() {
+    const fol = foliageOf(this.palette);
+    if (!fol) return null;
+    if (this.fgrid?.fol !== fol) {
+      const n = this.width * this.depth;
+      this.fgrid = { fol, floor: new Int16Array(n), walk: new Int16Array(n), dirty: new Uint8Array(n).fill(1) };
+    }
+    return this.fgrid;
+  }
+  private column(g: NonNullable<StaticVoxels['fgrid']>, x: number, y: number, h: number): void {
+    let floor = this.zMin, walk = this.zMin;
+    for (let z = this.height[h]! - 1; z >= this.zMin && (floor === this.zMin || walk === this.zMin); z--) {
+      const v = this.get(x, y, z);
+      if (!v) continue;
+      if (floor === this.zMin && !g.fol[v]) floor = z + 1;
+      if (walk === this.zMin && g.fol[v] !== 1) walk = z + 1;
+    }
+    g.floor[h] = floor; g.walk[h] = walk; g.dirty[h] = 0;
+  }
+  // La cara de arriba del vóxel más alto que no es follaje (el fondo del agua)
+  floorAt(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return this.zMin;
+    const h = y * this.width + x, g = this.foliageGrid();
+    if (!g) return this.height[h]!;
+    if (g.dirty[h]) this.column(g, x, y, h);
+    return g.floor[h]!;
+  }
+  // La cara de arriba del vóxel más alto que no se atraviesa andando (donde se apoya el pie)
+  walkAt(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return this.zMin;
+    const h = y * this.width + x, g = this.foliageGrid();
+    if (!g) return this.height[h]!;
+    if (g.dirty[h]) this.column(g, x, y, h);
+    return g.walk[h]!;
+  }
+  // ¿Bloquea el paso este valor de vóxel? (todo lo lleno, menos el follaje que se atraviesa)
+  blocks(v: number): boolean {
+    if (!v) return false;
+    const fol = foliageOf(this.palette);
+    return !fol || fol[v] !== 1;
   }
 
   chunkOf(x: number, y: number): number {
@@ -444,16 +491,15 @@ export class WorldState {
   // ---- consultas del juego (WorldQuery, acordada con FERN). Todo en ejes del modelo: x este, y norte, z arriba.
 
   // ¿Vóxel sólido estático? (paredes, columnas, muebles, el pilón de la fuente)
+  // (la hierba y las flores se atraviesan; los arbustos, follaje con blocks, no)
   solidAt(x: number, y: number, z: number): boolean {
-    return this.solid.get(Math.floor(x), Math.floor(y), Math.floor(z)) !== 0;
+    return this.solid.blocks(this.solid.get(Math.floor(x), Math.floor(y), Math.floor(z)));
   }
 
   // Altura (entera) de la cara de arriba del sólido más alto de la columna: donde se apoya el pie. El agua no
-  // cuenta: sus alturas fraccionarias solo salen por waterAt.
+  // cuenta: sus alturas fraccionarias solo salen por waterAt. El follaje que se atraviesa tampoco.
   groundAt(x: number, y: number): number {
-    const xi = Math.floor(x), yi = Math.floor(y);
-    if (xi < 0 || yi < 0 || xi >= this.width || yi >= this.depth) return this.solid.zMin;
-    return this.solid.height[yi * this.width + xi]!;
+    return this.solid.walkAt(Math.floor(x), Math.floor(y));
   }
 
   // Agua en la columna: profundidad y altura de la superficie (null si está seca)
@@ -484,14 +530,14 @@ export class WorldState {
     let mx = sx ? (sx > 0 ? x + 1 - px : px - x) * ddx : Infinity;
     let my = sy ? (sy > 0 ? y + 1 - py : py - y) * ddy : Infinity;
     let mz = sz ? (sz > 0 ? z + 1 - pz : pz - z) * ddz : Infinity;
-    if (this.solid.get(x, y, z)) return { hit: [px, py, pz], normal: [0, 0, 0] };
+    if (this.solid.blocks(this.solid.get(x, y, z))) return { hit: [px, py, pz], normal: [0, 0, 0] };
     for (let i = 0; i < 4096; i++) {
       let t: number, normal: [number, number, number];
       if (mx <= my && mx <= mz) { t = mx; x += sx; mx += ddx; normal = [-sx, 0, 0]; }
       else if (my <= mz) { t = my; y += sy; my += ddy; normal = [0, -sy, 0]; }
       else { t = mz; z += sz; mz += ddz; normal = [0, 0, -sz]; }
       if (t > 1) return null;
-      if (this.solid.get(x, y, z)) return { hit: [px + dx * t, py + dy * t, pz + dz * t], normal };
+      if (this.solid.blocks(this.solid.get(x, y, z))) return { hit: [px + dx * t, py + dy * t, pz + dz * t], normal };
     }
     return null;
   }

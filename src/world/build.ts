@@ -97,7 +97,7 @@ export interface World {
   width: number;     // en vóxeles (x)
   depth: number;     // en vóxeles (y)
   // Agua inicial, en ejes del modelo (índice y * width + x). El agua es un fluido que se simula aparte; el fondo
-  // de cada columna es la rejilla de alturas de los vóxeles (model.height).
+  // de cada columna es la rejilla de alturas de los vóxeles sin el follaje (model.floorAt).
   wet: Uint8Array;              // 1 donde empieza habiendo agua
   waterTop: Int8Array;          // altura de su superficie inicial (1 = a ras del suelo; más en la fuente)
   fountain: Fountain | null;

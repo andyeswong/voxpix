@@ -22,6 +22,16 @@ color (`rampFromColor`, con giro de tono en OKLCH) y agrupa una lista de colores
   "outline": "#0d0c12" }
 ```
 
+Una rampa puede ser **follaje** (`"kind": "foliage"`: hierba, flores, hojas). Se ve igual que un sólido, pero:
+- las luces lo atraviesan: cada vóxel de follaje deja pasar `FOLIAGE_T` (0,5) de la luz;
+- sus caras reciben algo de luz por detrás (`FOLIAGE_BACKLIT`, 0,25);
+- la sombra del sol sale moteada: cada celda deja pasar el sol por entre 1 y 4 hojas, según un hash entero de su
+  posición, así la CPU y la GPU dan la misma sombra;
+- en el mundo del juego, el agua no lo cuenta como fondo y se atraviesa andando (salvo con `"blocks": true`, los
+  arbustos).
+
+Un modelo sin rampas de follaje da exactamente la misma imagen que antes de que existiera (`test/vegetacion-mundo.test.ts`).
+
 Un vóxel guarda su material como un número: `rampa * 16 + tono + 1` (0 es vacío). La luz del render no multiplica
 colores: **mueve el tono dentro de la rampa**. Por eso la imagen solo tiene colores de la paleta, y
 `assertClosedPalette` lo comprueba.

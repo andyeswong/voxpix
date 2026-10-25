@@ -5,7 +5,7 @@
 // Si cambian vóxeles a mitad de partida, rebake() rehace SOLO lo afectado: el recuadro de pantalla de los trozos
 // cambiados, la rejilla de sombras de esas columnas y los pesos de las luces que los alcanzan. El resultado es el
 // mismo, byte a byte, que hornear el mundo entero de nuevo (hay prueba).
-import { render, camera, unkey, DIR_VECTORS, type RenderOptions, type Camera, type VoxelSource } from '../core';
+import { render, camera, unkey, DIR_VECTORS, FOLIAGE_T, facingOf, foliageOf, type RenderOptions, type Camera, type VoxelSource } from '../core';
 import { resolveLight } from './lightutil';
 import { CHUNK, type StaticVoxels } from './state';
 import type { WorldLight } from './build';
@@ -47,7 +47,6 @@ export interface Bakeable {
   depth: number;
 }
 
-const facing = (ndl: number) => (ndl > 0 ? 0.35 + 0.65 * ndl : 0);
 const BASIN_DEPTH = 10;   // las cuencas del agua bajan hasta z = -8: la imagen se alarga por abajo
 
 // Proyección oblicua 3/4: la altura sube 1:1 y el suelo se acorta por `incline` (1 = sin acortar, como los tiles
@@ -169,18 +168,24 @@ function warmUp(b: Baked): void {
 const gridZ = (topZ: number) => topZ + 2 + BASIN_DEPTH;
 const Z0 = -BASIN_DEPTH;
 
+export { foliageOf };
+
+// La rejilla de sombras: 1 sólido, 2 follaje (la luz lo cruza atenuándose)
 function fillOcc(b: Baked, x0: number, y0: number, x1: number, y1: number): void {
   const GW = b.source.width, GD = b.source.depth, GZ = gridZ(b.topZ);
+  const fol = foliageOf(b.source.palette);
   for (let z = 0; z < GZ; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) b.occ[(z * GD + y) * GW + x] = 0;
-  for (const [x, y, z0] of b.source.entries({ x0, y0, x1, y1 })) {
+  for (const [x, y, z0, v] of b.source.entries({ x0, y0, x1, y1 })) {
     const z = z0 - Z0;
-    if (z >= 0 && z < GZ) b.occ[(z * GD + y) * GW + x] = 1;
+    if (z >= 0 && z < GZ) b.occ[(z * GD + y) * GW + x] = fol && fol[v] ? 2 : 1;
   }
 }
 
-function occluded(b: Baked, px: number, py: number, pz: number, lx: number, ly: number, lz: number): boolean {
+// Cuánta luz llega de p a la luz: 0 tras un sólido, FOLIAGE_T por cada vóxel de follaje (1 si nada se cruza)
+function transmit(b: Baked, px: number, py: number, pz: number, lx: number, ly: number, lz: number): number {
   const GW = b.source.width, GD = b.source.depth, GZ = gridZ(b.topZ);
-  const filled = (x: number, y: number, z0: number) => { const z = z0 - Z0; return x >= 0 && y >= 0 && z >= 0 && x < GW && y < GD && z < GZ && b.occ[(z * GD + y) * GW + x] === 1; };
+  const cell = (x: number, y: number, z0: number) => { const z = z0 - Z0; return x >= 0 && y >= 0 && z >= 0 && x < GW && y < GD && z < GZ ? b.occ[(z * GD + y) * GW + x]! : 0; };
+  let t = 1;
   const dx = lx - px, dy = ly - py, dz = lz - pz;
   let x = Math.floor(px), y = Math.floor(py), z = Math.floor(pz);
   const tx = Math.floor(lx), ty = Math.floor(ly), tz = Math.floor(lz);
@@ -190,14 +195,16 @@ function occluded(b: Baked, px: number, py: number, pz: number, lx: number, ly: 
   let my = sy ? (sy > 0 ? y + 1 - py : py - y) * ddy : Infinity;
   let mz = sz ? (sz > 0 ? z + 1 - pz : pz - z) * ddz : Infinity;
   for (let i = 0; i < 1024; i++) {
-    if (x === tx && y === ty && z === tz) return false;
-    if (mx <= my && mx <= mz) { if (mx > 1) return false; x += sx; mx += ddx; }
-    else if (my <= mz) { if (my > 1) return false; y += sy; my += ddy; }
-    else { if (mz > 1) return false; z += sz; mz += ddz; }
-    if (x === tx && y === ty && z === tz) return false;
-    if (filled(x, y, z)) return true;
+    if (x === tx && y === ty && z === tz) return t;
+    if (mx <= my && mx <= mz) { if (mx > 1) return t; x += sx; mx += ddx; }
+    else if (my <= mz) { if (my > 1) return t; y += sy; my += ddy; }
+    else { if (mz > 1) return t; z += sz; mz += ddz; }
+    if (x === tx && y === ty && z === tz) return t;
+    const c = cell(x, y, z);
+    if (c === 1) return 0;
+    if (c === 2) t *= FOLIAGE_T;
   }
-  return false;
+  return t;
 }
 
 // ---- pesos de una luz fija: su zona de pantalla y el peso de cada píxel (por cara de vóxel, con sombras)
@@ -229,6 +236,7 @@ function weightRows(b: Baked, zone: BakedLight, j0: number, j1: number): BakedLi
   const { light: l, rect, weight } = zone;
   const p = resolveLight(l, 0);
   const r = p.radius;
+  const fol = foliageOf(b.source.palette);
   const cache = new Map<number, number>();
   for (let j = j0; j < j1; j++) for (let i = 0; i < rect.w; i++) {
     const idx = (rect.y + j) * b.width + rect.x + i;
@@ -245,9 +253,13 @@ function weightRows(b: Baked, zone: BakedLight, j0: number, j1: number): BakedLi
       const d = Math.hypot(ax, ay, az);
       w = 0;
       if (d < r) {
-        const fa = d < 1e-6 ? 1 : facing((n[0] * ax + n[1] * ay + n[2] * az) / d);
+        const leaf = !!fol && !!fol[b.source.get(vx, vy, vz)];
+        const fa = d < 1e-6 ? 1 : facingOf((n[0] * ax + n[1] * ay + n[2] * az) / d, leaf);
         const k2 = 1 - d / r;
-        if (fa > 0 && !occluded(b, vx + 0.5 + n[0], vy + 0.5 + n[1], vz + 0.5 + n[2], l.x, l.y, l.z)) w = k2 * k2 * fa * p.base;
+        if (fa > 0) {
+          const t = transmit(b, vx + 0.5 + n[0], vy + 0.5 + n[1], vz + 0.5 + n[2], l.x, l.y, l.z);
+          if (t > 0) w = t === 1 ? k2 * k2 * fa * p.base : k2 * k2 * fa * p.base * t;
+        }
       }
       cache.set(ck, w);
     }

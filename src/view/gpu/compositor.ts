@@ -12,8 +12,8 @@
 //     (dónde va, qué sprite) y la tabla de luces.
 import { DIR_VECTORS, unkey } from '../../core';
 import { resolveLight } from '../../world/lightutil';
-import { entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
+import { leafAt, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
+import { worldPointAt, foliageOf, type Baked, type BakedLight } from '../../world/bake';
 import type { RenderState } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
@@ -65,6 +65,8 @@ export class GpuCompositor {
   private tFace: WebGLTexture | null = null;
   private tWorldY: WebGLTexture | null = null;
   private worldY = new Float32Array(0);
+  // La cara de cada píxel tal como se sube: con follaje, cara + 8 (el shader le da luz por detrás); sin follaje, b.face
+  private faceUp: Int8Array | null = null;
   private tWeights: WebGLTexture | null = null;
   private weightZones: BakedLight[] = [];
   // Entidades: el atlas de sprites (una capa por modelo y giro), el de sus cuerpos sin girar (para el rayo de su
@@ -370,7 +372,9 @@ export class GpuCompositor {
       for (const t of [this.tColor, this.tDepth, this.tFace, this.tWorldY]) if (t) gl.deleteTexture(t);
       this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
       this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
-      this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, b.face);
+      this.faceUp = foliageOf(b.source.palette) ? new Int8Array(b.width * b.height) : null;
+      if (this.faceUp) fillFace(b, this.faceUp, 0, 0, b.width - 1, b.height - 1);
+      this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face);
       this.worldY = new Float32Array(b.width * b.height);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
       this.tWorldY = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, this.worldY);
@@ -384,7 +388,8 @@ export class GpuCompositor {
       // Se quedó atrás: todo de nuevo
       subImage(gl, this.tColor, 0, 0, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, b.depth, b.width, 1);
-      subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, b.face, b.width, 1);
+      if (this.faceUp) fillFace(b, this.faceUp, 0, 0, b.width - 1, b.height - 1);
+      subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tWorldY!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
     } else for (const r of pub.rects) {
@@ -392,7 +397,8 @@ export class GpuCompositor {
       const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
       subImage(gl, this.tColor, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
-      subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, b.face, b.width, 1);
+      if (this.faceUp) fillFace(b, this.faceUp, r.x0, r.y0, r.x1, r.y1);
+      subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
       subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
     }
@@ -778,6 +784,15 @@ function fillWorldY(b: Baked, out: Float32Array, x0: number, y0: number, x1: num
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const P = b.face[sy * b.width + sx]! >= 0 ? worldPointAt(b, sx, sy) : null;
     out[sy * b.width + sx] = P ? P[1] : 0;
+  }
+}
+
+// La cara con el follaje marcado (+8)
+function fillFace(b: Baked, out: Int8Array, x0: number, y0: number, x1: number, y1: number): void {
+  const fol = foliageOf(b.source.palette);
+  for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
+    const i = sy * b.width + sx, f = b.face[i]!;
+    out[i] = f >= 0 && leafAt(b, fol, i) ? f + 8 : f;
   }
 }
 

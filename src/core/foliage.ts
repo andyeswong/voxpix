@@ -16,6 +16,7 @@ export interface FoliageOptions {
   heads?: readonly number[];     // flores: las rampas de las cabezas (una al azar por flor)
   on?: readonly number[];        // rampas sobre las que crece (hierba, flores, arbustos); por defecto las de hierba
   water?: readonly number[];     // rampas de agua; por defecto las que se llaman agua o water
+  zMin?: number;                 // hasta dónde bajar buscando la superficie (0 por defecto; las cuencas del juego, menos)
 }
 
 export interface FoliageSource {
@@ -74,13 +75,14 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
   const put = (x: number, y: number, z: number, v: number) => { planned.set(`${x},${y},${z}`, v); };
 
   // La superficie de una columna: el vóxel más alto, su rampa, y si es agua, cuánta y dónde está el fondo
+  const zMin = o.zMin ?? 0;
   const surface = (x: number, y: number) => {
     let z = zMax;
-    while (z >= 0 && !src.get(x, y, z)) z--;
-    if (z < 0) return null;
+    while (z >= zMin && !src.get(x, y, z)) z--;
+    if (z < zMin) return null;
     const ramp = decode(src.get(x, y, z)).ramp;
     let depth = 0;
-    if (water.has(ramp)) { let g = z; while (g >= 0 && src.get(x, y, g) && water.has(decode(src.get(x, y, g)).ramp)) g--; depth = z - g; }
+    if (water.has(ramp)) { let g = z; while (g >= zMin && src.get(x, y, g) && water.has(decode(src.get(x, y, g)).ramp)) g--; depth = z - g; }
     return { z, ramp, depth, wet: water.has(ramp) };
   };
   // Distancia (en columnas, hasta `max`) a la orilla: desde tierra, al agua más cercana; desde el agua, a la tierra

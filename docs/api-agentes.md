@@ -30,7 +30,7 @@ el resultado se ve en la app, como si lo hiciera una persona.
 |---|---|---|
 | `info()` | objeto | Nombre, vóxeles, lienzo, rampas, luces, tipos de luz, la vista y si se renderiza en la GPU o en la CPU. |
 | `newModel(name, w, d, h)` | `info()` | Un modelo vacío con la paleta actual y un lienzo de w x d x h. Quita las luces. |
-| `palette([{ name, colors, emissive? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola. No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene. |
+| `palette([{ name, colors, emissive?, kind?, blocks? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola; `kind: 'foliage'` la hace follaje (la luz la atraviesa) y `blocks` hace que ese follaje no se atraviese andando. No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene. |
 | `ramp(name, '#rrggbb', { tones?, hueShift? })` | índice | Una rampa nueva generada desde un color: de 2 a 16 tonos (por defecto 5), con las sombras girando hacia el frío y las luces hacia el cálido (`hueShift` en grados, por defecto 22). Se deshace. |
 | `setTone(rampa, tono, '#rrggbb')` | - | Cambia un color de la paleta; lo pintado con él cambia también. `rampa` es el índice o el nombre. |
 | `palettes()` | lista | Las paletas de la comunidad que trae: `id`, nombre, autor y cuántos colores. |
@@ -51,6 +51,7 @@ el resultado se ve en la app, como si lo hiciera una persona.
 | `box(x0, y0, z0, x1, y1, z1, material)` | celdas | La caja entre dos esquinas, ambas incluidas. Con `null`, la vacía. |
 | `fill(x, y, z, material)` | celdas | El cubo: la mancha contigua (4 vecinos) de la capa z que empieza en (x, y), con el mismo valor, pasa a `material`. |
 | `water(x, y, z, material?)` | `{cells, spill}` | Agua hasta la altura z desde esa celda vacía: todas las celdas vacías conectadas que no pasan de esa altura, como se llenaría una cuenca. Los bordes del lienzo hacen de pared; `spill` dice que el agua llegó a ellos. Por defecto usa la rampa `agua` o `water`. |
+| `foliage(x0, y0, x1, y1, {type, density?, seed?, ramp?, heads?, on?})` | `{plants, voxels, ramps}` | Vegetación sobre la superficie del rectángulo, en un paso de deshacer. `type`: `grass` (matas de 1-2), `flowers` (tallo y cabeza), `bush` (manchas de radio 2-3, no se atraviesan), `reeds` (juncos donde el agua cubre 1-2, pegados a la orilla) o `lilies` (nenúfares a ras del agua). Hierba, flores y arbustos crecen sobre la rampa `hierba` (o las de `on`), y la hierba es más densa junto al agua. Con la misma `seed`, lo mismo. Si faltan sus rampas (`hierba-alta`, `flor-*`, `junco`, `nenufar`, `arbusto`), las añade. |
 | `batch(fn)` | lo que devuelva `fn` | Lo que haga `fn`, en un solo paso de deshacer. |
 | `undo()`, `redo()` | si había | Deshacen y rehacen. |
 
