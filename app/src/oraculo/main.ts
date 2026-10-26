@@ -64,6 +64,7 @@ interface Scenario {
   theme: ThemeId;
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
+  xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
@@ -150,6 +151,9 @@ const SCENARIOS: Scenario[] = [
   // El líquido brilla solo cuando su rampa es emisiva (WaterLayer.glow): la GPU lo pinta igual, también en la vista girada
   { name: 'lago tóxico emisivo', theme: 'medieval', look: toxic, pos: [172, 170], ticks: 120, stompEvery: 42 },
   { name: 'laberinto medieval', theme: 'medieval', shape: { kind: 'maze' }, ticks: 60 },
+  // MAIA pegada a la pared sur: la pared la tapa y se ve su silueta (Frame2DOptions.xray)
+  { name: 'silueta tras la pared sur', theme: 'oficina', pos: [320, 20], xray: true, ticks: 30 },
+  { name: 'silueta tras la pared sur, giro 2', theme: 'oficina', pos: [320, 426], quarter: 2, xray: true, ticks: 30 },
   { name: 'oficina en T, giro 1', theme: 'oficina', shape: { kind: 'T' }, quarter: 1, ticks: 60 },
   { name: 'lago tóxico emisivo, giro 1', theme: 'medieval', look: toxic, quarter: 1, pos: [172, 170], ticks: 120 },
   { name: 'medieval lago sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false },
@@ -379,7 +383,8 @@ async function run(): Promise<void> {
     const { vx, vy } = viewOf(view.camera.viewDepth, b, maia.x, maia.y, maia.z);
     const ambient = THEMES[sc.theme].ambient;
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
-      ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}) };
+      ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}),
+      ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');

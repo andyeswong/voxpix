@@ -29,6 +29,10 @@ export interface Frame2DOptions {
   // girada, WorldView.viewBox). Sin rehornear; las entidades que pasan por delante lo tapan. El pulso, quien llama
   // (cambiando el color en cada cuadro). null o sin campo: nada.
   highlight?: Highlight | null;
+  // Silueta a través de lo que tapa: donde una entidad queda detrás del escenario (una pared, una columna), se pinta su
+  // silueta de `color` (0..255) en trama de damero y con luz propia. Así no se pierde a nadie detrás de una pared. La
+  // trama va por píxel de la imagen horneada (no se mueve con la cámara). null o sin campo: nada
+  xray?: { color: readonly [number, number, number] } | null;
 }
 
 export interface Highlight {
@@ -186,9 +190,17 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     }
   });
   const etotals = total && !low ? sprites.map((d) => entityLight(state, d, o)) : [];
+  const xr = o.xray?.color;
   for (let t = 0; t < vw * vh; t++) {
     const k = entOf[t]!;
-    if (k < 0 || entDepth[t]! >= depthBuf[t]! - 0.5) continue;      // lo que hay delante la tapa
+    if (k < 0) continue;
+    if (entDepth[t]! >= depthBuf[t]! - 0.5) {                         // lo que hay delante la tapa
+      if (xr && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
+        view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2];
+        if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
+      }
+      continue;
+    }
     const d = sprites[k]!, s = entPx[t]!;
     depthBuf[t] = entDepth[t]!;
     view[t * 4] = d.img.rgba[s * 4]!; view[t * 4 + 1] = d.img.rgba[s * 4 + 1]!; view[t * 4 + 2] = d.img.rgba[s * 4 + 2]!;

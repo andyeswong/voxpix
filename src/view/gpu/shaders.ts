@@ -67,6 +67,8 @@ uniform bool uHl;
 uniform sampler2D uHlMask;
 uniform ivec4 uHlRect;
 uniform vec3 uHlColor;                 // 0..1
+uniform bool uXray;                    // la silueta de las entidades tapadas (Frame2DOptions.xray)
+uniform vec3 uXrayColor;               // 0..1
 uniform sampler2DArray uWeights;
 uniform sampler2D uEntColor;             // la capa de entidades (paso de entidades): color, su luz y profundidad
 uniform sampler2D uEntLight;
@@ -197,6 +199,10 @@ void main() {
     depth = ed;
     col = texelFetch(uEntColor, t, 0).rgb;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
+  } else if (uXray && !isinf(ed) && ((s.x + s.y) & 1) == 0) {
+    // Tapada por el escenario: su silueta, en damero y con luz propia
+    col = uXrayColor;
+    total = vec3(${EMISSIVE});
   }
   oColor = vec4(col, 1.0);
   oLight = vec4(total, 0.0);

@@ -201,6 +201,13 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
 
+## La silueta de lo que queda detrás
+
+Todas las paredes miden lo mismo, así que una pared que está entre la cámara y un personaje (la del sur, en la vista de
+siempre) lo tapa. `Frame2DOptions.xray = { color: [r, g, b] }` (0..255) pinta, donde una entidad queda detrás del
+escenario, su silueta de ese color en damero y con luz propia. CPU y GPU dan lo mismo; la trama va por píxel de la
+imagen horneada, así que no tiembla al mover la cámara. Sin el campo, nada cambia.
+
 ## Resaltar un objeto del escenario
 
 Para señalar algo que es parte del escenario horneado (la fuente, un adorno) sin rehornear:

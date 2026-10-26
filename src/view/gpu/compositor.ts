@@ -292,6 +292,8 @@ export class GpuCompositor {
       const c = o.highlight!.color;
       gl.uniform3f(s.u.uHlColor, c[0] / 255, c[1] / 255, c[2] / 255);
     } else gl.uniform1i(s.u.uHlMask, 12);
+    gl.uniform1i(s.u.uXray, o.xray ? 1 : 0);
+    if (o.xray) gl.uniform3f(s.u.uXrayColor, o.xray.color[0] / 255, o.xray.color[1] / 255, o.xray.color[2] / 255);
     const a = b.options.oblique?.y ?? 1;
     gl.uniform2i(s.u.uView, o.vx, o.vy);
     const bg = o.background ?? BACKGROUND;

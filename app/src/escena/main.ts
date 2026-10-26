@@ -250,6 +250,8 @@ function frame(time: number): void {
   const { vx, vy } = viewOrigin(b, state, maia);
   compositor.frame(state, b, {
     vx, vy, vw: VW, vh: VH, time, lights: lightsOn, ambient, outline, outlineColor,
+    // La silueta de quien queda detrás de una pared (todas miden lo mismo: la del sur tapa a quien se pega a ella)
+    xray: { color: [150, 220, 255] },
     // ?luces=N: solo las N luces más cercanas alumbran a cada entidad (para ajustar en el Flip)
     ...(q.get('luces') ? { entityLightCap: Number(q.get('luces')) } : {}),
     // Sin walk, un bote de 1 px al andar; el walk ya trae el sube y baja del cuerpo

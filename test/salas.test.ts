@@ -54,7 +54,7 @@ describe('salas con puertas', () => {
     const blocks = placed.map(([gx, gy], k) => ({ gx, gy, layout: generateLayout({ ...SPEC, shape: SHAPES[k + 1] }, 3 + k) }));
     const m = stitchRooms(blocks);
     expect([m.cols, m.rows]).toEqual([72, 36]);
-    const open = m.doors!.filter((d) => d.open).map((d) => `${(d as { block: number }).block}${d.side}`).sort();
+    const open = m.doors!.filter((d) => d.open).map((d) => `${(d as unknown as { block: number }).block}${d.side}`).sort();
     expect(open).toEqual(['0e', '1s', '1w', '2e', '2n', '3w']);
     // Donde no hay sala (la esquina de abajo a la izquierda) es el vacío
     expect(m.wall[(18 + 5) * m.cols + 5]).toBe(WALL.outside);
