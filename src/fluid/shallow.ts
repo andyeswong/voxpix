@@ -157,6 +157,17 @@ export class ShallowWater {
     for (const i of ring) depth[i] = depth[i]! + taken / ring.length;
   }
 
+  // Velocidad del agua en una celda (unidades del mundo por segundo): el flujo neto de las caras, entre la profundidad.
+  // Para lo que flota (world/floaters.ts). ft va hacia y - 1 y fb hacia y + 1.
+  flow(x: number, y: number): [number, number] {
+    const { w, h, fl, fr, ft, fb } = this;
+    if (x < 0 || y < 0 || x >= w || y >= h) return [0, 0];
+    const i = y * w + x, d = Math.max(0.3, this.depth[i]!);
+    const fx = (fr[i]! - fl[i]!) + (x > 0 ? fr[i - 1]! : 0) - (x < w - 1 ? fl[i + 1]! : 0);
+    const fy = (fb[i]! - ft[i]!) + (y > 0 ? fb[i - w]! : 0) - (y < h - 1 ? ft[i + w]! : 0);
+    return [fx * 0.5 * this.cell / d, fy * 0.5 * this.cell / d];
+  }
+
   // Inclinación de la superficie en una celda (para iluminarla): diferencias centradas
   slope(x: number, y: number): [number, number] {
     const { w, h } = this;

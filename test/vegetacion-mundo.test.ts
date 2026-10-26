@@ -119,7 +119,9 @@ describe('follaje en el mundo', () => {
     expect(reeds.plants).toBeGreaterThan(20);
     expect(lilies.plants).toBeGreaterThan(20);
     for (const [x, y] of reeds.voxels) { const d = Math.round(depth(x, y)); expect(d).toBeGreaterThanOrEqual(1); expect(d).toBeLessThanOrEqual(2); }
-    // Con el agua fluida, el nenúfar flota justo encima de la superficie (el agua se pinta encima de la escena)
-    for (const [x, y, z] of lilies.voxels) expect(z).toBe(m.floorAt(x, y) + Math.round(depth(x, y)));
+    // Con el agua fluida, los nenúfares no son vóxeles sino flotantes (floaters.ts), sobre agua de 1 o más
+    expect(lilies.voxels.length).toBe(0);
+    expect(lilies.floats.length).toBe(lilies.plants);
+    for (const [x, y] of lilies.floats) expect(Math.round(depth(Math.floor(x), Math.floor(y)))).toBeGreaterThanOrEqual(1);
   });
 });

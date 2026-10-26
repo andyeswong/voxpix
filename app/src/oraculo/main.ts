@@ -10,8 +10,8 @@
 // más de un nivel de luz o en más de ±2 de color.
 import { generateLayout, TILE } from '../../../src/worldgen';
 import { THEMES } from '../../../src/content/themes';
-import { Model, box, material, planFoliage, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
-import { buildWorldState, type WorldTheme } from '../../../src/world/build';
+import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
+import { buildWorldState, addWorldFloaters, worldWaterDepth, type WorldTheme } from '../../../src/world/build';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
@@ -87,6 +87,10 @@ function vegetate(w: World, at: [number, number]): void {
   put(planFoliage(m, ...all, m.zMax, { type: 'flowers', ramp: ri('hierba-alta'), heads: [ri('flor-roja'), ri('flor-amarilla')], seed: 5, zMin: m.zMin }));
   // Sumergida: hierba en el fondo de las columnas que empiezan con agua
   put(planFoliage(m, ...all, m.zMax, { type: 'grass', ramp: ri('hierba-alta'), seed: 6, zMin: m.zMin, density: 0.5, on: m.palette.ramps.map((_, i) => i) }), (x, y) => w.wet[y * m.width + x] === 1);
+  // Nenúfares que flotan en el lago (los pisotones del escenario los mueven)
+  const pads = lilyPadModels(structuredClone(FOLIAGE_RAMPS.nenufar!));
+  const lilies = planFoliage(m, ...all, m.zMax, { type: 'lilies', ramp: ri('hierba-alta'), seed: 7, zMin: m.zMin, waterDepth: worldWaterDepth(w), density: 0.02 });
+  w.floaters = lilies.floats.map(([x, y, k]) => ({ x, y, model: pads[k]!, yaw: k * 45 }));
   // El árbol y su antorcha
   const [tx, ty] = at, g = m.walkAt(tx, ty);
   for (let z = g; z <= g + 7; z++) for (let y = ty; y <= ty + 1; y++) for (let x = tx; x <= tx + 1; x++) m.set(x, y, z, material(ri('madera'), 1));
@@ -313,6 +317,7 @@ async function run(): Promise<void> {
       if (sc.veg) vegetate(world, [204, 184]);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world, sc.theme), { seed: layout.seed, fountain: world.fountain });
+      addWorldFloaters(state, world);
       state.warmUp();
     }
     const view = new WorldView(state, sc.quarter ?? 0);

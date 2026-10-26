@@ -158,6 +158,24 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
 
+## Lo que flota
+
+`state.floaters` (`src/world/floaters.ts`) mueve cosas que flotan en el agua: nenúfares, hojas, maderas. Cada
+flotante es una entidad (se pinta en la CPU, en la GPU, con luz y en los 4 giros) que sube y baja con la superficie, la
+arrastra la corriente y la apartan los pisotones (`events.disturb`). Se frena sola y no sale del agua.
+
+```ts
+state.floaters.add(modelo, x, y, yaw);        // sobre el agua que haya ahí; da su id ('flota-N')
+world.floaters = [{ x, y, model, yaw }];      // o al construir (en decorate): buildWorldState los pone
+const plan = planFoliage(m, ..., { type: 'lilies', waterDepth: worldWaterDepth(world) });
+// con agua fluida, plan.floats trae los nenúfares (x, y, forma) para lilyPadModels(rampa)[forma]
+```
+
+- No bloquean nada (ni la colisión, ni los disparos, ni dan sombra de verdad) y no gastan el azar del mundo: la
+  partida es la misma con y sin ellos. Sus ids (`flota-N`) no tocan la secuencia numérica de las entidades.
+- Entran en la instantánea y en la huella del mundo (un mundo sin flotantes da la huella de siempre).
+- Las entidades se iluminan como sólidas: los materiales (follaje, vidrio) son del escenario.
+
 ## Determinismo
 
 `state.step()` avanza 1/60 s fijos, sin reloj ni `Math.random`: el azar es un generador con semilla dentro del

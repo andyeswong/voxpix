@@ -257,7 +257,8 @@ export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptio
   const lights: PointLight3D[] = entityLocalLights(state, d, o)
     .filter((l) => Math.hypot(l.x, l.y) < l.radius + 20 && (!pick || pick.includes(l.index)));
   const { e } = d;
-  const total = lightField3D(e.model, d.img, camera(d.ro), lights, o.ambient, { floor: false });
+  // Las entidades se iluminan como sólidas, en la CPU y en la GPU: los materiales (follaje, vidrio) son del escenario
+  const total = lightField3D(e.model, d.img, camera(d.ro), lights, o.ambient, { floor: false, materials: false });
   // Lo emisivo lleva su propia luz: se ve con su color, sin que la luz del mundo lo oscurezca
   const em = emissiveMask(d);
   if (em) for (let i = 0; i < em.length; i++) if (em[i]) total.fill(EMISSIVE_LIGHT, i * 3, i * 3 + 3);

@@ -15,6 +15,7 @@ import { decode, key, unkey, materialsOf, type MaterialTable } from '../core';
 import type { WorldLight, Fountain } from './build';
 import type { WaterLayer } from './water';
 import { Drops } from './particles';
+import { Floaters } from './floaters';
 
 export const CHUNK = 16;
 
@@ -368,6 +369,8 @@ export class WorldState {
   readonly lights = new LightList();
   readonly models: ModelRegistry;
   readonly drops: Drops;
+  // Lo que flota en el agua (nenúfares...): entidades que mueve el agua (floaters.ts)
+  readonly floaters: Floaters = new Floaters(this);
   tick = 0;
   private rngState: number;
 
@@ -399,7 +402,7 @@ export class WorldState {
   // ---- eventos: lo que el juego le hace al mundo dentro del tick (los llama el runtime antes de step)
   readonly events = {
     // Algo empuja el agua (pisar, un golpe): ondas; con fuerza, el agua salta el borde
-    disturb: (x: number, y: number, force: number, radius = 1.5) => { this.water?.disturb(x, y, force, radius); },
+    disturb: (x: number, y: number, force: number, radius = 1.5) => { this.water?.disturb(x, y, force, radius); this.floaters.push(x, y, force, radius); },
     // Añade agua en un punto
     pour: (x: number, y: number, amount: number) => { this.water?.pour(x, y, amount); },
     // Gotas que saltan desde (x, y, z)
@@ -603,6 +606,7 @@ export class WorldState {
       }
     }
     this.drops.step(dt, this.water, (x, y) => this.groundAt(x, y));
+    this.floaters.step(dt, this.water);
     this.placeFollowers();
     this.tick++;
   }
@@ -632,6 +636,7 @@ export class WorldState {
       chunks: this.solid.exportChunks(),
       water: this.water ? this.water.sim.exportState() : null,
       drops: this.drops.exportState(),
+      floaters: this.floaters.exportState(),
       entities: [...this.entities].sort((a, b) => byId(a.id, b.id)).map((e) => ({ id: e.id, modelId: e.modelId, x: e.x, y: e.y, z: e.z, yaw: e.yaw, castsShadow: e.castsShadow })),
       lights: [...this.lights].sort((a, b) => byId(a.id, b.id)).map((l) => ({ ...l })),
       next: { entity: this.entities.next, light: this.lights.next },
@@ -644,6 +649,7 @@ export class WorldState {
     this.solid.importChunks(s.chunks);
     if (this.water && s.water) this.water.sim.importState(s.water);
     this.drops.importState(s.drops);
+    this.floaters.importState(s.floaters);
     // Las entidades y luces vuelven a ser exactamente las de la instantánea (las nuevas se van, las quitadas vuelven)
     this.entities.length = 0;
     for (const se of s.entities) {
@@ -665,6 +671,8 @@ export class WorldState {
     for (const c of s.chunks) { h.num(c.version); if (c.data) h.bytes(c.data); else h.num(-1); }
     if (s.water) for (const k of ['depth', 'fl', 'fr', 'ft', 'fb', 'awake'] as const) h.bytes(s.water[k]);
     h.num(s.drops.n); h.bytes(s.drops.data);
+    // Los flotantes, solo si alguna vez hubo (así un mundo sin ellos da la huella de siempre)
+    if (s.floaters.next > 1) { h.num(s.floaters.next); for (const f of s.floaters.list) { h.str(String(f.id)); h.f64(f.x); h.f64(f.y); h.f64(f.vx); h.f64(f.vy); h.f64(f.yaw); } }
     for (const e of s.entities) { h.str(String(e.id)); h.num(e.modelId); h.f64(e.x); h.f64(e.y); h.f64(e.z); h.f64(e.yaw); h.num(e.castsShadow === 'always' ? 2 : e.castsShadow ? 1 : 0); }
     for (const l of s.lights) { h.str(String(l.id)); h.str(l.kind); h.f64(l.x); h.f64(l.y); h.f64(l.z); h.num(l.baked ? 1 : 0); h.f64(l.intensity ?? -1); h.f64(l.radius ?? -1); h.f64(l.dir?.[0] ?? 9); h.f64(l.dir?.[1] ?? 9); h.f64(l.dir?.[2] ?? 9); h.f64(l.cone ?? -1); h.str(String(l.owner ?? '')); h.str(l.follow ? JSON.stringify(l.follow) : ''); }
     h.num(s.next.entity); h.num(s.next.light);
@@ -681,6 +689,7 @@ export interface WorldSnapshot {
   chunks: Array<{ version: number; data: Uint16Array | null }>;
   water: ReturnType<import('../fluid/shallow').ShallowWater['exportState']> | null;
   drops: { data: Float32Array; n: number };
+  floaters: ReturnType<Floaters['exportState']>;
   entities: Array<{ id: EntityId; modelId: number; x: number; y: number; z: number; yaw: number; castsShadow: ShadowMode }>;
   lights: WorldLight[];
   next: { entity: number; light: number };

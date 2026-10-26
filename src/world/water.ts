@@ -84,6 +84,13 @@ export class WaterLayer {
   depthAt(x: number, y: number): number { const i = this.cellOf(x, y); return i < 0 ? 0 : this.sim.depth[i]!; }
   surfaceAt(x: number, y: number): number { const i = this.cellOf(x, y); return i < 0 ? 0 : this.sim.surface(i); }
 
+  // Para lo que flota: hacia dónde va el agua y cuánto se inclina su superficie, en un punto del mundo
+  flowAt(x: number, y: number): [number, number] { return this.sim.flow(Math.floor(x / CELL), Math.floor(y / CELL)); }
+  slopeAt(x: number, y: number): [number, number] {
+    const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
+    return gx < 0 || gy < 0 || gx >= this.gw || gy >= this.gh ? [0, 0] : this.sim.slope(gx, gy);
+  }
+
   // Algo que se mueve dentro del agua la empuja (ondas). Con fuerza, el agua salta el borde y moja el suelo.
   disturb(x: number, y: number, amount: number, radius = 1.5): void {
     this.sim.disturb(x / CELL, y / CELL, radius, amount);

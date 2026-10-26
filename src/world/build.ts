@@ -1,6 +1,6 @@
 // El escenario generado (worldgen de escenario-motor) construido en VÓXELES, 1 vóxel = 1 píxel del juego.
 // Ejes del modelo: x hacia el este, y hacia el norte, z hacia arriba. La fila 0 del mapa es el norte.
-import { material, type Palette } from '../core';
+import { material, type Palette, type VoxelSource } from '../core';
 import { StaticVoxels } from './state';
 import { WALL, TILE, NORTH, type Layout } from '../worldgen';
 import type { SourceKind } from '../lighting/lights';
@@ -102,6 +102,8 @@ export interface World {
   wet: Uint8Array;              // 1 donde empieza habiendo agua
   waterTop: Int8Array;          // altura de su superficie inicial (1 = a ras del suelo; más en la fuente)
   fountain: Fountain | null;
+  // Lo que flota al empezar (nenúfares...): buildWorldState los pone en el agua como flotantes (world/floaters.ts)
+  floaters?: Array<{ x: number; y: number; model: VoxelSource; yaw?: number }>;
 }
 
 // Fuente: pilón redondo con agua por encima del suelo, fuste central y un cuenco con fuego arriba
@@ -371,6 +373,7 @@ export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?:
 // El estado del mundo completo de un nivel: lo estático, el agua (fluido), las luces y las gotas
 import { WorldState } from './state';
 import { WaterLayer } from './water';
+import { FLOAT_MIN_DEPTH } from './floaters';
 
 // La profundidad del agua de partida en cada columna (0 = seca), para colocar cosas antes de que exista el WaterLayer
 // (planFoliage con waterDepth: juncos y nenúfares). El fondo es el suelo sin follaje.
@@ -384,11 +387,19 @@ export function worldWaterDepth(world: World): (x: number, y: number) => number 
 
 // decorate: cambia el mundo antes de crear el agua y el estado (vegetación con planFoliage, decorados del juego...).
 // Si añade rampas, que ponga en world.model.palette una paleta NUEVA.
+// Los flotantes de partida del mundo (world.floaters) en el estado, solo donde el simulador tiene agua (sus celdas de
+// 2 x 2 toman el fondo más alto: una orilla que en la columna tenía agua puede quedar seca). Para quien crea el
+// WorldState a mano; buildWorldState ya lo hace
+export function addWorldFloaters(state: WorldState, world: World): void {
+  for (const f of world.floaters ?? []) if (state.water && state.water.depthAt(f.x, f.y) >= FLOAT_MIN_DEPTH) state.floaters.add(f.model, f.x, f.y, f.yaw ?? 0);
+}
+
 export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void; fountain?: boolean } = {}): { world: World; state: WorldState } {
   const world = buildWorld(layout, theme, opts.fountain === undefined ? {} : { fountain: opts.fountain });
   opts.decorate?.(world);
   const water = new WaterLayer(world, theme);
   const state = new WorldState(world.model, world.lights, water, { seed: layout.seed, fountain: world.fountain });
+  addWorldFloaters(state, world);
   state.warmUp();
   return { world, state };
 }

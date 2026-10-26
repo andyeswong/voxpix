@@ -2,7 +2,7 @@
 //   - medieval: vegetación (hierba, flores, arbustos, juncos y nenúfares con planFoliage) y árboles con copa de follaje;
 //   - oficina y cyberpunk: cubículos de vidrio con una luz dentro (la luz sale por el vidrio y no por la piedra).
 // Va en buildWorldState({ decorate }), antes del agua y del estado. Determinista por semilla.
-import { material, planFoliage, FOLIAGE_RAMPS, type Ramp } from '@core/index';
+import { material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type Ramp } from '@core/index';
 import { worldWaterDepth, type World, type WorldTheme } from '../../../src/world/build';
 
 // Hash de una celda en [0, 1)
@@ -66,7 +66,10 @@ function vegetation(w: World, spawn: { x: number; y: number }, seed: number): vo
   put(planFoliage(m, ...all, m.zMax, { ...base, type: 'flowers', ramp: ri('hierba-alta'), heads: ['flor-roja', 'flor-amarilla', 'flor-blanca', 'flor-lila'].map(ri), density: 0.08 }));
   const waterDepth = worldWaterDepth(w);
   put(planFoliage(m, ...all, m.zMax, { ...base, type: 'reeds', ramp: ri('junco'), waterDepth }));
-  put(planFoliage(m, ...all, m.zMax, { ...base, type: 'lilies', ramp: ri('nenufar'), waterDepth, density: 0.008 }));
+  // Los nenúfares flotan: los mueve el agua (los pisotones de MAIA los apartan)
+  const pads = lilyPadModels(m.palette.ramps[ri('nenufar')]!);
+  const lilies = planFoliage(m, ...all, m.zMax, { ...base, type: 'lilies', ramp: ri('nenufar'), waterDepth, density: 0.004 });
+  w.floaters = lilies.floats.map(([x, y, k]) => ({ x, y, model: pads[k]!, yaw: ((x * 7 + y * 13) % 8) * 45 }));
 }
 
 function glass(w: World, theme: WorldTheme, spawn: { x: number; y: number }, seed: number): void {

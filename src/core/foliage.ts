@@ -5,6 +5,7 @@
 // arbustos de radio 2 o 3.
 import { decode, material, type Palette, type Ramp } from './palette';
 import { rampMaterial } from './materials';
+import { Model } from './model';
 
 export type FoliageType = 'grass' | 'flowers' | 'reeds' | 'lilies' | 'bush';
 export const FOLIAGE_TYPES: readonly FoliageType[] = ['grass', 'flowers', 'reeds', 'lilies', 'bush'];
@@ -68,7 +69,9 @@ function rnd(x: number, y: number, seed: number, salt: number): number {
   return ((h ^ (h >>> 15)) >>> 0) / 4294967296;
 }
 
-export interface FoliagePlan { voxels: Array<[number, number, number, number]>; plants: number }
+// voxels: los vóxeles a poner. floats: con agua fluida, los nenúfares no son vóxeles sino flotantes que mueve el agua
+// (src/world/floaters.ts): x, y del centro y la forma (lilyPadModels)
+export interface FoliagePlan { voxels: Array<[number, number, number, number]>; plants: number; floats: Array<[number, number, number]> }
 
 // Planea la vegetación en el rectángulo [x0..x1] x [y0..y1] (incluidos). zMax: hasta dónde buscar la superficie.
 export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: number, y1: number, zMax: number, o: FoliageOptions): FoliagePlan {
@@ -129,6 +132,7 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
   };
 
   let plants = 0;
+  const floats: FoliagePlan['floats'] = [];
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     const s = surface(x, y);
     if (!s) continue;
@@ -177,8 +181,9 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
       }
       case 'lilies': {
         // Nenúfares: una hoja de 2 a 4 vóxeles a ras del agua, donde es honda de 1 o más. Con agua de vóxeles sustituye
-        // la capa de arriba; con agua fluida (que se pinta encima de la escena) flota justo por encima
+        // la capa de arriba; con agua fluida es un flotante (que el agua mueve), en floats
         if (!s.wet || s.depth < 1 || r0 >= density) break;
+        if (s.fluid) { floats.push([x + 0.5, y + 0.5, Math.floor(r2 * LILY_SHAPES.length) % LILY_SHAPES.length]); plants++; break; }
         const bits = Math.floor(r2 * 8) | 1;
         let n = 0;
         for (const [k, dx, dy] of [[0, 0, 0], [1, 1, 0], [2, 0, 1], [4, 1, 1]] as const) {
@@ -197,5 +202,29 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
   }
   const voxels: FoliagePlan['voxels'] = [];
   for (const [k, v] of planned) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; voxels.push([x, y, z, v]); }
-  return { voxels, plants };
+  return { voxels, plants, floats };
 }
+
+// ---- las hojas de nenúfar que flotan: modelos pequeños (los pies en el origen), una por forma
+// Cada forma: filas de arriba (norte) a abajo, '#' hoja, '+' hoja clara, '.' nada
+const LILY_SHAPES: readonly string[][] = [
+  ['##', '#+'],
+  ['.#.', '#+#', '##.'],
+  ['###', '#+.', '###'],
+  ['.##', '##+', '.#.'],
+];
+// Las formas con la rampa del nenúfar. Comparten paleta: el mundo la añade una sola vez
+export function lilyPadModels(ramp: Ramp): Model[] {
+  const palette = { ramps: [ramp] };
+  const top = ramp.colors.length - 1;
+  return LILY_SHAPES.map((rows, k) => {
+    const m = new Model(palette, `nenufar-${k}`);
+    const h = rows.length, w = rows[0]!.length;
+    rows.forEach((row, j) => [...row].forEach((ch, i) => {
+      if (ch === '.') return;
+      m.set(i - Math.floor(w / 2), Math.floor(h / 2) - j, 0, material(0, ch === '+' ? top : Math.min(top, 1 + ((i + j) % 2))));
+    }));
+    return m;
+  });
+}
+

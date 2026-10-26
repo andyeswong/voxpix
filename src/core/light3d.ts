@@ -54,12 +54,13 @@ export function lightField3D(
   cam: Camera,
   lights: readonly PointLight3D[],
   ambient: readonly [number, number, number],
-  options: { floor?: boolean } = {},
+  // materials: false trata todo el modelo como sólido (así lo hace la GPU con las entidades del mundo)
+  options: { floor?: boolean; materials?: boolean } = {},
 ): Float32Array {
   if (!img.pickKey || !img.pickFace) throw new Error('lightField3D necesita un render con pick: true');
   const { width: W, height: H } = img;
   const total = new Float32Array(W * H * 3);
-  const mt = materialsOf(model.palette);
+  const mt = options.materials === false ? null : materialsOf(model.palette);
   const faceCache = new Map<string, [number, number, number]>();
 
   // Cuánta luz llega del punto p (en el aire) a la luz: 0 si hay algo opaco en medio, y por cada vóxel que deja pasar
