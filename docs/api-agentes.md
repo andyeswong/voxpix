@@ -101,7 +101,10 @@ El rig (`RigSpec`, en `src/anim/rig.ts`):
 ```js
 vp.rig({
   frameMs: 120,
-  parts: [   // un vóxel es de la parte si cae en alguna de sus cajas y su rampa es una de las suyas (si las dice)
+  // Un vóxel es de la parte si cae en ALGUNA de sus cajas (la parte es su unión) y su rampa es una de las suyas (si
+  // las dice). Un límite null es abierto: [null, null, null, -5, null, 7] es x <= -5 y z <= 7. Si dos partes piden
+  // el mismo vóxel, es de la PRIMERA. Lo que no es de ninguna es 'body', que también se mueve (moves.body).
+  parts: [
     { name: 'L', boxes: [[-9, -9, 0, -1, 9, 3]], ramps: [1], pivotZ: 3, footZ: 0 },
     { name: 'R', boxes: [[1, -9, 0, 9, 9, 3]], ramps: [1], pivotZ: 3, footZ: 0 },
   ],

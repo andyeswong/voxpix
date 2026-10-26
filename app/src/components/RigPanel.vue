@@ -31,11 +31,17 @@ function setMove(f: RigFrame, part: string, k: keyof PartMove, v: string): void 
   if (!v || !Number.isFinite(n) || n === 0) delete m[k]; else m[k] = Math.round(n);
 }
 
+// Una casilla de caja vacía es un límite abierto (null)
+function clean(): RigSpec {
+  const s: RigSpec = JSON.parse(JSON.stringify(spec.value));
+  for (const p of s.parts) p.boxes = p.boxes?.map((bx) => bx.map((v) => (v === null || (v as unknown) === '' || !Number.isFinite(Number(v)) ? null : Number(v))) as typeof bx);
+  return s;
+}
 function apply(): void {
-  try { err.value = ''; setRig(spec.value); msg.value = 'Rig guardado'; } catch (e) { err.value = (e as Error).message; }
+  try { err.value = ''; setRig(clean()); msg.value = 'Rig guardado'; } catch (e) { err.value = (e as Error).message; }
 }
 function generate(): void {
-  try { err.value = ''; const n = generateFromRig(spec.value); msg.value = `${n} cuadros generados desde el cuadro 0`; } catch (e) { err.value = (e as Error).message; }
+  try { err.value = ''; const n = generateFromRig(clean()); msg.value = `${n} cuadros generados desde el cuadro 0 (el 0 se queda como reposo)`; } catch (e) { err.value = (e as Error).message; }
 }
 function clearRig(): void { setRig(null); msg.value = 'Sin rig'; }
 const KEYS: Array<keyof PartMove> = ['dx', 'dy', 'dz', 'stride'];
@@ -44,7 +50,7 @@ const KEYS: Array<keyof PartMove> = ['dx', 'dy', 'dz', 'stride'];
 <template>
   <div class="rig">
     <div class="head"><strong>Rig por partes</strong><button class="ghost" @click="anim.panel = false">✕</button></div>
-    <p class="hint">Cada parte: una caja de vóxeles (x0 y0 z0 – x1 y1 z1) y, si quieres, solo unas rampas. Pivote: la z que no se mueve al dar el paso (la cadera); pie: la que más (stride adelanta el pie hacia el frente, -y).</p>
+    <p class="hint">Cada parte: una caja de vóxeles (x0 y0 z0 – x1 y1 z1; una casilla vacía no limita por ese lado) y, si quieres, solo unas rampas. Si dos partes piden un vóxel, es de la primera; lo que no es de ninguna es el cuerpo. Pivote: la z que no se mueve al dar el paso (la cadera); pie: la que más (stride adelanta el pie hacia el frente, -y).</p>
     <div v-for="(p, i) in spec.parts" :key="i" class="part">
       <div class="line">
         <input v-model="p.name" class="name" />
