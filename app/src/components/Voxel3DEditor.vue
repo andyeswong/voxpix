@@ -3,6 +3,7 @@ import { ref, watch, onMounted, onUnmounted } from 'vue';
 import { camera, key, unkey, decode, DIR_VECTORS, type RenderOptions, type Rendered } from '@core/index';
 import { renderModel } from '../preview';
 import { model, history, version, editor, paint, currentMaterial, touch, toggleLight } from '../store';
+import { anim, frameModels } from '../anim';
 import { SOURCE_PRESETS } from '../../../src/lighting';
 import { startPour, stopPour, fluidState } from '../fluidTool';
 import { fillBox, floodLayer } from '../edit';
@@ -68,6 +69,18 @@ function draw(): void {
     const r = x + 1 < W ? pk[i + 1]! : NaN, d = y + 1 < H ? pk[i + W]! : NaN;
     const edge = (!Number.isNaN(r) && r !== pk[i]) || (!Number.isNaN(d) && d !== pk[i]) || Number.isNaN(r) || Number.isNaN(d);
     if (edge) for (let ch = 0; ch < 3; ch++) rgba[i * 4 + ch] = rgba[i * 4 + ch]! * 0.72;
+  }
+  // Papel cebolla (modo Animación): el cuadro anterior, con la misma cámara, en fantasma donde tiene algo que el actual
+  // no tiene o tiene más cerca de la cámara
+  if (editor.mode === 'animacion' && anim.onion && anim.current > 0) {
+    const prev = renderModel(opts, frameModels()[anim.current - 1]!);
+    for (let i = 0; i < W * H; i++) {
+      if (!prev.rgba[i * 4 + 3] || Number.isNaN(prev.pickKey![i]!)) continue;
+      if (!Number.isNaN(pk[i]!) && !(prev.depth[i]! < last.depth[i]! - 0.5)) continue;
+      const a = Number.isNaN(pk[i]!) ? 0.45 : 0.35;
+      for (let ch = 0; ch < 3; ch++) rgba[i * 4 + ch] = rgba[i * 4 + ch]! * (1 - a) + prev.rgba[i * 4 + ch]! * a + (ch === 0 ? 30 : 0) * a;
+      rgba[i * 4 + 3] = 255;
+    }
   }
   const off = document.createElement('canvas');
   off.width = W; off.height = H;
@@ -256,7 +269,7 @@ function fit(): void {
 }
 onMounted(() => { ro = new ResizeObserver(fit); if (box.value) ro.observe(box.value); fit(); });
 onUnmounted(() => ro?.disconnect());
-watch([version, () => JSON.stringify(fluidState.faucets), () => JSON.stringify(editor.light.sources), () => ({ ...editor.view3d }), () => editor.mirrorX, () => editor.mirrorAxis, () => editor.grid], draw, { deep: true });
+watch([version, () => JSON.stringify(fluidState.faucets), () => JSON.stringify(editor.light.sources), () => ({ ...editor.view3d }), () => editor.mirrorX, () => editor.mirrorAxis, () => editor.grid, () => editor.mode, () => anim.onion], draw, { deep: true });
 </script>
 
 <template>

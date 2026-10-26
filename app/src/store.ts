@@ -24,7 +24,7 @@ export const editor = reactive({
   // La rejilla donde se edita (el lienzo): x e y con el pivote (0, 0) en medio, y z de 0 a maxZ (las capas)
   grid: { minX: -16, maxX: 15, minY: -16, maxY: 15, maxZ: 23 },
   view: { yaw: -30, elevation: 35, outline: 'outer' as 'none' | 'outer' | 'both', scale: 8, turn: 8 },
-  // cómo se edita: por capas, sobre el modelo en 3D, o animando (por capas, con la barra de animación y la cebolla)
+  // cómo se edita: por capas, sobre el modelo en 3D, o animando (en 3D, con la barra de animación y la cebolla)
   mode: 'layers' as 'layers' | 'voxel3d' | 'animacion',
   view3d: { yaw: -30, elevation: 35, zoom: 12, panX: 0, panY: 0 },   // pan: desplazamiento de la vista en píxeles
   explore: { height: 1, fov: 70 },                // Explorar: la altura del caminante (vóxeles) y su campo de visión

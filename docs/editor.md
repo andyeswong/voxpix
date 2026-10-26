@@ -88,16 +88,16 @@ parpadeo, y *Ambiente* oscurece el resto. Poner una luz la enciende sola.
 
 ## Animación
 
-**Animación** es uno de los modos de arriba (Capas, 3D, Animación, Explorar). Se edita por capas, y solo en este
-modo aparece la **barra de animación**: una ventana flotante como las demás (se arrastra por su cabecera, se aparta
+**Animación** es uno de los modos de arriba (Capas, 3D, Animación, Explorar). Se edita en **3D** (la animación es
+de vóxeles), y solo en este modo aparece la **barra de animación**: una ventana flotante como las demás (se arrastra por su cabecera, se aparta
 de los menús y recuerda su sitio) con los cuadros de la animación y el actual resaltado. Cada cuadro es el modelo
 entero; se edita el actual con las herramientas de siempre, y cada cuadro tiene su deshacer.
 
 - **◀ ▶ ▶|**: cuadro anterior, reproducir en bucle, siguiente. **+ Cuadro** copia el actual detrás; **Vacío** pone uno
   vacío; **← →** lo mueven; **Borrar** lo quita.
 - **ms**: la duración del cuadro (con **todos**, la de todos).
-- **Cebolla**: en el editor por capas se ven, como recuadros fantasma, los vóxeles del cuadro anterior que el actual
-  no tiene o tiene de otro color.
+- **Cebolla**: el cuadro anterior se ve en fantasma (con la misma cámara) donde tiene algo que el actual no tiene o
+  tiene más cerca: así se ve cuánto se movió cada pieza.
 - **Rig…** abre el rig por partes: cada parte es una caja de vóxeles (y, si quieres, solo unas rampas) con su
   pivote (la cadera) y su pie; cada cuadro del rig dice cuánto se mueve cada parte (dx, dy, dz) y cuánto adelanta el
   pie (paso). **Generar cuadros** rehace los cuadros 1..n desde el cuadro 0, que pasa a ser la pose de reposo (R).

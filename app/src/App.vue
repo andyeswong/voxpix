@@ -183,7 +183,7 @@ void version;
   <!-- El lienzo ocupa toda la ventana; todo lo demás flota encima -->
   <Explorer v-if="ui.explore" />
   <main class="stage" :style="{ '--free-left': ui.layersOpen ? '256px' : '24px', '--free-right': ui.previewOpen ? '392px' : '24px' }">
-    <LayerEditor v-if="editor.mode === 'layers' || editor.mode === 'animacion'" />
+    <LayerEditor v-if="editor.mode === 'layers'" />
     <Voxel3DEditor v-else />
   </main>
 
@@ -214,7 +214,7 @@ void version;
     <div class="seg big">
       <button :class="{ on: editor.mode === 'layers' }" title="Editar por capas (Tab)" @click="editor.mode = 'layers'"><PxIcon name="layers" />Capas</button>
       <button :class="{ on: editor.mode === 'voxel3d' }" title="Editar sobre el modelo en 3D (Tab)" @click="editor.mode = 'voxel3d'"><PxIcon name="cube" />3D</button>
-      <button :class="{ on: editor.mode === 'animacion' }" title="Animar: cuadros, cebolla, rig y exportar (por capas)" @click="editor.mode = 'animacion'"><PxIcon name="anim" />Animación</button>
+      <button :class="{ on: editor.mode === 'animacion' }" title="Animar en 3D: cuadros, cebolla, rig y exportar" @click="editor.mode = 'animacion'"><PxIcon name="anim" />Animación</button>
       <button title="Caminar por dentro del modelo en primera persona" @click="ui.explore = true"><PxIcon name="walk" />Explorar</button>
     </div>
   </div>
@@ -254,7 +254,7 @@ void version;
   <div class="float bottom" data-repel>
     <div class="pill options">
       <strong>{{ TOOLS.find((x) => x[0] === editor.tool)?.[2] }}</strong>
-      <span class="hint">{{ editor.tool === 'fluid' && fluidState.fillMode ? 'clic llena de agua hasta esa altura' : editor.tool === 'fluid' && fluidState.faucetMode ? 'clic pone o quita un grifo' : editor.mode === 'voxel3d' ? (TOOL_HINT_3D[editor.tool] ?? TOOL_HINT[editor.tool]) : TOOL_HINT[editor.tool] }}</span>
+      <span class="hint">{{ editor.tool === 'fluid' && fluidState.fillMode ? 'clic llena de agua hasta esa altura' : editor.tool === 'fluid' && fluidState.faucetMode ? 'clic pone o quita un grifo' : editor.mode !== 'layers' ? (TOOL_HINT_3D[editor.tool] ?? TOOL_HINT[editor.tool]) : TOOL_HINT[editor.tool] }}</span>
       <template v-if="editor.tool === 'light'">
         <select v-model="editor.light.kind"><option v-for="[k, name] in LIGHT_KINDS" :key="k" :value="k">{{ name }}</option></select>
       </template>
@@ -268,7 +268,7 @@ void version;
         <span v-if="fluidState.faucets.length" class="hint">{{ fluidState.faucets.length }} grifo(s)</span>
         <button v-if="fluidState.running" @click="settleNow">Fijar ({{ fluidState.cells }})</button>
       </template>
-      <span v-if="editor.mode === 'voxel3d'" class="hint">· botón derecho gira · botón del medio mueve · rueda acerca</span>
+      <span v-if="editor.mode !== 'layers'" class="hint">· botón derecho gira · botón del medio mueve · rueda acerca</span>
       <label v-if="editor.mirrorX" class="mirror">espejo x = <input type="number" v-model.number="editor.mirrorAxis" /></label>
     </div>
     <div class="row">
