@@ -40,7 +40,7 @@ el resultado se ve en la app, como si lo hiciera una persona.
 | `canvas(w, d, h, crop?)` | lienzo | Cambia el tamaño del lienzo. Con `crop`, borra lo que queda fuera. |
 | `load(json)` | `info()` | Abre un `.voxpix.json`, como objeto o como texto. |
 | `save()` | objeto | El `.voxpix.json` del modelo, con sus luces. |
-| `importPxl(source, prefijo?)` | `info()` | Un `.px.js`: su pila de capas `<prefijo>_zNN` como modelo nuevo, con la paleta del archivo. |
+| `importPxl(source, prefijo?)` | promesa de `info()` | Un `.px.js`: su pila de capas `<prefijo>_zNN` como modelo nuevo, con la paleta del archivo. El `.px.js` es código: se ejecuta en un worker aparte, sin acceso a la página, la red ni el almacenamiento, y lo que devuelve se valida. |
 
 ### Pintar
 

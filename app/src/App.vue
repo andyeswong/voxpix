@@ -18,7 +18,8 @@ import type { LightKind, Tool } from './store';
 import { Model, assertClosedPalette } from '@core/index';
 import { frameFor, renderModel, probeGpu, viewOptions, pngBlob } from './preview';
 import { fluidState, settleNow, startPour, stopPour } from './fluidTool';
-import { loadPxl, pxlAssets, paletteFromPxl, spriteToVoxels, toPxlSource, stackPrefixes, stackFromPxl, toPxlStack, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
+import { toPxlSource, toPxlStack } from '../../src/pxl/bridge';
+import { inspectPxl, pxlModel, pxlSpriteInto, pxlStackModel } from './pxl/sandbox';
 
 const LIGHT_KINDS: Array<[LightKind, string]> = [['torch', 'antorcha'], ['lamp', 'lámpara'], ['brazier', 'brasero'], ['neon-pink', 'neón rosa'], ['neon-cyan', 'neón cian'], ['screen', 'pantalla']];
 const TOOLS: Array<[Tool, string, string, string, string]> = [
@@ -70,12 +71,12 @@ function open(e: Event): void {
 // ---- pxl
 const pxl = ref<{ name: string; source: string; sprites: string[]; stacks: string[]; sprite: string; plane: 'front' | 'top'; error: string } | null>(null);
 
+// Un .px.js es código: se ejecuta en un worker aparte, nunca en la página (app/src/pxl/sandbox.ts)
 function importPxl(e: Event): void {
-  readFile(e, (source, name) => {
+  readFile(e, async (source, name) => {
     try {
-      const p = loadPxl(source, name);
-      const sprites = pxlAssets(p);
-      pxl.value = { name, source, sprites, stacks: stackPrefixes(p), sprite: sprites[0] ?? '', plane: 'front', error: '' };
+      const { sprites, stacks } = await inspectPxl(source, name);
+      pxl.value = { name, source, sprites, stacks, sprite: sprites[0] ?? '', plane: 'front', error: '' };
     } catch (err) {
       pxl.value = { name, source, sprites: [], stacks: [], sprite: '', plane: 'front', error: String(err) };
     }
@@ -83,36 +84,35 @@ function importPxl(e: Event): void {
 }
 
 // Modelo nuevo con la paleta del arte (y el sprite, si se eligió)
-function pxlAsNew(withSprite: boolean): void {
+async function pxlAsNew(withSprite: boolean): Promise<void> {
   const d = pxl.value!;
-  const p = loadPxl(d.source, d.name);
-  const m = new Model(applyDirectives(paletteFromPxl(p, withSprite ? d.sprite : undefined), pxlDirectives(d.source)), withSprite ? d.sprite : d.name.replace(/\.px\.[jt]s$/, ''));
-  if (withSprite) spriteToVoxels(p, d.sprite, m, { plane: d.plane, z: editor.z });
-  replaceModel(m);
-  pxl.value = null;
+  try {
+    const m = await pxlModel(d.source, d.name, { modelName: withSprite ? d.sprite : d.name.replace(/\.px\.[jt]s$/, ''), ...(withSprite ? { sprite: d.sprite } : {}), plane: d.plane, z: editor.z });
+    replaceModel(m);
+    pxl.value = null;
+  } catch (err) { d.error = String(err); }
 }
 
 // El sprite dentro del modelo actual, con los colores más cercanos de su paleta (deshacer lo quita)
-function pxlIntoCurrent(): void {
+async function pxlIntoCurrent(): Promise<void> {
   const d = pxl.value!;
-  const p = loadPxl(d.source, d.name);
-  const tmp = new Model(model.value.palette);
-  spriteToVoxels(p, d.sprite, tmp, { plane: d.plane, z: editor.z });
-  history.value.begin();
-  for (const [x, y, z, v] of tmp.entries()) paint(x, y, z, v);
-  history.value.commit();
-  touch();
-  pxl.value = null;
+  try {
+    const vox = await pxlSpriteInto(d.source, d.name, model.value.palette, { sprite: d.sprite, plane: d.plane, z: editor.z });
+    history.value.begin();
+    for (const [x, y, z, v] of vox) paint(x, y, z, v);
+    history.value.commit();
+    touch();
+    pxl.value = null;
+  } catch (err) { d.error = String(err); }
 }
 
 // Modelo nuevo desde una pila de capas <prefijo>_zNN
-function pxlStack(prefix: string): void {
+async function pxlStack(prefix: string): Promise<void> {
   const d = pxl.value!;
-  const p = loadPxl(d.source, d.name);
-  const m = new Model(applyDirectives(paletteFromPxl(p, `${prefix}_z00`), pxlDirectives(d.source)), prefix);
-  try { stackFromPxl(p, prefix, m); } catch (err) { d.error = String(err); return; }
-  replaceModel(m);
-  pxl.value = null;
+  try {
+    replaceModel(await pxlStackModel(d.source, d.name, prefix));
+    pxl.value = null;
+  } catch (err) { d.error = String(err); }
 }
 
 function exportStack(): void {

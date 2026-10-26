@@ -13,7 +13,7 @@ import { pngBlob, renderExplore } from './preview';
 import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, setRig, generateFromRig, frameMs as framesMs, toFile, loadAnimated, sheetPng, animGif } from './anim';
 import { fx, FX_KINDS, addEffect, removeEffect, burstEffect, type EffectSource } from './effects';
 import type { RigSpec } from '../../src/anim/rig';
-import { loadPxl, paletteFromPxl, stackFromPxl, stackPrefixes, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
+import { inspectPxl, pxlStackModel } from './pxl/sandbox';
 import { SOURCE_PRESETS } from '../../src/lighting';
 import { PRESET_PALETTES } from '../../src/samples/palettes';
 import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps } from './paletteOps';
@@ -85,7 +85,7 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   newModel(name, w, d, h)                  modelo vacío con la paleta actual
   load(json)                               abre un .voxpix.json (objeto o texto)
   save()                                   el .voxpix.json (objeto)
-  importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo
+  importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo (promesa: se ejecuta aparte)
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
   png({sheet?, scale?})                    PNG de la vista (o la hoja de ángulos), en base64; con luz si lit
   firstPerson({x, y, z, yaw?, pitch?, fov?, width?, height?, scale?})   PNG en primera persona desde ese ojo
@@ -289,13 +289,11 @@ export const api = {
 
   save() { return toFile(api.lights()); },
 
-  importPxl(source: string, stackPrefix?: string) {
-    const p = loadPxl(source, 'api.px.js');
-    const prefix = stackPrefix ?? stackPrefixes(p)[0];
+  // El .px.js se ejecuta en un worker aparte, no en la página: por eso es una promesa
+  async importPxl(source: string, stackPrefix?: string) {
+    const prefix = stackPrefix ?? (await inspectPxl(source, 'api.px.js')).stacks[0];
     if (!prefix) throw new Error('el .px.js no tiene capas <prefijo>_zNN');
-    const m = new Model(applyDirectives(paletteFromPxl(p, `${prefix}_z00`), pxlDirectives(source)), prefix);
-    stackFromPxl(p, prefix, m);
-    replaceModel(m);
+    replaceModel(await pxlStackModel(source, 'api.px.js', prefix));
     return api.info();
   },
 
