@@ -158,6 +158,22 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
 
+## Resaltar un objeto del escenario
+
+Para señalar algo que es parte del escenario horneado (la fuente, un adorno) sin rehornear:
+
+```ts
+compositor.frame(rs, baked, { ...opciones, highlight: { box: view.viewBox([x0, y0, z0, x1, y1, z1]), color: [255, 214, 102], width: 2 } });
+```
+
+- `box`: la caja del objeto, en celdas del mundo (con `view.viewBox` pasa a los ejes de la vista girada). Que empiece
+  por encima del suelo: si incluye el suelo, el aro rodea también el suelo.
+- Se pinta un aro de `width` píxeles (1 a 4) con `color` y luz propia, solo por FUERA de la silueta (el interior de
+  un pilón no lleva aro). Las entidades que pasan por delante lo tapan.
+- La máscara se calcula una vez por horneado y caja (y otra vez si se rehornea): por cuadro solo se pinta. El pulso
+  lo pone quien llama, cambiando `color`; `highlight: null` lo apaga.
+- La CPU y la GPU dan lo mismo (el oráculo del juego lo prueba con la fuente en los 4 giros).
+
 ## Lo que flota
 
 `state.floaters` (`src/world/floaters.ts`) mueve cosas que flotan en el agua: nenúfares, hojas, maderas. Cada

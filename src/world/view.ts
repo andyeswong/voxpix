@@ -261,6 +261,12 @@ export class WorldView implements RenderState {
     this.dropsView?.refresh();
   }
 
+  // Una caja del mundo (x0, y0, z0, x1, y1, z1, celdas incluidas) en ejes de esta vista: para Frame2DOptions.highlight
+  viewBox(box: readonly [number, number, number, number, number, number]): [number, number, number, number, number, number] {
+    const [ax, ay] = this.camera.cellToView(box[0], box[1]), [bx, by] = this.camera.cellToView(box[3], box[4]);
+    return [Math.min(ax, bx), Math.min(ay, by), Math.min(box[2], box[5]), Math.max(ax, bx), Math.max(ay, by), Math.max(box[2], box[5])];
+  }
+
   // ---- de la pantalla al mundo (puntero y toques)
   // El vóxel (en ejes del MUNDO) que se ve en un píxel de la imagen horneada de esta vista, o null
   voxelAt(b: Baked, sx: number, sy: number): [number, number, number] | null {

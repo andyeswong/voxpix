@@ -12,7 +12,7 @@
 //     (dónde va, qué sprite) y la tabla de luces.
 import { DIR_VECTORS, unkey } from '../../core';
 import { resolveLight } from '../../world/lightutil';
-import { backlitAt, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
+import { backlitAt, highlightMask, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
@@ -71,6 +71,8 @@ export class GpuCompositor {
   // código elige su valor en backVals (0 = nada); si la paleta no tiene, b.face tal cual
   private faceUp: Int8Array | null = null;
   private backVals: Float32Array<ArrayBuffer> = new Float32Array(16);
+  private tHl: WebGLTexture | null = null;
+  private hlMask: Uint8Array | null = null;
   private tWeights: WebGLTexture | null = null;
   private weightZones: BakedLight[] = [];
   // Los otros horneados ya subidos (los giros guardados de una vista girada, el nivel anterior...): volver a uno solo
@@ -256,6 +258,23 @@ export class GpuCompositor {
     bindTex(gl, 10, gl.TEXTURE_2D, E.contact, s.u.uContact);
     bindTex(gl, 7, gl.TEXTURE_3D, this.tOcc, s.u.uOcc);
     bindTex(gl, 9, gl.TEXTURE_2D, this.tWorldY, s.u.uWorldY);
+    // El resalte de un objeto del escenario: la máscara del aro se sube solo cuando cambia (highlightMask la guarda)
+    const hl = o.highlight ? highlightMask(b, o.highlight) : null;
+    gl.uniform1i(s.u.uHl, hl ? 1 : 0);
+    if (hl) {
+      if (this.hlMask !== hl.mask) {
+        if (this.tHl) gl.deleteTexture(this.tHl);
+        const [, , rw, rh] = hl.rect;
+        const bytes = new Uint8Array(rw * rh);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = hl.mask[i] ? 255 : 0;
+        this.tHl = tex2D(gl, gl.R8, rw, rh, gl.RED, gl.UNSIGNED_BYTE, bytes);
+        this.hlMask = hl.mask;
+      }
+      bindTex(gl, 12, gl.TEXTURE_2D, this.tHl, s.u.uHlMask);
+      gl.uniform4i(s.u.uHlRect, ...hl.rect);
+      const c = o.highlight!.color;
+      gl.uniform3f(s.u.uHlColor, c[0] / 255, c[1] / 255, c[2] / 255);
+    } else gl.uniform1i(s.u.uHlMask, 12);
     const a = b.options.oblique?.y ?? 1;
     gl.uniform2i(s.u.uView, o.vx, o.vy);
     const bg = o.background ?? BACKGROUND;

@@ -59,6 +59,7 @@ interface Scenario {
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
+  highlight?: (w: World) => [number, number, number, number, number, number];   // resaltar esa caja del mundo
   pos?: [number, number];
   ticks: number;
   stompEvery?: number;
@@ -237,6 +238,16 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   });
 }
 for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `oficina vidrio, giro ${q}`, theme: 'oficina', ticks: 60, quarter: q, glass: true });
+// El resalte de un objeto del escenario (la fuente, al acabar la oleada), con MAIAs alrededor que lo tapan en parte
+for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({
+  name: `medieval fuente resaltada, giro ${q}`, theme: 'medieval', ticks: 60, quarter: q,
+  highlight: (w) => { const f = w.fountain!; const r = Math.ceil(f.radius) + 3; return [Math.floor(f.x) - r, Math.floor(f.y) - r, 1, Math.floor(f.x) + r, Math.floor(f.y) + r, f.bowl.z + 3]; },   // desde z = 1: el suelo no es la fuente
+  setup: (s, rt) => {
+    const f = s.fountain!;
+    for (const [dx, dy] of [[-20, -18], [0, -21], [21, -10], [-8, 19]] as const) s.entities.add({ model: maiaModel, x: Math.round(f.x + dx), y: Math.round(f.y + dy), z: s.groundAt(f.x + dx, f.y + dy), facing: 0, castsShadow: true });
+    rt.player.x = f.x - 30; rt.player.y = f.y - 30; rt.syncEntity();
+  },
+});
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
 }
@@ -329,7 +340,8 @@ async function run(): Promise<void> {
     const maia = view.frame().entities.find((e) => e.id === rt.entityId)!;
     const { vx, vy } = viewOf(view.camera.viewDepth, b, maia.x, maia.y, maia.z);
     const ambient = THEMES[sc.theme].ambient;
-    const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient, ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}) };
+    const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
+      ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');

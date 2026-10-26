@@ -23,6 +23,69 @@ export interface Frame2DOptions {
   detail?: 'completo' | 'bajo';
   // Tope de luces por entidad: solo las N más cercanas (de las que llegan) alumbran a cada una. Sin tope, todas.
   entityLightCap?: number;
+  // Resaltar un objeto ESTÁTICO del escenario horneado (la fuente, un adorno): un aro de `width` píxeles de `color`
+  // (0..255), con luz propia, alrededor de lo que se ve de los vóxeles de la caja (ejes del horneado: para una vista
+  // girada, WorldView.viewBox). Sin rehornear; las entidades que pasan por delante lo tapan. El pulso, quien llama
+  // (cambiando el color en cada cuadro). null o sin campo: nada.
+  highlight?: Highlight | null;
+}
+
+export interface Highlight {
+  box: readonly [number, number, number, number, number, number];
+  color: readonly [number, number, number];
+  width?: number;
+}
+
+// La máscara del aro de un resalte: en el recuadro de pantalla del objeto, 1 donde va el aro (fuera de los píxeles del
+// objeto y a `width` o menos de ellos, en 4 vecinos). Se guarda por horneado, caja y anchura, y se rehace si el
+// horneado publica algo nuevo (un rehorneado)
+const hlCache = new WeakMap<Baked, { key: string; rect: [number, number, number, number]; mask: Uint8Array }>();
+export function highlightMask(b: Baked, h: Highlight): { rect: [number, number, number, number]; mask: Uint8Array } | null {
+  const w = Math.max(1, Math.min(4, Math.round(h.width ?? 1)));
+  const k = `${h.box.join(',')}|${w}|${b.published.serial}|${b.version}`;
+  const hit = hlCache.get(b);
+  if (hit && hit.key === k) return hit;
+  const [x0, y0, z0, x1, y1, z1] = h.box;
+  const lo = [Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1)], hi = [Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1)];
+  let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+  for (const x of [lo[0]!, hi[0]! + 1]) for (const y of [lo[1]!, hi[1]! + 1]) for (const z of [lo[2]!, hi[2]! + 1]) {
+    const [sx, sy] = b.cam.project(x, y, z);
+    sx0 = Math.min(sx0, sx); sx1 = Math.max(sx1, sx); sy0 = Math.min(sy0, sy); sy1 = Math.max(sy1, sy);
+  }
+  const rx = Math.max(0, Math.floor(sx0) - w - 1), ry = Math.max(0, Math.floor(sy0) - w - 1);
+  const rw = Math.min(b.width, Math.ceil(sx1) + w + 2) - rx, rh = Math.min(b.height, Math.ceil(sy1) + w + 2) - ry;
+  if (rw <= 0 || rh <= 0) return null;
+  let obj = new Uint8Array(rw * rh);
+  for (let j = 0; j < rh; j++) for (let i = 0; i < rw; i++) {
+    const kk = b.pick[(ry + j) * b.width + rx + i]!;
+    if (Number.isNaN(kk)) continue;
+    const [x, y, z] = unkey(kk);
+    if (x >= lo[0]! && x <= hi[0]! && y >= lo[1]! && y <= hi[1]! && z >= lo[2]! && z <= hi[2]!) obj[j * rw + i] = 1;
+  }
+  const inside = obj;
+  for (let n = 0; n < w; n++) {
+    const next = obj.slice();
+    for (let j = 0; j < rh; j++) for (let i = 0; i < rw; i++) {
+      if (obj[j * rw + i]) continue;
+      if ((i > 0 && obj[j * rw + i - 1]) || (i < rw - 1 && obj[j * rw + i + 1]) || (j > 0 && obj[(j - 1) * rw + i]) || (j < rh - 1 && obj[(j + 1) * rw + i])) next[j * rw + i] = 1;
+    }
+    obj = next;
+  }
+  // Solo el contorno EXTERIOR: lo que se alcanza desde el borde del recuadro sin cruzar el objeto (el interior de un
+  // pilón, con el agua, no lleva aro)
+  const outside = new Uint8Array(rw * rh), stack: number[] = [];
+  const seed = (p: number) => { if (!inside[p] && !outside[p]) { outside[p] = 1; stack.push(p); } };
+  for (let i = 0; i < rw; i++) { seed(i); seed((rh - 1) * rw + i); }
+  for (let j = 0; j < rh; j++) { seed(j * rw); seed(j * rw + rw - 1); }
+  while (stack.length) {
+    const p = stack.pop()!, i = p % rw, j = (p - i) / rw;
+    if (i > 0) seed(p - 1); if (i < rw - 1) seed(p + 1); if (j > 0) seed(p - rw); if (j < rh - 1) seed(p + rw);
+  }
+  const mask = new Uint8Array(rw * rh);
+  for (let p = 0; p < mask.length; p++) mask[p] = obj[p] && !inside[p] && outside[p] ? 1 : 0;
+  const out = { key: k, rect: [rx, ry, rw, rh] as [number, number, number, number], mask };
+  hlCache.set(b, out);
+  return out;
 }
 
 // Lienzo del render de una entidad y dónde caen sus pies
@@ -91,6 +154,19 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     return [total[q]!, total[q + 1]!, total[q + 2]!] as const;
   }) : [];
   if (total) for (const d of sprites) contactShadow(d, total, o);
+  // El resalte: el aro con su color y luz propia (después de las sombras de contacto, antes de las entidades)
+  const hl = o.highlight ? highlightMask(b, o.highlight) : null;
+  if (hl) {
+    const [rx, ry, rw, rh] = hl.rect, c = o.highlight!.color;
+    for (let j = 0; j < rh; j++) for (let i = 0; i < rw; i++) {
+      if (!hl.mask[j * rw + i]) continue;
+      const x = rx + i - vx, y = ry + j - vy;
+      if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+      const t = y * vw + x;
+      view[t * 4] = c[0]; view[t * 4 + 1] = c[1]; view[t * 4 + 2] = c[2];
+      if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
+    }
+  }
   // La profundidad de cada píxel de entidad se calcula en float32 y se compara por la misma clave que el z-buffer de
   // la GPU (entityDepthKey): así, en un casi empate, las dos rutas eligen la misma entidad
   const entDepth = new Float32Array(vw * vh).fill(Infinity), entKey = new Float32Array(vw * vh).fill(Infinity);

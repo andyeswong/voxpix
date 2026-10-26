@@ -62,6 +62,11 @@ uniform sampler2D uDepth;
 uniform isampler2D uFace;
 uniform float uBack[16];               // la luz por detrás de cada código de la cara (compositor.ts, backlitCodes)
 uniform sampler2D uWorldY;             // la y del mundo de cada píxel (calculada en la CPU en doble precisión)
+// El resalte (frame2d.ts, highlightMask): el aro, en su recuadro de la imagen horneada, con su color y luz propia
+uniform bool uHl;
+uniform sampler2D uHlMask;
+uniform ivec4 uHlRect;
+uniform vec3 uHlColor;                 // 0..1
 uniform sampler2DArray uWeights;
 uniform sampler2D uEntColor;             // la capa de entidades (paso de entidades): color, su luz y profundidad
 uniform sampler2D uEntLight;
@@ -183,6 +188,10 @@ void main() {
   }
   // Las sombras de contacto, y encima la entidad más cercana si está delante de lo que hay
   if (uLights) total *= texelFetch(uContact, t, 0).rgb;
+  if (uHl) {
+    ivec2 h = s - uHlRect.xy;
+    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); }
+  }
   float ed = texelFetch(uEntDepth, t, 0).r;
   if (ed < depth - 0.5) {
     depth = ed;
