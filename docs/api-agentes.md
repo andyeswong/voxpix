@@ -150,6 +150,7 @@ Cada rampa es un material: un juego de propiedades que el motor lee por separado
 | `backlit` | luz que recibe una cara iluminada por detrás | 0 |
 | `bed` | en el juego, el agua lo cuenta como fondo y pared | `true` |
 | `blocks` | en el juego, bloquea el paso (jugador, entidades, disparos) | `true` |
+| `climb` | en el juego, se puede subir y pisar; con `false`, la columna que lo tiene arriba es como una pared, a cualquier altura | `true` |
 | `emissive` | brilla solo | `false` |
 | `reflect` | **NO IMPLEMENTADO**: reservado para los reflejos (metal, agua). Hoy no lo pinta ningún render: no lo uses esperando reflejos | 0 |
 
@@ -157,7 +158,7 @@ Cada rampa es un material: un juego de propiedades que el motor lee por separado
 |---|---|---|
 | `solido` | lo de siempre | las del sólido |
 | `follaje` | hierba, flores, hojas | `light` 0,5, `backlit` 0,25, `bed` y `blocks` no |
-| `arbusto` | follaje que no se atraviesa | como el follaje, con `blocks` |
+| `arbusto` | follaje que no se atraviesa ni se sube | como el follaje, con `blocks` y `climb: false` |
 | `vidrio` | translúcido: ventanas, mamparas | `light` 0,85 (pasa la luz; se ve como un bloque de su color, no a través) |
 | `metal` | metal | `reflect` 0,6 (reservado) |
 

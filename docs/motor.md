@@ -93,7 +93,9 @@ state.entities.remove(id);
 - Los materiales del escenario (docs/render.md, Materiales) mandan en el mundo: la luz horneada atraviesa lo que deja
   pasar luz (follaje, vidrio) y las caras con `backlit` reciben luz por detrás, también de las luces dinámicas.
   `groundAt`, `solidAt` y `raycast` atraviesan lo que no bloquea (la hierba; no los arbustos ni el vidrio), y el agua
-  se apoya en `floorAt`, el suelo sin lo que no es fondo (el follaje). `planFoliage` (src/core) coloca
+  se apoya en `floorAt`, el suelo sin lo que no es fondo (el follaje). `standable` no deja pisar una columna cuyo
+  vóxel de arriba no se sube (`climb: false`, los arbustos): es como una pared a cualquier altura, y su cúpula ya no
+  sirve de escalera. `planFoliage` (src/core) coloca
   vegetación en cualquier cosa con `palette` y `get`, también en un `StaticVoxels`.
 - El sprite de cada modelo y giro se guarda (con tope: los menos usados se sueltan). Conviene girar en los 8 rumbos
   (`HEADINGS` de `world/frame2d`) y precalentar con `compositor.prewarm` lo que vaya a salir, para que el primer

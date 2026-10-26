@@ -89,25 +89,25 @@ export class StaticVoxels implements VoxelSource {
   // ---- los materiales (materials.ts): lo que no es fondo (bed) no cuenta para el agua, y lo que no bloquea (blocks)
   // se atraviesa andando. Las dos alturas se calculan por columna al pedirlas; si la paleta no tiene materiales
   // especiales son la rejilla height.
-  private fgrid: { mt: MaterialTable; floor: Int16Array; walk: Int16Array; dirty: Uint8Array } | null = null;
+  private fgrid: { mt: MaterialTable; floor: Int16Array; walk: Int16Array; noClimb: Uint8Array; dirty: Uint8Array } | null = null;
   private foliageGrid() {
     const mt = materialsOf(this.palette);
     if (!mt) return null;
     if (this.fgrid?.mt !== mt) {
       const n = this.width * this.depth;
-      this.fgrid = { mt, floor: new Int16Array(n), walk: new Int16Array(n), dirty: new Uint8Array(n).fill(1) };
+      this.fgrid = { mt, floor: new Int16Array(n), walk: new Int16Array(n), noClimb: new Uint8Array(n), dirty: new Uint8Array(n).fill(1) };
     }
     return this.fgrid;
   }
   private column(g: NonNullable<StaticVoxels['fgrid']>, x: number, y: number, h: number): void {
-    let floor = this.zMin, walk = this.zMin;
+    let floor = this.zMin, walk = this.zMin, noClimb = 0;
     for (let z = this.height[h]! - 1; z >= this.zMin && (floor === this.zMin || walk === this.zMin); z--) {
       const v = this.get(x, y, z);
       if (!v) continue;
       if (floor === this.zMin && g.mt.bed[v]) floor = z + 1;
-      if (walk === this.zMin && g.mt.blocks[v]) walk = z + 1;
+      if (walk === this.zMin && g.mt.blocks[v]) { walk = z + 1; noClimb = g.mt.climb[v] ? 0 : 1; }
     }
-    g.floor[h] = floor; g.walk[h] = walk; g.dirty[h] = 0;
+    g.floor[h] = floor; g.walk[h] = walk; g.noClimb[h] = noClimb; g.dirty[h] = 0;
   }
   // La cara de arriba del vóxel más alto que no es follaje (el fondo del agua)
   floorAt(x: number, y: number): number {
@@ -124,6 +124,15 @@ export class StaticVoxels implements VoxelSource {
     if (!g) return this.height[h]!;
     if (g.dirty[h]) this.column(g, x, y, h);
     return g.walk[h]!;
+  }
+  // ¿Se puede pisar lo de arriba de la columna? No si es de un material que no se sube (un arbusto): la columna es
+  // como una pared, a cualquier altura
+  climbableAt(x: number, y: number): boolean {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return true;
+    const h = y * this.width + x, g = this.foliageGrid();
+    if (!g) return true;
+    if (g.dirty[h]) this.column(g, x, y, h);
+    return !g.noClimb[h];
   }
   // ¿Bloquea el paso este valor de vóxel? (todo lo lleno, menos el follaje que se atraviesa)
   blocks(v: number): boolean {
@@ -542,10 +551,11 @@ export class WorldState {
   }
 
   // ¿Cabe un pie en (x, y) viniendo de la altura feetZ? Sube como mucho `step`; bajar, lo que sea (sin vacío).
-  // El agua más honda que `maxWater` no se puede pisar.
+  // El agua más honda que `maxWater` no se puede pisar, ni lo que no se sube (materials.ts, climb: los arbustos)
   standable(x: number, y: number, feetZ: number, step: number, maxWater = 4.5): boolean {
     const xi = Math.floor(x), yi = Math.floor(y);
     if (!this.solid.hasColumn(xi, yi)) return false;
+    if (!this.solid.climbableAt(xi, yi)) return false;
     if (this.groundAt(xi, yi) - feetZ > step) return false;
     const w = this.waterAt(xi, yi);
     return !(w && w.depth > maxWater);

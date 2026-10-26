@@ -6,11 +6,12 @@ import { bakeWorld } from '../src/world/bake';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WaterLayer } from '../src/world/water';
 import type { World } from '../src/world/build';
+import { Runtime } from '../src/runtime/runtime';
 
 describe('las propiedades de una rampa', () => {
   it('sin material es el sólido; los materiales con nombre y las props se suman encima; la forma vieja sigue valiendo', () => {
     const r = (x: Partial<Ramp>): Ramp => ({ name: 'r', colors: ['#000000'], ...x });
-    expect(rampMaterial(r({}))).toEqual({ light: 0, backlit: 0, bed: true, blocks: true, emissive: false, reflect: 0 });
+    expect(rampMaterial(r({}))).toEqual({ light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0 });
     expect(rampMaterial(r({ material: 'vidrio' }))).toMatchObject({ light: 0.85, bed: true, blocks: true });
     expect(rampMaterial(r({ material: 'vidrio', props: { light: 0.6 } })).light).toBe(0.6);
     expect(rampMaterial(r({ kind: 'foliage' }))).toEqual(rampMaterial(r({ material: 'follaje' })));
@@ -103,5 +104,41 @@ describe('el vidrio', () => {
     };
     expect(west(stone)).toBe(0);
     expect(west(glass)).toBeGreaterThan(0);
+  });
+});
+
+// FERN (medieval, semilla 1): la cúpula de un arbusto (alturas 1-2-3-4) se subía como una escalera con step 2, y desde
+// la cima el cuerpo pasaba a lo alto de la pared sur. Un arbusto no se sube ni se pisa (climb: false), a cualquier altura
+describe('los arbustos no se suben', () => {
+  const PAL = { ramps: [{ name: 'suelo', colors: ['#404040'] }, { name: 'arbusto', colors: ['#2f6b32'], material: 'arbusto' }, { name: 'muro', colors: ['#606060'] }] };
+  function scene(): WorldState {
+    const s = new StaticVoxels(structuredClone(PAL), 40, 24, -2, 12);
+    for (let y = 0; y < 24; y++) for (let x = 0; x < 40; x++) s.set(x, y, 0, material(0, 0));
+    // Una escalera de arbusto (1, 2, 3, 4 de alto, de 2 en 2 columnas) y una pared de 6 justo detrás de la cima
+    for (let k = 0; k < 4; k++) for (let x = 10 + k * 2; x < 12 + k * 2; x++) for (let y = 4; y < 20; y++) for (let z = 1; z <= k + 1; z++) s.set(x, y, z, material(1, 0));
+    for (let x = 18; x < 22; x++) for (let y = 4; y < 20; y++) for (let z = 1; z <= 6; z++) s.set(x, y, z, material(2, 0));
+    return new WorldState(s, [], null);
+  }
+
+  it('la columna de arbusto no se pisa a ninguna altura; el suelo y la pared, como siempre', () => {
+    const w = scene();
+    expect(w.standable(10.5, 10.5, 1, 2)).toBe(false);      // el primer escalón (1 sobre el suelo)
+    expect(w.standable(16.5, 10.5, 4, 2)).toBe(false);      // la cima, viniendo de su misma altura
+    expect(w.standable(16.5, 10.5, 9, 2)).toBe(false);      // ni cayendo desde arriba
+    expect(w.standable(5.5, 10.5, 1, 2)).toBe(true);
+    expect(w.standable(19.5, 10.5, 6, 2)).toBe(true);       // lo alto de la pared sigue siendo pisable desde su altura
+    expect(w.solid.climbableAt(5, 10)).toBe(true);
+  });
+
+  it('un cuerpo que empuja contra la escalera de arbusto se queda en el suelo', () => {
+    const w = scene();
+    const rt = new Runtime(w, { x: 5, y: 12 }, { radius: 4, speed: 70 });
+    for (let t = 0; t < 240; t++) rt.step({ dx: 1, dy: 0, stomp: false });
+    expect(rt.player.z).toBe(1);
+    expect(rt.player.x).toBeLessThan(10);
+  });
+
+  it('una paleta sin materiales que no se suben sigue por el camino de siempre', () => {
+    expect(materialsOf({ ramps: [{ name: 'a', colors: ['#000000'] }] })).toBeNull();
   });
 });

@@ -72,7 +72,7 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   fxPause(on?)                             para o sigue las partículas
   palette([{name, colors, emissive?, material?, props?}], outline?)   cambia la paleta entera. material: ${Object.keys(MATERIALS).join(', ')}
                                            (follaje: la luz lo atraviesa y se anda a través; vidrio: pasa la luz, no el agua
-                                           ni el jugador); props ajusta {light, backlit, bed, blocks, emissive, reflect} (rampas de oscuro a claro; no se deshace)
+                                           ni el jugador); props ajusta {light, backlit, bed, blocks, climb, emissive, reflect} (rampas de oscuro a claro; no se deshace)
   materials()                              los materiales que puede llevar una rampa, con sus propiedades
                                            (reflect está reservado: todavía no refleja nada)
   ramp(name, '#rrggbb', {tones?, hueShift?})        una rampa nueva generada desde un color; da su índice
