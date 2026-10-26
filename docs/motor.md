@@ -176,6 +176,16 @@ const plan = planFoliage(m, ..., { type: 'lilies', waterDepth: worldWaterDepth(w
 - Entran en la instantánea y en la huella del mundo (un mundo sin flotantes da la huella de siempre).
 - Las entidades se iluminan como sólidas: los materiales (follaje, vidrio) son del escenario.
 
+## Explorar un mundo en primera persona
+
+`renderFirstPerson` (`src/core/explore.ts`) acepta un `StaticVoxels` con su caja (`bounds`) y el agua del simulador
+como superficie (`water: state.water.firstPersonWater(palette)`, con la rampa del agua de la paleta). La GPU lo hace
+igual (`GpuVoxelRenderer.firstPerson`, con el agua subida como textura en cada cuadro), y el oráculo del render lo
+compara en un mundo medieval mirando un lago. En la demo de escenario, **X** entra en primera persona desde donde
+está MAIA (`?explorar=1&altura=12` arranca así), con las luces del mundo y su parpadeo; **+/-** cambia la altura.
+Las entidades (MAIA, los flotantes) todavía no salen en la primera persona. En la Alienware, a 384x216 sobre un
+mundo de 640x480 con luces: ~30 ms por cuadro (escena ~16, luz ~11, capas ~3).
+
 ## Determinismo
 
 `state.step()` avanza 1/60 s fijos, sin reloj ni `Math.random`: el azar es un generador con semilla dentro del

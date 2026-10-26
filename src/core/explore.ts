@@ -26,6 +26,19 @@ export interface FpOptions {
   outline?: 'none' | 'outer' | 'both';
   thresholds?: { lit: number; mid: number };
   bounds?: Bounds;                   // la caja del modelo (si no, se calcula)
+  water?: FpWater;                   // el agua como fluido aparte (el mundo del juego): su superficie
+}
+
+// El agua de un mundo para la primera persona: por celda de cell x cell columnas, la altura de la superficie (NaN si
+// está seca) y la profundidad. Se pinta con la rampa `ramp` de la paleta (la del agua): más oscura en lo hondo, con
+// trama entre DEEP_FROM y DEEP_TO como en el 2D
+export interface FpWater { cell: number; gw: number; gh: number; surface: Float32Array; depth: Float32Array; ramp: number }
+export const FP_DEEP_FROM = 3, FP_DEEP_TO = 6;
+const BAYER4 = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
+// La superficie del agua en la columna (x, y), o NaN
+function waterSurface(w: FpWater, x: number, y: number): number {
+  const gx = Math.floor(x / w.cell), gy = Math.floor(y / w.cell);
+  return gx < 0 || gy < 0 || gx >= w.gw || gy >= w.gh ? NaN : w.surface[gy * w.gw + gx]!;
 }
 
 export const FP_SUN: readonly [number, number, number] = [0.45, -0.55, 0.7];
@@ -60,7 +73,8 @@ export function boundsOf(model: VoxelSource): Bounds | null {
 
 // El primer vóxel lleno que cruza el rayo desde (ox, oy, oz) en la dirección d: su celda, la cara por la que entra
 // (índice en DIR_VECTORS) y la distancia. null si sale de la caja o pasa de maxDist.
-export function fpHit(model: VoxelSource, b: Bounds, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number): { x: number; y: number; z: number; face: number; t: number; v: number } | null {
+// Con agua: si el rayo baja y cruza su superficie antes de tocar un vóxel, da el agua (v = 0, water = la celda).
+export function fpHit(model: VoxelSource, b: Bounds, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, maxDist: number, water?: FpWater): { x: number; y: number; z: number; face: number; t: number; v: number; water?: number } | null {
   const len = Math.hypot(dx, dy, dz);
   dx /= len; dy /= len; dz /= len;
   let x = Math.floor(ox), y = Math.floor(oy), z = Math.floor(oz);
@@ -72,6 +86,18 @@ export function fpHit(model: VoxelSource, b: Bounds, ox: number, oy: number, oz:
   // Si el ojo ya está dentro de un vóxel, no se ve ese (como estar pegado a la pared)
   let face = -1, t = 0;
   for (let k = 0; k < 4096; k++) {
+    // El tramo del rayo dentro de esta celda: ¿cruza la superficie del agua de su columna, bajando?
+    if (water && dz < 0) {
+      const s = waterSurface(water, x, y);
+      if (s === s) {
+        const tNext = Math.min(mx, my, mz), zA = oz + dz * t, zB = oz + dz * tNext;
+        if (zA >= s && zB < s) {
+          const tw = (oz - s) / -dz;
+          if (tw > maxDist) return null;
+          return { x, y, z: Math.floor(s - 1e-6), face: 4, t: tw, v: 0, water: Math.floor(y / water.cell) * water.gw + Math.floor(x / water.cell) };
+        }
+      }
+    }
     if (mx <= my && mx <= mz) { t = mx; x += sx; mx += ddx; face = sx > 0 ? 1 : 0; }
     else if (my <= mz) { t = my; y += sy; my += ddy; face = sy > 0 ? 3 : 2; }
     else { t = mz; z += sz; mz += ddz; face = sz > 0 ? 5 : 4; }
@@ -144,9 +170,17 @@ export function renderFirstPerson(model: VoxelSource, cam: FpCamera, o: FpOption
   };
   for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
     const d = fpRay(cam, W, H, i, j);
-    const h = fpHit(model, b, cam.x, cam.y, cam.z, d[0], d[1], d[2], maxDist);
+    const h = fpHit(model, b, cam.x, cam.y, cam.z, d[0], d[1], d[2], maxDist, o.water);
     if (!h) continue;
     const p = j * W + i;
+    if (h.water !== undefined) {
+      // El agua: tono claro u hondo con trama por la profundidad, en la rampa del agua
+      const w = o.water!, deepT = Math.max(0, Math.min(1, (w.depth[h.water]! - FP_DEEP_FROM) / (FP_DEEP_TO - FP_DEEP_FROM)));
+      const n = rampOf(pal, w.ramp).colors.length;
+      color[p] = w.ramp * 16 + Math.max(0, Math.min(n - 1, BAYER4[(i & 3) + ((j & 3) << 2)]! / 16 < deepT ? 1 : 2));
+      depth[p] = h.t;
+      continue;
+    }
     color[p] = toneOf(h.x, h.y, h.z, h.face, h.v);
     depth[p] = h.t;
     pickKey[p] = key(h.x, h.y, h.z);

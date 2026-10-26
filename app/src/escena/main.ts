@@ -15,6 +15,7 @@ import type { WorldState, Entity } from '../../../src/world/state';
 import { FixedLoop, NO_INPUT, Runtime, type TickInput, type CarryConfig } from '../../../src/runtime/runtime';
 import maiaFile from '../../../models/maia/maia.json';
 import { decorate } from './decor';
+import { WorldExplorer } from './explorar';
 import linterna from '../../../models/luces/linterna.json';
 import linternaNeon from '../../../models/luces/linterna-neon.json';
 import antorcha from '../../../models/luces/antorcha.json';
@@ -105,6 +106,9 @@ let state: WorldState | null = null;
 let baked: Baked | null = null;
 let maia: Entity | null = null;
 let mode: '2d' | 'voxel' = q.get('modo') === 'voxel' ? 'voxel' : '2d';
+// X: explorar en primera persona (explorar.ts) desde donde está MAIA. +/-: la altura del personaje invisible
+const explorer = new WorldExplorer();
+let exploreHeight = Number(q.get('altura') ?? 1);
 const vox = { yaw: -30, elevation: 35, zoom: 3, dirty: true };
 let runtime: Runtime | null = null;
 let ticks: FixedLoop | null = null;
@@ -137,12 +141,16 @@ function rebuild(): void {
     bakeMs = Math.round(performance.now() - t0);
     vox.dirty = true;
     loading.style.display = 'none';
+    if (explorer.on) { explorer.stop(); toggleExplore(); }        // explorando: se sigue en el mundo nuevo
+    else if (q.get('explorar') === '1' && !exploredOnce) { exploredOnce = true; toggleExplore(); }
   }, 30);
 }
+let exploredOnce = false;
 
 // La entrada de un tick, leída del teclado. En modo vóxel, las teclas van según la pantalla (arriba = alejarse de la
 // cámara): se giran con el giro de la vista a los ejes del modelo.
 function input(): TickInput {
+  if (explorer.on) { moving = false; stomp = false; return { dx: 0, dy: 0, stomp: false }; }   // explorando, MAIA se queda quieta (Espacio salta)
   let dx = 0, dy = 0;
   if (keys.has('a') || keys.has('arrowleft')) dx--;
   if (keys.has('d') || keys.has('arrowright')) dx++;
@@ -161,6 +169,11 @@ function input(): TickInput {
 let lastVoxelDraw = 0;
 function frame(time: number): void {
   if (!state || !baked || !maia) return;
+  if (explorer.on) {
+    const out = explorer.frame(VW, VH, time, lightsOn, THEMES[theme].ambient, outline);
+    g.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, VW, VH), 0, 0);
+    return;
+  }
   if (mode === 'voxel') {
     // Se redibuja al girar, al hacer zoom y mientras MAIA anda; si no, a pocos Hz para el parpadeo y el agua
     if (!vox.dirty && !moving && time - lastVoxelDraw < 0.15) return;
@@ -199,6 +212,7 @@ function loop(now: number): void {
   last = now;
   if (q.has('agitar') && Math.floor(now / 700) !== Math.floor((now - dt * 1000) / 700)) stomp = true;   // pruebas sin teclado
   ticks?.advance(dt);              // ticks fijos de 1/60: el runtime del juego
+  explorer.step(Math.min(0.1, dt), keys);
   const t0 = performance.now();
   frame(now / 1000);
   if (state && baked && romper?.length === 2 && !roto && runtime && runtime.tick > 180) {
@@ -213,7 +227,8 @@ function loop(now: number): void {
   showRoute();
   hud.textContent = `VoxPix · un solo mundo en vóxeles · ${theme} · semilla ${seed}\n` +
     `horneado ${bakeMs} ms${baked ? ` (render ${baked.ms.render}, luces ${baked.ms.light})` : ''} · cuadro ${avg.toFixed(1)} ms (${compositor.kind}) · luces ${lightsOn ? 'sí' : 'no'} · gotas ${state?.drops.count ?? 0}\n` +
-    (mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · G ${theme === 'medieval' ? 'vegetación' : 'vidrio'} ${deco ? 'sí' : 'no'} · V modo vóxel`
+    (explorer.on ? `EXPLORAR · clic para mirar con el ratón · WASD andar · Espacio saltar · Mayús correr · +/- altura ${explorer.walker!.height} · X o Esc salir · render ${explorer.renderMs.toFixed(1)} ms (escena ${explorer.parts.scene.toFixed(1)}, luz ${explorer.parts.light.toFixed(1)}, capas ${explorer.parts.layers.toFixed(1)})`
+      : mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · G ${theme === 'medieval' ? 'vegetación' : 'vidrio'} ${deco ? 'sí' : 'no'} · V modo vóxel · X explorar`
       : `MODO VÓXEL · WASD andar · arrastrar = girar · rueda = zoom · C contorno · V vuelve al modo 2D`);
   next(loop);
 }
@@ -264,10 +279,32 @@ addEventListener('keydown', (e) => {
   if (k === 'l') { lightsOn = !lightsOn; vox.dirty = true; }
   if (k === 'c') cycleOutline();
   if (k === 'g') { deco = !deco; rebuild(); }
-  if (k === 'v') toggleMode();
+  if (k === 'v' && !explorer.on) toggleMode();
+  if (k === 'x') toggleExplore();
+  if (explorer.on && (k === '+' || k === '=')) { exploreHeight = Math.min(48, exploreHeight + 1); explorer.setHeight(exploreHeight); }
+  if (explorer.on && (k === '-' || k === '_')) { exploreHeight = Math.max(1, exploreHeight - 1); explorer.setHeight(exploreHeight); }
+  if (k === 'escape' && explorer.on && !document.pointerLockElement) toggleExplore();
   if (k === ' ') { stomp = true; e.preventDefault(); }
 });
 addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+
+// Explorar: el lienzo del modo vóxel muestra la primera persona; clic para capturar el ratón y mirar
+function toggleExplore(): void {
+  if (explorer.on) {
+    explorer.stop();
+    if (document.pointerLockElement) document.exitPointerLock();
+    compositor.canvas.style.display = mode === '2d' ? '' : 'none';
+    voxCanvas.style.display = mode === '2d' ? 'none' : '';
+    vox.dirty = true;
+    return;
+  }
+  if (!state || !maia) return;
+  explorer.start(state, { x: maia.x, y: maia.y, z: maia.z }, exploreHeight);
+  compositor.canvas.style.display = 'none';
+  voxCanvas.style.display = '';
+}
+voxCanvas.addEventListener('click', () => { if (explorer.on) voxCanvas.requestPointerLock(); });
+addEventListener('mousemove', (e) => { if (explorer.on && document.pointerLockElement === voxCanvas) explorer.look(e.movementX, e.movementY); });
 
 // Girar y hacer zoom en modo vóxel
 let drag: [number, number] | null = null;

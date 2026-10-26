@@ -7,7 +7,7 @@
 //   3. la CPU lee eso y termina con finishRender (los contornos y los colores), el mismo código que la CPU.
 // Lo que sube: los vóxeles (una lista y una rejilla 3D con el material) cuando cambia el modelo; cada render, solo
 // uniforms.
-import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, FOLIAGE_SUN_MAX, SUN_UNIT, SUN_OPAQUE, sunCost, rampMaterial, materialsOf, fpBasis, FP_FOV, FP_SUN, type FpCamera, type FpOptions, type Palette, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
+import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, FOLIAGE_SUN_MAX, SUN_UNIT, SUN_OPAQUE, sunCost, rampMaterial, materialsOf, fpBasis, FP_FOV, FP_SUN, FP_DEEP_FROM, FP_DEEP_TO, type FpCamera, type FpOptions, type Palette, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
 
 const TW = 1024;                 // ancho de las texturas de lista (vóxeles, caras)
 // El render de la CPU toma la muestra de cada píxel en (i + 0.5 + 1/1024) y decide con sus funciones de arista. La
@@ -346,6 +346,17 @@ bool inShadow(ivec3 c, bool mats) {
   return false;
 }
 uniform bool uMats;                          // la paleta tiene materiales que dejan pasar luz (si no, todo opaco)
+// El agua como fluido aparte (FpWater): superficie (-1e30 si seca) y profundidad por celda de uWCell columnas
+uniform bool uHasWater;
+uniform sampler2D uWSurf, uWDepth;
+uniform int uWCell, uWaterRamp;
+uniform ivec2 uWGrid;
+const int BAYER4[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
+float wSurf(ivec3 c) {
+  int gx = int(floor(float(c.x) / float(uWCell))), gy = int(floor(float(c.y) / float(uWCell)));
+  if (gx < 0 || gy < 0 || gx >= uWGrid.x || gy >= uWGrid.y) return -1e30;
+  return texelFetch(uWSurf, ivec2(gx, gy), 0).r;
+}
 void main() {
   int i = int(gl_FragCoord.x), j = int(gl_FragCoord.y);
   oPick = ivec4(-1); oDepth = vec4(1e30, 0.0, 0.0, 0.0);
@@ -361,6 +372,23 @@ void main() {
   int face = -1;
   float t = 0.0;
   for (int k = 0; k < 4096; k++) {
+    // fpHit: el tramo de esta celda, ¿cruza bajando la superficie del agua de su columna?
+    if (uHasWater && d.z < 0.0) {
+      float s = wSurf(c);
+      if (s > -1e29) {
+        float tNext = min(m.x, min(m.y, m.z)), zA = uEye.z + d.z * t, zB = uEye.z + d.z * tNext;
+        if (zA >= s && zB < s) {
+          float tw = (uEye.z - s) / -d.z;
+          if (tw > uMaxDist) return;
+          int gx = int(floor(float(c.x) / float(uWCell))), gy = int(floor(float(c.y) / float(uWCell)));
+          float deepT = clamp((texelFetch(uWDepth, ivec2(gx, gy), 0).r - ${FP_DEEP_FROM.toFixed(1)}) / ${(FP_DEEP_TO - FP_DEEP_FROM).toFixed(1)}, 0.0, 1.0);
+          int tone = float(BAYER4[(i & 3) + ((j & 3) << 2)]) / 16.0 < deepT ? 1 : 2;
+          oPick = ivec4(-2 - (uWaterRamp * 16 + clamp(tone, 0, uRampLen[uWaterRamp] - 1)), 0, 0, 0);   // agua: sin vóxel (la luz la toma por vacía)
+          oDepth = vec4(tw, 0.0, 0.0, 0.0);
+          return;
+        }
+      }
+    }
     if (m.x <= m.y && m.x <= m.z) { t = m.x; c.x += st.x; m.x += dd.x; face = st.x > 0 ? 1 : 0; }
     else if (m.y <= m.z) { t = m.y; c.y += st.y; m.y += dd.y; face = st.y > 0 ? 3 : 2; }
     else { t = m.z; c.z += st.z; m.z += dd.z; face = st.z > 0 ? 5 : 4; }
@@ -410,6 +438,8 @@ export class GpuVoxelRenderer {
   private readonly vao: WebGLVertexArrayObject;
   private readonly max3D: number;
   private mats: RampMats = rampMats({ ramps: [] });
+  private tWSurf: { t: WebGLTexture; w: number; h: number } | null = null;
+  private tWDepth: { t: WebGLTexture; w: number; h: number } | null = null;
   // El modelo subido
   private modelOf: VoxelSource | null = null;
   private rev: unknown = undefined;
@@ -549,6 +579,21 @@ export class GpuVoxelRenderer {
     this.mats = rampMats(pal);
     gl.uniform1iv(u.uRampSun, this.mats.sun);
     gl.uniform1i(u.uMats, materialsOf(pal) ? 1 : 0);
+    const wt = o.water;
+    gl.uniform1i(u.uHasWater, wt ? 1 : 0);
+    // Los samplers del agua siempre en sus unidades (2 y 3): si se quedan en la 0 con la rejilla (otro tipo de
+    // sampler) en otra, el dibujo falla sin avisar y se leería la imagen anterior
+    gl.uniform1i(u.uWSurf, 2); gl.uniform1i(u.uWDepth, 3);
+    if (wt) {
+      const surf = new Float32Array(wt.gw * wt.gh);
+      for (let k = 0; k < surf.length; k++) { const v = wt.surface[k]!; surf[k] = v === v ? v : -1e30; }
+      this.tWSurf = upload2D(gl, this.tWSurf, wt.gw, wt.gh, surf);
+      this.tWDepth = upload2D(gl, this.tWDepth, wt.gw, wt.gh, wt.depth);
+      bind(gl, 2, gl.TEXTURE_2D, this.tWSurf.t, u.uWSurf);
+      bind(gl, 3, gl.TEXTURE_2D, this.tWDepth.t, u.uWDepth);
+      gl.uniform1i(u.uWCell, wt.cell); gl.uniform1i(u.uWaterRamp, wt.ramp);
+      gl.uniform2i(u.uWGrid, wt.gw, wt.gh);
+    }
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
     const pick = new Int32Array(W * H * 4), dep = new Float32Array(W * H * 4);
@@ -561,9 +606,12 @@ export class GpuVoxelRenderer {
     const pickKey = new Float64Array(W * H).fill(NaN), pickFace = new Int8Array(W * H).fill(-1);
     for (let p = 0; p < W * H; p++) {
       const s = pick[p * 4]!;
-      if (s < 0) continue;
+      if (s === -1) continue;
+      depth[p] = dep[p * 4]!;
+      if (s < -1) { color[p] = -2 - s; continue; }          // agua: su tono, sin vóxel
       const w = pick[p * 4 + 3]!, f = w & 7;
-      color[p] = s; pickFace[p] = f; depth[p] = dep[p * 4]!;
+      color[p] = s;
+      pickFace[p] = f;
       pickKey[p] = key(pick[p * 4 + 1]!, pick[p * 4 + 2]!, (w - f) / 8);
     }
     return finishRender(pal, { width: W, height: H, originX: 0, originY: 0, outline: o.outline ?? 'none' }, color, depth, pickKey, pickFace);
@@ -770,6 +818,21 @@ function program(gl: WebGL2RenderingContext, vs: string, fs: string): { prog: We
     u[info.name.replace(/\[0\]$/, '')] = gl.getUniformLocation(prog, info.name);
   }
   return { prog, u: new Proxy(u, { get: (t, k: string) => t[k] ?? null }) };
+}
+
+// Una textura R32F de w x h con esos datos (la reusa si es del mismo tamaño)
+function upload2D(gl: WebGL2RenderingContext, cur: { t: WebGLTexture; w: number; h: number } | null, w: number, h: number, data: Float32Array): { t: WebGLTexture; w: number; h: number } {
+  let c = cur;
+  if (!c || c.w !== w || c.h !== h) {
+    if (c) gl.deleteTexture(c.t);
+    const t = tex(gl, gl.TEXTURE_2D);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, w, h, 0, gl.RED, gl.FLOAT, null);
+    c = { t, w, h };
+  }
+  gl.activeTexture(gl.TEXTURE7);
+  gl.bindTexture(gl.TEXTURE_2D, c.t);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h, gl.RED, gl.FLOAT, data);
+  return c;
 }
 
 function tex(gl: WebGL2RenderingContext, target: number): WebGLTexture {

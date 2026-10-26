@@ -6,7 +6,7 @@
 //   - cáusticas: el fondo que se ve a través del agua recibe la luz que las ondas enfocan;
 //   - refracción: el fondo se ve desplazado según la inclinación de la superficie.
 import { ShallowWater } from '../fluid/shallow';
-import { rgbOf, spotFactor } from '../core';
+import { rgbOf, spotFactor, type Palette, type FpWater } from '../core';
 import { resolveLight } from './lightutil';
 import type { World, WorldLight } from './build';
 import type { Baked } from './bake';
@@ -83,6 +83,21 @@ export class WaterLayer {
   // Todo en ejes del modelo (x este, y norte)
   depthAt(x: number, y: number): number { const i = this.cellOf(x, y); return i < 0 ? 0 : this.sim.depth[i]!; }
   surfaceAt(x: number, y: number): number { const i = this.cellOf(x, y); return i < 0 ? 0 : this.sim.surface(i); }
+
+  // El agua para la primera persona (src/core/explore.ts): la superficie (NaN si está seca) y la profundidad por celda,
+  // con la rampa del agua de la paleta del mundo. null si la paleta no tiene rampa llamada agua o water
+  firstPersonWater(palette: Palette): FpWater | null {
+    const ramp = palette.ramps.findIndex((r) => /^(agua|water)$/i.test(r.name));
+    if (ramp < 0) return null;
+    const n = this.gw * this.gh, surface = new Float32Array(n), depth = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const d = this.sim.depth[i]!;
+      const wet = !this.sim.solid[i] && d >= 0.04;
+      surface[i] = wet ? this.sim.ground[i]! + d : NaN;
+      depth[i] = wet ? d : 0;
+    }
+    return { cell: CELL, gw: this.gw, gh: this.gh, surface, depth, ramp };
+  }
 
   // Para lo que flota: hacia dónde va el agua y cuánto se inclina su superficie, en un punto del mundo
   flowAt(x: number, y: number): [number, number] { return this.sim.flow(Math.floor(x / CELL), Math.floor(y / CELL)); }

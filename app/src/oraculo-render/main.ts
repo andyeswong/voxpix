@@ -10,6 +10,9 @@ import { GpuVoxelRenderer } from '../../../src/view/gpu/voxrender';
 import { sampleScene } from '../../../src/samples/basic';
 import { medievalScene } from '../../../src/samples/medieval';
 import { vegetationScene } from '../../../src/samples/vegetacion';
+import { generateLayout } from '../../../src/worldgen';
+import { THEMES } from '../../../src/content/themes';
+import { buildWorldState } from '../../../src/world/build';
 import { loadPxl, paletteFromPxl, stackFromPxl, pxlDirectives, applyDirectives } from '../../../src/pxl/bridge';
 import maiaFile from '../../../models/maia/maia.json';
 import antorcha from '../../../models/luces/antorcha.json';
@@ -180,8 +183,33 @@ async function main(): Promise<void> {
       log(`${lpass ? 'ok  ' : 'MAL '} ${name.padEnd(12)} ${('luz ' + label).padEnd(22)} luz distinta ${String(bad).padStart(5)} · máx ${max.toExponential(1)}`);
     }
   }
+  // Explorar un mundo del juego, con el agua como fluido aparte (FpWater): desde la orilla del lago, mirando al agua
+  log('\nPrimera persona en un mundo con agua:');
+  {
+    const { world: w, state: st } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const water = st.water!.firstPersonWater(w.model.palette)!;
+    const bw = { minX: 0, maxX: w.width - 1, minY: 0, maxY: w.depth - 1, minZ: w.model.zMin, maxZ: w.model.zMax };
+    for (const [label, cam] of [['orilla del lago', { x: 186.3, y: 168.2, z: 14.5, yaw: 250, pitch: -22 }], ['de lejos', { x: 230.4, y: 120.3, z: 40.2, yaw: 300, pitch: -25, fov: 90 }]] as Array<[string, FpCamera]>) {
+      const o = { width: 200, height: 120, outline: 'both' as const, water, bounds: bw };
+      let t = performance.now();
+      const a = renderFirstPerson(w.model, cam, o);
+      const cpuMs = performance.now() - t;
+      t = performance.now();
+      const g = gpu.firstPerson(w.model, cam, o, 2)!;
+      const gpuMs = performance.now() - t;
+      const c = compare(a, g);
+      let wpx = 0;
+      const wr = water.ramp;
+      for (let p = 0; p < 200 * 120; p++) if (Number.isNaN(a.pickKey![p]!) && a.rgba[p * 4 + 3]) wpx++;
+      const share = Math.max(c.rgba, c.pick) / Math.max(1, c.filled);
+      const pass = share <= FP_TOL && wpx > 500;
+      ok &&= pass;
+      results.push({ model: 'mundo', label: `fp ${label}`, ...c, share, pass, cpuMs, gpuMs, water: wpx });
+      log(`${pass ? 'ok  ' : 'MAL '} mundo        ${label.padEnd(22)} color ${String(c.rgba).padStart(5)} · vóxel ${String(c.pick).padStart(5)} de ${String(c.filled).padStart(6)} (${(share * 100).toFixed(3)} %) · agua ${wpx} px (rampa ${wr}) · cpu ${cpuMs.toFixed(0)} ms · gpu ${gpuMs.toFixed(0)} ms`);
+    }
+  }
   log(ok ? '\nTODO BIEN' : '\nHAY DIFERENCIAS');
   (window as unknown as { __oracle: unknown }).__oracle = { ok, results };
 }
 
-main().catch((e) => { log(`ERROR ${e}`); (window as unknown as { __oracle: unknown }).__oracle = { ok: false, error: String(e) }; });
+main().catch((e) => { log(`ERROR ${e}`); (window as unknown as { __oracle: unknown }).__oracle = { ok: false, error: String(e?.stack ?? e) }; });
