@@ -10,6 +10,8 @@ import { Model, material as mat, decode, validatePalette, planFoliage, rampMater
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob, renderExplore } from './preview';
+import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, setRig, generateFromRig, frameMs as framesMs, toFile, loadAnimated, sheetPng, animGif } from './anim';
+import type { RigSpec } from '../../src/anim/rig';
 import { loadPxl, paletteFromPxl, stackFromPxl, stackPrefixes, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
 import { SOURCE_PRESETS } from '../../src/lighting';
 import { PRESET_PALETTES } from '../../src/samples/palettes';
@@ -83,9 +85,27 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   firstPerson({x, y, z, yaw?, pitch?, fov?, width?, height?, scale?})   PNG en primera persona desde ese ojo
                                            (yaw 0 = norte, 90 = este; pitch + arriba): para previsualizar por dentro
   explore(open?, {height?, fov?})          abre (o cierra) la vista Explorar: caminar por dentro del modelo
+ANIMACIÓN (cada cuadro es el modelo entero; las herramientas pintan el cuadro actual):
+  frames()                                 {count, current, ms[], playing, onion, rig}
+  frame(i)                                 va al cuadro i
+  addFrame({empty?})                       un cuadro después del actual (copia del actual, o vacío); da su índice
+  deleteFrame(i?), moveFrame(from, to)     quita / mueve un cuadro
+  frameMs(ms, all?)                        la duración del cuadro actual (o de todos), en milisegundos
+  play(on?), onion(on?)                    reproduce en bucle / papel cebolla (el cuadro anterior en fantasma)
+  rig(spec | null)                         el rig por partes: {frameMs, parts: [{name, boxes?: [[x0,y0,z0,x1,y1,z1]],
+                                           ramps?, pivotZ?, footZ?}], frames: [{moves: {parte: {dx?, dy?, dz?, stride?}}}]}
+  generateFromRig(spec?)                   con el rig, el cuadro 0 es la pose de reposo y los demás se generan
+  animPng({scale?}), animGif({scale?})     la hoja de cuadros en fila / el GIF animado, en base64
   batch(fn)                                lo que haga fn, en un solo paso de deshacer
   undo(), redo()
   tool(name)                               cambia la herramienta de la interfaz (para enseñar lo que haces)`;
+
+async function b64(blob: Blob): Promise<string> {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  let s = '';
+  for (let i = 0; i < buf.length; i += 0x8000) s += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  return btoa(s);
+}
 
 export const api = {
   version: 1,
@@ -240,11 +260,11 @@ export const api = {
   },
 
   load(json: string | (ModelFile & { lights?: LightSource3D[] })) {
-    loadFile(typeof json === 'string' ? JSON.parse(json) : json);
+    loadAnimated(typeof json === 'string' ? JSON.parse(json) : json);
     return api.info();
   },
 
-  save() { return { ...model.value.toJSON(), lights: api.lights() }; },
+  save() { return toFile(api.lights()); },
 
   importPxl(source: string, stackPrefix?: string) {
     const p = loadPxl(source, 'api.px.js');
@@ -289,6 +309,24 @@ export const api = {
     if (o.fov !== undefined) editor.explore.fov = Math.max(30, Math.min(120, o.fov));
     ui.explore = open;
     return { open: ui.explore, ...editor.explore };
+  },
+
+  // ---- animación (anim.ts)
+  frames() { return { count: anim.count, current: anim.current, ms: framesMs(), playing: anim.playing, onion: anim.onion, rig: anim.rig }; },
+  frame(i: number) { int(i); if (i < 0 || i >= anim.count) throw new Error(`cuadros 0..${anim.count - 1}`); selectFrame(i); return api.frames(); },
+  addFrame(o: { empty?: boolean } = {}): number { return addFrame(!!o.empty); },
+  deleteFrame(i?: number) { deleteFrame(i ?? anim.current); return api.frames(); },
+  moveFrame(from: number, to: number) { int(from, to); moveFrame(from, to); return api.frames(); },
+  frameMs(ms: number, all = false) { setFrameMs(ms, all); return api.frames(); },
+  play(on?: boolean) { play(on ?? !anim.playing); return anim.playing; },
+  onion(on?: boolean) { anim.onion = on ?? !anim.onion; touch(); return anim.onion; },
+  rig(spec: RigSpec | null) { setRig(spec); return anim.rig; },
+  generateFromRig(spec?: RigSpec): number { return generateFromRig(spec ?? anim.rig); },
+  async animPng(o: { scale?: number } = {}): Promise<{ name: string; base64: string }> {
+    return { name: `${model.value.name}_${anim.count}cuadros.png`, base64: await b64(await sheetPng(Math.max(1, Math.round(o.scale ?? 1)))) };
+  },
+  async animGif(o: { scale?: number } = {}): Promise<{ name: string; base64: string }> {
+    return { name: `${model.value.name}.gif`, base64: await b64(animGif(Math.max(1, Math.round(o.scale ?? 1)))) };
   },
 
   async png(o: { sheet?: boolean; scale?: number } = {}): Promise<{ name: string; base64: string }> {

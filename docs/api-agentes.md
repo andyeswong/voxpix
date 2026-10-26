@@ -76,6 +76,48 @@ El espejo de la interfaz (M) también se aplica a `set`, `voxels`, `box` y `fill
 | `explore(open?, { height?, fov? })` | `{open, height, fov}` | Abre (o cierra) la vista Explorar. `height`: la altura del personaje invisible en vóxeles, de 1 a 64 (el ojo va al 90 % de esa altura); `fov` en grados. |
 | `tool(name)` | - | Cambia la herramienta de la interfaz, para que quien mire vea qué haces: `pen`, `erase`, `paint`, `pick`, `box`, `fill`, `light` o `fluid`. |
 
+## Animación
+
+Una animación son cuadros: cada cuadro es el modelo entero, con su duración, y todos comparten la paleta. Las
+funciones de pintar (`set`, `voxels`, `box`, `fill`, `water`, `foliage`...) pintan el **cuadro actual**, y cada cuadro
+tiene su propio deshacer.
+
+| Función | Devuelve | Qué hace |
+|---|---|---|
+| `frames()` | `{count, current, ms[], playing, onion, rig}` | El estado de la animación. |
+| `frame(i)` | ídem | Va al cuadro `i` (desde 0). |
+| `addFrame({ empty? })` | índice | Un cuadro después del actual: copia del actual o vacío. |
+| `deleteFrame(i?)` / `moveFrame(from, to)` | ídem | Quita un cuadro (el actual si no se dice) / lo mueve. |
+| `frameMs(ms, all?)` | ídem | La duración del cuadro actual (o de todos), en milisegundos. |
+| `play(on?)` | si reproduce | Reproduce en bucle (o para). |
+| `onion(on?)` | si está | Papel cebolla: el cuadro anterior en fantasma en el editor por capas. |
+| `rig(spec \| null)` | el rig | El rig por partes (abajo). Falla si una parte está mal. |
+| `generateFromRig(spec?)` | cuántos cuadros | Con el rig, el cuadro 0 es la pose de reposo y los cuadros 1..n se generan desde él (rehaciéndolos). La reproducción y la exportación usan entonces los cuadros 1..n. |
+| `animPng({ scale? })` | promesa de `{name, base64}` | La hoja: los cuadros en fila, en el ángulo de la vista previa, con el mismo encuadre para todos y luz si `lit`. |
+| `animGif({ scale? })` | promesa de `{name, base64}` | El GIF animado (en bucle), igual; cada cuadro dura la media de las duraciones. |
+
+El rig (`RigSpec`, en `src/anim/rig.ts`):
+
+```js
+vp.rig({
+  frameMs: 120,
+  parts: [   // un vóxel es de la parte si cae en alguna de sus cajas y su rampa es una de las suyas (si las dice)
+    { name: 'L', boxes: [[-9, -9, 0, -1, 9, 3]], ramps: [1], pivotZ: 3, footZ: 0 },
+    { name: 'R', boxes: [[1, -9, 0, 9, 9, 3]], ramps: [1], pivotZ: 3, footZ: 0 },
+  ],
+  frames: [  // por cuadro, cuánto se mueve cada parte; 'body' es lo que no es de ninguna
+    { moves: { L: { stride: 1 }, R: { stride: -1 } } },     // stride: adelanta el pie (-y) doblando desde pivotZ
+    { moves: { R: { dz: 1 }, body: { dz: 1 } } },
+    { moves: { L: { stride: -1 }, R: { stride: 1 } } },
+    { moves: { L: { dz: 1 }, body: { dz: 1 } } },
+  ],
+});
+vp.generateFromRig();
+```
+
+`save()` da la versión 2 del archivo si hay más de un cuadro o un rig (`animation: { frames: [{ ms, voxels? }], rig? }`,
+con el cuadro 0 en `voxels`, así quien lea la versión 1 ve el primer cuadro). Sin animación, la versión 1 de siempre.
+
 ## Materiales
 
 Cada rampa es un material: un juego de propiedades que el motor lee por separado (la luz, el agua, el paso). Sin

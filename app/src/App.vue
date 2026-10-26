@@ -4,6 +4,9 @@ import LayerEditor from './components/LayerEditor.vue';
 import Voxel3DEditor from './components/Voxel3DEditor.vue';
 import Viewport from './components/Viewport.vue';
 import Explorer from './components/Explorer.vue';
+import { toFile, loadAnimated, anim } from './anim';
+import Timeline from './components/Timeline.vue';
+import RigPanel from './components/RigPanel.vue';
 import PalettePanel from './components/PalettePanel.vue';
 import LayersPanel from './components/LayersPanel.vue';
 import CanvasSizeDialog from './components/CanvasSizeDialog.vue';
@@ -48,7 +51,7 @@ function download(name: string, text: string, type: string): void {
 }
 
 function save(): void {
-  download(`${model.value.name || 'modelo'}.voxpix.json`, JSON.stringify({ ...model.value.toJSON(), lights: editor.light.sources }), 'application/json');
+  download(`${model.value.name || 'modelo'}.voxpix.json`, JSON.stringify(toFile(editor.light.sources)), 'application/json');
 }
 
 function readFile(e: Event, then: (text: string, name: string) => void): void {
@@ -59,7 +62,7 @@ function readFile(e: Event, then: (text: string, name: string) => void): void {
 }
 
 function open(e: Event): void {
-  readFile(e, (t) => loadFile(JSON.parse(t)));
+  readFile(e, (t) => loadAnimated(JSON.parse(t)));
 }
 
 // ---- pxl
@@ -248,6 +251,7 @@ void version;
 
   <!-- Abajo: herramientas y colores, y encima las opciones de la herramienta -->
   <div class="float bottom" data-repel>
+    <Timeline />
     <div class="pill options">
       <strong>{{ TOOLS.find((x) => x[0] === editor.tool)?.[2] }}</strong>
       <span class="hint">{{ editor.tool === 'fluid' && fluidState.fillMode ? 'clic llena de agua hasta esa altura' : editor.tool === 'fluid' && fluidState.faucetMode ? 'clic pone o quita un grifo' : editor.mode === 'voxel3d' ? (TOOL_HINT_3D[editor.tool] ?? TOOL_HINT[editor.tool]) : TOOL_HINT[editor.tool] }}</span>
@@ -287,6 +291,7 @@ void version;
     </div>
   </div>
   <aside v-if="ui.paletteOpen" v-draggable="'paleta'" class="float palette card" @click.stop><PalettePanel /></aside>
+  <aside v-if="anim.panel" v-draggable="'rig'" class="float rigpanel card" @click.stop><RigPanel /></aside>
 
   <!-- Abajo a la izquierda: dónde estás -->
   <div class="float status">
@@ -375,6 +380,7 @@ aside.dragging :deep(header) { cursor: grabbing; }
 .dot { width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset; }
 .dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
 .more { min-height: 44px; border-radius: 14px; color: var(--muted); }
+.rigpanel { z-index: 5; top: 80px; left: 50%; transform: translateX(-50%); width: 620px; padding: 14px; max-height: calc(100vh - 260px); overflow: auto; }
 .palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 460px; padding: 16px; max-height: calc(100vh - 250px); overflow-y: auto; }
 .status { left: 16px; bottom: 16px; display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .backend { min-height: 22px; padding: 0 8px; font-size: 11px; color: var(--muted); border-radius: 8px; }

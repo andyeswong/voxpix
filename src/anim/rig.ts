@@ -62,3 +62,34 @@ export function rigFrame(base: Model, rig: Rig, f: RigFrame): Model {
 export function rigFrames(base: Model, rig: Rig): Model[] {
   return rig.frames.map((f) => rigFrame(base, rig, f));
 }
+
+// ---- el rig que se puede guardar (en el .voxpix.json, desde el editor o la API de agentes)
+// Cada parte se define por cajas de vóxeles (x0, y0, z0, x1, y1, z1, incluidas) y/o rampas: un vóxel es de la parte si
+// cae en alguna de sus cajas (o no tiene cajas) y su rampa es una de las suyas (o no tiene rampas). Las condiciones
+// arbitrarias (como el trípode del clip) siguen siendo Rig en código; esto cubre lo que se dibuja con el ratón.
+export interface RigPartSpec {
+  name: string;
+  boxes?: Array<[number, number, number, number, number, number]>;
+  ramps?: number[];
+  pivotZ?: number;
+  footZ?: number;
+}
+export interface RigSpec { parts: RigPartSpec[]; frames: RigFrame[]; frameMs: number }
+
+export function rigFromSpec(spec: RigSpec): Rig {
+  return {
+    frameMs: spec.frameMs,
+    frames: spec.frames,
+    parts: spec.parts.map((p): RigPart => {
+      if (!p.name || p.name === 'body') throw new Error(`una parte necesita nombre (y no puede llamarse body): ${p.name}`);
+      const boxes = p.boxes ?? [], ramps = p.ramps ? new Set(p.ramps) : null;
+      return {
+        name: p.name,
+        has: (x, y, z, v) => (!boxes.length || boxes.some(([x0, y0, z0, x1, y1, z1]) => x >= Math.min(x0, x1) && x <= Math.max(x0, x1) && y >= Math.min(y0, y1) && y <= Math.max(y0, y1) && z >= Math.min(z0, z1) && z <= Math.max(z0, z1)))
+          && (!ramps || ramps.has(Math.floor((v - 1) / 16))),
+        ...(p.pivotZ !== undefined ? { pivotZ: p.pivotZ } : {}),
+        ...(p.footZ !== undefined ? { footZ: p.footZ } : {}),
+      };
+    }),
+  };
+}

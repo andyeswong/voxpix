@@ -86,6 +86,24 @@ el del medio para mover y la rueda para acercar.
 Con *Iluminación*, las fuentes de luz del modelo alumbran cada cara de vóxel, con sombras de los propios vóxeles y
 parpadeo, y *Ambiente* oscurece el resto. Poner una luz la enciende sola.
 
+## Animación
+
+Abajo, encima de las herramientas, está la **línea de tiempo**: los cuadros de la animación, con el actual resaltado.
+Cada cuadro es el modelo entero; se edita el actual con las herramientas de siempre, y cada cuadro tiene su deshacer.
+
+- **◀ ▶ ▶|**: cuadro anterior, reproducir en bucle, siguiente. **+ Cuadro** copia el actual detrás; **Vacío** pone uno
+  vacío; **← →** lo mueven; **Borrar** lo quita.
+- **ms**: la duración del cuadro (con **todos**, la de todos).
+- **Cebolla**: en el editor por capas se ven, como recuadros fantasma, los vóxeles del cuadro anterior que el actual
+  no tiene o tiene de otro color.
+- **Rig…** abre el rig por partes: cada parte es una caja de vóxeles (y, si quieres, solo unas rampas) con su
+  pivote (la cadera) y su pie; cada cuadro del rig dice cuánto se mueve cada parte (dx, dy, dz) y cuánto adelanta el
+  pie (paso). **Generar cuadros** rehace los cuadros 1..n desde el cuadro 0, que pasa a ser la pose de reposo (R).
+- **Hoja PNG** y **GIF** exportan la animación en el ángulo de la vista previa, a la escala elegida.
+- **Guardar** guarda los cuadros y el rig en el `.voxpix.json` (versión 2); sin animación, el archivo es el de siempre.
+
+Lo mismo por la API de agentes: `docs/api-agentes.md`, Animación.
+
 ## Explorar
 
 El botón **Explorar** (arriba, junto a Capas y 3D) te pone dentro del modelo en primera persona, con un personaje

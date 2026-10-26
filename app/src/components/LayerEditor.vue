@@ -5,6 +5,7 @@ import { model, history, version, editor, paint, currentMaterial, touch, toggleL
 import { SOURCE_PRESETS } from '../../../src/lighting';
 import { startPour, stopPour, fluidState } from '../fluidTool';
 import { fillBox, floodLayer } from '../edit';
+import { anim, frameModels } from '../anim';
 
 // Editor de una capa z vista desde arriba (norte arriba). Clic izquierdo pinta según la herramienta,
 // clic derecho borra. La capa de abajo se ve en fantasma para orientarse.
@@ -57,6 +58,21 @@ function draw(): void {
         g.globalAlpha = 1;
       }
     }
+  }
+  // Papel cebolla: lo que el cuadro anterior tenía en esta capa y el actual no (o distinto), como un recuadro fantasma
+  if (anim.onion && anim.current > 0) {
+    const prev = frameModels()[anim.current - 1]!;
+    g.lineWidth = Math.max(1, Math.floor(CELL / 6));
+    g.globalAlpha = 0.55;
+    for (let r = 0; r < rows.value; r++) for (let q = 0; q < cols.value; q++) {
+      const x = editor.grid.minX + q, y = editor.grid.maxY - r;
+      const pv = prev.get(x, y, editor.z);
+      if (!pv || pv === m.get(x, y, editor.z)) continue;
+      g.strokeStyle = colorOf(pv);
+      const k = Math.max(1, Math.floor(CELL / 5));
+      g.strokeRect(q * CELL + k, r * CELL + k, CELL - 2 * k, CELL - 2 * k);
+    }
+    g.globalAlpha = 1; g.lineWidth = 1;
   }
   // Rejilla, ejes y eje del espejo
   // Con celdas diminutas (lienzos grandes), una línea cada 8 celdas en vez de cada una

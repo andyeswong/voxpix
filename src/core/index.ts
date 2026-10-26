@@ -9,3 +9,5 @@ export * from './color';
 export * from './foliage';
 export * from './materials';
 export * from './explore';
+export * from './anim';
+export * from './gif';
