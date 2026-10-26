@@ -72,12 +72,12 @@ dinámicas, sombras y agua. Abajo, el mismo mundo en el modo 2D, compuesto por l
 
 ## Empezar
 
-    npm install
-    npm run dev        # el editor en http://localhost:5190
-    npm test           # las pruebas (Vitest)
-    npm run build      # la app en app/dist (el editor, la demo del mundo y las páginas de prueba)
+    bun install        # con el lockfile del repo (bun.lock)
+    bun run dev        # el editor en http://localhost:5190
+    bun run test       # las pruebas (Vitest; ojo: `bun test` es otro programa)
+    bun run build      # la app en app/dist (el editor, la demo del mundo y las páginas de prueba)
 
-Hace falta Node 20 o posterior. El editor funciona en cualquier navegador con WebGL2. Sin WebGL2, todo pasa a la
+Hace falta [bun](https://bun.sh) para instalar y Node 20 o posterior para correrlo. El editor funciona en cualquier navegador con WebGL2. Sin WebGL2, todo pasa a la
 CPU, que da los mismos píxeles, solo que más despacio.
 
 ## El editor (`app/`)
