@@ -42,7 +42,7 @@ Más en [docs/ia.md](docs/ia.md).
 
 [docs/](docs/README.md):
 - [el editor](docs/editor.md);
-- [la API para agentes](docs/api-agentes.md);
+- [la API para agentes](docs/api-agentes.md) y [la de mundos](docs/api-mundos.md);
 - [IA](docs/ia.md);
 - [el render](docs/render.md);
 - [el motor del mundo](docs/motor.md);
@@ -104,6 +104,10 @@ CPU, que da los mismos píxeles, solo que más despacio.
 abrir y guardar, vista y PNG. Cualquier cosa que controle un navegador (la consola, Playwright o CDP) puede
 construir modelos con ella. `voxpix.help()` la explica; la referencia está en [docs/api-agentes.md](docs/api-agentes.md)
 y `scripts/api/` trae un ejemplo que hace un paisaje medieval de 128 x 128.
+
+`window.voxpixWorld`, en la demo de escenario, construye mundos enteros desde una receta en JSON: generador y semilla,
+colores (con líquido que brilla), columnas y muebles como modelos, vegetación, modelos sueltos, luces y efectos. Se ve
+en vivo, y sin navegador con `voxpix world receta.json mundo.png`. La referencia está en [docs/api-mundos.md](docs/api-mundos.md).
 
 ## La línea de comandos
 

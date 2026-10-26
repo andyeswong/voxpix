@@ -11,6 +11,16 @@ Para trabajar sin navegador (`src/cli/main.ts`). `sample` es la escena de muestr
 - `--turn N` saca una tira con N ángulos.
 - Comprueba que la imagen solo use colores de la paleta.
 
+## Un mundo desde una receta
+
+    npm run voxpix -- world <receta.json> <salida.png|-> [--at x,y] [--size 384x216] [--ticks 30] [--scale 1]
+        [--whole] [--lights no] [--info info.json]
+
+- La receta es un mundo en JSON (generador, semilla, colores, columnas, vegetación, modelos, luces, efectos). Con
+  `"theme"`, se completa con un tema de muestra. Ver [api-mundos.md](api-mundos.md).
+- Pinta en la CPU la vista centrada en `--at` (por defecto, la salida) tras `--ticks` pasos; `--whole`, el mundo entero.
+- Escribe la información del mundo (tamaño, columnas, muebles, luces, rampas, huella) en la salida o en `--info`.
+
 ## pxl
 
 [pxl](https://github.com/crsolver/claude-pxl) escribe arte de píxeles como código (`.px.js`); va en `vendor/pxl`.

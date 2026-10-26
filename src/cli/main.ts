@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { Model, render, assertClosedPalette, fitFrame, type RenderOptions } from '../core';
 import { encodePNG, onBackground } from '../core/png';
 import { medievalScene } from '../samples/medieval';
+import { buildSampleRecipe } from '../samples/recipes';
+import { describeWorld, snapshotWorld } from '../world/recipe';
 import { loadPxl, paletteFromPxl, spriteToVoxels, toPxlSource, pxlAssets, stackFromPxl, toPxlStack, pxlDirectives, applyDirectives } from '../pxl/bridge';
 
 // CLI de VoxPix.
@@ -14,6 +16,9 @@ import { loadPxl, paletteFromPxl, spriteToVoxels, toPxlSource, pxlAssets, stackF
 //   voxpix import-pxl <arte.px.js> --stack <prefijo> <salida.json>   capas <prefijo>_zNN vistas desde arriba
 //                [--outline #rrggbb]   color fijo del contorno (si no, el de la directiva // voxpix: outline del .px.js)
 //   voxpix export-pxl <modelo.json> <salida.px.js> --stack <prefijo>    el modelo como esas capas
+//   voxpix world <receta.json> <salida.png|-> [--at x,y] [--size WxH] [--ticks n] [--scale n] [--whole] [--lights no]
+//                [--info info.json]   un mundo entero desde una receta (src/world/recipe.ts; con "theme", uno de muestra).
+//                En la salida, lo que el agente necesita saber del mundo (describeWorld): tamaño, columnas, muebles, luces
 
 function arg(name: string, def: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -76,12 +81,29 @@ function exportPxl(): void {
   console.log(`${out}: ${turn} sprites + hoja "${name}"`);
 }
 
+function world(src: string | undefined, out: string | undefined): void {
+  if (!src || !out) { console.error('uso: voxpix world <receta.json> <salida.png|-> [--at x,y] [--size WxH] [--ticks n] [--scale n] [--whole] [--info info.json]'); process.exit(1); }
+  const built = buildSampleRecipe(JSON.parse(readFileSync(src, 'utf8')));
+  const info = describeWorld(built);
+  if (out !== '-') {
+    const [w, h] = arg('size', '384x216').split('x').map(Number) as [number, number];
+    const at = process.argv.includes('--at') ? arg('at', '').split(',').map(Number) as [number, number] : undefined;
+    const shot = snapshotWorld(built, { width: w, height: h, ticks: Number(arg('ticks', '30')), lights: arg('lights', 'si') !== 'no', whole: process.argv.includes('--whole'), ...(at ? { at } : {}) });
+    writeFileSync(out, encodePNG(shot.width, shot.height, shot.rgba, Number(arg('scale', '1'))));
+    console.log(`${out}: ${shot.width}x${shot.height}`);
+  }
+  const infoOut = arg('info', '');
+  if (infoOut) writeFileSync(infoOut, JSON.stringify(info, null, 1));
+  else console.log(JSON.stringify(info));
+}
+
 function main(): void {
   const [cmd, src, out] = process.argv.slice(2);
+  if (cmd === 'world') return world(src, out);
   if (cmd === 'import-pxl') return importPxl();
   if (cmd === 'export-pxl') return exportPxl();
   if (cmd !== 'render' || !src || !out) {
-    console.error('uso: voxpix render|export-pxl|import-pxl ... (ver cabecera de src/cli/main.ts)');
+    console.error('uso: voxpix render|export-pxl|import-pxl|world ... (ver cabecera de src/cli/main.ts)');
     process.exit(1);
   }
   const model = load(src);

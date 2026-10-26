@@ -15,6 +15,10 @@ import type { WorldState, Entity } from '../../../src/world/state';
 import { FixedLoop, NO_INPUT, Runtime, type TickInput, type CarryConfig } from '../../../src/runtime/runtime';
 import maiaFile from '../../../models/maia/maia.json';
 import { decorate } from './decor';
+import { buildSampleRecipe, type RecipeInput } from '../../../src/samples/recipes';
+import type { WorldRecipe } from '../../../src/world/recipe';
+import { restZ } from '../../../src/runtime/body';
+import { installWorldApi } from './api';
 import { WorldExplorer } from './explorar';
 import linterna from '../../../models/luces/linterna.json';
 import linternaNeon from '../../../models/luces/linterna-neon.json';
@@ -124,15 +128,28 @@ let fxOn = q.get('efectos') !== 'no';
 const WEATHERS = ['nada', 'lluvia', 'nieve'] as const;
 let weather: typeof WEATHERS[number] = 'nada';
 let weatherId = 0;
+// La receta de mundo que puso un agente (window.voxpixWorld.build): mientras la haya, el mundo sale de ella (y no del
+// tema con su decoración). T vuelve a los temas
+let recipe: (WorldRecipe & { theme?: ThemeId }) | null = null;
+let ambient: readonly [number, number, number] = THEMES[theme].ambient;
+let built: Array<() => void> = [];          // quien espera a que termine el rebuild en curso
 
 function rebuild(): void {
   loading.style.display = 'flex';
   setTimeout(() => {
     const t0 = performance.now();
-    layout = generateLayout(THEMES[theme].spec, seed);
-    // La decoración del tema (decor.ts): vegetación en el medieval, cubículos de vidrio en oficina y cyberpunk. G la quita
-    const lay = layout;
-    ({ world, state } = buildWorldState(layout, THEMES[theme].look, deco ? { decorate: (w) => decorate(w, theme, { x: lay.spawn.x, y: w.depth - 1 - lay.spawn.y }, seed) } : {}));
+    if (recipe) {
+      const b = buildSampleRecipe({ ...recipe, seed });
+      ({ layout, world, state, ambient } = b);
+      recipe = b.recipe;
+      if (b.recipe.theme) theme = b.recipe.theme;
+    } else {
+      layout = generateLayout(THEMES[theme].spec, seed);
+      ambient = THEMES[theme].ambient;
+      // La decoración del tema (decor.ts): vegetación en el medieval, cubículos de vidrio en oficina y cyberpunk. G la quita
+      const lay = layout;
+      ({ world, state } = buildWorldState(layout, THEMES[theme].look, deco ? { decorate: (w) => decorate(w, theme, { x: lay.spawn.x, y: w.depth - 1 - lay.spawn.y }, seed) } : {}));
+    }
     baked = bakeWorld(world, { topZ: TOPZ, incline: INCLINE, outline, outlineColor });
     // La salida viene del worldgen (filas hacia abajo): se pasa a ejes del modelo una vez, aquí
     let spawn = { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };
@@ -151,6 +168,8 @@ function rebuild(): void {
     loading.style.display = 'none';
     if (explorer.on) { explorer.stop(); toggleExplore(); }        // explorando: se sigue en el mundo nuevo
     else if (q.get('explorar') === '1' && !exploredOnce) { exploredOnce = true; toggleExplore(); }
+    const waiting = built; built = [];
+    for (const f of waiting) f();
   }, 30);
 }
 let exploredOnce = false;
@@ -202,11 +221,19 @@ function input(): TickInput {
   return t;
 }
 
+// Cámara del modo 2D: centrada en MAIA, sin pasar de la tapa de la pared norte
+function viewOrigin(b: Baked, st: WorldState, m: Entity): { vx: number; vy: number } {
+  const feet = b.cam.project(m.x + 0.5, m.y, m.z);
+  const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
+  const top = Math.floor(b.cam.project(0, st.depth - 1 - 2 * TILE, 32)[1]);   // la tapa de la pared norte
+  return { vx, vy: Math.max(top, Math.min(b.height - VH, Math.floor(feet[1]) - VH / 2 - 12)) };
+}
+
 let lastVoxelDraw = 0;
 function frame(time: number): void {
   if (!state || !baked || !maia) return;
   if (explorer.on) {
-    const out = explorer.frame(VW, VH, time, lightsOn, THEMES[theme].ambient, outline);
+    const out = explorer.frame(VW, VH, time, lightsOn, ambient, outline);
     g.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, VW, VH), 0, 0);
     return;
   }
@@ -214,20 +241,15 @@ function frame(time: number): void {
     // Se redibuja al girar, al hacer zoom y mientras MAIA anda; si no, a pocos Hz para el parpadeo y el agua
     if (!vox.dirty && !moving && time - lastVoxelDraw < 0.15) return;
     const out = frame3D(state, { width: VW, height: VH, center: [maia.x, maia.y], radius: 72, yaw: vox.yaw, elevation: vox.elevation, zoom: vox.zoom,
-      time, lights: lightsOn, ambient: THEMES[theme].ambient, outline, outlineColor });
+      time, lights: lightsOn, ambient, outline, outlineColor });
     g.putImageData(new ImageData(out as Uint8ClampedArray<ArrayBuffer>, VW, VH), 0, 0);
     vox.dirty = false; lastVoxelDraw = time;
     return;
   }
   const b = baked;
-  // Cámara: centrada en MAIA, sin pasar de la tapa de la pared norte
-  const feet = b.cam.project(maia.x + 0.5, maia.y, maia.z);
-  const fx = Math.floor(feet[0]), fy = Math.floor(feet[1]);
-  const vx = Math.max(0, Math.min(b.width - VW, fx - VW / 2));
-  const top = Math.floor(b.cam.project(0, state.depth - 1 - 2 * TILE, 32)[1]);   // la tapa de la pared norte
-  const vy = Math.max(top, Math.min(b.height - VH, fy - VH / 2 - 12));
+  const { vx, vy } = viewOrigin(b, state, maia);
   compositor.frame(state, b, {
-    vx, vy, vw: VW, vh: VH, time, lights: lightsOn, ambient: THEMES[theme].ambient, outline, outlineColor,
+    vx, vy, vw: VW, vh: VH, time, lights: lightsOn, ambient, outline, outlineColor,
     // ?luces=N: solo las N luces más cercanas alumbran a cada entidad (para ajustar en el Flip)
     ...(q.get('luces') ? { entityLightCap: Number(q.get('luces')) } : {}),
     // Sin walk, un bote de 1 px al andar; el walk ya trae el sube y baja del cuerpo
@@ -312,7 +334,7 @@ addEventListener('keydown', (e) => {
   const k = e.key.toLowerCase();
   keys.add(k);
   if (k === 'r') { seed = (seed * 7919 + 13) % 100000; rebuild(); }
-  if (k === 't') { theme = THEME_IDS[(THEME_IDS.indexOf(theme) + 1) % THEME_IDS.length]!; rebuild(); }
+  if (k === 't') { recipe = null; theme = THEME_IDS[(THEME_IDS.indexOf(theme) + 1) % THEME_IDS.length]!; rebuild(); }
   if (k === 'l') { lightsOn = !lightsOn; vox.dirty = true; }
   if (k === 'c') cycleOutline();
   if (k === 'g') { deco = !deco; rebuild(); }
@@ -367,6 +389,45 @@ voxCanvas.addEventListener('wheel', (e) => {
   vox.zoom = Math.max(1, Math.min(8, vox.zoom + (e.deltaY < 0 ? 1 : -1)));
   vox.dirty = true;
 }, { passive: false });
+
+// La API de mundos para agentes (api.ts): window.voxpixWorld
+installWorldApi({
+  get state() { return state; }, get world() { return world; }, get layout() { return layout; }, get baked() { return baked; },
+  get recipe() { return recipe; }, get mode() { return explorer.on ? 'explore' : mode; }, get ambient() { return ambient; },
+  get theme() { return theme; }, get seed() { return seed; }, get maia() { return maia; }, vox, VW, VH,
+  build(r: RecipeInput | null): Promise<void> {
+    if (r) { recipe = 'theme' in r && r.theme ? { ...(r as WorldRecipe), theme: r.theme } as WorldRecipe & { theme?: ThemeId } : r as WorldRecipe; seed = r.seed ?? seed; }
+    else recipe = null;
+    return new Promise((res) => { built.push(res); rebuild(); });
+  },
+  goto(x: number, y: number): void {
+    if (!runtime || !state) throw new Error('el mundo aún no está construido');
+    const p = runtime.player;
+    p.x = x; p.y = y; p.z = restZ(state, x, y, p.r);
+    runtime.syncEntity();
+    vox.dirty = true;
+  },
+  setMode(m: '2d' | 'voxel' | 'explore'): void {
+    if (m === 'explore') { if (!explorer.on) toggleExplore(); return; }
+    if (explorer.on) toggleExplore();
+    if (m !== mode) toggleMode();
+  },
+  setWeather(w: string): void {
+    if (!(WEATHERS as readonly string[]).includes(w)) throw new Error(`no hay tiempo "${w}"; hay: ${WEATHERS.join(', ')}`);
+    setWeather(w as typeof weather);
+  },
+  setLights(on: boolean): void { lightsOn = on; vox.dirty = true; },
+  frame3D(): Uint8ClampedArray {
+    if (!state || !maia) throw new Error('el mundo aún no está construido');
+    return frame3D(state, { width: VW, height: VH, center: [maia.x, maia.y], radius: 72, yaw: vox.yaw, elevation: vox.elevation, zoom: vox.zoom,
+      time: performance.now() / 1000, lights: lightsOn, ambient, outline, outlineColor });
+  },
+  view(): { vx: number; vy: number } {
+    if (!baked || !state || !maia) throw new Error('el mundo aún no está construido');
+    return viewOrigin(baked, state, maia);
+  },
+  get lightsOn() { return lightsOn; }, get outline() { return outline; },
+});
 
 rebuild();
 next(loop);

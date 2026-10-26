@@ -150,6 +150,8 @@ const look: WorldLook = {
   | `prop(site)` | cada mueble (`layout.props`): `prop`, su huella `x0..x1`, `yS..yN` y `lights` | `blockProp`: un bloque de madera; `null`, ninguno |
 
   Los de la muestra (puertas, ventanas, antorchas, escritorios) están en `src/samples/pieces.ts` (`SAMPLE_PIECES`).
+- **Sin código**: todo esto también se describe como datos en una receta (`src/world/recipe.ts`), que es lo que usan
+  los agentes con `window.voxpixWorld` y `voxpix world`. Ver `docs/api-mundos.md`.
 - **Lo demás** (vegetación, cables, adornos) va en `decorate(world)`, antes de crear el agua y el estado. Para algo que
   se cruce y no deje pasar la luz (cables, alfombras), una rampa con `material: 'atravesable'`.
 
