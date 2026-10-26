@@ -24,6 +24,7 @@ export interface EmitterSpec {
   wobble?: number;                               // vaivén horizontal (nieve, hojas), en vóxeles/s
   colors: readonly string[];                     // la rampa a lo largo de la vida: el primero al nacer
   px?: 1 | 2;                                    // tamaño en pantalla
+  streak?: number;                               // estela vertical en píxeles hacia arriba (la lluvia): 1 = un punto
   // Luz: la partícula se ve con luz propia y, hasta el tope de luces, alumbra lo que tiene cerca
   light?: { radius: number; intensity?: number; color?: readonly [number, number, number] };
   collide?: FxCollide;                           // con los vóxeles que bloquean: atravesar, pararse, rebotar o morir
@@ -35,7 +36,7 @@ export const FX_PRESETS = {
   humo: { rate: 10, life: [1.4, 2.4], speed: [4, 8], spread: 25, gravity: -6, drag: 0.6, wobble: 3, colors: ['#8a8794', '#6e6b78', '#55525e', '#3e3c46'], px: 2 },
   polvo: { burst: 10, shape: 'disc', extent: [2, 0, 0], life: [0.35, 0.7], speed: [8, 16], spread: 75, gravity: 40, drag: 2.5, colors: ['#b49a74', '#94795a', '#6e5a44'], collide: 'stop' },
   brasas: { rate: 7, life: [1, 2], speed: [6, 12], spread: 30, gravity: -10, drag: 0.4, wobble: 4, colors: ['#ffd36a', '#ff8a2a', '#d0461c', '#6a2a1a'], light: { radius: 6, intensity: 0.5, color: [1, 0.55, 0.22] } },
-  lluvia: { rate: 160, shape: 'box', extent: [40, 40, 0], life: [1.5, 1.5], speed: [120, 140], dir: [0.12, 0.05, -1], spread: 2, colors: ['#9ab4d8', '#7a94bc'], collide: 'die' },
+  lluvia: { rate: 160, shape: 'box', extent: [40, 40, 0], life: [1.5, 1.5], speed: [120, 140], dir: [0.12, 0.05, -1], spread: 2, colors: ['#9ab4d8', '#7a94bc'], streak: 3, collide: 'die' },
   nieve: { rate: 40, shape: 'box', extent: [40, 40, 0], life: [5, 7], speed: [5, 9], dir: [0, 0, -1], spread: 10, wobble: 5, colors: ['#ffffff', '#e4ecf6'], collide: 'stop' },
   hojas: { rate: 3, shape: 'box', extent: [10, 10, 0], life: [3, 5], speed: [3, 6], dir: [0, 0, -1], spread: 20, wobble: 8, colors: ['#6a9a3a', '#a8a43a', '#c4762e'], collide: 'stop' },
   burbujas: { rate: 6, shape: 'disc', extent: [2, 0, 0], life: [0.8, 1.4], speed: [6, 10], spread: 12, gravity: -4, wobble: 2, colors: ['#d8f2ff', '#9ad0f0'] },
@@ -56,8 +57,8 @@ export interface FxOptions {
 export const FX_MAX_ALIVE = 2000;
 export const FX_MAX_LIGHTS = 8;
 
-// Un punto que pintar: posición, color, tamaño y si lleva luz propia
-export const FX_STRIDE = 8;      // x, y, z, r, g, b, px, emisiva (en FxSystem.pack)
+// Un punto que pintar: posición, color, tamaño, si lleva luz propia y su estela
+export const FX_STRIDE = 9;      // x, y, z, r, g, b, px, emisiva, estela (en FxSystem.pack)
 
 // Lo que pide un efecto para pintarse: lo da FxSystem y lo da una vista girada (con las posiciones en sus ejes)
 export interface FxSource {
@@ -232,7 +233,7 @@ export class FxSystem implements FxSource {
       const c = R.rgb[Math.min(R.rgb.length - 1, Math.floor(t * R.rgb.length))]!;
       out[q] = d[o]!; out[q + 1] = d[o + 1]!; out[q + 2] = d[o + 2]!;
       out[q + 3] = c[0]; out[q + 4] = c[1]; out[q + 5] = c[2];
-      out[q + 6] = R.spec.px ?? 1; out[q + 7] = R.spec.light ? 1 : 0;
+      out[q + 6] = R.spec.px ?? 1; out[q + 7] = R.spec.light ? 1 : 0; out[q + 8] = Math.max(1, Math.round(R.spec.streak ?? 1));
     }
     this.packedN = this.n;
     this.dirty = false;

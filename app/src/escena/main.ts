@@ -4,7 +4,7 @@
 // gotas, y los dos modos leen ese mismo estado.
 import { generateLayout, TILE, type Layout } from '../../../src/worldgen';
 import { THEMES } from '../../../src/content/themes';
-import { Model, type ModelFile } from '@core/index';
+import { Model, FX_PRESETS, type ModelFile } from '@core/index';
 import { buildWorldState, type WorldTheme, type World } from '../../../src/world/build';
 import { bakeWorld, rebakeChangedJobs, type Baked } from '../../../src/world/bake';
 import { FrameBudget } from '../../../src/view/budget';
@@ -117,6 +117,13 @@ let stomp = false;             // Espacio: se gasta en el siguiente tick
 const keys = new Set<string>();
 let bakeMs = 0;
 let deco = q.get('deco') !== 'no';     // ?deco=no: el escenario sin vegetación ni vidrio (G lo cambia)
+// Efectos (src/core/effects.ts): brasas en antorchas y braseros, polvo al pisar, chispas (E) y el tiempo (N: nada,
+// lluvia, nieve; cyberpunk empieza con lluvia). F los apaga: la partida es la misma (los visuales no tocan la huella).
+// ?efectos=no arranca sin ellos; ?tiempo=lluvia|nieve|nada
+let fxOn = q.get('efectos') !== 'no';
+const WEATHERS = ['nada', 'lluvia', 'nieve'] as const;
+let weather: typeof WEATHERS[number] = 'nada';
+let weatherId = 0;
 
 function rebuild(): void {
   loading.style.display = 'flex';
@@ -133,6 +140,7 @@ function rebuild(): void {
     if (pos && pos.length === 2 && pos.every(Number.isFinite)) spawn = { x: pos[0]!, y: pos[1]! };
     runtime = new Runtime(state, spawn, { radius: 4, speed: 70, model: maiaModel, walk: WALK ? walkFrames(maiaModel) : undefined, shadow: 'always', carry: carryFor(theme) });
     maia = state.entities.get(runtime.entityId!) ?? null;
+    addEffects();
     if (q.get('dir')) { runtime.player.facing = Number(q.get('dir')) % 8; runtime.syncEntity(); }
     // Hasta 10 ticks por cuadro (un tick cuesta ~0,7 ms): el modo vóxel pinta a 8-10 fps y con el tope de 5 MAIA andaba
     // a cámara lenta. Por debajo de 6 fps la partida se frena en vez de encadenar cuadros más lentos
@@ -146,6 +154,32 @@ function rebuild(): void {
   }, 30);
 }
 let exploredOnce = false;
+
+// Los efectos del escenario: brasas sobre las antorchas y braseros horneados (y humo en los braseros), y el tiempo
+function addEffects(): void {
+  if (!state) return;
+  state.effectsOn = fxOn;
+  for (const l of state.lights) {
+    if (l.kind === 'torch') state.fx.add('brasas', l.x, l.y, l.z + 2);
+    if (l.kind === 'brazier') { state.fx.add('brasas', l.x, l.y, l.z + 2); state.fx.add('humo', l.x, l.y, l.z + 6); }
+  }
+  weatherId = 0;
+  const w = q.get('tiempo');
+  setWeather((WEATHERS as readonly string[]).includes(w ?? '') ? w as typeof weather : theme === 'cyberpunk' ? 'lluvia' : 'nada');
+}
+// El tiempo cae sobre lo que se ve: un emisor que sigue a MAIA, del ancho de la vista
+function setWeather(w: typeof weather): void {
+  weather = w;
+  if (!state) return;
+  if (weatherId) { state.fx.remove(weatherId); weatherId = 0; }
+  if (w === 'nada' || !maia) return;
+  const base = w === 'lluvia' ? FX_PRESETS.lluvia : FX_PRESETS.nieve;
+  // Más ancho que la vista (384 px ~ 384 vóxeles en x; el fondo, ~2 veces su alto por la inclinación), con el ritmo
+  // escalado al área para que la densidad sea la del efecto ya hecho
+  const ext = [210, 160, 0] as const;
+  const rate = base.rate * (ext[0] * ext[1]) / (base.extent[0] * base.extent[1]) * (w === 'lluvia' ? 0.6 : 0.5);
+  weatherId = state.fx.add({ ...base, extent: ext, rate }, maia.x, maia.y, maia.z + (w === 'lluvia' ? 48 : 40));
+}
 
 // La entrada de un tick, leída del teclado. En modo vóxel, las teclas van según la pantalla (arriba = alejarse de la
 // cámara): se giran con el giro de la vista a los ejes del modelo.
@@ -161,6 +195,8 @@ function input(): TickInput {
     [dx, dy] = [dx * c + dy * s, -dx * s + dy * c];
   }
   moving = !!(dx || dy);
+  // El pisotón levanta polvo (efecto visual: no entra en la partida)
+  if (stomp && state && maia) state.fx.burst('polvo', maia.x + 0.5, maia.y, maia.z + 1);
   const t = { dx, dy, stomp };
   stomp = false;
   return t;
@@ -212,6 +248,7 @@ function loop(now: number): void {
   last = now;
   if (q.has('agitar') && Math.floor(now / 700) !== Math.floor((now - dt * 1000) / 700)) stomp = true;   // pruebas sin teclado
   ticks?.advance(dt);              // ticks fijos de 1/60: el runtime del juego
+  if (weatherId && state && maia) state.fx.move(weatherId, maia.x, maia.y, maia.z + (weather === 'lluvia' ? 48 : 40));
   explorer.step(Math.min(0.1, dt), keys);
   const t0 = performance.now();
   frame(now / 1000);
@@ -226,9 +263,9 @@ function loop(now: number): void {
   if (n === 30) { avg = acc / n; acc = 0; n = 0; }
   showRoute();
   hud.textContent = `VoxPix · un solo mundo en vóxeles · ${theme} · semilla ${seed}\n` +
-    `horneado ${bakeMs} ms${baked ? ` (render ${baked.ms.render}, luces ${baked.ms.light})` : ''} · cuadro ${avg.toFixed(1)} ms (${compositor.kind}) · luces ${lightsOn ? 'sí' : 'no'} · gotas ${state?.drops.count ?? 0}\n` +
+    `horneado ${bakeMs} ms${baked ? ` (render ${baked.ms.render}, luces ${baked.ms.light})` : ''} · cuadro ${avg.toFixed(1)} ms (${compositor.kind}) · luces ${lightsOn ? 'sí' : 'no'} · gotas ${state?.drops.count ?? 0} · partículas ${fxOn ? state?.fx.alive ?? 0 : 'no'}\n` +
     (explorer.on ? `EXPLORAR · clic para mirar con el ratón · WASD andar · Espacio saltar · Mayús correr · +/- altura ${explorer.walker!.height} · X o Esc salir · render ${explorer.renderMs.toFixed(1)} ms (escena ${explorer.parts.scene.toFixed(1)}, luz ${explorer.parts.light.toFixed(1)}, capas ${explorer.parts.layers.toFixed(1)})`
-      : mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · G ${theme === 'medieval' ? 'vegetación' : 'vidrio'} ${deco ? 'sí' : 'no'} · V modo vóxel · X explorar`
+      : mode === '2d' ? `WASD/flechas mover · Espacio pisotón · R otra semilla · T otro tema · L luz · C contorno · G ${theme === 'medieval' ? 'vegetación' : 'vidrio'} ${deco ? 'sí' : 'no'} · F efectos ${fxOn ? 'sí' : 'no'} · E chispas · N tiempo: ${weather} · V modo vóxel · X explorar`
       : `MODO VÓXEL · WASD andar · arrastrar = girar · rueda = zoom · C contorno · V vuelve al modo 2D`);
   next(loop);
 }
@@ -279,6 +316,13 @@ addEventListener('keydown', (e) => {
   if (k === 'l') { lightsOn = !lightsOn; vox.dirty = true; }
   if (k === 'c') cycleOutline();
   if (k === 'g') { deco = !deco; rebuild(); }
+  if (k === 'f') { fxOn = !fxOn; if (state) state.effectsOn = fxOn; }
+  if (k === 'n') setWeather(WEATHERS[(WEATHERS.indexOf(weather) + 1) % WEATHERS.length]!);
+  // Chispas delante de MAIA, a la altura de la mano
+  if (k === 'e' && state && maia && !explorer.on) {
+    const a = (maia.yaw * Math.PI) / 180;
+    state.fx.burst('chispas', maia.x + 0.5 + Math.sin(a) * 8, maia.y - Math.cos(a) * 8, maia.z + 8);
+  }
   if (k === 'v' && !explorer.on) toggleMode();
   if (k === 'x') toggleExplore();
   if (explorer.on && (k === '+' || k === '=')) { exploreHeight = Math.min(48, exploreHeight + 1); explorer.setHeight(exploreHeight); }

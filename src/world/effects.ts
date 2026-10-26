@@ -40,9 +40,10 @@ export function drawEffects(src: FxSource, b: Baked, view: Uint8ClampedArray, de
   for (let k = 0; k < n; k++) {
     const q = k * FX_STRIDE;
     const [sx, sy, depth] = b.cam.project(d[q]!, d[q + 1]!, d[q + 2]!);
-    const tx = Math.floor(sx) - vx, ty = Math.floor(sy) - vy, px = d[q + 6]!, em = d[q + 7]! > 0;
-    for (let j = 0; j < px; j++) for (let i = 0; i < px; i++) {
-      const x = tx + i, y = ty + j;
+    const tx = Math.floor(sx) - vx, ty = Math.floor(sy) - vy, px = d[q + 6]!, em = d[q + 7]! > 0, len = d[q + 8]!;
+    // La estela: el mismo punto repetido hacia arriba (en el orden en que lo pinta la GPU)
+    for (let s = 0; s < len; s++) for (let j = 0; j < px; j++) for (let i = 0; i < px; i++) {
+      const x = tx + i, y = ty - s + j;
       if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
       const t = y * vw + x;
       if (depth >= depthBuf[t]! - 0.3) continue;

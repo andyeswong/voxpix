@@ -821,19 +821,23 @@ export class GpuCompositor {
     for (const s of state.effects!.sources) total += s.count;
     if (!total) return 0;
     if (this.fxData.length < total * 8) this.fxData = new Float32Array(Math.max(256, total * 2) * 8);
-    const out = this.fxData;
+    let out = this.fxData;
     let n = 0;
     for (const s of state.effects!.sources) {
       const d = s.packed;
       for (let k = 0; k < s.count; k++) {
         const q = k * FX_STRIDE;
         const [sx, sy, depth] = b.cam.project(d[q]!, d[q + 1]!, d[q + 2]!);
-        const tx = Math.floor(sx) - o.vx, ty = Math.floor(sy) - o.vy, px = d[q + 6]!;
-        if (tx + px <= 0 || ty + px <= 0 || tx >= o.vw || ty >= o.vh) continue;
-        const w = n * 8;
-        out[w] = tx; out[w + 1] = ty; out[w + 2] = depth;
-        out[w + 3] = d[q + 3]!; out[w + 4] = d[q + 4]!; out[w + 5] = d[q + 5]!; out[w + 6] = px; out[w + 7] = d[q + 7]!;
-        n++;
+        const tx = Math.floor(sx) - o.vx, ty0 = Math.floor(sy) - o.vy, px = d[q + 6]!, len = d[q + 8]!;
+        for (let st = 0; st < len; st++) {
+          const ty = ty0 - st;
+          if (tx + px <= 0 || ty + px <= 0 || tx >= o.vw || ty >= o.vh) continue;
+          if (out.length < (n + 1) * 8) { const grown = new Float32Array(out.length * 2); grown.set(out); out = this.fxData = grown; }
+          const w = n * 8;
+          out[w] = tx; out[w + 1] = ty; out[w + 2] = depth;
+          out[w + 3] = d[q + 3]!; out[w + 4] = d[q + 4]!; out[w + 5] = d[q + 5]!; out[w + 6] = px; out[w + 7] = d[q + 7]!;
+          n++;
+        }
       }
     }
     if (n) {

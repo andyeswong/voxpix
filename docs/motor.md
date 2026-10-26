@@ -201,6 +201,11 @@ caja, disco), ritmo (`rate` por segundo) o ráfaga (`burst`), vida, rapidez, dir
 los vóxeles que bloquean (`collide`: atravesar, pararse, rebotar o morir).
 
 Efectos ya hechos (`FX_PRESETS`): `chispas`, `humo`, `polvo`, `brasas`, `lluvia`, `nieve`, `hojas`, `burbujas`.
+`streak` da una estela vertical de N píxeles (la lluvia lleva 3).
+
+En la demo de escenario: brasas en antorchas y braseros (humo en los braseros), polvo al pisar, **E** chispas delante
+de MAIA, **N** el tiempo (nada, lluvia, nieve; cyberpunk empieza con lluvia) y **F** apaga los efectos. `?efectos=no`
+y `?tiempo=lluvia|nieve|nada` en la URL. Falta pintarlos en el modo vóxel y en primera persona.
 
 El mundo tiene dos sistemas:
 
