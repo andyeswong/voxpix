@@ -90,7 +90,8 @@ function world(src: string | undefined, out: string | undefined): void {
     const at = process.argv.includes('--at') ? arg('at', '').split(',').map(Number) as [number, number] : undefined;
     const shot = snapshotWorld(built, { width: w, height: h, ticks: Number(arg('ticks', '30')), lights: arg('lights', 'si') !== 'no', whole: process.argv.includes('--whole'), ...(at ? { at } : {}) });
     writeFileSync(out, encodePNG(shot.width, shot.height, shot.rgba, Number(arg('scale', '1'))));
-    console.log(`${out}: ${shot.width}x${shot.height}`);
+    const k = Number(arg('scale', '1'));
+    console.log(`${out}: ${shot.width * k}x${shot.height * k}`);
   }
   const infoOut = arg('info', '');
   if (infoOut) writeFileSync(infoOut, JSON.stringify(info, null, 1));

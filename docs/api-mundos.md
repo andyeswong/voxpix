@@ -11,6 +11,28 @@ Todo va en ejes del modelo del mundo: x hacia el este, y hacia el norte, z hacia
 La receta está en `src/world/recipe.ts`. Quien escriba código puede usar directamente `buildRecipe(receta)` o
 `buildWorldState` con un `WorldLook` (ver `docs/motor.md`).
 
+## Un ejemplo mínimo
+
+`scripts/mundos/toxico.json`, el cyberpunk de muestra con un lago de agua tóxica que brilla y humo:
+
+```json
+{
+  "theme": "cyberpunk",
+  "seed": 3,
+  "ramps": { "water": { "colors": ["#0a2a10", "#145a20", "#22a03a", "#4ee060", "#b0ffb8"], "emissive": true } },
+  "effects": [{ "preset": "humo", "x": 140, "y": 335, "z": 4 }]
+}
+```
+
+Desde un clon limpio (`git clone`, `npm ci`), en la raíz del repo:
+
+```sh
+npm run voxpix -- world scripts/mundos/toxico.json toxico.png --at 140,330 --scale 2 --info toxico.json
+```
+
+Sale `toxico.png` (768 x 432): el lago verde brillando en medio de la vista. `toxico.json` trae la información del
+mundo; su `hash` es la huella, la misma en cualquier máquina: `987b32a6`.
+
 ## La receta
 
 ```json

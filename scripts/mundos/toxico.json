@@ -1,0 +1,6 @@
+{
+  "theme": "cyberpunk",
+  "seed": 3,
+  "ramps": { "water": { "colors": ["#0a2a10", "#145a20", "#22a03a", "#4ee060", "#b0ffb8"], "emissive": true } },
+  "effects": [{ "preset": "humo", "x": 140, "y": 335, "z": 4 }]
+}
