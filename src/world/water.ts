@@ -5,12 +5,14 @@
 //   - brillo especular de cada fuente según la normal de la superficie (punto en agua quieta, destellos con ondas);
 //   - cáusticas: el fondo que se ve a través del agua recibe la luz que las ondas enfocan;
 //   - refracción: el fondo se ve desplazado según la inclinación de la superficie.
+// Su color es la rampa del agua de la paleta del mundo (la que se llama agua o water; si no hay, el azul por defecto), y si esa
+// rampa es emisiva la superficie brilla sola: la luz del mundo no la oscurece (un líquido tóxico, lava...).
 import { ShallowWater } from '../fluid/shallow';
-import { rgbOf, spotFactor, type Palette, type FpWater } from '../core';
+import { rgbOf, rampMaterial, spotFactor, type Palette, type FpWater } from '../core';
 import { resolveLight } from './lightutil';
 import type { World, WorldLight } from './build';
 import type { Baked } from './bake';
-import { worldPalette, M } from './build';
+import { DEFAULT_WORLD_RAMPS } from './build';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
 export const WATER_CELL = CELL;
@@ -23,6 +25,7 @@ export class WaterLayer {
   readonly gw: number;
   readonly gh: number;
   readonly tones: Array<[number, number, number]>;
+  readonly glow: number;                           // luz mínima de la superficie: 1 si la rampa del agua es emisiva, 0 si no
   readonly basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   private fountainOut: number[] = [];             // desagüe
@@ -30,7 +33,7 @@ export class WaterLayer {
   // Rejilla de celdas de CELL x CELL vóxeles en ejes del modelo: la celda (gx, gy) cubre x en [gx*CELL, gx*CELL+CELL)
   // e y en [gy*CELL, gy*CELL+CELL) (gy crece hacia el norte). El fondo de cada celda sale de la rejilla de alturas
   // de los vóxeles del mundo; lo que sube más de WALL_Z (paredes, columnas, el fuste) o no tiene suelo, no deja pasar el agua.
-  constructor(private world: World, theme: Parameters<typeof worldPalette>[0]) {
+  constructor(private world: World) {
     this.gw = Math.ceil(world.width / CELL);
     this.gh = Math.ceil(world.depth / CELL);
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
@@ -68,7 +71,12 @@ export class WaterLayer {
         else if (d > 11 && d < 14) this.fountainOut.push(i);  // desagüe junto al borde del pilón
       }
     }
-    this.tones = worldPalette(theme).ramps[M.water]!.colors.map(rgbOf);
+    const pal = world.model.palette;
+    const ramp = pal.ramps.find((r) => /^(agua|water)$/i.test(r.name));
+    const colors = ramp?.colors.length ? ramp.colors : DEFAULT_WORLD_RAMPS.water;
+    // Cinco tonos (del hondo a la espuma): una rampa más corta repite sus extremos, una más larga se muestrea
+    this.tones = [0, 1, 2, 3, 4].map((k) => rgbOf(colors[Math.round((k * (colors.length - 1)) / 4)]!));
+    this.glow = ramp && rampMaterial(ramp).emissive ? 1 : 0;
   }
 
   private cellOf(x: number, y: number): number {
@@ -181,6 +189,7 @@ export interface WaterGrid {
   readonly sim: { readonly depth: Float32Array; readonly ground: Float32Array; readonly solid: Uint8Array };
   readonly basin: Uint8Array;
   readonly tones: ReadonlyArray<readonly [number, number, number]>;
+  readonly glow?: number;
 }
 
 // Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
@@ -235,7 +244,8 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     // Opaca donde es honda; la trama (transparencia) solo en la orilla y en el suelo mojado
     const alphaFor = (tn: number) => (!w.basin[i] ? Math.min(0.6, d) : d >= 1.5 ? 1 : Math.min(1, 0.45 + d * 0.35 + (tn === 4 ? 0.4 : 0)));
     // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
-    let lr = ambient[0] * 1.25, lg = ambient[1] * 1.25, lb = ambient[2] * 1.3, spec = 0, sr = 0, sg = 0, sb = 0;
+    const glow = w.glow ?? 0;
+    let lr = Math.max(glow, ambient[0] * 1.25), lg = Math.max(glow, ambient[1] * 1.25), lb = Math.max(glow, ambient[2] * 1.3), spec = 0, sr = 0, sg = 0, sb = 0;
     const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
     if (total) for (const l of lights) {
       const cx = gx * CELL + 1, cy = gy * CELL + 1;

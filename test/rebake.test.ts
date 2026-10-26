@@ -4,7 +4,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { bakeWorld, rebakeChanged, rebakeChangedJobs, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState } from '../src/world/build';
 
 const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060', '#808080', '#a0a0a0'] }] };
@@ -52,7 +52,7 @@ describe('rehorneado por trozos', () => {
   });
 
   it('sin cambios no rehace nada; changedSince separa vóxeles de agua y entidades', () => {
-    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const v = state.version;
     expect(state.changedSince(v)).toEqual([]);
     for (let t = 0; t < 5; t++) state.step();                   // el agua de la fuente se mueve

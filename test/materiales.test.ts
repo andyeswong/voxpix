@@ -17,7 +17,7 @@ describe('las propiedades de una rampa', () => {
     expect(rampMaterial(r({ kind: 'foliage' }))).toEqual(rampMaterial(r({ material: 'follaje' })));
     expect(rampMaterial(r({ kind: 'foliage', blocks: true }))).toEqual(rampMaterial(r({ material: 'arbusto' })));
     expect(rampMaterial(r({ emissive: true })).emissive).toBe(true);
-    expect(() => rampMaterial(r({ material: 'plastilina' }))).toThrow('no hay material "plastilina" (rampa r); los materiales son: solido, follaje, arbusto, vidrio, metal');
+    expect(() => rampMaterial(r({ material: 'plastilina' }))).toThrow('no hay material "plastilina" (rampa r); los materiales son: solido, follaje, arbusto, atravesable, vidrio, metal');
     expect(() => rampMaterial(r({ props: { brillo: 1 } as never }))).toThrow(/propiedad "brillo"/);
     expect(() => new Model({ ramps: [r({ material: 'plastilina' })] })).toThrow(/no hay material/);
     expect(Object.keys(MATERIALS)).toEqual(expect.arrayContaining(['solido', 'follaje', 'arbusto', 'vidrio', 'metal']));
@@ -83,7 +83,7 @@ describe('el vidrio', () => {
     };
     const glass = mk(material(1, 1)), stone = mk(material(0, 2));
     // El agua: el vidrio cuenta como fondo y como pared (más de 8 de alto), igual que la piedra
-    const wg = new WaterLayer(glass, 'medieval'), ws = new WaterLayer(stone, 'medieval');
+    const wg = new WaterLayer(glass), ws = new WaterLayer(stone);
     expect(Buffer.from(wg.sim.solid).equals(Buffer.from(ws.sim.solid))).toBe(true);
     expect(glass.model.floorAt(16, 5)).toBe(10);
     // El paso

@@ -19,7 +19,7 @@ function lake(): World {
 describe('el agua en los bordes de la vista', () => {
   it('cada fila de una vista sobre un lago tiene agua', () => {
     const w = lake();
-    const state = new WorldState(w.model, [], new WaterLayer(w, 'medieval'));
+    const state = new WorldState(w.model, [], new WaterLayer(w));
     const b = bakeWorld(w, { topZ: 20, incline: 0.5 });
     const vw = 120, vh = 90;
     // Vistas dentro del lago: arriba (junto a su borde norte), en medio y abajo (junto al sur)

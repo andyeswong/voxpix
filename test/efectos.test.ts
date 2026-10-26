@@ -3,7 +3,7 @@
 // mismas huellas; y en el cuadro se pintan con su color, detrás de lo que las tapa y con luz propia si la llevan.
 import { describe, it, expect } from 'vitest';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState } from '../src/world/build';
 import { FxSystem, fxRandom, FX_PRESETS, FX_STRIDE, Model, box, material, type EmitterSpec } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
@@ -101,7 +101,7 @@ describe('efectos: el sistema', () => {
 
 // Una partida corta (la de determinism.test.ts) con o sin efectos visuales
 function play(fxMode: 'sin' | 'con' | 'apagados', ticks = 100): string[] {
-  const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+  const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
   const m = new Model({ ramps: [{ name: 'x', colors: ['#ff0000'] }] });
   box(m, -1, -1, 0, 1, 1, 6, material(0, 0));
   const e = state.addEntity('cuerpo', m, 100, 100, 1);
@@ -131,7 +131,7 @@ describe('efectos en el mundo', () => {
   });
 
   it('las de simulación entran en la huella y en la instantánea', () => {
-    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const h0 = state.hash();
     state.simFx.add('polvo', 100, 100, 2);
     expect(state.hash()).not.toBe(h0);

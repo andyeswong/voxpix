@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { material } from '../../src/core';
 import { StaticVoxels, WorldState } from '../../src/world/state';
-import { buildWorldState, type WorldTheme } from '../../src/world/build';
+import { buildWorldState } from '../../src/world/build';
 import { generateLayout, WALL, TILE, type Layout } from '../../src/worldgen';
-import { THEMES } from '../../src/content/themes';
+import { THEMES, type ThemeId } from '../../src/samples/themes';
 import { fits, footprint, moveBody, restZ, type Body } from '../../src/runtime/body';
 
 // La colisión del runtime sobre el estado del mundo: lo que el worldgen dice que es pared, columna o mueble no se
@@ -13,12 +13,12 @@ import { fits, footprint, moveBody, restZ, type Body } from '../../src/runtime/b
 // Las pruebas que recorren mapas enteros tardan más que los 5 s por defecto en máquinas lentas (oficina)
 const SLOW = 30_000;
 
-const THEME_IDS: WorldTheme[] = ['medieval', 'cyberpunk', 'oficina'];
+const THEME_IDS: ThemeId[] = ['medieval', 'cyberpunk', 'oficina'];
 const SEEDS = [1, 2, 3, 7];
 
-function level(theme: WorldTheme, seed: number) {
+function level(theme: ThemeId, seed: number) {
   const layout = generateLayout(THEMES[theme].spec, seed);
-  return { layout, ...buildWorldState(layout, theme) };
+  return { layout, ...buildWorldState(layout, THEMES[theme].look) };
 }
 
 // Centro de un tile del worldgen (filas con y hacia abajo) en ejes del modelo

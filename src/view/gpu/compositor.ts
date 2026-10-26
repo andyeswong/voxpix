@@ -363,6 +363,7 @@ export class GpuCompositor {
       gl.uniform1f(w.u.uTPerPx, 1 / (a * f1 - f2));
       gl.uniform1f(w.u.uDPerT, f1 * f1 - f2 * f2);
       gl.uniform3fv(w.u.uTones, this.waterTones(state));
+      gl.uniform1f(w.u.uGlow, state.water!.glow ?? 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 

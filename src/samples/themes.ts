@@ -1,9 +1,11 @@
-// Los temas de escenario (oficina, medieval, cyberpunk): reglas del generador, paletas y agua de cada uno.
+// Temas de MUESTRA (oficina, medieval, cyberpunk) para la demo, el oráculo y las pruebas: reglas del generador y cómo
+// se ve el mundo (WorldLook). Son contenido, no motor: el código de src/ no importa nada de samples/. Un juego arma
+// los suyos igual, con generateLayout, worldPalette y su propio constructor de columnas.
 import type { WaterPalette } from '../terrain/waterTiles';
 import type { GeneratorSpec } from '../worldgen/spec';
+import { worldPalette, type WorldLook } from '../world/build';
 
-// Un tema = datos: qué hojas usa, cómo se genera el mapa y cómo se ve. En el juego esto vive en el contenido
-// de cada nivel; el motor (worldgen, terrain, lighting) solo ve los datos.
+// Un tema = datos: qué hojas usa, cómo se genera el mapa y cómo se ve.
 export type ThemeId = 'medieval' | 'cyberpunk' | 'oficina';
 type Palettes = { puddle: WaterPalette; lake: WaterPalette; ocean: WaterPalette };
 
@@ -16,6 +18,7 @@ export interface Theme {
   ambient: readonly [number, number, number];
   spec: GeneratorSpec;
   water?: Palettes;                          // sin esto, los colores de agua por defecto
+  look: WorldLook;                           // el mundo de vóxeles: paleta, fuente y columnas
   pillar: { top: readonly [number, number, number]; topDim: readonly [number, number, number]; lit: readonly [number, number, number]; mid: readonly [number, number, number]; dark: readonly [number, number, number]; joint: readonly [number, number, number] };
 }
 
@@ -25,6 +28,8 @@ const MEDIEVAL: Theme = {
   material: 'moneda',
   fountain: true,
   ambient: [0.4, 0.46, 0.64],
+  // Los colores por defecto del motor son los del medieval; la fuente y las columnas redondas de piedra
+  look: { palette: worldPalette(), fountain: true },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-grieta', weight: 2 }, { anim: 'piso-hierba', weight: 2 }, { anim: 'piso-paja', weight: 1.5 }],
@@ -46,6 +51,12 @@ const CYBERPUNK: Theme = {
   material: 'chip-suelto',
   fountain: false,
   ambient: [0.42, 0.46, 0.66],
+  look: { palette: worldPalette({
+    floor: ['#14162a', '#1e2238', '#2a304a', '#3a4262', '#4e5878'],
+    wall: ['#181a2a', '#24283e', '#343a56', '#485072', '#606a8e'],
+    cap: ['#20223a', '#2e3250', '#40466a', '#565e86', '#7078a0'],
+    column: ['#22263a', '#3a4260', '#525c80', '#6e789c', '#8a94b8'],
+  }) },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-raspon', weight: 2 }, { anim: 'piso-rejilla', weight: 1 }, { anim: 'piso-neon-rosa', weight: 0.4 }, { anim: 'piso-neon-cian', weight: 0.4 }],
@@ -73,6 +84,12 @@ const OFICINA: Theme = {
   material: 'clip-suelto',
   fountain: false,
   ambient: [0.7, 0.72, 0.8],
+  look: { palette: worldPalette({
+    floor: ['#22262e', '#323844', '#464e5e', '#5e687c', '#76829a'],
+    wall: ['#262a2e', '#3a4046', '#545c64', '#788088', '#98a0a8'],
+    cap: ['#2c2a2a', '#403e3e', '#5c5a58', '#827e7a', '#a29e98'],
+    column: ['#343234', '#525052', '#6e6c6c', '#8a8886', '#aaa8a4'],
+  }) },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-raspon', weight: 2 }, { anim: 'piso-mancha', weight: 0.8 }, { anim: 'piso-papel', weight: 0.6 }],

@@ -3,7 +3,8 @@
 //   - oficina y cyberpunk: cubículos de vidrio con una luz dentro (la luz sale por el vidrio y no por la piedra).
 // Va en buildWorldState({ decorate }), antes del agua y del estado. Determinista por semilla.
 import { material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type Ramp } from '@core/index';
-import { worldWaterDepth, type World, type WorldTheme } from '../../../src/world/build';
+import { worldWaterDepth, type World } from '../../../src/world/build';
+import type { ThemeId } from '../../../src/samples/themes';
 
 // Hash de una celda en [0, 1)
 const rnd = (x: number, y: number, s: number) => {
@@ -72,7 +73,7 @@ function vegetation(w: World, spawn: { x: number; y: number }, seed: number): vo
   w.floaters = lilies.floats.map(([x, y, k]) => ({ x, y, model: pads[k]!, yaw: ((x * 7 + y * 13) % 8) * 45 }));
 }
 
-function glass(w: World, theme: WorldTheme, spawn: { x: number; y: number }, seed: number): void {
+function glass(w: World, theme: ThemeId, spawn: { x: number; y: number }, seed: number): void {
   const m = w.model;
   const neon = theme === 'cyberpunk';
   const r0 = addRamps(w, neon
@@ -94,7 +95,7 @@ function glass(w: World, theme: WorldTheme, spawn: { x: number; y: number }, see
   });
 }
 
-export function decorate(w: World, theme: WorldTheme, spawn: { x: number; y: number }, seed: number): void {
+export function decorate(w: World, theme: ThemeId, spawn: { x: number; y: number }, seed: number): void {
   if (theme === 'medieval') vegetation(w, spawn, seed);
   else glass(w, theme, spawn, seed);
 }

@@ -159,6 +159,7 @@ Cada rampa es un material: un juego de propiedades que el motor lee por separado
 | `solido` | lo de siempre | las del sólido |
 | `follaje` | hierba, flores, hojas | `light` 0,5, `backlit` 0,25, `bed` y `blocks` no |
 | `arbusto` | follaje que no se atraviesa ni se sube | como el follaje, con `blocks` y `climb: false` |
+| `atravesable` | opaco pero se cruza: cables por el suelo, alfombras, papeles | `bed` y `blocks` no (no deja pasar la luz) |
 | `vidrio` | translúcido: ventanas, mamparas | `light` 0,85 (pasa la luz; se ve como un bloque de su color, no a través) |
 | `metal` | metal | `reflect` 0,6 (reservado) |
 

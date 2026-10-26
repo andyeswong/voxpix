@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { createHash } from 'node:crypto';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState, worldWaterDepth, type World } from '../src/world/build';
 import { bakeWorld } from '../src/world/bake';
 import { frame2D } from '../src/world/frame2d';
@@ -17,7 +17,7 @@ const h = (a: ArrayBufferView) => createHash('sha256').update(new Uint8Array(a.b
 
 describe('sin follaje, todo da lo mismo que antes', () => {
   it('horneado, pesos de las luces, cuadro 2D, render y luz del editor: las huellas del motor anterior', () => {
-    const { world, state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { world, state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const b = bakeWorld(world, { topZ: 40, incline: 0.5 });
     state.lights.add({ kind: 'lantern', x: 180, y: 170, z: 6 });
     const f = frame2D(state, b, { vx: 60, vy: 120, vw: 384, vh: 216, time: 0.5, lights: true, ambient: THEMES.medieval.ambient });
@@ -58,7 +58,7 @@ describe('follaje en el mundo', () => {
     // Hierba en el fondo de la cuenca y un arbusto de 10 de alto pegado a la orilla (dentro del agua)
     for (let y = 4; y < 28; y += 3) for (let x = 2; x < 14; x += 2) veg.model.set(x, y, -1, material(2, 1));
     for (let z = -1; z < 9; z++) for (let y = 12; y < 16; y++) for (let x = 12; x < 16; x++) veg.model.set(x, y, z, material(3, 1));
-    const a = new WaterLayer(plain, 'medieval'), b = new WaterLayer(veg, 'medieval');
+    const a = new WaterLayer(plain), b = new WaterLayer(veg);
     expect(Buffer.from(b.sim.ground.buffer).equals(Buffer.from(a.sim.ground.buffer))).toBe(true);
     expect(Buffer.from(b.sim.solid).equals(Buffer.from(a.sim.solid))).toBe(true);     // el arbusto no es pared
     expect(veg.model.floorAt(13, 13)).toBe(-1);
@@ -110,7 +110,7 @@ describe('follaje en el mundo', () => {
 
   it('con el agua como fluido (el juego), juncos en la orilla poco honda y nenúfares a ras del agua', () => {
     let world!: World;
-    buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval', { decorate: (w) => { world = w; } });
+    buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look, { decorate: (w) => { world = w; } });
     const m = world.model, depth = worldWaterDepth(world);
     const pal = { ...m.palette, ramps: [...m.palette.ramps, structuredClone(FOLIAGE_RAMPS.junco!), structuredClone(FOLIAGE_RAMPS.nenufar!)] };
     m.palette = pal;

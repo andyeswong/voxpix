@@ -3,9 +3,9 @@
 // el runtime (src/runtime/runtime.ts); el mundo guarda lo estático, el agua, las entidades (MAIA), las luces y las
 // gotas, y los dos modos leen ese mismo estado.
 import { generateLayout, TILE, type Layout } from '../../../src/worldgen';
-import { THEMES } from '../../../src/content/themes';
+import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, FX_PRESETS, type ModelFile } from '@core/index';
-import { buildWorldState, type WorldTheme, type World } from '../../../src/world/build';
+import { buildWorldState, type World } from '../../../src/world/build';
 import { bakeWorld, rebakeChangedJobs, type Baked } from '../../../src/world/bake';
 import { FrameBudget } from '../../../src/view/budget';
 import { walkFrames } from '../../../src/anim/walk';
@@ -23,12 +23,12 @@ import antorcha from '../../../models/luces/antorcha.json';
 // La luz que lleva MAIA en la mano en cada mundo: linterna (un foco) en la oficina y en cyberpunk, antorcha en el
 // medieval. hand: dónde va el modelo respecto a los pies; emit: de dónde sale la luz respecto al modelo. ?luz=no la
 // quita, para comparar.
-const CARRY: Record<WorldTheme, Omit<CarryConfig, 'model'> & { file: unknown }> = {
+const CARRY: Record<ThemeId, Omit<CarryConfig, 'model'> & { file: unknown }> = {
   oficina: { file: linterna, kind: 'lantern', cone: 40, intensity: 3, radius: 100, hand: [8, -2, 6], emit: [0, -7, 1] },
   medieval: { file: antorcha, kind: 'torch', hand: [8, -1, 5], emit: [0, 0, 8] },
   cyberpunk: { file: linternaNeon, kind: 'lantern', cone: 40, intensity: 1.8, color: [0.18, 0.9, 1], hand: [8, -2, 6], emit: [0, -7, 1] },
 };
-function carryFor(t: WorldTheme): CarryConfig | undefined {
+function carryFor(t: ThemeId): CarryConfig | undefined {
   if (q.get('luz') === 'no') return undefined;
   const { file, ...c } = CARRY[t];
   return { ...c, model: Model.fromJSON(file as ModelFile) };
@@ -36,7 +36,7 @@ function carryFor(t: WorldTheme): CarryConfig | undefined {
 
 const VW = 384, VH = 216;
 const TOPZ = 40;
-const THEME_IDS: WorldTheme[] = ['medieval', 'cyberpunk', 'oficina'];
+const THEME_IDS: ThemeId[] = ['medieval', 'cyberpunk', 'oficina'];
 const q = new URLSearchParams(location.search);
 // Inclinación del suelo (misma para escenario y personajes): 0.5 por defecto; 1 = losetas sin acortar como el juego
 const INCLINE = Number(q.get('inclinacion') ?? 0.5);
@@ -85,7 +85,7 @@ const maiaModel = Model.fromJSON(maiaFile as unknown as ModelFile);
 const WALK = q.get('anim') !== 'quieto';
 
 // ---- estado de la demo (el del juego vive en `state`)
-let theme: WorldTheme = (THEME_IDS.includes(q.get('tema') as WorldTheme) ? q.get('tema') : 'medieval') as WorldTheme;
+let theme: ThemeId = (THEME_IDS.includes(q.get('tema') as ThemeId) ? q.get('tema') : 'medieval') as ThemeId;
 let seed = Number(q.get('seed') ?? 7);
 let lightsOn = true;
 // Contorno (como el de VoxPix): exterior, exterior + interior (los saltos de profundidad: paredes, columnas) o ninguno.
@@ -132,7 +132,7 @@ function rebuild(): void {
     layout = generateLayout(THEMES[theme].spec, seed);
     // La decoración del tema (decor.ts): vegetación en el medieval, cubículos de vidrio en oficina y cyberpunk. G la quita
     const lay = layout;
-    ({ world, state } = buildWorldState(layout, theme, deco ? { decorate: (w) => decorate(w, theme, { x: lay.spawn.x, y: w.depth - 1 - lay.spawn.y }, seed) } : {}));
+    ({ world, state } = buildWorldState(layout, THEMES[theme].look, deco ? { decorate: (w) => decorate(w, theme, { x: lay.spawn.x, y: w.depth - 1 - lay.spawn.y }, seed) } : {}));
     baked = bakeWorld(world, { topZ: TOPZ, incline: INCLINE, outline, outlineColor });
     // La salida viene del worldgen (filas hacia abajo): se pasa a ejes del modelo una vez, aquí
     let spawn = { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };

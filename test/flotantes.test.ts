@@ -2,14 +2,14 @@
 // del agua, y entra en la instantánea.
 import { describe, it, expect } from 'vitest';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState, worldWaterDepth, type World } from '../src/world/build';
 import { lilyPadModels, planFoliage, FOLIAGE_RAMPS } from '../src/core';
 import type { WorldState } from '../src/world/state';
 
 // El medieval con nenúfares flotando en sus lagos
 function pond(withFloaters: boolean): { world: World; state: WorldState } {
-  return buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval', {
+  return buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look, {
     decorate: (w) => {
       if (!withFloaters) return;
       const m = w.model, models = lilyPadModels(structuredClone(FOLIAGE_RAMPS.nenufar!));

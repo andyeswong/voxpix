@@ -7,7 +7,7 @@ import { bakeWorld, bakeWorldJob, rebakeChanged } from '../src/world/bake';
 import { entitySprite } from '../src/world/frame2d';
 import { ViewCamera, WorldView, prepareViewJob, type Quarter } from '../src/world/view';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState } from '../src/world/build';
 
 const PAL = { ramps: [
@@ -197,7 +197,7 @@ describe('hornear sin congelar la vista', () => {
 
   it('bakeWorldJob, troceado al mínimo, da lo mismo que bakeWorld (un mundo con luces y agua)', () => {
     const layout = generateLayout(THEMES.medieval.spec, 7);
-    const { world } = buildWorldState(layout, 'medieval');
+    const { world } = buildWorldState(layout, THEMES.medieval.look);
     const ref = bakeWorld(world, { topZ: 40, incline: 0.5 });
     const { baked, job } = bakeWorldJob(world, { topZ: 40, incline: 0.5 });
     let steps = 0;

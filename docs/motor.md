@@ -21,9 +21,9 @@ con pxl (`src/pxl`), también `pxl-core` -> `node_modules/voxpix/vendor/pxl/src/
 
 ```ts
 import { generateLayout } from '@voxpix/worldgen';
-import { THEMES } from '@voxpix/content/themes';
 import { Model, type ModelFile } from '@voxpix/core';
-import { buildWorldState } from '@voxpix/world/build';
+import { buildWorldState, worldPalette } from '@voxpix/world/build';
+import { THEMES } from '@voxpix/samples/themes';
 import { bakeWorld } from '@voxpix/world/bake';
 import { createCompositor } from '@voxpix/view/compositor';
 import { walkFrames, WALK_FRAME_MS } from '@voxpix/anim/walk';
@@ -34,10 +34,11 @@ const canvas = document.querySelector('canvas')!;
 canvas.width = VW; canvas.height = VH;
 const compositor = createCompositor(canvas);                 // GPU (WebGL2) si hay; si no, CPU
 
-// Un escenario por semilla, construido en vóxeles y horneado una vez
-const theme = 'medieval';
-const layout = generateLayout(THEMES[theme].spec, 7);
-const { world, state } = buildWorldState(layout, theme);
+// Un escenario por semilla, construido en vóxeles y horneado una vez. El generador (spec) y el aspecto (look) son
+// tuyos: aquí, los de la muestra medieval de src/samples/themes.ts
+const { spec, look, ambient } = THEMES.medieval;
+const layout = generateLayout(spec, 7);
+const { world, state } = buildWorldState(layout, look);
 const baked = bakeWorld(world, { topZ: 40, incline: 0.5 });
 
 // Una entidad que anda, y una antorcha que va con ella
@@ -47,7 +48,7 @@ const id = state.entities.add({ model: walk[0]!, x, y, z: 1, facing: 0, castsSha
 state.lights.add({ kind: 'torch', x: 0, y: 0, z: 0, follow: { entity: id, offset: [6, -4, 14] } });
 
 // Lo que va a salir, subido antes del primer cuadro
-const opts = { vx: 0, vy: 0, vw: VW, vh: VH, time: 0, lights: true, ambient: THEMES[theme].ambient };
+const opts = { vx: 0, vy: 0, vw: VW, vh: VH, time: 0, lights: true, ambient };
 compositor.prewarm(baked, opts, walk.map((model) => ({ model, casts: true })));
 
 function loop(now: number): void {
@@ -66,8 +67,9 @@ requestAnimationFrame(loop);
 
 | Módulo | Qué hay |
 |---|---|
-| `worldgen`, `content/themes`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente) y tres temas: `oficina`, `medieval` y `cyberpunk`, con sus paletas y su luz ambiente. |
-| `world/build` | `buildWorldState(layout, tema)`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. |
+| `worldgen`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente), con las reglas que le pases (`GeneratorSpec`). |
+| `world/build` | `buildWorldState(layout, look, { decorate })`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. El aspecto (`WorldLook`) lo da quien construye; ver "El aspecto del mundo". |
+| `samples` | Contenido de MUESTRA para la demo y las pruebas: tres temas (`oficina`, `medieval`, `cyberpunk`, en `samples/themes`), escenas y paletas. El motor no lo importa: cópialo o haz el tuyo. |
 | `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas, los efectos y su huella (`hash`, `snapshot`, `restore`). |
 | `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo lo que cambió. Ojo: `baked.rgba` es la imagen SIN luz; la luz horneada está en `baked.lights[].weight` (un peso por píxel de su zona) y se suma al componer cada cuadro. Para comprobar un cambio de luz, mira los pesos o el cuadro compuesto, no `rgba`. |
 | `view/compositor` | `createCompositor(canvas)`: compone cada cuadro (escenario, entidades con su luz por cara y sus sombras, agua, gotas). GPU con WebGL2 o CPU de reserva con el mismo resultado. Si la GPU pierde el contexto, sigue la CPU. |
@@ -114,6 +116,31 @@ state.lights.add({ kind: 'torch', x: 0, y: 0, z: 0, follow: { entity: id, offset
 - Las luces del escenario son fijas y se hornean; las que se añaden en partida son dinámicas.
 - `owner` es la entidad que lleva la luz: su cuerpo no le hace sombra.
 - `Frame2DOptions.entityLightCap` limita cuántas luces alumbran a cada entidad, para máquinas modestas.
+
+## El aspecto del mundo
+
+El motor no sabe de temas. `buildWorldState(layout, look)` construye con lo que diga el `WorldLook`:
+
+```ts
+const look: WorldLook = {
+  // Las rampas en el orden de M (suelo, pared, tapa, columna, agua, madera, metal...). Las que no digas, por defecto
+  palette: worldPalette({
+    floor: ['#22262e', '#323844', '#464e5e', '#5e687c', '#76829a'],
+    water: { colors: ['#0a2a10', '#145a20', '#22a03a', '#4ee060', '#b0ffb8'], emissive: true },   // brilla solo
+  }),
+  fountain: false,               // el pilón con agua y fuego; por defecto no
+  pillar: miMampara,             // quien construye cada columna del mapa; por defecto roundPillar; null, ninguna
+};
+```
+
+- **El líquido** es la rampa `agua` de la paleta del mundo: su color (de 2 a 5 tonos o más, del hondo a la espuma) y,
+  si la rampa es emisiva (`emissive: true` o un material emisivo), la superficie brilla sola, sin que la luz del mundo
+  la oscurezca. CPU y GPU dan lo mismo. Las luces que quieras sobre el líquido las pones tú, como cualquier `WorldLight`.
+- **Las columnas**: el mapa marca dónde van (`layout.pillar`); `pillar(site)` las construye. `site` trae la loseta en
+  ejes del modelo (`x0..x1`, `y0..y1`, de TILE x TILE), su centro (`cx`, `cy`), el `model` y un `noise(x, y, z)`
+  determinista. La colisión es la de los vóxeles que pongas: lo que no ocupes, se puede cruzar.
+- **Lo demás** (vegetación, cables, adornos) va en `decorate(world)`, antes de crear el agua y el estado. Para algo que
+  se cruce y no deje pasar la luz (cables, alfombras), una rampa con `material: 'atravesable'`.
 
 ## Agua y eventos
 

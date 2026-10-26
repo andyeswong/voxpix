@@ -11,7 +11,7 @@ import { sampleScene } from '../../../src/samples/basic';
 import { medievalScene } from '../../../src/samples/medieval';
 import { vegetationScene } from '../../../src/samples/vegetacion';
 import { generateLayout } from '../../../src/worldgen';
-import { THEMES } from '../../../src/content/themes';
+import { THEMES } from '../../../src/samples/themes';
 import { buildWorldState } from '../../../src/world/build';
 import { loadPxl, paletteFromPxl, stackFromPxl, pxlDirectives, applyDirectives } from '../../../src/pxl/bridge';
 import maiaFile from '../../../models/maia/maia.json';
@@ -186,7 +186,7 @@ async function main(): Promise<void> {
   // Explorar un mundo del juego, con el agua como fluido aparte (FpWater): desde la orilla del lago, mirando al agua
   log('\nPrimera persona en un mundo con agua:');
   {
-    const { world: w, state: st } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { world: w, state: st } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const water = st.water!.firstPersonWater(w.model.palette)!;
     const bw = { minX: 0, maxX: w.width - 1, minY: 0, maxY: w.depth - 1, minZ: w.model.zMin, maxZ: w.model.zMax };
     for (const [label, cam] of [['orilla del lago', { x: 186.3, y: 168.2, z: 14.5, yaw: 250, pitch: -22 }], ['de lejos', { x: 230.4, y: 120.3, z: 40.2, yaw: 300, pitch: -25, fov: 90 }]] as Array<[string, FpCamera]>) {

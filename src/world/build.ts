@@ -1,20 +1,30 @@
 // El escenario generado (worldgen de escenario-motor) construido en VÓXELES, 1 vóxel = 1 píxel del juego.
 // Ejes del modelo: x hacia el este, y hacia el norte, z hacia arriba. La fila 0 del mapa es el norte.
-import { material, type Palette, type VoxelSource } from '../core';
+import { material, type Palette, type Ramp, type VoxelSource } from '../core';
 import { StaticVoxels } from './state';
 import { WALL, TILE, NORTH, type Layout } from '../worldgen';
 import type { SourceKind } from '../lighting/lights';
-import { THEMES } from '../content/themes';
 
-export type WorldTheme = 'medieval' | 'cyberpunk' | 'oficina';
-
-// Materiales del mundo (índice de rampa). Cada tema da sus colores; el orden es el mismo en todos.
+// Materiales del mundo (índice de rampa): el papel de cada rampa en la paleta del mundo. buildWorld pinta el suelo, las
+// paredes, la fachada, la fuente y los muebles con estos índices; quien construye el mundo da los colores (WorldLook).
 export const M = {
   floor: 0, wall: 1, cap: 2, column: 3, water: 4, wood: 5, metal: 6, flame: 7,
   neonPink: 8, neonCyan: 9, screen: 10, cloth: 11, warmGlass: 12, darkGlass: 13, grass: 14,
 } as const;
+export type WorldRole = keyof typeof M;
 
-const SHARED = {
+// Los nombres de las rampas, en el orden de M (el agua se llama 'agua': así la encuentran el render y la vegetación)
+const ROLE_NAMES: Record<WorldRole, string> = {
+  floor: 'suelo', wall: 'pared', cap: 'tapa', column: 'columna', water: 'agua', wood: 'madera', metal: 'metal', flame: 'llama',
+  neonPink: 'neón rosa', neonCyan: 'neón cian', screen: 'pantalla', cloth: 'tela', warmGlass: 'ventana cálida', darkGlass: 'ventana oscura', grass: 'hierba',
+};
+
+// Los colores por defecto de cada papel (neutros: piedra gris y agua azul). Quien construye el mundo cambia los que quiera
+export const DEFAULT_WORLD_RAMPS: Readonly<Record<WorldRole, readonly string[]>> = {
+  floor: ['#1f1a17', '#352e28', '#4e463c', '#6e6454', '#8a7f6a'],
+  wall: ['#1e2024', '#30343a', '#484e56', '#686f78', '#878e98'],
+  cap: ['#2a2d34', '#3c4048', '#565c66', '#7a818c', '#9aa0aa'],
+  column: ['#30291f', '#4a4032', '#625949', '#7c715e', '#9e927c'],
   water: ['#0e1a2e', '#16304a', '#1f4a66', '#2f6a86', '#5a9ab4'],
   wood: ['#2e1c14', '#4a2e1c', '#6e4628', '#946436', '#b88850'],
   metal: ['#1c1e24', '#2e323a', '#4a505c', '#6e7684', '#a0a8b4'],
@@ -28,38 +38,41 @@ const SHARED = {
   grass: ['#1e2e16', '#2f4a22', '#46692e', '#6a9440', '#8cb85a'],
 };
 
-const THEME_RAMPS: Record<WorldTheme, { floor: string[]; wall: string[]; cap: string[]; column: string[] }> = {
-  medieval: {
-    floor: ['#1f1a17', '#352e28', '#4e463c', '#6e6454', '#8a7f6a'],
-    wall: ['#1e2024', '#30343a', '#484e56', '#686f78', '#878e98'],
-    cap: ['#2a2d34', '#3c4048', '#565c66', '#7a818c', '#9aa0aa'],
-    column: ['#30291f', '#4a4032', '#625949', '#7c715e', '#9e927c'],
-  },
-  cyberpunk: {
-    floor: ['#14162a', '#1e2238', '#2a304a', '#3a4262', '#4e5878'],
-    wall: ['#181a2a', '#24283e', '#343a56', '#485072', '#606a8e'],
-    cap: ['#20223a', '#2e3250', '#40466a', '#565e86', '#7078a0'],
-    column: ['#22263a', '#3a4260', '#525c80', '#6e789c', '#8a94b8'],
-  },
-  oficina: {
-    floor: ['#22262e', '#323844', '#464e5e', '#5e687c', '#76829a'],
-    wall: ['#262a2e', '#3a4046', '#545c64', '#788088', '#98a0a8'],
-    cap: ['#2c2a2a', '#403e3e', '#5c5a58', '#827e7a', '#a29e98'],
-    column: ['#343234', '#525052', '#6e6c6c', '#8a8886', '#aaa8a4'],
-  },
-};
+// Una rampa de un papel: sus colores, y si hace falta su material (un agua que brilla: { emissive: true })
+export type WorldRampSpec = readonly string[] | { colors: readonly string[]; material?: string; emissive?: boolean; props?: Ramp['props'] };
 
-export function worldPalette(theme: WorldTheme): Palette {
-  const t = THEME_RAMPS[theme];
-  const r = (name: string, colors: string[]) => ({ name, colors });
+// La paleta del mundo: las rampas en el orden de M, con los colores por defecto donde no se diga otra cosa
+export function worldPalette(ramps: Partial<Record<WorldRole, WorldRampSpec>> = {}): Palette {
   return {
-    ramps: [
-      r('suelo', t.floor), r('pared', t.wall), r('tapa', t.cap), r('columna', t.column),
-      r('agua', SHARED.water), r('madera', SHARED.wood), r('metal', SHARED.metal), r('llama', SHARED.flame),
-      r('neón rosa', SHARED.neonPink), r('neón cian', SHARED.neonCyan), r('pantalla', SHARED.screen), r('tela', SHARED.cloth),
-      r('ventana cálida', SHARED.warmGlass), r('ventana oscura', SHARED.darkGlass), r('hierba', SHARED.grass),
-    ],
+    ramps: (Object.keys(M) as WorldRole[]).map((role) => {
+      const r = ramps[role] ?? DEFAULT_WORLD_RAMPS[role];
+      const spec = Array.isArray(r) ? { colors: r as readonly string[] } : r as Exclude<WorldRampSpec, readonly string[]>;
+      const ramp: Ramp = { name: ROLE_NAMES[role], colors: [...spec.colors] };
+      if (spec.material) ramp.material = spec.material;
+      if (spec.emissive) ramp.emissive = true;
+      if (spec.props) ramp.props = { ...spec.props };
+      return ramp;
+    }),
   };
+}
+
+// Una columna del mapa (layout.pillar sin mueble): la loseta que ocupa, en ejes del modelo, y lo que necesita quien la
+// construye. x0..x1, y0..y1 incluidos (TILE x TILE); cx, cy, su centro
+export interface PillarSite {
+  model: StaticVoxels;
+  x0: number; y0: number; x1: number; y1: number;
+  cx: number; cy: number;
+  seed: number;
+  noise(x: number, y: number, z: number): number;      // ruido determinista por vóxel en [0, 1)
+}
+export type PillarBuilder = (site: PillarSite) => void;
+
+// Cómo se ve un mundo construido: la paleta (en el orden de M; worldPalette la hace), si lleva la fuente y quién
+// construye las columnas. El motor no sabe de temas: cada juego o demo arma el suyo con esto.
+export interface WorldLook {
+  palette: Palette;
+  fountain?: boolean;                 // el pilón con agua y fuego (en el sitio libre más cercano a la salida); por defecto no
+  pillar?: PillarBuilder | null;      // por defecto roundPillar; null: sin columnas de vóxeles (las pone decorate, o nadie)
 }
 
 // Ruido determinista por vóxel (la misma semilla da el mismo mundo)
@@ -73,6 +86,18 @@ export const WALL_H = 32;          // alto de la pared norte (la fachada del jue
 export const SIDE_WALL_H = 12;           // paredes de los lados: bajas, como tapas (en el juego solo se ve la tapa)
 export const SOUTH_WALL_H = 6;           // la del sur, más baja: si no, taparía el suelo de delante
 const COLUMN_H = 34;
+
+// La columna de piedra redonda (la de siempre): un fuste de radio 6,5 con basa y capitel de 7,5, en la rampa columna
+export const roundPillar: PillarBuilder = ({ model, cx, cy, noise }) => {
+  for (let z = 0; z < COLUMN_H; z++) {
+    const cap = z >= COLUMN_H - 3 || z < 2;
+    const r = cap ? 7.5 : 6.5;
+    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+      if ((x - cx) ** 2 + (y - cy) ** 2 > r * r) continue;
+      model.set(x, y, z, material(M.column, cap ? 3 : z % 12 === 0 ? 1 : 2 + (noise(x, y, z) > 0.9 ? 1 : 0)));
+    }
+  }
+};
 
 // Una luz del mundo, en coordenadas del MODELO (vóxeles)
 export interface WorldLight {
@@ -118,9 +143,9 @@ export interface Fountain {
 // Profundidad máxima de la cuenca según el tamaño de la masa de agua (KIND_ID: 1 charco, 2 lago, 3 océano)
 const BASIN_MAX = [0, 2, 4, 7];
 
-// fountain: si lleva la fuente (por defecto, lo que diga el tema: solo el medieval)
-export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?: boolean } = {}): World {
-  const pal = worldPalette(theme);
+// look: la paleta, la fuente y las columnas (WorldLook). Sin look, la paleta por defecto, sin fuente y columnas redondas
+export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPalette() }): World {
+  const pal = structuredClone(look.palette);
   const W = layout.cols * TILE, D = layout.rows * TILE;
   const model = new StaticVoxels(pal, W, D, -10, 48);
   const my = (py: number) => D - 1 - py;            // fila de píxeles del juego -> y del modelo
@@ -268,7 +293,7 @@ export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?:
 
   // ---- fuente: en el sitio libre (3x3 losetas sin pared, columna, mueble ni agua) más cercano a la salida
   let fountain: Fountain | null = null;
-  if (opts.fountain ?? THEMES[theme].fountain) {
+  if (look.fountain) {
     let best: [number, number] | null = null, bd = Infinity;
     const free = (cx: number, cy: number) => {
       if (cx < 1 || cy < 1 || cx >= layout.cols - 1 || cy >= layout.rows - 1) return false;
@@ -331,20 +356,13 @@ export function buildWorld(layout: Layout, theme: WorldTheme, opts: { fountain?:
     }
   }
 
-  // ---- columnas y muebles
-  for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
+  // ---- columnas (las construye el look) y muebles
+  const pillar = look.pillar === undefined ? roundPillar : look.pillar;
+  if (pillar) for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
     const i = cell(cx, cy);
     if (!layout.pillar[i] || layout.prop[i]) continue;
-    const ccx = cx * TILE + 7.5, ccy = my(cy * TILE + 7.5);
-    for (let z = 0; z < COLUMN_H; z++) {
-      const cap = z >= COLUMN_H - 3 || z < 2;
-      const r = cap ? 7.5 : 6.5;
-      for (let y = Math.floor(ccy - r); y <= Math.ceil(ccy + r); y++) for (let x = Math.floor(ccx - r); x <= Math.ceil(ccx + r); x++) {
-        if ((x - ccx) ** 2 + (y - ccy) ** 2 > r * r) continue;
-        const n = hash(x, y, z, seed);
-        model.set(x, y, z, material(M.column, cap ? 3 : z % 12 === 0 ? 1 : 2 + (n > 0.9 ? 1 : 0)));
-      }
-    }
+    const x0 = cx * TILE, yTop = my(cy * TILE);
+    pillar({ model, x0, x1: x0 + TILE - 1, y0: yTop - TILE + 1, y1: yTop, cx: x0 + 7.5, cy: my(cy * TILE + 7.5), seed, noise: (x, y, z) => hash(x, y, z, seed) });
   }
   for (const p of layout.props) {
     const x0 = p.x * TILE, x1 = (p.x + p.w) * TILE - 1;
@@ -394,10 +412,10 @@ export function addWorldFloaters(state: WorldState, world: World): void {
   for (const f of world.floaters ?? []) if (state.water && state.water.depthAt(f.x, f.y) >= FLOAT_MIN_DEPTH) state.floaters.add(f.model, f.x, f.y, f.yaw ?? 0);
 }
 
-export function buildWorldState(layout: Layout, theme: WorldTheme, opts: { decorate?: (world: World) => void; fountain?: boolean } = {}): { world: World; state: WorldState } {
-  const world = buildWorld(layout, theme, opts.fountain === undefined ? {} : { fountain: opts.fountain });
+export function buildWorldState(layout: Layout, look?: WorldLook, opts: { decorate?: (world: World) => void } = {}): { world: World; state: WorldState } {
+  const world = buildWorld(layout, look);
   opts.decorate?.(world);
-  const water = new WaterLayer(world, theme);
+  const water = new WaterLayer(world);
   const state = new WorldState(world.model, world.lights, water, { seed: layout.seed, fountain: world.fountain });
   addWorldFloaters(state, world);
   state.warmUp();

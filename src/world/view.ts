@@ -148,6 +148,7 @@ class WaterView implements WaterSurface {
   }
   get toneColors(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
   get tones(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
+  get glow(): number { return this.src.glow; }
   isBasin(i: number): boolean { return this.basin[i] === 1; }
   draw(...args: Parameters<WaterSurface['draw']>): void { drawWater(this, ...args); }
 }

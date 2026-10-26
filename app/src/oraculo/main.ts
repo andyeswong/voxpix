@@ -9,9 +9,9 @@
 // Tolerancia (la justifica scripts/oracle/README.md): como mucho el 0,5 % de los píxeles puede diferir, y ninguno en
 // más de un nivel de luz o en más de ±2 de color.
 import { generateLayout, TILE } from '../../../src/worldgen';
-import { THEMES } from '../../../src/content/themes';
+import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
-import { buildWorldState, addWorldFloaters, worldWaterDepth, type WorldTheme } from '../../../src/world/build';
+import { buildWorldState, addWorldFloaters, worldWaterDepth, type WorldLook } from '../../../src/world/build';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
@@ -51,10 +51,17 @@ function crowd(n: number) {
   };
 }
 
+// Agua verde tóxica que brilla sola (una rampa agua emisiva) sobre el resto del look
+function toxic(base: WorldLook): WorldLook {
+  const ramps = base.palette.ramps.map((r) => (r.name === 'agua' ? { ...r, colors: ['#0a2a10', '#145a20', '#22a03a', '#4ee060', '#b0ffb8'], emissive: true } : r));
+  return { ...base, palette: { ...base.palette, ramps } };
+}
+
 interface Scenario {
   name: string;
   lightCap?: number;      // tope de luces por entidad (entityLightCap)
-  theme: WorldTheme;
+  theme: ThemeId;
+  look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
@@ -138,6 +145,9 @@ const SCENARIOS: Scenario[] = [
   { name: 'oficina salida', theme: 'oficina', ticks: 120 },
   { name: 'cyberpunk salida', theme: 'cyberpunk', ticks: 120 },
   { name: 'medieval lago con pisotones', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42 },
+  // El líquido brilla solo cuando su rampa es emisiva (WaterLayer.glow): la GPU lo pinta igual, también en la vista girada
+  { name: 'lago tóxico emisivo', theme: 'medieval', look: toxic, pos: [172, 170], ticks: 120, stompEvery: 42 },
+  { name: 'lago tóxico emisivo, giro 1', theme: 'medieval', look: toxic, quarter: 1, pos: [172, 170], ticks: 120 },
   { name: 'medieval lago sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false },
   {
     name: 'medieval columna rota', theme: 'medieval', ticks: 120,
@@ -345,12 +355,13 @@ async function run(): Promise<void> {
     out.textContent += `${sc.name}…\n`;
     await new Promise((r) => setTimeout(r, 0));
     const layout = generateLayout(THEMES[sc.theme].spec, 7);
-    let { world, state } = buildWorldState(layout, sc.theme);
+    const look = sc.look ? sc.look(THEMES[sc.theme].look) : THEMES[sc.theme].look;
+    let { world, state } = buildWorldState(layout, look);
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
       if (sc.veg) vegetate(world, [204, 184]);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
-      state = new WorldState(world.model, world.lights, new WaterLayer(world, sc.theme), { seed: layout.seed, fountain: world.fountain });
+      state = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
       addWorldFloaters(state, world);
       state.warmUp();
     }

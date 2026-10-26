@@ -34,6 +34,7 @@ export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>
   solido: {},
   follaje: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: false },   // hierba, flores, hojas
   arbusto: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: true, climb: false },   // follaje que no se atraviesa ni se sube
+  atravesable: { bed: false, blocks: false },                                         // opaco pero se cruza: cables, alfombras, charcos de papel
   vidrio: { light: 0.85 },                                                             // translúcido: pasa la luz, no el agua ni el jugador
   metal: { reflect: 0.6 },
 };

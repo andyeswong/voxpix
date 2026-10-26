@@ -72,9 +72,9 @@ describe('un solo mundo', () => {
 
   it('el agua que consulta el juego es la misma que ve el modo vóxel (un nivel real)', async () => {
     const { generateLayout } = await import('../src/worldgen');
-    const { THEMES } = await import('../src/content/themes');
+    const { THEMES } = await import('../src/samples/themes');
     const { buildWorldState } = await import('../src/world/build');
-    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     // Una celda con agua: su columna en la vista llega justo hasta la superficie que da la consulta
     const w = state.water!;
     let found = false;

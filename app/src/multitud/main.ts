@@ -4,9 +4,9 @@
 //   ?antorchas=10: las 10 primeras llevan una antorcha (luz puntual que va con ellas)   ?linterna=1: y una linterna
 //   ?luces=N: tope de luces por entidad (solo las N más cercanas la alumbran)   ?contorno=no: sin el contorno interior
 import { generateLayout, TILE } from '../../../src/worldgen';
-import { THEMES } from '../../../src/content/themes';
+import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, type ModelFile } from '@core/index';
-import { buildWorldState, type WorldTheme } from '../../../src/world/build';
+import { buildWorldState } from '../../../src/world/build';
 import { bakeWorld } from '../../../src/world/bake';
 import { createCompositor } from '../../../src/view/compositor';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
@@ -15,7 +15,7 @@ import maiaFile from '../../../models/maia/maia.json';
 const VW = 384, VH = 216;
 const q = new URLSearchParams(location.search);
 const N = Number(q.get('n') ?? 200);
-const theme = (q.get('tema') ?? 'medieval') as WorldTheme;
+const theme = (q.get('tema') ?? 'medieval') as ThemeId;
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
 canvas.width = VW; canvas.height = VH;
@@ -26,7 +26,7 @@ const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 
 const maia = Model.fromJSON(maiaFile as unknown as ModelFile);
 const walk = walkFrames(maia);
 const layout = generateLayout(THEMES[theme].spec, 7);
-const { world, state } = buildWorldState(layout, theme);
+const { world, state } = buildWorldState(layout, THEMES[theme].look);
 const baked = bakeWorld(world, { topZ: 40, incline: 0.5, outline: q.get('contorno') === 'no' ? 'none' : 'both' });   // el estándar: contorno interior
 const cx = layout.spawn.x, cy = world.depth - 1 - layout.spawn.y;
 // Cada una en su órbita alrededor de la salida, a su velocidad

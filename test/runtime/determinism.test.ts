@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { buildWorldState, type WorldTheme } from '../../src/world/build';
+import { buildWorldState } from '../../src/world/build';
 import { generateLayout, TILE } from '../../src/worldgen';
-import { THEMES } from '../../src/content/themes';
+import { THEMES, type ThemeId } from '../../src/samples/themes';
 import { FixedLoop, Runtime, type TickInput } from '../../src/runtime/runtime';
 import { Model, material } from '../../src/core';
 
@@ -13,9 +13,9 @@ const SLOW = 30_000;
 // La partida es función de la semilla y de la entrada de cada tick, nada más: ni del ritmo de cuadros, ni del orden
 // en que se construyó el mundo, ni del reloj. Es lo que permite, p. ej., medir el balance de un juego con muchas semillas.
 
-function game(theme: WorldTheme, seed: number): Runtime {
+function game(theme: ThemeId, seed: number): Runtime {
   const layout = generateLayout(THEMES[theme].spec, seed);
-  const { state } = buildWorldState(layout, theme);
+  const { state } = buildWorldState(layout, THEMES[theme].look);
   return new Runtime(state, { x: layout.spawn.x, y: layout.rows * TILE - 1 - layout.spawn.y }, { radius: 4, speed: 70 });
 }
 
@@ -44,7 +44,7 @@ function run(rt: Runtime, input: (tick: number) => TickInput, until: number): vo
 }
 
 // medieval 7 tiene agua y fuente: las ondas, las gotas y el chorro entran en juego
-const CASES: Array<[WorldTheme, number]> = [['medieval', 7], ['cyberpunk', 3], ['oficina', 2]];
+const CASES: Array<[ThemeId, number]> = [['medieval', 7], ['cyberpunk', 3], ['oficina', 2]];
 
 describe('determinismo del runtime', () => {
   it.each(CASES)('%s, semilla %i: misma semilla y misma entrada, misma huella en cada control', (theme, seed) => {
@@ -128,7 +128,7 @@ describe('determinismo del runtime', () => {
     const model = new Model({ ramps: [{ name: 'tela', colors: ['#202040', '#404080', '#6060c0'] }] }, 'cubo');
     for (let z = 0; z < 6; z++) for (let y = -2; y < 2; y++) for (let x = -2; x < 2; x++) model.set(x, y, z, material(0, 1));
     const make = () => {
-      const { state } = buildWorldState(layout, 'medieval');
+      const { state } = buildWorldState(layout, THEMES.medieval.look);
       return new Runtime(state, { x: layout.spawn.x, y: layout.rows * TILE - 1 - layout.spawn.y }, { radius: 4, speed: 70, model });
     };
     const a = make(), b = make();
@@ -152,7 +152,7 @@ describe('determinismo del runtime', () => {
       return m;
     };
     const idle = cube(4), frames = [1, 2, 3, 5, 6, 7, 8, 9].map(cube);
-    const { state } = buildWorldState(layout, 'oficina');
+    const { state } = buildWorldState(layout, THEMES.oficina.look);
     const rt = new Runtime(state, { x: layout.spawn.x, y: layout.rows * TILE - 1 - layout.spawn.y }, { radius: 4, speed: 70, model: idle, walk: frames });
     const e = () => state.entities.get(rt.entityId!)!;
     const idleId = e().modelId;
@@ -176,7 +176,7 @@ describe('determinismo del runtime', () => {
     const cube = (h: number) => { const m = new Model(pal, `c${h}`); for (let z = 0; z < h; z++) m.set(0, 0, z, material(0, 1)); return m; };
     const carry = { model: cube(2), kind: 'lantern' as const, cone: 40, hand: [8, -2, 6] as const, emit: [0, -7, 1] as const };
     const make = () => {
-      const { state } = buildWorldState(layout, 'oficina');
+      const { state } = buildWorldState(layout, THEMES.oficina.look);
       return new Runtime(state, { x: layout.spawn.x, y: layout.rows * TILE - 1 - layout.spawn.y }, { radius: 4, speed: 70, model: cube(6), carry });
     };
     const a = make(), b = make();

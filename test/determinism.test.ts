@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorld, buildWorldState } from '../src/world/build';
 import { WaterLayer } from '../src/world/water';
 import { Model, material, box } from '../src/core';
@@ -9,7 +9,7 @@ import { WorldState } from '../src/world/state';
 
 // Una partida corta con eventos: pisotones en el agua, gotas, una entidad que se mueve
 function play(seed: number, ticks: number, variant = 0): { state: WorldState; hashes: string[] } {
-  const { state, world } = buildWorldState(generateLayout(THEMES.medieval.spec, seed), 'medieval');
+  const { state, world } = buildWorldState(generateLayout(THEMES.medieval.spec, seed), THEMES.medieval.look);
   const m = new Model({ ramps: [{ name: 'x', colors: ['#ff0000'] }] });
   box(m, -1, -1, 0, 1, 1, 6, material(0, 0));
   const e = state.addEntity('cuerpo', m, 100, 100, 1);
@@ -66,8 +66,8 @@ describe('simulación determinista', () => {
 describe('calentar step', () => {
   it('warmUp deja el mundo exactamente como estaba', () => {
     const layout = generateLayout(THEMES.medieval.spec, 7);
-    const world = buildWorld(layout, 'medieval');
-    const s = new WorldState(world.model, world.lights, new WaterLayer(world, 'medieval'), { seed: layout.seed, fountain: world.fountain });
+    const world = buildWorld(layout, THEMES.medieval.look);
+    const s = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
     const before = s.hash();
     s.warmUp();
     expect(s.hash()).toBe(before);

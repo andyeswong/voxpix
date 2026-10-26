@@ -6,8 +6,8 @@
 // Q / E (o tocar la mitad izquierda / derecha) giran un cuarto. Si un rehorneado pasa de 300 ms, antes se pinta un
 // cuadro de transición (no un cuadro congelado). El resultado queda en window.__giro.
 import { generateLayout } from '../../../src/worldgen';
-import { THEMES } from '../../../src/content/themes';
-import { buildWorldState, type WorldTheme } from '../../../src/world/build';
+import { THEMES, type ThemeId } from '../../../src/samples/themes';
+import { buildWorldState } from '../../../src/world/build';
 import { bakeWorld, rebakeChangedJobs, type Baked } from '../../../src/world/bake';
 import { WorldView, prepareViewJob, type Quarter } from '../../../src/world/view';
 import { FrameBudget } from '../../../src/view/budget';
@@ -15,7 +15,7 @@ import { createCompositor } from '../../../src/view/compositor';
 
 const VW = 384, VH = 216, TOPZ = 40, INCLINE = 0.5, SLOW_MS = 300;
 const q = new URLSearchParams(location.search);
-const theme = (q.get('tema') ?? 'medieval') as WorldTheme;
+const theme = (q.get('tema') ?? 'medieval') as ThemeId;
 const cache = q.get('modo') === 'cache';
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
@@ -25,7 +25,7 @@ canvas.style.width = `${VW * s}px`; canvas.style.height = `${VH * s}px`;
 const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
 
 const layout = generateLayout(THEMES[theme].spec, Number(q.get('seed') ?? 7));
-const { world, state } = buildWorldState(layout, theme);
+const { world, state } = buildWorldState(layout, THEMES[theme].look);
 const spawn = { x: layout.spawn.x + 0.5, y: world.depth - 1 - layout.spawn.y + 0.5 };
 
 // Lo que ocupa un horneado: sus imágenes por píxel, los pesos de las luces horneadas y la rejilla de sombras

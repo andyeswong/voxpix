@@ -225,6 +225,7 @@ uniform ivec4 uCells;               // gx0, gx1, gy0, gy1
 uniform float uA, uOriginY, uF1, uF2, uVy, uVz, uTPerPx, uDPerT;
 uniform vec3 uAmbient;
 uniform vec3 uTones[5];             // 0..255
+uniform float uGlow;                // luz mínima de la superficie (agua emisiva)
 uniform int uNLights;
 ${LIGHT_TABLE}
 
@@ -304,7 +305,7 @@ void main() {
   if (d < 0.6 && !basin) tone = 3;
   vec3 tc = uTones[tone];
   float alpha = !basin ? min(0.6, d) : d >= 1.5 ? 1.0 : min(1.0, 0.45 + d * 0.35 + (tone == 4 ? 0.4 : 0.0));
-  vec3 lt = uAmbient * vec3(1.25, 1.25, 1.3);
+  vec3 lt = max(vec3(uGlow), uAmbient * vec3(1.25, 1.25, 1.3));
   vec3 sp3 = vec3(0.0);
   float spec = 0.0;
   float caustic = 1.0 + clamp(-lap * 6.0, -0.6, 2.5);

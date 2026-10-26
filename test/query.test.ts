@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState } from '../src/world/build';
 
 const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060'] }] };
@@ -58,7 +58,7 @@ describe('consultas del mundo (WorldQuery)', () => {
   });
 
   it('en un nivel real: el agua honda no se pisa y el borde de la fuente tampoco', () => {
-    const { state, world } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), 'medieval');
+    const { state, world } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const w = state.water!;
     let deep: [number, number] | null = null;
     for (let i = 0; i < w.sim.depth.length && !deep; i++) if (!w.sim.solid[i] && w.sim.depth[i]! > 4.6) deep = [(i % w.gw) * 2, Math.floor(i / w.gw) * 2];
