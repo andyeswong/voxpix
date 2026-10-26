@@ -67,7 +67,7 @@ requestAnimationFrame(loop);
 
 | Módulo | Qué hay |
 |---|---|
-| `worldgen`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente), con las reglas que le pases (`GeneratorSpec`). `spec.shape` da la forma de la sala: L, T, salas con pasillos, laberinto o un plano en texto (ver `docs/api-mundos.md`). |
+| `worldgen`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente), con las reglas que le pases (`GeneratorSpec`). `spec.shape` da la forma de la sala: L, T, salas con pasillos, laberinto o un plano en texto. Con `spec.doors`, la sala trae sus huecos de puerta, y `stitchRooms` une varias en un mapa abriendo las puertas entre vecinas (ver `docs/api-mundos.md`). |
 | `world/build` | `buildWorldState(layout, look, { decorate })`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. El aspecto (`WorldLook`) lo da quien construye; ver "El aspecto del mundo". |
 | `samples` | Contenido de MUESTRA para la demo y las pruebas: tres temas (`oficina`, `medieval`, `cyberpunk`, en `samples/themes`), escenas y paletas. El motor no lo importa: cópialo o haz el tuyo. |
 | `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas, los efectos y su huella (`hash`, `snapshot`, `restore`). |

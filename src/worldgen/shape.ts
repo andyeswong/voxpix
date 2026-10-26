@@ -3,12 +3,13 @@
 // del mapa), así un mapa sin forma gasta el azar del generador igual que siempre. Después, el suelo que no tenga camino
 // a la zona más grande se cierra: todo el suelo queda conectado.
 import { createRng } from '../sim/rng';
-import type { ShapeSpec } from './spec';
+import type { DoorSlot, DoorSpec, ShapeSpec } from './spec';
 
 // wall: 0 = suelo; lo demás, pared. El interior jugable es x 1..cols-2, y north..rows-2 (filas hacia el sur). Al final,
 // lo que no toca el suelo (ni en diagonal) pasa a `outside`: el vacío. Así las paredes siguen la forma, de una loseta de
 // grueso, en vez de dejar bloques macizos; la fachada norte (filas 0..north-1) solo queda sobre las columnas que dan a la sala
-export function applyShape(shape: ShapeSpec, wall: Uint8Array, cols: number, rows: number, north: number, seed: number, cap: number, outside: number): void {
+// doors: los huecos de puerta (en el centro de cada lado), con su pasillo hasta el suelo; se devuelven cerrados
+export function applyShape(shape: ShapeSpec | null, doors: DoorSpec | null, wall: Uint8Array, cols: number, rows: number, north: number, seed: number, cap: number, outside: number): DoorSlot[] {
   const at = (x: number, y: number) => y * cols + x;
   const x0 = 1, x1 = cols - 2, y0 = north, y1 = rows - 2;
   const iw = x1 - x0 + 1, ih = y1 - y0 + 1;
@@ -20,12 +21,12 @@ export function applyShape(shape: ShapeSpec, wall: Uint8Array, cols: number, row
   };
   const frac = (v: number | undefined, def: number, what: string) => {
     const f = v ?? def;
-    if (!(f > 0 && f < 1)) throw new Error(`shape ${shape.kind}: ${what} es una fracción entre 0 y 1 (sin incluirlos)`);
+    if (!(f > 0 && f < 1)) throw new Error(`shape ${shape?.kind}: ${what} es una fracción entre 0 y 1 (sin incluirlos)`);
     return f;
   };
   const rng = createRng(seed * 2654435761 + 97);
 
-  switch (shape.kind) {
+  if (shape) switch (shape.kind) {
     case 'L': {
       const f = frac(shape.size, 0.45, 'size');
       const w = Math.max(1, Math.round(iw * f)), h = Math.max(1, Math.round(ih * f));
@@ -115,6 +116,7 @@ export function applyShape(shape: ShapeSpec, wall: Uint8Array, cols: number, row
     default:
       throw new Error(`no hay forma "${(shape as { kind: string }).kind}"; las formas son: L, T, corridors, maze, plan`);
   }
+  const kind = shape?.kind ?? 'rect';
 
   // Todo el suelo conectado: se queda la zona más grande y se cierran las demás
   const region = new Int32Array(cols * rows).fill(-1);
@@ -138,8 +140,28 @@ export function applyShape(shape: ShapeSpec, wall: Uint8Array, cols: number, row
     if (size > bestSize) { bestSize = size; best = id; }
     id++;
   }
-  if (best < 0) throw new Error(`shape ${shape.kind}: no queda suelo`);
+  if (best < 0) throw new Error(`shape ${kind}: no queda suelo`);
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (!wall[at(x, y)] && region[at(x, y)] !== best) wall[at(x, y)] = cap;
+
+  // Los huecos de puerta: centrados en cada lado; cada fila (o columna) del hueco se abre desde el borde hacia dentro
+  // hasta dar con el suelo de la sala
+  const slots: DoorSlot[] = [];
+  if (doors) {
+    const w = Math.max(1, Math.round(doors.width ?? 3));
+    const cx = (cols >> 1) - (w >> 1), cy = ((y0 + y1) >> 1) - (w >> 1);
+    if (cx < x0 || cx + w - 1 > x1 || cy < y0 || cy + w - 1 > y1) throw new Error(`doors: un hueco de ${w} no cabe en una sala de ${cols} x ${rows}`);
+    const main = (i: number) => wall[i] === 0 && region[i] === best;
+    for (const side of ['n', 's', 'e', 'w'] as const) {
+      const from = side === 'n' || side === 's' ? cx : cy;
+      for (let k = from; k < from + w; k++) {
+        if (side === 'n') for (let y = y0; y <= y1 && !main(at(k, y)); y++) wall[at(k, y)] = 0;
+        if (side === 's') for (let y = y1; y >= y0 && !main(at(k, y)); y--) wall[at(k, y)] = 0;
+        if (side === 'w') for (let x = x0; x <= x1 && !main(at(x, k)); x++) wall[at(x, k)] = 0;
+        if (side === 'e') for (let x = x1; x >= x0 && !main(at(x, k)); x--) wall[at(x, k)] = 0;
+      }
+      slots.push({ side, from, to: from + w - 1, open: false });
+    }
+  }
 
   // El vacío: las losetas de pared sin suelo en sus 8 vecinas. Las filas de la fachada van por columnas: la columna
   // entera (tapa y fachada) se queda si su última fila toca el suelo
@@ -154,4 +176,5 @@ export function applyShape(shape: ShapeSpec, wall: Uint8Array, cols: number, row
   for (let y = north; y < rows; y++) for (let x = 0; x < cols; x++) if (wall[at(x, y)] && !touches(x, y)) out[at(x, y)] = 1;
   for (let x = 0; x < cols; x++) if (!touches(x, north - 1)) for (let y = 0; y < north; y++) out[at(x, y)] = 1;
   for (let i = 0; i < out.length; i++) if (out[i]) wall[i] = outside;
+  return slots;
 }

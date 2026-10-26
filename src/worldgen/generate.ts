@@ -4,7 +4,7 @@
 import type { LightSource } from '../lighting/lights';
 import { createRng } from '../sim/rng';
 import { analyzeMasses, DEFAULT_MASS_OPTIONS, type MassMap } from '../terrain/regions';
-import type { GeneratorSpec } from './spec';
+import type { DoorSlot, GeneratorSpec } from './spec';
 import { applyShape } from './shape';
 
 export const TILE = 16;
@@ -38,6 +38,8 @@ export interface Layout {
   sources: LightSource[];                   // fuentes de luz: las piezas de fachada que emiten y después los muebles que emiten
   materials: Array<{ x: number; y: number }>;
   spawn: { x: number; y: number };          // los pies del jugador, en píxeles
+  doors?: DoorSlot[];                       // los huecos de puerta (spec.doors), abiertos o cerrados
+  blocks?: Array<{ gx: number; gy: number; x0: number; y0: number }>;   // las salas de un mapa unido (stitchRooms), en losetas
 }
 
 // Ruido de valor suave con semilla (enteros, sin azar)
@@ -92,12 +94,13 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   for (let y = 0; y < rows; y++) { wall[at(0, y)] = WALL.cap; wall[at(cols - 1, y)] = WALL.cap; }
   for (let x = 1; x < cols - 1; x++) { wall[at(x, 1)] = WALL.facadeTop; wall[at(x, 2)] = WALL.facadeBottom; }
   // La forma de la sala (shape.ts): las paredes de dentro
-  if (spec.shape) applyShape(spec.shape, wall, cols, rows, NORTH, seed, WALL.cap, WALL.outside);
+  const shaped = !!(spec.shape || spec.doors);
+  const doors = shaped ? applyShape(spec.shape ?? null, spec.doors ?? null, wall, cols, rows, NORTH, seed, WALL.cap, WALL.outside) : undefined;
 
   // Agua: un océano en un costado, un lago y unos charcos, con la orilla rota por ruido. Deja dos tiles libres junto a las paredes.
   // En el rectángulo es la caja de dentro; con forma, lo que está a 3 o más losetas de cualquier pared (en el rectángulo,
   // lo mismo)
-  const wallDist = spec.shape ? chebyshevToWall(wall, cols, rows) : null;      // (el vacío cuenta como pared)
+  const wallDist = shaped ? chebyshevToWall(wall, cols, rows) : null;      // (el vacío cuenta como pared)
   const inInterior = wallDist ? (x: number, y: number) => wallDist[at(x, y)]! >= 3
     : (x: number, y: number) => x >= 3 && x <= cols - 4 && y >= NORTH + 2 && y <= rows - 4;
   const side = Math.floor(rng() * 3);   // 0 izquierda, 1 derecha, 2 abajo
@@ -248,7 +251,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   }
   // Las piezas que emiten luz son fuentes: el ancla está en la mitad de la fachada
   const sources: LightSource[] = [];
-  if (spec.shape) for (let x = 1; x < cols - 1; x++) if (wall[at(x, 2)] === WALL.outside) facade[x] = '';   // sobre el vacío, no hay fachada
+  if (shaped) for (let x = 1; x < cols - 1; x++) if (wall[at(x, 2)] === WALL.outside) facade[x] = '';   // sobre el vacío, no hay fachada
   for (let x = 1; x < cols - 1; x++) {
     const kind = f.emits[facade[x]!];
     if (kind) sources.push({ id: `facade-${x}`, kind, x: x * TILE + 8, y: TILE + TILE });
@@ -275,5 +278,5 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
     for (let x = 0; x < cols; x++) line += water[at(x, y)] ? '~' : '.';
     waterRows.push(line);
   }
-  return { seed, cols, rows, caps: spec.caps, wall, floor, water: waterRows, masses, pillar, props, prop, facade, sources, materials, spawn: { x: sx * TILE + 8, y: sy * TILE + 12 } };
+  return { seed, cols, rows, caps: spec.caps, wall, floor, water: waterRows, masses, pillar, props, prop, facade, sources, materials, spawn: { x: sx * TILE + 8, y: sy * TILE + 12 }, ...(doors ? { doors } : {}) };
 }

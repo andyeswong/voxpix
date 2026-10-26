@@ -53,6 +53,8 @@ mundo; su `hash` es la huella, la misma en cualquier máquina: `281c7658`.
 | `seed` | la semilla del mapa |
 | `generator` | las reglas del generador (`GeneratorSpec`: tamaño, suelos, fachada, agua, columnas, muebles). Con `theme`, el del tema |
 | `shape` | la forma de la sala (ver "Formas de sala"). Sin ella, el rectángulo entero |
+| `size` | el tamaño de la sala en losetas, `[cols, rows]` (manda sobre el del generador) |
+| `rooms` | varias salas unidas en un mapa (ver "Salas con puertas"): `[{ gx, gy, shape?, seed? }]` |
 | `theme` | un tema de MUESTRA (`medieval`, `cyberpunk`, `oficina`): completa generador, colores, fuente, luz ambiente y piezas (puertas, ventanas, escritorios). Lo que pongas encima, manda |
 | `ramps` | los colores de cada papel: `floor`, `wall`, `cap`, `column`, `water`, `wood`, `metal`, `flame`, `neonPink`, `neonCyan`, `screen`, `cloth`, `warmGlass`, `darkGlass`, `grass`. Cada uno, una lista de colores o `{ colors, emissive, material }`. El agua emisiva brilla sola |
 | `fountain` | el pilón con agua y fuego |
@@ -88,6 +90,31 @@ la sala.
 ```json
 { "theme": "medieval", "seed": 7, "shape": { "kind": "maze", "loops": 0.2 } }
 ```
+
+## Salas con puertas
+
+Para un mapa de varias salas, cada sala (un bloque) trae cuatro huecos de puerta, uno en el centro de cada lado, de 3
+losetas de ancho. Cada hueco tiene un pasillo corto hasta el suelo de la sala, aunque la forma lo tape. Nacen cerrados:
+la pared del borde sigue ahí, y se ven como un nicho. Una puerta solo se abre si hay otra sala pegada en ese lado.
+
+El motor genera los bloques; la disposición la decide quien pide el mapa (el juego). En la receta, `rooms` dice dónde va
+cada bloque en una rejilla: `gx` crece hacia el este y `gy` hacia el sur. Todas las salas miden lo mismo (`size`). Lo
+que no cubre ninguna sala es el vacío. La fachada decorada es la de las salas de la fila de arriba, y la salida, la de
+la primera sala.
+
+```json
+{ "theme": "medieval", "seed": 5, "size": [24, 18], "rooms": [
+  { "gx": 0, "gy": 0, "shape": { "kind": "maze" } },
+  { "gx": 1, "gy": 0, "shape": { "kind": "T", "bar": "south" } },
+  { "gx": 1, "gy": 1, "shape": { "kind": "L", "corner": "nw" } },
+  { "gx": 2, "gy": 1, "shape": { "kind": "corridors", "rooms": 3 } }
+] }
+```
+
+`info()` trae las puertas (`doors`: lado, losetas, abierta o no, de qué sala) y dónde empieza cada sala (`blocks`).
+
+En código: `generateLayout({ ...spec, doors: {} }, semilla)` da una sala con sus huecos; `openDoors(sala, ['e', 's'])`
+abre los de esos lados, y `stitchRooms([{ layout, gx, gy }, ...])` une las salas y abre las puertas entre vecinas.
 
 ## En el navegador: `window.voxpixWorld`
 

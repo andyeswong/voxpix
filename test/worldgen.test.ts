@@ -285,7 +285,7 @@ describe('generador de mapas por semilla', () => {
 // pura no importa la vista
 describe('worldgen: arquitectura', () => {
   const sources = import.meta.glob('../src/worldgen/*.ts', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
-  const ALLOWED = ['./spec', './generate', './shape', '../lighting/lights', '../sim/rng', '../terrain/regions'];
+  const ALLOWED = ['./spec', './generate', './shape', './rooms', '../lighting/lights', '../sim/rng', '../terrain/regions'];
   it('solo importa de lo permitido', () => {
     expect(Object.keys(sources).length).toBeGreaterThanOrEqual(3);
     for (const [k, src] of Object.entries(sources)) for (const m of src.matchAll(/from\s+'([^']+)'/g)) expect(ALLOWED, `${k} importa ${m[1]}`).toContain(m[1]);

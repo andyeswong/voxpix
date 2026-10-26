@@ -43,7 +43,9 @@ const HELP = `voxpixWorld: construir y mirar mundos de vóxeles (ejes del modelo
 Construir (cada una reconstruye el mundo y devuelve una promesa con info()):
   build(receta)                 un mundo desde una receta. Con theme ('medieval', 'cyberpunk', 'oficina') se completa con
                                 ese tema de muestra. Campos: seed, generator, shape (la forma de la sala: {kind: 'L'|'T'|
-                                'corridors'|'maze'|'plan', ...}), ramps {papel: colores | {colors, emissive}},
+                                'corridors'|'maze'|'plan', ...}), size [cols, rows], rooms [{gx, gy, shape?, seed?}]
+                                (varias salas en una rejilla: gx al este, gy al sur; las puertas se abren entre vecinas),
+                                ramps {papel: colores | {colors, emissive}},
                                 fountain, wallHeight (alto de todas las paredes, 16), pillar ('round'|'none'|modelo), prop ('block'|'none'|modelo), foliage [{type,
                                 density, ramp, heads, on}], stamps [{model, x, y, z?, yaw?}], lights [{kind, x, y, z,
                                 radius?, intensity?, color?}], effects [{preset, x, y, z}], ambient [r, g, b]

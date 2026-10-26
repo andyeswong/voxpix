@@ -5,7 +5,7 @@
 // el mismo mundo. Quien escriba código puede pasar además constructores (funciones) en `code`.
 import { decode, material, MAX_RAMPS, Model, planFoliage, lilyPadModels, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, FOLIAGE_TYPES,
   FX_PRESETS, type FoliageType, type FxPreset, type ModelFile, type Palette, type Ramp } from '../core';
-import { generateLayout, TILE, type Layout } from '../worldgen';
+import { generateLayout, stitchRooms, TILE, type Layout } from '../worldgen';
 import type { GeneratorSpec, ShapeSpec } from '../worldgen/spec';
 import { buildWorldState, worldPalette, worldWaterDepth, M, type World, type WorldLight, type WorldLook, type WorldRampSpec, type WorldRole,
   type PillarBuilder, type PropBuilder } from './build';
@@ -33,6 +33,10 @@ export interface WorldRecipe {
   seed: number;
   generator: GeneratorSpec;
   shape?: ShapeSpec;                                       // la forma de la sala (L, T, pasillos, laberinto, plano); manda sobre la del generator
+  size?: readonly [number, number];                        // el tamaño de la sala en losetas (cols, rows); manda sobre el del generator
+  // Varias salas unidas: cada una en su sitio de una rejilla (gx al este, gy al SUR), con su forma y su semilla. Las
+  // puertas se abren solo entre salas vecinas. La disposición es de quien pide el mapa
+  rooms?: Array<{ gx: number; gy: number; shape?: ShapeSpec; seed?: number }>;
   ramps?: Partial<Record<WorldRole, WorldRampSpec>>;      // los colores de cada papel (worldPalette); el agua emisiva brilla
   fountain?: boolean;
   wallHeight?: number;                                     // el alto de todas las paredes (16 por defecto)
@@ -103,7 +107,12 @@ export function checkRecipe(r: WorldRecipe): void {
 
 export function buildRecipe(r: WorldRecipe, code: Partial<WorldLook> = {}): BuiltRecipe {
   checkRecipe(r);
-  const layout = generateLayout(r.shape ? { ...r.generator, shape: r.shape } : r.generator, r.seed);
+  let gen = r.shape ? { ...r.generator, shape: r.shape } : r.generator;
+  if (r.size) gen = { ...gen, cols: r.size[0], rows: r.size[1] };
+  const layout = r.rooms?.length
+    ? stitchRooms(r.rooms.map((room, k) => ({ gx: room.gx, gy: room.gy,
+      layout: generateLayout({ ...gen, shape: room.shape ?? gen.shape, doors: gen.doors ?? {} }, room.seed ?? r.seed * 31 + k) })))
+    : generateLayout(gen, r.seed);
   let palette = worldPalette(r.ramps);
   // Columnas y muebles de modelo: sus rampas entran en la paleta antes de construir (se estampan al construir)
   let pillar: PillarBuilder | null | undefined = r.pillar === 'none' ? null : undefined;
@@ -187,6 +196,9 @@ export function describeWorld(b: Pick<BuiltRecipe, 'layout' | 'world' | 'state'>
     lights: s.lights.map((x) => ({ id: x.id, kind: x.kind, x: x.x, y: x.y, z: x.z, baked: x.baked !== false })),
     waterCells: wet,
     floaters: s.floaters.list.length,
+    // Las puertas (en losetas a lo largo de su lado) y, en un mapa de varias salas, dónde empieza cada una
+    doors: l.doors ?? [],
+    blocks: l.blocks ?? null,
     ramps: s.solid.palette.ramps.map((r) => r.name),
     hash: s.hash(),
   };

@@ -53,6 +53,14 @@ export type ShapeSpec =
   | { kind: 'maze'; cell?: number; loops?: number }
   | { kind: 'plan'; rows: readonly string[] };
 
+// Huecos de puerta (para unir salas en un mapa): uno en el centro de cada lado, de `width` losetas (3), con un pasillo
+// corto hasta el suelo de la sala aunque la forma lo tape. Nacen CERRADOS (la pared sigue ahí): openDoors o stitchRooms
+// los abren solo donde hay otra sala al lado
+export interface DoorSpec { width?: number }
+export type Side = 'n' | 's' | 'e' | 'w';
+// Un hueco: su lado y las losetas que ocupa a lo largo de él (x para n y s, y para e y w; filas hacia el sur)
+export interface DoorSlot { side: Side; from: number; to: number; open: boolean }
+
 export interface GeneratorSpec {
   cols: number;                            // en tiles de 16 px: la arena mide cols*16 x rows*16
   rows: number;
@@ -64,4 +72,5 @@ export interface GeneratorSpec {
   props?: readonly PropSpec[];             // muebles que bloquean luz y paso
   materials: number;                       // materiales sueltos por el suelo
   shape?: ShapeSpec;                       // la forma de la sala; sin ella, el rectángulo entero
+  doors?: DoorSpec;                        // con esto, la sala trae sus cuatro huecos de puerta (cerrados)
 }
