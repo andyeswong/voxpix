@@ -49,6 +49,11 @@ const canvas = document.getElementById('view') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
 const loading = document.getElementById('loading')!;
 const modeBtn = document.getElementById('mode') as HTMLButtonElement;
+// ?embed: para meter la demo en otra página (la landing), sin el HUD de medidas ni los botones de encima; los mandos
+// los pone la página de fuera con window.voxpixWorld. Las teclas siguen funcionando
+if (q.has('embed')) {
+  for (const el of [hud, modeBtn, document.getElementById('outline')]) if (el) el.style.display = 'none';
+}
 // Letrero visible cuando el modo 2D se compone en la CPU (sin WebGL2, o si se perdió el contexto): bajo detalle, sin
 // sombras de verdad ni reflejos (MAIA no quiere que eso solo lo diga el '(cpu)' del HUD). Lo crea la escena, sin tocar
 // el HTML.
