@@ -26,6 +26,7 @@ export const editor = reactive({
   view: { yaw: -30, elevation: 35, outline: 'outer' as 'none' | 'outer' | 'both', scale: 8, turn: 8 },
   mode: 'layers' as 'layers' | 'voxel3d',                    // cómo se edita: por capas o sobre el modelo en 3D
   view3d: { yaw: -30, elevation: 35, zoom: 12, panX: 0, panY: 0 },   // pan: desplazamiento de la vista en píxeles
+  explore: { height: 1, fov: 70 },                // Explorar: la altura del caminante (vóxeles) y su campo de visión
   // Fuentes de luz de la escena, en el ESPACIO DEL MODELO (celda x, y, z): el render las interpreta en 2.5D.
   // Solo afectan a la vista previa iluminada; no cambian los vóxeles ni la paleta. Se guardan con el modelo.
   light: {
@@ -47,6 +48,7 @@ export const ui = reactive({
   renderMs: 0,
   backend: 'gpu' as 'gpu' | 'cpu',               // con qué se renderiza (preview.ts); 'cpu' si no hay WebGL2
   gpuAvailable: false,
+  explore: false,                                  // la vista Explorar (primera persona) abierta
 });
 
 export interface LightSource3D { id: string; kind: LightKind; x: number; y: number; z: number }

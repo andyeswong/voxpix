@@ -9,7 +9,7 @@
 import { Model, material as mat, decode, validatePalette, planFoliage, rampMaterial, MATERIALS, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, type ModelFile, type FoliageType, type Ramp, type MaterialProps } from '@core/index';
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
-import { pngBlob } from './preview';
+import { pngBlob, renderExplore } from './preview';
 import { loadPxl, paletteFromPxl, stackFromPxl, stackPrefixes, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
 import { SOURCE_PRESETS } from '../../src/lighting';
 import { PRESET_PALETTES } from '../../src/samples/palettes';
@@ -80,6 +80,9 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
   png({sheet?, scale?})                    PNG de la vista (o la hoja de ángulos), en base64; con luz si lit
+  firstPerson({x, y, z, yaw?, pitch?, fov?, width?, height?, scale?})   PNG en primera persona desde ese ojo
+                                           (yaw 0 = norte, 90 = este; pitch + arriba): para previsualizar por dentro
+  explore(open?, {height?, fov?})          abre (o cierra) la vista Explorar: caminar por dentro del modelo
   batch(fn)                                lo que haga fn, en un solo paso de deshacer
   undo(), redo()
   tool(name)                               cambia la herramienta de la interfaz (para enseñar lo que haces)`;
@@ -260,6 +263,32 @@ export const api = {
     if (v.lit !== undefined) editor.light.enabled = v.lit;
     if (v.ambient !== undefined) editor.light.ambient = v.ambient;
     return api.info().view;
+  },
+
+  // Primera persona desde un ojo (src/core/explore.ts), con el contorno de la vista; fondo transparente
+  async firstPerson(o: { x: number; y: number; z: number; yaw?: number; pitch?: number; fov?: number; width?: number; height?: number; scale?: number }): Promise<{ name: string; base64: string }> {
+    const W = o.width ?? 320, H = o.height ?? 180, s = Math.max(1, Math.round(o.scale ?? 1));
+    const img = renderExplore({ x: o.x, y: o.y, z: o.z, yaw: o.yaw ?? 0, pitch: o.pitch ?? 0, fov: o.fov ?? editor.explore.fov }, { width: W, height: H, outline: editor.view.outline });
+    const off = document.createElement('canvas');
+    off.width = W; off.height = H;
+    off.getContext('2d')!.putImageData(new ImageData(img.rgba, W, H), 0, 0);
+    const c = document.createElement('canvas');
+    c.width = W * s; c.height = H * s;
+    const g = c.getContext('2d')!;
+    g.imageSmoothingEnabled = false;
+    g.drawImage(off, 0, 0, W * s, H * s);
+    const blob = await new Promise<Blob>((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('sin PNG'))), 'image/png'));
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    let str = '';
+    for (let i = 0; i < buf.length; i += 0x8000) str += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+    return { name: `${model.value.name}_primera_persona.png`, base64: btoa(str) };
+  },
+
+  explore(open = true, o: { height?: number; fov?: number } = {}) {
+    if (o.height !== undefined) editor.explore.height = Math.max(1, Math.min(64, Math.round(o.height)));
+    if (o.fov !== undefined) editor.explore.fov = Math.max(30, Math.min(120, o.fov));
+    ui.explore = open;
+    return { open: ui.explore, ...editor.explore };
   },
 
   async png(o: { sheet?: boolean; scale?: number } = {}): Promise<{ name: string; base64: string }> {

@@ -200,9 +200,29 @@
     "h": 16
    }
   },
-  "ic_cube": {
+  "ic_walk": {
    "frame": {
     "x": 0,
+    "y": 34,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   }
+  },
+  "ic_cube": {
+   "frame": {
+    "x": 17,
     "y": 34,
     "w": 16,
     "h": 16
@@ -222,7 +242,7 @@
   },
   "ic_undo": {
    "frame": {
-    "x": 17,
+    "x": 34,
     "y": 34,
     "w": 16,
     "h": 16
@@ -242,7 +262,7 @@
   },
   "ic_redo": {
    "frame": {
-    "x": 34,
+    "x": 51,
     "y": 34,
     "w": 16,
     "h": 16
@@ -262,7 +282,7 @@
   },
   "ic_new": {
    "frame": {
-    "x": 51,
+    "x": 68,
     "y": 34,
     "w": 16,
     "h": 16
@@ -282,26 +302,6 @@
   },
   "ic_open": {
    "frame": {
-    "x": 68,
-    "y": 34,
-    "w": 16,
-    "h": 16
-   },
-   "rotated": false,
-   "trimmed": false,
-   "spriteSourceSize": {
-    "x": 0,
-    "y": 0,
-    "w": 16,
-    "h": 16
-   },
-   "sourceSize": {
-    "w": 16,
-    "h": 16
-   }
-  },
-  "ic_save": {
-   "frame": {
     "x": 0,
     "y": 51,
     "w": 16,
@@ -320,7 +320,7 @@
     "h": 16
    }
   },
-  "ic_sample": {
+  "ic_save": {
    "frame": {
     "x": 17,
     "y": 51,
@@ -340,7 +340,7 @@
     "h": 16
    }
   },
-  "ic_sun": {
+  "ic_sample": {
    "frame": {
     "x": 34,
     "y": 51,
@@ -360,7 +360,7 @@
     "h": 16
    }
   },
-  "ic_import": {
+  "ic_sun": {
    "frame": {
     "x": 51,
     "y": 51,
@@ -380,10 +380,30 @@
     "h": 16
    }
   },
-  "ic_export": {
+  "ic_import": {
    "frame": {
     "x": 68,
     "y": 51,
+    "w": 16,
+    "h": 16
+   },
+   "rotated": false,
+   "trimmed": false,
+   "spriteSourceSize": {
+    "x": 0,
+    "y": 0,
+    "w": 16,
+    "h": 16
+   },
+   "sourceSize": {
+    "w": 16,
+    "h": 16
+   }
+  },
+  "ic_export": {
+   "frame": {
+    "x": 0,
+    "y": 68,
     "w": 16,
     "h": 16
    },
@@ -407,7 +427,7 @@
   "format": "RGBA8888",
   "size": {
    "w": 84,
-   "h": 67
+   "h": 84
   },
   "scale": "1"
  }

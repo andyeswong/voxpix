@@ -8,3 +8,4 @@ export * from './light3d';
 export * from './color';
 export * from './foliage';
 export * from './materials';
+export * from './explore';

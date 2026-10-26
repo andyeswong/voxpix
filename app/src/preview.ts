@@ -1,7 +1,7 @@
 // El render del editor (y su luz): el de la GPU (src/view/gpu/voxrender.ts) si hay WebGL2, el de la CPU si no (o
 // con ?ruta=cpu, o si se elige en la barra de estado). Los dos dan los mismos píxeles (app/oraculo-render.html).
 // Y lo que comparten la vista previa y la exportación a PNG: el encuadre y la imagen iluminada.
-import { render, camera, lightField3D, fitFrame, type RenderOptions, type Rendered, type PointLight3D, type VoxelSource, type Bounds, type Frame } from '@core/index';
+import { render, camera, lightField3D, fitFrame, renderFirstPerson, type FpCamera, type FpOptions, type RenderOptions, type Rendered, type PointLight3D, type VoxelSource, type Bounds, type Frame } from '@core/index';
 import { GpuVoxelRenderer } from '../../src/view/gpu/voxrender';
 import { lightIntensity, lightOf, SOURCE_PRESETS } from '../../src/lighting';
 import { buildLayers, applyLayers } from '../../src/lighting/shade';
@@ -37,6 +37,12 @@ export function renderModel(o: RenderOptions, m: VoxelSource = model.value, rev:
   }
   return img;
 }
+// Explorar: la vista en primera persona del modelo del editor (renderFirstPerson), por la GPU si hay
+export function renderExplore(cam: FpCamera, o: FpOptions): Rendered {
+  const g = ui.backend === 'gpu' ? gpuRenderer() : null;
+  return (g && g.firstPerson(model.value, cam, o, version.value)) || renderFirstPerson(model.value, cam, o);
+}
+
 // Para la barra de estado: si la GPU está disponible (se prueba al arrancar)
 export function probeGpu(): void { gpuRenderer(); }
 

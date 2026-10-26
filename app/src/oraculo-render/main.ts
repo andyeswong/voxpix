@@ -5,7 +5,7 @@
 // Qué se compara: el color final (RGBA, byte a byte), el vóxel y la cara de cada píxel (pickKey, pickFace) y la
 // profundidad. Tolerancia: como mucho el 0,1 % de los píxeles con otro color o con otro vóxel/cara (empates de
 // profundidad y umbrales de tono en coma flotante de 32 bits frente a 64), y la profundidad a 1e-3.
-import { Model, render, box, material, camera, lightField3D, type ModelFile, type RenderOptions, type Rendered, type PointLight3D } from '@core/index';
+import { Model, render, box, material, camera, lightField3D, renderFirstPerson, type ModelFile, type RenderOptions, type Rendered, type PointLight3D, type FpCamera } from '@core/index';
 import { GpuVoxelRenderer } from '../../../src/view/gpu/voxrender';
 import { sampleScene } from '../../../src/samples/basic';
 import { medievalScene } from '../../../src/samples/medieval';
@@ -16,6 +16,9 @@ import antorcha from '../../../models/luces/antorcha.json';
 import paisajeSrc from '../../../models/paisaje/medieval_capas.px.js?raw';
 
 const TOL_SHARE = 0.001;
+// En primera persona los rayos van en coma flotante de 32 bits en la GPU y de 64 en la CPU: en las aristas de un vóxel
+// (lejos, donde un vóxel ocupa menos de un píxel) alguno toca el vecino
+const FP_TOL = 0.005;
 const out = document.getElementById('out')!;
 const log = (s: string) => { out.textContent += s + '\n'; };
 
@@ -134,6 +137,31 @@ async function main(): Promise<void> {
       ok &&= pass;
       results.push({ model: name, label: `luz ${label}`, bad, max, share, pass, cpuMs, gpuMs });
       log(`${pass ? 'ok  ' : 'MAL '} ${name.padEnd(12)} ${label.padEnd(22)} luz distinta ${String(bad).padStart(5)} de ${a.length / 3} (${(share * 100).toFixed(3)} %) · máx ${max.toExponential(1)} · cpu ${cpuMs.toFixed(0)} ms · gpu ${gpuMs.toFixed(0)} ms`);
+    }
+  }
+  // Explorar en primera persona (renderFirstPerson): desde fuera mirando hacia abajo y desde dentro, a ras del suelo
+  log('\nPrimera persona (explorar):');
+  for (const [name, m] of models) {
+    const b = m.bounds()!;
+    const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2, span = Math.max(b.maxX - b.minX, b.maxY - b.minY, 8);
+    const cams: Array<[string, FpCamera]> = [
+      ['desde fuera', { x: cx - span * 0.6 + 0.37, y: cy - span * 0.7 + 0.21, z: b.maxZ + span * 0.4 + 0.13, yaw: 38, pitch: -28 }],
+      ['a ras del suelo', { x: cx + 0.31, y: b.minY - 2.6, z: b.minZ + 1.7, yaw: 7, pitch: 4, fov: 80 }],
+    ];
+    for (const [label, cam] of cams) {
+      const o = { width: 200, height: 120, outline: 'both' as const };
+      let t = performance.now();
+      const a = renderFirstPerson(m, cam, o);
+      const cpuMs = performance.now() - t;
+      t = performance.now();
+      const g = gpu.firstPerson(m, cam, o, 1)!;
+      const gpuMs = performance.now() - t;
+      const c = compare(a, g);
+      const share = Math.max(c.rgba, c.pick) / Math.max(1, c.filled);
+      const pass = share <= FP_TOL;
+      ok &&= pass;
+      results.push({ model: name, label: `fp ${label}`, ...c, share, pass, cpuMs, gpuMs });
+      log(`${pass ? 'ok  ' : 'MAL '} ${name.padEnd(12)} ${label.padEnd(22)} color ${String(c.rgba).padStart(5)} · vóxel ${String(c.pick).padStart(5)} de ${String(c.filled).padStart(6)} (${(share * 100).toFixed(3)} %) · cpu ${cpuMs.toFixed(0)} ms · gpu ${gpuMs.toFixed(0)} ms`);
     }
   }
   log(ok ? '\nTODO BIEN' : '\nHAY DIFERENCIAS');

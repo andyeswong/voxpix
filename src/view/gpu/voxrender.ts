@@ -7,7 +7,7 @@
 //   3. la CPU lee eso y termina con finishRender (los contornos y los colores), el mismo código que la CPU.
 // Lo que sube: los vóxeles (una lista y una rejilla 3D con el material) cuando cambia el modelo; cada render, solo
 // uniforms.
-import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, FOLIAGE_SUN_MAX, SUN_UNIT, SUN_OPAQUE, sunCost, rampMaterial, type Palette, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
+import { finishRender, renderBasis, key, SMOOTH_EPS, MAX_RAMPS, RAY_NUDGE, LIGHT_NUDGE, FOLIAGE_SUN_MAX, SUN_UNIT, SUN_OPAQUE, sunCost, rampMaterial, materialsOf, fpBasis, FP_FOV, FP_SUN, type FpCamera, type FpOptions, type Palette, type RenderOptions, type Rendered, type VoxelSource, type PointLight3D, type Camera } from '../../core';
 
 const TW = 1024;                 // ancho de las texturas de lista (vóxeles, caras)
 // El render de la CPU toma la muestra de cada píxel en (i + 0.5 + 1/1024) y decide con sus funciones de arista. La
@@ -289,6 +289,104 @@ void main() {
   oTotal = vec4(c, 1.0);
 }`;
 
+// renderFirstPerson (src/core/explore.ts) por píxel: el rayo del ojo por la rejilla (Amanatides-Woo, los mismos pasos
+// que la CPU), el tono de la cara que toca (sol con sombra en unidades enteras, oclusión ambiental) y qué vóxel es. La
+// fila j del destino es la fila j de la imagen (readPixels la deja en ese orden).
+const FRAG_FP = `#version 300 es
+precision highp float; precision highp int; precision highp usampler3D;
+uniform usampler3D uGrid;
+uniform ivec3 uGridMin, uGridSize;
+uniform vec3 uEye, uF, uR, uU, uL;
+uniform float uTanH, uTanV, uMaxDist;
+uniform int uW, uH;
+uniform bool uShadows, uAo;
+uniform vec2 uTh;
+uniform int uRampLen[${MAX_RAMPS}];
+uniform int uRampSun[${MAX_RAMPS}];
+layout(location = 0) out ivec4 oPick;      // x, y, z, tono * 8 + cara (-1: nada)
+layout(location = 1) out vec4 oDepth;
+const ivec3 DIRS[6] = ivec3[6](ivec3(1, 0, 0), ivec3(-1, 0, 0), ivec3(0, 1, 0), ivec3(0, -1, 0), ivec3(0, 0, 1), ivec3(0, 0, -1));
+const ivec3 PU[6] = ivec3[6](ivec3(0, 1, 0), ivec3(0, 1, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0));
+const ivec3 PW[6] = ivec3[6](ivec3(0, 0, 1), ivec3(0, 0, 1), ivec3(0, 0, 1), ivec3(0, 0, 1), ivec3(0, 1, 0), ivec3(0, 1, 0));
+uint matAt(ivec3 p) {
+  ivec3 q = p - uGridMin;
+  if (any(lessThan(q, ivec3(0))) || any(greaterThanEqual(q, uGridSize))) return 0u;
+  return texelFetch(uGrid, q, 0).r;
+}
+int rampOf(uint m) { return int(m - 1u) / 16; }
+int sunDepth(ivec3 c) {
+  uint h = (uint(c.x) * 0x8da6b343u) ^ (uint(c.y) * 0xd8163841u) ^ (uint(c.z) * 0xcb1ab31fu);
+  h = (h ^ (h >> 15u)) * 0x2c1b3c6du;
+  h = h ^ (h >> 12u);
+  return 1 + int(h % ${FOLIAGE_SUN_MAX}u);
+}
+bool outside(ivec3 q, ivec3 st, ivec3 lo, ivec3 hi) {
+  return (st.x > 0 && q.x > hi.x) || (st.x < 0 && q.x < lo.x) || (st.y > 0 && q.y > hi.y) || (st.y < 0 && q.y < lo.y)
+    || (st.z > 0 && q.z > hi.z) || (st.z < 0 && q.z < lo.z);
+}
+bool inShadow(ivec3 c, bool mats) {
+  int need = mats ? sunDepth(c) * ${SUN_UNIT} : 0, spent = 0;
+  ivec3 q = c, st = ivec3(sign(uL));
+  vec3 td = vec3(st.x != 0 ? abs(1.0 / uL.x) : 1e30, st.y != 0 ? abs(1.0 / uL.y) : 1e30, st.z != 0 ? abs(1.0 / uL.z) : 1e30);
+  vec3 t = td * 0.5;
+  ivec3 lo = uGridMin, hi = uGridMin + uGridSize - 1;
+  for (int k = 0; k < 128; k++) {
+    if (t.x <= t.y && t.x <= t.z) { q.x += st.x; t.x += td.x; }
+    else if (t.y <= t.z) { q.y += st.y; t.y += td.y; }
+    else { q.z += st.z; t.z += td.z; }
+    if (outside(q, st, lo, hi)) return false;
+    uint m = matAt(q);
+    if (m != 0u) {
+      int cost = uRampSun[rampOf(m)];
+      if (cost == ${SUN_OPAQUE}) return true;
+      spent += cost;
+      if (spent >= need) return true;
+    }
+  }
+  return false;
+}
+uniform bool uMats;                          // la paleta tiene materiales que dejan pasar luz (si no, todo opaco)
+void main() {
+  int i = int(gl_FragCoord.x), j = int(gl_FragCoord.y);
+  oPick = ivec4(0, 0, 0, -1); oDepth = vec4(1e30, 0.0, 0.0, 0.0);
+  float a = (float(i) + 0.5) / float(uW) * 2.0 - 1.0, b = 1.0 - (float(j) + 0.5) / float(uH) * 2.0;
+  vec3 d = uF + uR * (a * uTanH) + uU * (b * uTanV);
+  d /= length(d);
+  ivec3 c = ivec3(floor(uEye)), st = ivec3(sign(d));
+  vec3 dd = vec3(st.x != 0 ? abs(1.0 / d.x) : 1e30, st.y != 0 ? abs(1.0 / d.y) : 1e30, st.z != 0 ? abs(1.0 / d.z) : 1e30);
+  vec3 m = vec3(st.x != 0 ? (st.x > 0 ? float(c.x) + 1.0 - uEye.x : uEye.x - float(c.x)) * dd.x : 1e30,
+                st.y != 0 ? (st.y > 0 ? float(c.y) + 1.0 - uEye.y : uEye.y - float(c.y)) * dd.y : 1e30,
+                st.z != 0 ? (st.z > 0 ? float(c.z) + 1.0 - uEye.z : uEye.z - float(c.z)) * dd.z : 1e30);
+  ivec3 lo = uGridMin, hi = uGridMin + uGridSize - 1;
+  int face = -1;
+  float t = 0.0;
+  for (int k = 0; k < 4096; k++) {
+    if (m.x <= m.y && m.x <= m.z) { t = m.x; c.x += st.x; m.x += dd.x; face = st.x > 0 ? 1 : 0; }
+    else if (m.y <= m.z) { t = m.y; c.y += st.y; m.y += dd.y; face = st.y > 0 ? 3 : 2; }
+    else { t = m.z; c.z += st.z; m.z += dd.z; face = st.z > 0 ? 5 : 4; }
+    if (t > uMaxDist || outside(c, st, lo, hi)) return;
+    uint v = matAt(c);
+    if (v == 0u) continue;
+    ivec3 n = DIRS[face];
+    float I = max(0.0, dot(vec3(n), uL));
+    if (uShadows && inShadow(c + n, uMats)) I = min(I, uTh.y - 0.01);
+    int level = I >= uTh.x ? 1 : I >= uTh.y ? 0 : -1;
+    if (uAo) {
+      int occ = 0;
+      for (int p = -1; p <= 1; p++) for (int q = -1; q <= 1; q++) {
+        if (p == 0 && q == 0) continue;
+        if (matAt(c + n + p * PU[face] + q * PW[face]) != 0u) occ++;
+      }
+      if (occ >= 5) level -= 1;
+    }
+    int ramp = rampOf(v), tone = int(v - 1u) - ramp * 16;
+    int shade = ramp * 16 + clamp(tone + level, 0, uRampLen[ramp] - 1);
+    oPick = ivec4(c, shade * 8 + face);
+    oDepth = vec4(t, 0.0, 0.0, 0.0);
+    return;
+  }
+}`;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Uniforms = Record<string, any>;
 
@@ -305,6 +403,7 @@ export class GpuVoxelRenderer {
   private readonly tone: { prog: WebGLProgram; u: Uniforms };
   private readonly faces: { prog: WebGLProgram; u: Uniforms };
   private readonly light: { prog: WebGLProgram; u: Uniforms };
+  private readonly fp: { prog: WebGLProgram; u: Uniforms };
   private readonly vao: WebGLVertexArrayObject;
   private readonly max3D: number;
   private mats: RampMats = rampMats({ ramps: [] });
@@ -339,6 +438,7 @@ export class GpuVoxelRenderer {
     this.tone = program(gl, VERT_FULL, FRAG_TONE);
     this.faces = program(gl, VERT_FACES, FRAG_FACES);
     this.light = program(gl, VERT_FULL, FRAG_LIGHT);
+    this.fp = program(gl, VERT_FULL, FRAG_FP);
     this.vao = gl.createVertexArray()!;
     this.max3D = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE) as number;
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
@@ -412,6 +512,57 @@ export class GpuVoxelRenderer {
     checkFbo(gl);
     this.target = { w, h, fbo, pick, depth, zbuf };
     return this.target;
+  }
+
+  // Como renderFirstPerson (src/core/explore.ts): la vista en primera persona desde una cámara. null si el modelo no
+  // cabe en la GPU (entonces, la CPU).
+  firstPerson(model: VoxelSource, cam: FpCamera, o: FpOptions, rev?: unknown): Rendered | null {
+    if (!this.upload(model, rev)) return null;
+    const gl = this.gl, { width: W, height: H } = o;
+    const T = this.ensureTarget(W, H);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, T.fbo);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+    gl.viewport(0, 0, W, H);
+    gl.disable(gl.DEPTH_TEST);
+    const u = this.fp.u, pal = model.palette;
+    gl.useProgram(this.fp.prog);
+    bind(gl, 1, gl.TEXTURE_3D, this.tGrid, u.uGrid);
+    gl.uniform3iv(u.uGridMin, this.gridMin);
+    gl.uniform3iv(u.uGridSize, this.gridSize);
+    const { f, r, u: up } = fpBasis(cam);
+    const th = Math.tan(((cam.fov ?? FP_FOV) * Math.PI) / 360);
+    gl.uniform3f(u.uEye, cam.x, cam.y, cam.z);
+    gl.uniform3fv(u.uF, f); gl.uniform3fv(u.uR, r); gl.uniform3fv(u.uU, up);
+    const sun = o.sun ?? FP_SUN, sl = Math.hypot(sun[0], sun[1], sun[2]);
+    gl.uniform3f(u.uL, sun[0] / sl, sun[1] / sl, sun[2] / sl);
+    gl.uniform1f(u.uTanH, th); gl.uniform1f(u.uTanV, th * (H / W)); gl.uniform1f(u.uMaxDist, o.maxDist ?? 192);
+    gl.uniform1i(u.uW, W); gl.uniform1i(u.uH, H);
+    gl.uniform1i(u.uShadows, (o.shadows ?? true) ? 1 : 0); gl.uniform1i(u.uAo, (o.ao ?? true) ? 1 : 0);
+    const th2 = o.thresholds ?? { lit: 0.72, mid: 0.3 };
+    gl.uniform2f(u.uTh, th2.lit, th2.mid);
+    const lens = new Int32Array(MAX_RAMPS).fill(1);
+    pal.ramps.slice(0, MAX_RAMPS).forEach((rr, k) => { lens[k] = rr.colors.length; });
+    gl.uniform1iv(u.uRampLen, lens);
+    this.mats = rampMats(pal);
+    gl.uniform1iv(u.uRampSun, this.mats.sun);
+    gl.uniform1i(u.uMats, materialsOf(pal) ? 1 : 0);
+    gl.bindVertexArray(this.vao);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    const pick = new Int32Array(W * H * 4), dep = new Float32Array(W * H * 4);
+    gl.readBuffer(gl.COLOR_ATTACHMENT0);
+    gl.readPixels(0, 0, W, H, gl.RGBA_INTEGER, gl.INT, pick);
+    gl.readBuffer(gl.COLOR_ATTACHMENT1);
+    gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, dep);
+    this.lastRender = '';
+    const color = new Int32Array(W * H).fill(-1), depth = new Float32Array(W * H).fill(Infinity);
+    const pickKey = new Float64Array(W * H).fill(NaN), pickFace = new Int8Array(W * H).fill(-1);
+    for (let p = 0; p < W * H; p++) {
+      const w = pick[p * 4 + 3]!;
+      if (w < 0) continue;
+      color[p] = w >> 3; pickFace[p] = w & 7; depth[p] = dep[p * 4]!;
+      pickKey[p] = key(pick[p * 4]!, pick[p * 4 + 1]!, pick[p * 4 + 2]!);
+    }
+    return finishRender(pal, { width: W, height: H, originX: 0, originY: 0, outline: o.outline ?? 'none' }, color, depth, pickKey, pickFace);
   }
 
   // Como render(model, o). `rev` dice si el modelo cambió desde la última vez (p. ej. un contador de versión): con el

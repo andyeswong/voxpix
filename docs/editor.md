@@ -86,6 +86,21 @@ el del medio para mover y la rueda para acercar.
 Con *Iluminación*, las fuentes de luz del modelo alumbran cada cara de vóxel, con sombras de los propios vóxeles y
 parpadeo, y *Ambiente* oscurece el resto. Poner una luz la enciende sola.
 
+## Explorar
+
+El botón **Explorar** (arriba, junto a Capas y 3D) te pone dentro del modelo en primera persona, con un personaje
+invisible: caminas por tu escena, tu edificio o tu personaje como en un juego.
+
+- Clic en la vista para mirar con el ratón. WASD o las flechas para andar, Espacio para saltar, Mayús para correr.
+- **F** vuela (Espacio sube, C baja), **R** vuelve al inicio y **Esc** suelta el ratón; otro Esc sale.
+- **Altura**: lo alto que es el personaje, de 1 a 32 vóxeles (1 por defecto). Con 1 ves el modelo como un bicho
+  pequeño; con 16, como alguien de su tamaño. **Visión**: el campo de visión.
+- Choca con lo que bloquea (los materiales: la hierba se atraviesa, el vidrio no), sube escalones de 1, y el agua se
+  vadea. Debajo del modelo hay un suelo infinito.
+- El render es el del núcleo (`renderFirstPerson`, `src/core/explore.ts`) con la paleta cerrada y el contorno de la
+  vista; por la GPU si hay (va a 60 fps), y el oráculo del render compara las dos rutas.
+- Por ahora se ve con la luz del sol; las fuentes de luz del modelo todavía no alumbran en Explorar.
+
 ## Exportar
 
 - **pxl: N ángulos:** un `.px.js` con un sprite por ángulo y una hoja. Se construye con

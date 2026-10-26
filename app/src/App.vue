@@ -3,6 +3,7 @@ import { onMounted, onUnmounted, ref } from 'vue';
 import LayerEditor from './components/LayerEditor.vue';
 import Voxel3DEditor from './components/Voxel3DEditor.vue';
 import Viewport from './components/Viewport.vue';
+import Explorer from './components/Explorer.vue';
 import PalettePanel from './components/PalettePanel.vue';
 import LayersPanel from './components/LayersPanel.vue';
 import CanvasSizeDialog from './components/CanvasSizeDialog.vue';
@@ -177,6 +178,7 @@ void version;
 
 <template>
   <!-- El lienzo ocupa toda la ventana; todo lo demás flota encima -->
+  <Explorer v-if="ui.explore" />
   <main class="stage" :style="{ '--free-left': ui.layersOpen ? '256px' : '24px', '--free-right': ui.previewOpen ? '392px' : '24px' }">
     <LayerEditor v-if="editor.mode === 'layers'" />
     <Voxel3DEditor v-else />
@@ -209,6 +211,7 @@ void version;
     <div class="seg big">
       <button :class="{ on: editor.mode === 'layers' }" title="Editar por capas (Tab)" @click="editor.mode = 'layers'"><PxIcon name="layers" />Capas</button>
       <button :class="{ on: editor.mode === 'voxel3d' }" title="Editar sobre el modelo en 3D (Tab)" @click="editor.mode = 'voxel3d'"><PxIcon name="cube" />3D</button>
+      <button title="Caminar por dentro del modelo en primera persona" @click="ui.explore = true"><PxIcon name="walk" />Explorar</button>
     </div>
   </div>
 
