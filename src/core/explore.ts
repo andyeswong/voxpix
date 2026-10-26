@@ -172,6 +172,8 @@ export interface WalkInput {
   run?: boolean;
 }
 
+const MAX_MOVE = 0.25;     // lo más que avanza el caminante en un tramo (menos que el radio mínimo y que un vóxel)
+
 export class Walker {
   x: number; y: number; z: number;     // los pies (centro de la base)
   vz = 0;
@@ -201,7 +203,15 @@ export class Walker {
     return false;
   }
 
+  // Un paso de dt. El movimiento se parte en tramos de como mucho MAX_MOVE: a ninguna velocidad (ni con un dt grande)
+  // se atraviesa una pared de un vóxel
   step(dt: number, input: WalkInput, solid: (x: number, y: number, z: number) => boolean): void {
+    const reach = this.speed * (input.run ? 2 : 1) * dt + Math.abs(this.vz) * dt + this.gravity * dt * dt;
+    const n = Math.max(1, Math.ceil(reach / MAX_MOVE));
+    for (let k = 0; k < n; k++) this.substep(dt / n, input, solid);
+  }
+
+  private substep(dt: number, input: WalkInput, solid: (x: number, y: number, z: number) => boolean): void {
     const yr = (this.yaw * Math.PI) / 180;
     const fx = Math.sin(yr), fy = Math.cos(yr), rx = Math.cos(yr), ry = -Math.sin(yr);
     let mx = input.forward * fx + input.strafe * rx, my = input.forward * fy + input.strafe * ry;

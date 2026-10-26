@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { Walker, fpRay, materialsOf, type FpCamera } from '@core/index';
+import { Walker, fpBasis, materialsOf, type FpCamera } from '@core/index';
 import { model, editor, ui } from '../store';
 import { renderExplore } from '../preview';
 import PxIcon from './PxIcon.vue';
@@ -45,7 +45,7 @@ function solidFn(): (x: number, y: number, z: number) => boolean {
 }
 
 const keys = new Set<string>();
-let raf = 0, last = 0, acc = 0, fps = 0, frames = 0, fpsT = 0;
+let raf = 0, last = 0, acc = 0, fps = 0, frames = 0, fpsT = 0, renderMs = 0, renderMax = 0;
 
 function frame(now: number): void {
   raf = requestAnimationFrame(frame);
@@ -62,10 +62,14 @@ function frame(now: number): void {
     jump: k(' '), down: k('c'), run: k('shift'), fly: fly.value,
   };
   while (acc >= 1 / 60) { walker.step(1 / 60, input, solid); acc -= 1 / 60; }
+  const t0 = performance.now();
   draw();
+  const ms = performance.now() - t0;
+  renderMs = renderMs * 0.9 + ms * 0.1;
+  if (frames > 10) renderMax = Math.max(renderMax, ms);
   frames++;
   if (now - fpsT > 500) { fps = Math.round((frames * 1000) / (now - fpsT)); frames = 0; fpsT = now; }
-  hud.value = `${fps} fps · pies ${walker.x.toFixed(1)}, ${walker.y.toFixed(1)}, ${walker.z.toFixed(1)} · altura ${walker.height}${fly.value ? ' · volando' : ''}`;
+  hud.value = `${fps} fps · render ${renderMs.toFixed(1)} ms (peor ${renderMax.toFixed(1)}) · pies ${walker.x.toFixed(1)}, ${walker.y.toFixed(1)}, ${walker.z.toFixed(1)} · altura ${walker.height}${fly.value ? ' · volando' : ''}`;
 }
 
 const SKY = [[42, 40, 58], [96, 104, 140]] as const;      // arriba y en el horizonte
@@ -77,10 +81,14 @@ function draw(): void {
   const img = renderExplore(cam, { width: RW, height: RH, outline: editor.view.outline });
   const out = new ImageData(RW, RH);
   const floor = Math.min(0, bounds().minZ);
+  // Los rayos de los píxeles vacíos (cielo o suelo): la base de la cámara una vez, no por píxel
+  const { f, r, u } = fpBasis(cam);
+  const th = Math.tan(((cam.fov ?? 70) * Math.PI) / 360), tv = th * (RH / RW);
   for (let j = 0; j < RH; j++) for (let i = 0; i < RW; i++) {
     const p = j * RW + i, o = p * 4;
     if (img.rgba[o + 3]) { out.data[o] = img.rgba[o]!; out.data[o + 1] = img.rgba[o + 1]!; out.data[o + 2] = img.rgba[o + 2]!; out.data[o + 3] = 255; continue; }
-    const d = fpRay(cam, RW, RH, i, j);
+    const a = ((i + 0.5) / RW) * 2 - 1, b = 1 - ((j + 0.5) / RH) * 2;
+    const d = [f[0] + r[0] * a * th + u[0] * b * tv, f[1] + r[1] * a * th + u[1] * b * tv, f[2] + r[2] * a * th + u[2] * b * tv] as const;
     let col: readonly number[];
     if (d[2] < 0 && cam.z > floor) {
       // El suelo infinito: losetas de 4 vóxeles

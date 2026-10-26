@@ -30,6 +30,13 @@ describe('render en primera persona', () => {
     expect(d[0]).toBeCloseTo(1, 5); expect(d[1]).toBeCloseTo(0, 5); expect(d[2]).toBeCloseTo(0, 5);
   });
 
+  it('el mismo modelo con la misma pose da los mismos bytes', () => {
+    const m = medievalScene().model, cam = { x: -10, y: -12, z: 5.7, yaw: 30, pitch: -10 };
+    const a = renderFirstPerson(m, cam, { width: 80, height: 45, outline: 'both' }), b = renderFirstPerson(m, cam, { width: 80, height: 45, outline: 'both' });
+    expect(Buffer.from(a.rgba).equals(Buffer.from(b.rgba))).toBe(true);
+    expect(Buffer.from(a.depth.buffer).equals(Buffer.from(b.depth.buffer))).toBe(true);
+  });
+
   it('la escena medieval de muestra, desde dentro: se ve algo en casi toda la imagen', () => {
     const m = medievalScene().model;
     const img = renderFirstPerson(m, { x: -10, y: -12, z: 5.7, yaw: 30, pitch: -10 }, { width: 96, height: 54, outline: 'both' });
@@ -68,6 +75,23 @@ describe('el caminante', () => {
     expect(v.x).toBeLessThan(6);
     expect(v.x).toBeGreaterThan(5);
     expect(v.z).toBe(1);
+  });
+
+  it('no atraviesa una pared de un vóxel a ninguna velocidad (ni con un paso enorme)', () => {
+    const thin = new Model(structuredClone(PAL));
+    box(thin, -20, -20, 0, 20, 20, 0, material(0, 1));
+    box(thin, -20, 3, 1, 20, 3, 12, material(1, 1));               // una pared de 1 de grueso en y = 3
+    const s = (x: number, y: number, z: number) => thin.get(x, y, z) !== 0;
+    for (const [speed, dt] of [[5, 1 / 60], [200, 1 / 60], [8, 2], [1000, 0.5]] as const) {
+      const w = new Walker(0.5, 0.5, 1, { height: 2, speed });
+      w.yaw = 0;
+      for (let i = 0; i < 20; i++) w.step(dt, { forward: 1, strafe: 0, run: true }, s);
+      expect(w.y, `velocidad ${speed}, dt ${dt}`).toBeLessThan(3);
+    }
+    // Y cayendo desde muy alto con un paso enorme, no atraviesa el suelo
+    const f = new Walker(0.5, 0.5, 300, { height: 2 });
+    for (let i = 0; i < 10; i++) f.step(1, { forward: 0, strafe: 0 }, s);
+    expect(f.z).toBe(1);
   });
 
   it('salta, vuela y la altura se elige (el ojo va al 90 %)', () => {
