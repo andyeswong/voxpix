@@ -1,5 +1,6 @@
 // Explorar (src/core/explore.ts): el render en primera persona y el caminante
 import { describe, it, expect } from 'vitest';
+import { createHash } from 'node:crypto';
 import { Model, box, material, renderFirstPerson, fpRay, Walker, assertClosedPalette, unkey } from '../src/core';
 import { medievalScene } from '../src/samples/medieval';
 
@@ -35,6 +36,8 @@ describe('render en primera persona', () => {
     const a = renderFirstPerson(m, cam, { width: 80, height: 45, outline: 'both' }), b = renderFirstPerson(m, cam, { width: 80, height: 45, outline: 'both' });
     expect(Buffer.from(a.rgba).equals(Buffer.from(b.rgba))).toBe(true);
     expect(Buffer.from(a.depth.buffer).equals(Buffer.from(b.depth.buffer))).toBe(true);
+    // Y una huella fija: si cambia, cambió el render (a propósito o no)
+    expect(createHash('sha256').update(new Uint8Array(a.rgba.buffer)).digest('hex').slice(0, 16)).toBe('6acb609a617f43bd');
   });
 
   it('la escena medieval de muestra, desde dentro: se ve algo en casi toda la imagen', () => {
@@ -88,6 +91,17 @@ describe('el caminante', () => {
       for (let i = 0; i < 20; i++) w.step(dt, { forward: 1, strafe: 0, run: true }, s);
       expect(w.y, `velocidad ${speed}, dt ${dt}`).toBeLessThan(3);
     }
+    // Volando, tampoco: hacia la pared y hacia arriba contra un techo
+    const ceil = new Model(structuredClone(PAL));
+    box(ceil, -20, -20, 0, 20, 20, 0, material(0, 1));
+    box(ceil, -20, -20, 8, 20, 20, 8, material(0, 1));              // un techo de 1 en z = 8
+    box(ceil, -20, 3, 1, 20, 3, 7, material(1, 1));
+    const sc = (x: number, y: number, z: number) => ceil.get(x, y, z) !== 0;
+    const fl = new Walker(0.5, 0.5, 1, { height: 2, speed: 500 });
+    fl.yaw = 0;
+    for (let i = 0; i < 10; i++) fl.step(0.5, { forward: 1, strafe: 0, fly: true, jump: true, run: true }, sc);
+    expect(fl.y).toBeLessThan(3);
+    expect(fl.z + fl.height).toBeLessThanOrEqual(8);
     // Y cayendo desde muy alto con un paso enorme, no atraviesa el suelo
     const f = new Walker(0.5, 0.5, 300, { height: 2 });
     for (let i = 0; i < 10; i++) f.step(1, { forward: 0, strafe: 0 }, s);

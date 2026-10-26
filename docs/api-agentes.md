@@ -72,8 +72,8 @@ El espejo de la interfaz (M) también se aplica a `set`, `voxels`, `box` y `fill
 |---|---|---|
 | `view({ yaw, elevation, outline, lit, ambient })` | la vista | La vista previa, que también es lo que sale en el PNG. `outline`: `outer`, `both` o `none`. `lit` enciende la iluminación; `ambient` va de 0,1 a 1. |
 | `png({ sheet?, scale? })` | promesa de `{name, base64}` | El PNG de la vista, o la hoja de 8 ángulos con `sheet: true`, con fondo transparente, un encuadre que contiene el modelo entero y luz si `lit`. |
-| `firstPerson({ x, y, z, yaw?, pitch?, fov?, width?, height?, scale? })` | promesa de `{name, base64}` | El PNG en primera persona desde ese ojo (yaw 0 = norte, 90 = este; pitch + arriba), con fondo transparente: para previsualizar el modelo por dentro. |
-| `explore(open?, { height?, fov? })` | `{open, height, fov}` | Abre (o cierra) la vista Explorar, con la altura del personaje invisible. |
+| `firstPerson({ x, y, z, yaw?, pitch?, fov?, width?, height?, scale? })` | promesa de `{name, base64}` | El PNG en primera persona desde ese ojo, con fondo transparente: para previsualizar el modelo por dentro. `x, y, z`: el ojo, en vóxeles (los mismos ejes que el modelo; z = 0 es el suelo). `yaw`: en GRADOS, 0 mira al norte (+y), 90 al este (+x), 180 al sur, 270 al oeste. `pitch`: en grados, positivo hacia arriba, de -89 a 89. `fov`: campo de visión horizontal en grados (70). `width, height`: la resolución del render (320 x 180); `scale`: ampliación entera sin suavizar. Con la iluminación encendida (`view({ lit: true })`), alumbran las fuentes del modelo. |
+| `explore(open?, { height?, fov? })` | `{open, height, fov}` | Abre (o cierra) la vista Explorar. `height`: la altura del personaje invisible en vóxeles, de 1 a 64 (el ojo va al 90 % de esa altura); `fov` en grados. |
 | `tool(name)` | - | Cambia la herramienta de la interfaz, para que quien mire vea qué haces: `pen`, `erase`, `paint`, `pick`, `box`, `fill`, `light` o `fluid`. |
 
 ## Materiales
