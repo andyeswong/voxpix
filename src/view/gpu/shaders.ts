@@ -9,7 +9,8 @@ import { DEEP_FROM, DEEP_TO, DEEP_R, WATER_ZMIN, WATER_ZMAX } from '../../world/
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
 export const MAX_CASTERS = 8;
-const EMISSIVE = '1.0';            // luz de lo emisivo (frame2d.ts: EMISSIVE_LIGHT)      // entidades con sombra de verdad por cuadro (frame2d.ts: MAX_CASTERS)
+const EMISSIVE = '1.0';            // luz de lo emisivo (frame2d.ts: EMISSIVE_LIGHT)
+const XRAY_MARGIN = '1.5';         // lo que tiene que tapar para la silueta (frame2d.ts: XRAY_MARGIN)      // entidades con sombra de verdad por cuadro (frame2d.ts: MAX_CASTERS)
 
 // Las luces del mundo de este cuadro, en una textura RGBA32F de 4 x MAX_LIGHTS (en uniforms se pasaría del mínimo
 // de vectores que WebGL2 garantiza en un móvil): por fila, posición y radio; color e intensidad con parpadeo;
@@ -199,7 +200,7 @@ void main() {
     depth = ed;
     col = texelFetch(uEntColor, t, 0).rgb;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
-  } else if (uXray && !isinf(ed) && ((s.x + s.y) & 1) == 0) {
+  } else if (uXray && !isinf(ed) && ed > depth + ${XRAY_MARGIN} && ((s.x + s.y) & 1) == 0) {
     // Tapada por el escenario: su silueta, en damero y con luz propia
     col = uXrayColor;
     total = vec3(${EMISSIVE});

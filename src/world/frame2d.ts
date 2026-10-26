@@ -195,7 +195,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     const k = entOf[t]!;
     if (k < 0) continue;
     if (entDepth[t]! >= depthBuf[t]! - 0.5) {                         // lo que hay delante la tapa
-      if (xr && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
+      // Silueta solo si lo de delante está claramente delante (XRAY_MARGIN): el suelo en el que se hunde un pie no cuenta
+      if (xr && entDepth[t]! > depthBuf[t]! + XRAY_MARGIN && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
         view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2];
         if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
       }
@@ -358,6 +359,9 @@ export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptio
 
 // Qué píxeles del render de una entidad son de una rampa emisiva (null si no tiene ninguna). Lo usa también la GPU.
 export const EMISSIVE_LIGHT = 1;
+// Cuánto más cerca (en profundidad, ~1 por vóxel) tiene que estar lo que tapa a una entidad para pintar su silueta
+// (xray): el suelo que tapa un pie hundido un vóxel queda por debajo; una pared, aun pegada, por encima
+export const XRAY_MARGIN = 1.5;
 const emissiveCache = new WeakMap<Rendered, Uint8Array | null>();
 export function emissiveMask(d: EntitySprite): Uint8Array | null {
   const { img } = d, m = d.e.model;

@@ -4,12 +4,13 @@ import { describe, it, expect } from 'vitest';
 import { Model, box, material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { bakeWorld } from '../src/world/bake';
-import { frame2D, frame2DParts, type Frame2DOptions } from '../src/world/frame2d';
+import { frame2D, frame2DParts, XRAY_MARGIN, type Frame2DOptions } from '../src/world/frame2d';
+import { FRAG_SCENE } from '../src/view/gpu/shaders';
 
 const PAL = { ramps: [{ name: 'suelo', colors: ['#202020', '#404040', '#606060', '#808080'] }, { name: 'muro', colors: ['#302040', '#504070', '#8070b0'] }] };
 const XR = [255, 0, 255] as const;
 
-function scene(behind: boolean) {
+function scene(behind: boolean, z = 1) {
   const s = new StaticVoxels(structuredClone(PAL), 40, 40, -2, 24);
   for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) s.set(x, y, 0, material(0, 1));
   // Un muro alto en y = 20, de 16 (y grande = lejos de la cámara: lo de y > 20 queda detrás)
@@ -17,7 +18,7 @@ function scene(behind: boolean) {
   const state = new WorldState(s, [], null);
   const m = new Model({ ramps: [{ name: 'cuerpo', colors: ['#400000', '#800000', '#c00000', '#ff0000'] }] });
   box(m, -1, -1, 0, 1, 1, 5, material(0, 2));
-  state.addEntity('alguien', m, 20, behind ? 23 : 12, 1);
+  state.addEntity('alguien', m, 20, behind ? 23 : 12, z);
   const b = bakeWorld({ model: s, lights: [], width: 40, depth: 40 }, { topZ: 24 });
   return { state, b };
 }
@@ -38,6 +39,16 @@ describe('silueta a través de lo que tapa', () => {
       const a = view[i * 4] === 255 && view[i * 4 + 1] === 0, c = view[(i + 1) * 4] === 255 && view[(i + 1) * 4 + 1] === 0;
       if ((i + 1) % b.width) expect(a && c).toBe(false);
     }
+  });
+
+  it('un pie hundido un vóxel en el suelo no da silueta (el suelo no cuenta como lo que tapa)', () => {
+    const { state, b } = scene(false, 0);
+    expect(count(frame2D(state, b, { vx: 0, vy: 0, vw: b.width, vh: b.height, time: 0, lights: false, ambient: [1, 1, 1], xray: { color: XR } }))).toBe(0);
+    // Detrás de la pared, hundida o no, sí
+    const w = scene(true, 0);
+    expect(count(frame2D(w.state, w.b, { vx: 0, vy: 0, vw: w.b.width, vh: w.b.height, time: 0, lights: false, ambient: [1, 1, 1], xray: { color: XR } }))).toBeGreaterThan(4);
+    // La GPU usa el mismo margen
+    expect(FRAG_SCENE).toContain(`ed > depth + ${XRAY_MARGIN}`);
   });
 
   it('delante de todo, la entidad se ve como siempre (sin silueta)', () => {
