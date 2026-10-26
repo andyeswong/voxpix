@@ -88,8 +88,10 @@ parpadeo, y *Ambiente* oscurece el resto. Poner una luz la enciende sola.
 
 ## Animación
 
-Abajo, encima de las herramientas, está la **línea de tiempo**: los cuadros de la animación, con el actual resaltado.
-Cada cuadro es el modelo entero; se edita el actual con las herramientas de siempre, y cada cuadro tiene su deshacer.
+**Animación** es uno de los modos de arriba (Capas, 3D, Animación, Explorar). Se edita por capas, y solo en este
+modo aparece la **barra de animación**: una ventana flotante como las demás (se arrastra por su cabecera, se aparta
+de los menús y recuerda su sitio) con los cuadros de la animación y el actual resaltado. Cada cuadro es el modelo
+entero; se edita el actual con las herramientas de siempre, y cada cuadro tiene su deshacer.
 
 - **◀ ▶ ▶|**: cuadro anterior, reproducir en bucle, siguiente. **+ Cuadro** copia el actual detrás; **Vacío** pone uno
   vacío; **← →** lo mueven; **Borrar** lo quita.

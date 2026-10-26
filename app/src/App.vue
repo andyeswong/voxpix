@@ -183,7 +183,7 @@ void version;
   <!-- El lienzo ocupa toda la ventana; todo lo demás flota encima -->
   <Explorer v-if="ui.explore" />
   <main class="stage" :style="{ '--free-left': ui.layersOpen ? '256px' : '24px', '--free-right': ui.previewOpen ? '392px' : '24px' }">
-    <LayerEditor v-if="editor.mode === 'layers'" />
+    <LayerEditor v-if="editor.mode === 'layers' || editor.mode === 'animacion'" />
     <Voxel3DEditor v-else />
   </main>
 
@@ -214,6 +214,7 @@ void version;
     <div class="seg big">
       <button :class="{ on: editor.mode === 'layers' }" title="Editar por capas (Tab)" @click="editor.mode = 'layers'"><PxIcon name="layers" />Capas</button>
       <button :class="{ on: editor.mode === 'voxel3d' }" title="Editar sobre el modelo en 3D (Tab)" @click="editor.mode = 'voxel3d'"><PxIcon name="cube" />3D</button>
+      <button :class="{ on: editor.mode === 'animacion' }" title="Animar: cuadros, cebolla, rig y exportar (por capas)" @click="editor.mode = 'animacion'"><PxIcon name="anim" />Animación</button>
       <button title="Caminar por dentro del modelo en primera persona" @click="ui.explore = true"><PxIcon name="walk" />Explorar</button>
     </div>
   </div>
@@ -251,7 +252,6 @@ void version;
 
   <!-- Abajo: herramientas y colores, y encima las opciones de la herramienta -->
   <div class="float bottom" data-repel>
-    <Timeline />
     <div class="pill options">
       <strong>{{ TOOLS.find((x) => x[0] === editor.tool)?.[2] }}</strong>
       <span class="hint">{{ editor.tool === 'fluid' && fluidState.fillMode ? 'clic llena de agua hasta esa altura' : editor.tool === 'fluid' && fluidState.faucetMode ? 'clic pone o quita un grifo' : editor.mode === 'voxel3d' ? (TOOL_HINT_3D[editor.tool] ?? TOOL_HINT[editor.tool]) : TOOL_HINT[editor.tool] }}</span>
@@ -291,7 +291,9 @@ void version;
     </div>
   </div>
   <aside v-if="ui.paletteOpen" v-draggable="'paleta'" class="float palette card" @click.stop><PalettePanel /></aside>
-  <aside v-if="anim.panel" v-draggable="'rig'" class="float rigpanel card" @click.stop><RigPanel /></aside>
+  <!-- Solo en el modo Animación: la barra de animación, una ventana flotante como las demás -->
+  <aside v-if="editor.mode === 'animacion'" v-draggable="'animacion'" class="float animwin card" @click.stop><Timeline /></aside>
+  <aside v-if="editor.mode === 'animacion' && anim.panel" v-draggable="'rig'" class="float rigpanel card" @click.stop><RigPanel /></aside>
 
   <!-- Abajo a la izquierda: dónde estás -->
   <div class="float status">
@@ -380,6 +382,7 @@ aside.dragging :deep(header) { cursor: grabbing; }
 .dot { width: 30px; height: 30px; min-height: 0; padding: 0; border-radius: 50%; border: 2px solid transparent; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35) inset; }
 .dot.on { border-color: #fff; box-shadow: 0 0 0 2px var(--accent); }
 .more { min-height: 44px; border-radius: 14px; color: var(--muted); }
+.animwin { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-50%); padding: 8px 12px; max-width: calc(100vw - 32px); }
 .rigpanel { z-index: 5; top: 80px; left: 50%; transform: translateX(-50%); width: 620px; padding: 14px; max-height: calc(100vh - 260px); overflow: auto; }
 .palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 460px; padding: 16px; max-height: calc(100vh - 250px); overflow-y: auto; }
 .status { left: 16px; bottom: 16px; display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }

@@ -49,7 +49,7 @@ const KEYS: Array<keyof PartMove> = ['dx', 'dy', 'dz', 'stride'];
 
 <template>
   <div class="rig">
-    <div class="head"><strong>Rig por partes</strong><button class="ghost" @click="anim.panel = false">✕</button></div>
+    <header class="head"><strong>Rig por partes</strong><button class="ghost" @click="anim.panel = false">✕</button></header>
     <p class="hint">Cada parte: una caja de vóxeles (x0 y0 z0 – x1 y1 z1; una casilla vacía no limita por ese lado) y, si quieres, solo unas rampas. Si dos partes piden un vóxel, es de la primera; lo que no es de ninguna es el cuerpo. Pivote: la z que no se mueve al dar el paso (la cadera); pie: la que más (stride adelanta el pie hacia el frente, -y).</p>
     <div v-for="(p, i) in spec.parts" :key="i" class="part">
       <div class="line">

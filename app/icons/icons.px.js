@@ -178,6 +178,22 @@ sprite("ic_layers", I, `
   ..............
   ..............`)
 
+sprite("ic_anim", I, `
+  ..............
+  .mmmmmmmmmmmm.
+  .m.m.m.m.m.m..
+  .mmmmmmmmmmmm.
+  .mlllmmlllmm..
+  .mlaamllaamm..
+  .mlaamllaamm..
+  .mlllmmlllmm..
+  .mmmmmmmmmmmm.
+  .m.m.m.m.m.m..
+  .mmmmmmmmmmmm.
+  ..............
+  ..............
+  ..............`)
+
 sprite("ic_walk", I, `
   ........aa....
   .......aAAa...

@@ -22,7 +22,12 @@ function exportGif(): void { download(animGif(scale.value), `${model.value.name}
 </script>
 
 <template>
-  <div class="pill timeline" @click.stop>
+  <div class="anim">
+  <header>
+    <h2>Animación</h2>
+    <span class="hint">cuadro {{ anim.current }} de {{ anim.count }}{{ anim.rig ? ' · con rig (R: reposo)' : '' }}</span>
+  </header>
+  <div class="timeline">
     <button class="ghost" title="Cuadro anterior" @click="selectFrame(anim.current - 1)">◀</button>
     <button :class="{ on: anim.playing }" title="Reproducir en bucle" @click="play()">{{ anim.playing ? '❚❚' : '▶' }}</button>
     <button class="ghost" title="Cuadro siguiente" @click="selectFrame(anim.current + 1)">▶|</button>
@@ -49,9 +54,14 @@ function exportGif(): void { download(animGif(scale.value), `${model.value.name}
     <button class="ghost" title="GIF animado en el ángulo de la vista previa" @click="exportGif">GIF</button>
     <span v-if="err" class="err">{{ err }}</span>
   </div>
+  </div>
 </template>
 
 <style scoped>
+.anim { display: flex; flex-direction: column; gap: 6px; }
+header { display: flex; align-items: center; gap: 8px; cursor: move; }
+header h2 { margin: 0; font-size: 13px; }
+.hint { color: var(--faint, #8e8ca6); font-size: 12px; }
 .timeline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: calc(100vw - 32px); font-size: 12px; }
 .frames { display: flex; gap: 3px; max-width: 360px; overflow-x: auto; }
 .frame { min-width: 26px; padding: 2px 6px; font-variant-numeric: tabular-nums; }

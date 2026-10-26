@@ -3,7 +3,7 @@
 // cuadro actual ES model.value). Encima, el rig por partes (src/anim/rig.ts, RigSpec): con un rig, el cuadro 0 es la
 // pose de reposo y los demás salen de él (generateFromRig); la reproducción y la exportación usan entonces los
 // cuadros 1..n. Lo mismo por la API de agentes (api.ts, anim*).
-import { reactive } from 'vue';
+import { reactive, watch } from 'vue';
 import { History, Model, animationToFile, animationFromFile, fitFrame, encodeGIF, DEFAULT_FRAME_MS, type ModelFile, type ModelFileV2 } from '@core/index';
 import { shot } from './preview';
 import { rigFrames, rigFromSpec, type RigSpec } from '../../src/anim/rig';
@@ -21,6 +21,9 @@ export const anim = reactive({
   rig: null as RigSpec | null,
   panel: false,                  // el panel del rig abierto
 });
+
+// Al salir del modo Animación, la reproducción para
+watch(() => editor.mode, (m) => { if (m !== 'animacion' && anim.playing) play(false); });
 
 // Si el modelo cambió por fuera (abrir, nuevo, muestra), la animación vuelve a ser un solo cuadro
 function ensure(): void {
