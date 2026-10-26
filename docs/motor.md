@@ -186,6 +186,10 @@ está MAIA (`?explorar=1&altura=12` arranca así), con las luces del mundo y su 
 Las entidades (MAIA, los flotantes) todavía no salen en la primera persona. En la Alienware, a 384x216 sobre un
 mundo de 640x480 con luces: ~30 ms por cuadro (escena ~16, luz ~11, capas ~3).
 
+Pendiente si Explorar llega a un juego: quitar las dos esperas de leer de la GPU (la escena y la luz se leen con
+readPixels, que espera a que termine; habría que componer en la GPU y pintar directamente), y que salgan las
+entidades en primera persona.
+
 ## Determinismo
 
 `state.step()` avanza 1/60 s fijos, sin reloj ni `Math.random`: el azar es un generador con semilla dentro del
