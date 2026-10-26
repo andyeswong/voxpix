@@ -36,6 +36,12 @@ export function playRange(): number[] { ensure(); const all = frames.map((_, i) 
 
 export function selectFrame(i: number): void {
   ensure();
+  select(i);
+}
+
+// Sin ensure(): para las operaciones que acaban de cambiar la lista de cuadros (si no, ensure creería que el modelo
+// cambió por fuera y reiniciaría la animación)
+function select(i: number): void {
   const f = frames[Math.max(0, Math.min(frames.length - 1, i))]!;
   f.model.palette = model.value.palette;        // una sola paleta: la que tenga el cuadro que se deja
   model.value = f.model; history.value = f.history;
@@ -51,7 +57,7 @@ export function addFrame(empty = false): number {
   m.palette = cur.model.palette;
   frames.splice(anim.current + 1, 0, { model: m, history: new History(m), ms: cur.ms });
   anim.count = frames.length;
-  selectFrame(anim.current + 1);
+  select(anim.current + 1);
   return anim.current;
 }
 
@@ -60,7 +66,7 @@ export function deleteFrame(i = anim.current): void {
   if (frames.length <= 1) throw new Error('la animación necesita al menos un cuadro');
   frames.splice(i, 1);
   anim.count = frames.length;
-  selectFrame(Math.min(i, frames.length - 1));
+  select(Math.min(i, frames.length - 1));
 }
 
 export function moveFrame(from: number, to: number): void {
@@ -68,7 +74,7 @@ export function moveFrame(from: number, to: number): void {
   if (from < 0 || from >= frames.length || to < 0 || to >= frames.length) throw new Error(`cuadros 0..${frames.length - 1}`);
   const [f] = frames.splice(from, 1);
   frames.splice(to, 0, f!);
-  selectFrame(to);
+  select(to);
 }
 
 export function setFrameMs(ms: number, all = false): void {
@@ -88,7 +94,7 @@ export function play(on = !anim.playing): void {
     if (!anim.playing) return;
     const range = playRange();
     const k = range.indexOf(anim.current);
-    selectFrame(range[(k + 1) % range.length]!);
+    select(range[(k + 1) % range.length]!);
     timer = window.setTimeout(tick, frames[anim.current]!.ms);
   };
   timer = window.setTimeout(tick, frames[anim.current]!.ms);
@@ -107,7 +113,7 @@ export function generateFromRig(spec = anim.rig): number {
   const made = rigFrames(base, rigFromSpec(spec)).map((m): Frame => { m.palette = base.palette; m.name = base.name; return { model: m, history: new History(m), ms: spec.frameMs }; });
   frames = [frames[0]!, ...made];
   anim.count = frames.length;
-  selectFrame(1);
+  select(1);
   return made.length;
 }
 
@@ -145,8 +151,8 @@ export function renderFrames(): { W: number; H: number; images: Uint8ClampedArra
   }
   const f = fitFrame(b, editor.view.elevation);
   const images: Uint8ClampedArray<ArrayBuffer>[] = [];
-  for (const i of range) { selectFrame(i); images.push(shot(f, editor.view.yaw, { lit: editor.light.enabled, time: 0, bg: 'nada' })); }
-  selectFrame(keep);
+  for (const i of range) { select(i); images.push(shot(f, editor.view.yaw, { lit: editor.light.enabled, time: 0, bg: 'nada' })); }
+  select(keep);
   return { W: f.W, H: f.H, images, ms: range.map((i) => frames[i]!.ms) };
 }
 

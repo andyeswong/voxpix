@@ -94,7 +94,8 @@ ANIMACIÓN (cada cuadro es el modelo entero; las herramientas pintan el cuadro a
   play(on?), onion(on?)                    reproduce en bucle / papel cebolla (el cuadro anterior en fantasma)
   rig(spec | null)                         el rig por partes: {frameMs, parts: [{name, boxes?: [[x0,y0,z0,x1,y1,z1]],
                                            ramps?, pivotZ?, footZ?}], frames: [{moves: {parte: {dx?, dy?, dz?, stride?}}}]}
-  generateFromRig(spec?)                   con el rig, el cuadro 0 es la pose de reposo y los demás se generan
+  generateFromRig(spec?)                   SUSTITUYE los cuadros 1..n por los que salen del rig; el cuadro 0 (la pose de
+                                           reposo) se queda. Da {generated, count}: count = 1 + generated
   animPng({scale?}), animGif({scale?})     la hoja de cuadros en fila / el GIF animado, en base64
   batch(fn)                                lo que haga fn, en un solo paso de deshacer
   undo(), redo()
@@ -321,7 +322,8 @@ export const api = {
   play(on?: boolean) { play(on ?? !anim.playing); return anim.playing; },
   onion(on?: boolean) { anim.onion = on ?? !anim.onion; touch(); return anim.onion; },
   rig(spec: RigSpec | null) { setRig(spec); return anim.rig; },
-  generateFromRig(spec?: RigSpec): number { return generateFromRig(spec ?? anim.rig); },
+  // SUSTITUYE los cuadros 1..n por los del rig; el cuadro 0 (la pose de reposo) se queda: count = 1 + generated
+  generateFromRig(spec?: RigSpec): { generated: number; count: number } { const generated = generateFromRig(spec ?? anim.rig); return { generated, count: anim.count }; },
   async animPng(o: { scale?: number } = {}): Promise<{ name: string; base64: string }> {
     return { name: `${model.value.name}_${anim.count}cuadros.png`, base64: await b64(await sheetPng(Math.max(1, Math.round(o.scale ?? 1)))) };
   },

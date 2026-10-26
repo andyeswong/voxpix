@@ -92,7 +92,7 @@ tiene su propio deshacer.
 | `play(on?)` | si reproduce | Reproduce en bucle (o para). |
 | `onion(on?)` | si está | Papel cebolla: el cuadro anterior en fantasma en el editor por capas. |
 | `rig(spec \| null)` | el rig | El rig por partes (abajo). Falla si una parte está mal. |
-| `generateFromRig(spec?)` | cuántos cuadros | Con el rig, el cuadro 0 es la pose de reposo y los cuadros 1..n se generan desde él (rehaciéndolos). La reproducción y la exportación usan entonces los cuadros 1..n. |
+| `generateFromRig(spec?)` | `{generated, count}` | **Sustituye** los cuadros 1..n (los que hubiera) por los que salen del rig, uno por cada cuadro del rig; el cuadro 0, la pose de reposo, se queda y es la base. Así `count = 1 + generated`: un rig de 4 cuadros deja 5 cuadros. La reproducción y la exportación usan entonces los cuadros 1..n (los 4 del ciclo). |
 | `animPng({ scale? })` | promesa de `{name, base64}` | La hoja: los cuadros en fila, en el ángulo de la vista previa, con el mismo encuadre para todos y luz si `lit`. |
 | `animGif({ scale? })` | promesa de `{name, base64}` | El GIF animado (en bucle), igual; cada cuadro dura la media de las duraciones. |
 
