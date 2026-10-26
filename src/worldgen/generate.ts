@@ -5,12 +5,14 @@ import type { LightSource } from '../lighting/lights';
 import { createRng } from '../sim/rng';
 import { analyzeMasses, DEFAULT_MASS_OPTIONS, type MassMap } from '../terrain/regions';
 import type { GeneratorSpec } from './spec';
+import { applyShape } from './shape';
 
 export const TILE = 16;
 export const FACADE_ROWS = 2;               // la fachada norte ocupa 2 filas de tiles (16x32 px)
 export const NORTH = 1 + FACADE_ROWS;       // filas de la pared norte: tapa + fachada
 
-export const WALL = { none: 0, cap: 1, facadeTop: 2, facadeBottom: 3 } as const;
+// outside: fuera de la sala (con forma): ni suelo ni pared, el vacío. Solo hay pared donde toca el suelo de la sala
+export const WALL = { none: 0, cap: 1, facadeTop: 2, facadeBottom: 3, outside: 4 } as const;
 
 export interface PlacedProp {
   anim: string;
@@ -55,6 +57,24 @@ function fbm(x: number, y: number, seed: number): number {
   return (valueNoise(x, y, seed) * 4 + valueNoise(x * 2, y * 2, seed + 1) * 2 + valueNoise(x * 4, y * 4, seed + 2)) / 7;
 }
 
+// Distancia (en losetas, contando las diagonales como 1) de cada loseta a la pared más cercana
+function chebyshevToWall(wall: Uint8Array, cols: number, rows: number): Int32Array {
+  const d = new Int32Array(cols * rows).fill(-1);
+  const q: number[] = [];
+  for (let i = 0; i < wall.length; i++) if (wall[i]) { d[i] = 0; q.push(i); }
+  for (let k = 0; k < q.length; k++) {
+    const i = q[k]!, x = i % cols, y = (i - x) / cols;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      const j = ny * cols + nx;
+      if (d[j] !== -1) continue;
+      d[j] = d[i]! + 1; q.push(j);
+    }
+  }
+  return d;
+}
+
 function pickWeighted<T extends { weight: number }>(items: readonly T[], r: number): T {
   let left = r * items.reduce((a, i) => a + i.weight, 0);
   for (const it of items) { left -= it.weight; if (left <= 0) return it; }
@@ -71,9 +91,15 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   for (let x = 0; x < cols; x++) { wall[x] = WALL.cap; wall[at(x, rows - 1)] = WALL.cap; }
   for (let y = 0; y < rows; y++) { wall[at(0, y)] = WALL.cap; wall[at(cols - 1, y)] = WALL.cap; }
   for (let x = 1; x < cols - 1; x++) { wall[at(x, 1)] = WALL.facadeTop; wall[at(x, 2)] = WALL.facadeBottom; }
+  // La forma de la sala (shape.ts): las paredes de dentro
+  if (spec.shape) applyShape(spec.shape, wall, cols, rows, NORTH, seed, WALL.cap, WALL.outside);
 
   // Agua: un océano en un costado, un lago y unos charcos, con la orilla rota por ruido. Deja dos tiles libres junto a las paredes.
-  const inInterior = (x: number, y: number) => x >= 3 && x <= cols - 4 && y >= NORTH + 2 && y <= rows - 4;
+  // En el rectángulo es la caja de dentro; con forma, lo que está a 3 o más losetas de cualquier pared (en el rectángulo,
+  // lo mismo)
+  const wallDist = spec.shape ? chebyshevToWall(wall, cols, rows) : null;      // (el vacío cuenta como pared)
+  const inInterior = wallDist ? (x: number, y: number) => wallDist[at(x, y)]! >= 3
+    : (x: number, y: number) => x >= 3 && x <= cols - 4 && y >= NORTH + 2 && y <= rows - 4;
   const side = Math.floor(rng() * 3);   // 0 izquierda, 1 derecha, 2 abajo
   const oceanY = rows * (0.45 + rng() * 0.25), oceanX = cols * (0.35 + rng() * 0.3);
   const lakeX = side === 0 ? cols * (0.6 + rng() * 0.2) : side === 1 ? cols * (0.2 + rng() * 0.2) : cols * (rng() < 0.5 ? 0.2 : 0.8);
@@ -125,7 +151,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   if (spec.water.puddles > 0 && !masses.regionSizes.some((n) => n <= DEFAULT_MASS_OPTIONS.puddleMax)) {
     for (let tries = 0; tries < 200; tries++) {
       const x = 4 + Math.floor(rng() * (cols - 8)), y = NORTH + 3 + Math.floor(rng() * (rows - NORTH - 7));
-      let free = true;
+      let free = !wallDist || inInterior(x, y);
       for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (water[at(x + dx, y + dy)]) free = false;
       if (!free) continue;
       water[at(x, y)] = 1;
@@ -143,8 +169,9 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
     return true;
   };
   let sx = cols >> 1, sy = (rows >> 1) + 2, best = Infinity;
-  for (let y = NORTH + 2; y < rows - 2; y++) for (let x = 2; x < cols - 2; x++) {
-    if (!landish(x, y, 2)) continue;
+  // Con 2 losetas libres alrededor; si la forma no lo deja (pasillos estrechos), con 1, y si no, la loseta sola
+  for (let r = 2; r >= 0 && best === Infinity; r--) for (let y = NORTH + r; y < rows - r; y++) for (let x = r; x < cols - r; x++) {
+    if ((r === 2 && (y < NORTH + 2 || y >= rows - 2 || x < 2 || x >= cols - 2)) || !landish(x, y, r)) continue;
     const d = (x - cols / 2) ** 2 + (y - rows / 2) ** 2;
     if (d < best) { best = d; sx = x; sy = y; }
   }
@@ -184,6 +211,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   for (let tries = 0; tries < 400 && placed < spec.pillars; tries++) {
     const x = 3 + Math.floor(rng() * (cols - 6)), y = NORTH + 2 + Math.floor(rng() * (rows - NORTH - 5));
     if (!landish(x, y, 1) || Math.hypot(x - sx, y - sy) < 4.5) continue; // 4,5 celdas: deja >= 48 px libres para pelear
+    if (wallDist && wallDist[at(x, y)]! < 3) continue;                     // con forma, ni en un pasillo: 2 losetas libres hasta la pared
     let near = false;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (pillar[at(x + dx, y + dy)]) near = true;
     if (near) continue;
@@ -220,6 +248,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   }
   // Las piezas que emiten luz son fuentes: el ancla está en la mitad de la fachada
   const sources: LightSource[] = [];
+  if (spec.shape) for (let x = 1; x < cols - 1; x++) if (wall[at(x, 2)] === WALL.outside) facade[x] = '';   // sobre el vacío, no hay fachada
   for (let x = 1; x < cols - 1; x++) {
     const kind = f.emits[facade[x]!];
     if (kind) sources.push({ id: `facade-${x}`, kind, x: x * TILE + 8, y: TILE + TILE });

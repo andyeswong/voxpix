@@ -42,7 +42,8 @@ export interface WorldApiContext {
 const HELP = `voxpixWorld: construir y mirar mundos de vóxeles (ejes del modelo: x este, y norte, z arriba).
 Construir (cada una reconstruye el mundo y devuelve una promesa con info()):
   build(receta)                 un mundo desde una receta. Con theme ('medieval', 'cyberpunk', 'oficina') se completa con
-                                ese tema de muestra. Campos: seed, generator, ramps {papel: colores | {colors, emissive}},
+                                ese tema de muestra. Campos: seed, generator, shape (la forma de la sala: {kind: 'L'|'T'|
+                                'corridors'|'maze'|'plan', ...}), ramps {papel: colores | {colors, emissive}},
                                 fountain, pillar ('round'|'none'|modelo), prop ('block'|'none'|modelo), foliage [{type,
                                 density, ramp, heads, on}], stamps [{model, x, y, z?, yaw?}], lights [{kind, x, y, z,
                                 radius?, intensity?, color?}], effects [{preset, x, y, z}], ambient [r, g, b]
@@ -60,7 +61,7 @@ Mirar:
   mode('2d'|'voxel'|'explore')  camera({ yaw, elevation, zoom })   (modo vóxel)
   png({ scale? })               lo que se ve ahora: { width, height, base64 }
 Consultar:
-  info()                        tamaño, salida, columnas, muebles, fuente, fachada, luces, agua, rampas, huella
+  info()                        tamaño, salida, dónde está MAIA, columnas, muebles, fuente, fachada, luces, agua, rampas, huella
   recipe()                      la receta de ahora (JSON: guárdala y vuelve a pasarla a build)
   groundAt(x, y)  solidAt(x, y, z)  waterAt(x, y)  hash()
   roles()                       los papeles de las rampas del mundo (floor, wall, water...) para ramps
@@ -73,7 +74,7 @@ export function installWorldApi(ctx: WorldApiContext): void {
   const st = (): WorldState => { if (!ctx.state) throw new Error('el mundo aún no está construido: espera a build()'); return ctx.state; };
   const num = (v: unknown, what: string): number => { if (typeof v !== 'number' || !Number.isFinite(v)) throw new Error(`${what} tiene que ser un número`); return v; };
   const current = (): RecipeInput => ctx.recipe ?? { theme: ctx.theme, seed: ctx.seed };
-  const info = () => ({ ...describeWorld({ layout: ctx.layout, world: ctx.world!, state: st() }), mode: ctx.mode, theme: ctx.recipe ? ctx.recipe.theme ?? null : ctx.theme, fromRecipe: !!ctx.recipe });
+  const info = () => ({ ...describeWorld({ layout: ctx.layout, world: ctx.world!, state: st() }), mode: ctx.mode, maia: ctx.maia ? [ctx.maia.x, ctx.maia.y, ctx.maia.z] : null, theme: ctx.recipe ? ctx.recipe.theme ?? null : ctx.theme, fromRecipe: !!ctx.recipe });
   const rebuild = async (r: RecipeInput | null) => { await ctx.build(r); return info(); };
   const model = (m: unknown, what: string): ModelFile => {
     try { return (m instanceof Model ? m.toJSON() : Model.fromJSON(m as ModelFile).toJSON()); }

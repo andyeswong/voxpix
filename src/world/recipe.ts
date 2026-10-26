@@ -6,7 +6,7 @@
 import { decode, material, MAX_RAMPS, Model, planFoliage, lilyPadModels, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, FOLIAGE_TYPES,
   FX_PRESETS, type FoliageType, type FxPreset, type ModelFile, type Palette, type Ramp } from '../core';
 import { generateLayout, TILE, type Layout } from '../worldgen';
-import type { GeneratorSpec } from '../worldgen/spec';
+import type { GeneratorSpec, ShapeSpec } from '../worldgen/spec';
 import { buildWorldState, worldPalette, worldWaterDepth, M, type World, type WorldLight, type WorldLook, type WorldRampSpec, type WorldRole,
   type PillarBuilder, type PropBuilder } from './build';
 import type { StaticVoxels, WorldState } from './state';
@@ -32,6 +32,7 @@ export type RecipeLight = Omit<WorldLight, 'id' | 'baked' | 'follow' | 'owner'> 
 export interface WorldRecipe {
   seed: number;
   generator: GeneratorSpec;
+  shape?: ShapeSpec;                                       // la forma de la sala (L, T, pasillos, laberinto, plano); manda sobre la del generator
   ramps?: Partial<Record<WorldRole, WorldRampSpec>>;      // los colores de cada papel (worldPalette); el agua emisiva brilla
   fountain?: boolean;
   pillar?: 'round' | 'none' | ModelFile;                   // un modelo: se estampa centrado en cada loseta de columna (z = 0)
@@ -101,7 +102,7 @@ export function checkRecipe(r: WorldRecipe): void {
 
 export function buildRecipe(r: WorldRecipe, code: Partial<WorldLook> = {}): BuiltRecipe {
   checkRecipe(r);
-  const layout = generateLayout(r.generator, r.seed);
+  const layout = generateLayout(r.shape ? { ...r.generator, shape: r.shape } : r.generator, r.seed);
   let palette = worldPalette(r.ramps);
   // Columnas y muebles de modelo: sus rampas entran en la paleta antes de construir (se estampan al construir)
   let pillar: PillarBuilder | null | undefined = r.pillar === 'none' ? null : undefined;

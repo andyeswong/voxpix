@@ -52,6 +52,7 @@ mundo; su `hash` es la huella, la misma en cualquier máquina: `987b32a6`.
 |---|---|
 | `seed` | la semilla del mapa |
 | `generator` | las reglas del generador (`GeneratorSpec`: tamaño, suelos, fachada, agua, columnas, muebles). Con `theme`, el del tema |
+| `shape` | la forma de la sala (ver "Formas de sala"). Sin ella, el rectángulo entero |
 | `theme` | un tema de MUESTRA (`medieval`, `cyberpunk`, `oficina`): completa generador, colores, fuente, luz ambiente y piezas (puertas, ventanas, escritorios). Lo que pongas encima, manda |
 | `ramps` | los colores de cada papel: `floor`, `wall`, `cap`, `column`, `water`, `wood`, `metal`, `flame`, `neonPink`, `neonCyan`, `screen`, `cloth`, `warmGlass`, `darkGlass`, `grass`. Cada uno, una lista de colores o `{ colors, emissive, material }`. El agua emisiva brilla sola |
 | `fountain` | el pilón con agua y fuego |
@@ -66,6 +67,26 @@ mundo; su `hash` es la huella, la misma en cualquier máquina: `987b32a6`.
 Los modelos son el JSON de voxpix: el de "Guardar" del editor, o `voxpix.save()`. Así un agente hace una mampara o una
 taza en el editor (`window.voxpix`) y la pone en el mundo con la receta. Sus rampas se suman a la paleta del mundo
 (como mucho 64 en total).
+
+## Formas de sala
+
+`shape` cambia la forma de lo que queda dentro de las paredes. Las paredes siguen el contorno, con una loseta de grueso
+como las de fuera, y lo que queda fuera de la sala es el vacío: ni suelo ni pared. Todo el suelo queda conectado: si una
+zona queda suelta, se cierra. El agua, las columnas, los muebles, la salida y los materiales caen siempre dentro. Las
+columnas dejan dos losetas libres hasta cualquier pared, para no tapar un pasillo. La fachada norte solo está donde da a
+la sala. Una pared que tiene suelo al norte es baja, como la del sur, para no tapar ese suelo.
+
+| `kind` | Opciones |
+|---|---|
+| `L` | `corner`: la esquina que se quita (`ne` por defecto, `nw`, `se`, `sw`); `size`: la fracción de cada lado que se quita (0,45) |
+| `T` | `bar`: dónde va la barra (`north` por defecto, o `south`); `barDepth`: su fondo (0,4); `stem`: el ancho del tallo (0,3) |
+| `corridors` | `rooms`: cuántas salas (5); `width`: el ancho de los pasillos en losetas (3) |
+| `maze` | `cell`: losetas por celda (4: pasillos de 3 y paredes de 1); `loops`: la fracción de paredes que se abren de más para que haya vueltas (0,1) |
+| `plan` | `rows`: el plano, una cadena por fila de `cols` caracteres (`#` pared, lo demás suelo); el borde y la fachada son pared siempre |
+
+```json
+{ "theme": "medieval", "seed": 7, "shape": { "kind": "maze", "loops": 0.2 } }
+```
 
 ## En el navegador: `window.voxpixWorld`
 

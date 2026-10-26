@@ -286,10 +286,12 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
   const northFront = NORTH * TILE;                 // primera fila de píxeles libre al sur de la pared norte
   for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
     const i = cell(cx, cy);
-    if (layout.wall[i] === WALL.none) continue;
+    if (layout.wall[i] === WALL.none || layout.wall[i] === WALL.outside) continue;   // el vacío: ni suelo ni pared
     if (cy < NORTH - 1) continue;                  // detrás de la pared norte: lo tapa la propia pared
     const north = cy === NORTH - 1;
-    const h = north ? WALL_H : cy === layout.rows - 1 ? SOUTH_WALL_H : SIDE_WALL_H;
+    // Una pared con suelo al norte (de una sala con forma) es baja, como la del sur: si no, taparía ese suelo
+    const southFacing = cy >= NORTH && layout.wall[i - layout.cols] === WALL.none;
+    const h = north ? WALL_H : cy === layout.rows - 1 || southFacing ? SOUTH_WALL_H : SIDE_WALL_H;
     for (let ly = 0; ly < TILE; ly++) for (let lx = 0; lx < TILE; lx++) {
       const px = cx * TILE + lx, py = cy * TILE + ly;
       for (let z = 0; z < h; z++) {
@@ -306,6 +308,7 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
   // ---- fachada norte: cada pieza decora su tramo de 16 vóxeles de la cara sur de la pared (la del look)
   const faceY = my(northFront - 1);                // y del modelo de la cara de la pared
   if (look.facade) for (let cx = 1; cx < layout.cols - 1; cx++) {
+    if (layout.wall[cell(cx, NORTH - 1)] === WALL.outside) continue;   // sobre el vacío no hay fachada
     const x0 = cx * TILE;
     look.facade({ model, piece: layout.facade[cx] ?? '', cx, x0, faceY, seed, carve: (lx0, lx1, z0, z1, inner) => {
       for (let lx = lx0; lx <= lx1; lx++) for (let z = z0; z <= z1; z++) {
