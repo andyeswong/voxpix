@@ -139,6 +139,17 @@ const look: WorldLook = {
 - **Las columnas**: el mapa marca dónde van (`layout.pillar`); `pillar(site)` las construye. `site` trae la loseta en
   ejes del modelo (`x0..x1`, `y0..y1`, de TILE x TILE), su centro (`cx`, `cy`), el `model` y un `noise(x, y, z)`
   determinista. La colisión es la de los vóxeles que pongas: lo que no ocupes, se puede cruzar.
+- **Las demás piezas del mapa**, con el mismo patrón. El motor no lee los nombres que pone el generador: se los pasa
+  a quien construye. Sin constructor, hace lo más sencillo:
+
+  | Campo del look | Se llama con | Por defecto |
+  |---|---|---|
+  | `floor(site)` | cada losa seca: `kind` (de `layout.floor`), `lx`, `ly`, `tone`, `noise`; devuelve el vóxel | `plainFloor`: la losa con su tono |
+  | `facade(site)` | cada tramo de la fachada norte: `piece`, `x0`, `faceY` y `carve()` para tallar huecos | nada: la pared lisa |
+  | `fixture(site)` | cada fuente de luz de la fachada: `source`, `x`, `faceY` y `lights` para poner la suya | `lightOnlyFixture`: solo la luz |
+  | `prop(site)` | cada mueble (`layout.props`): `prop`, su huella `x0..x1`, `yS..yN` y `lights` | `blockProp`: un bloque de madera; `null`, ninguno |
+
+  Los de la muestra (puertas, ventanas, antorchas, escritorios) están en `src/samples/pieces.ts` (`SAMPLE_PIECES`).
 - **Lo demás** (vegetación, cables, adornos) va en `decorate(world)`, antes de crear el agua y el estado. Para algo que
   se cruce y no deje pasar la luz (cables, alfombras), una rampa con `material: 'atravesable'`.
 

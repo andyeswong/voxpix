@@ -67,15 +67,78 @@ export interface PillarSite {
 }
 export type PillarBuilder = (site: PillarSite) => void;
 
+// Una losa del suelo seco (fuera del agua): el tipo de su loseta (layout.floor), su posición dentro de ella (lx, ly; la
+// fila 0 de la loseta es su borde norte) y el tono que el motor le daría (0..4). Devuelve el vóxel (material)
+export interface FloorSite {
+  kind: string;
+  cx: number; cy: number;              // la loseta (columna, fila del mapa)
+  lx: number; ly: number;
+  px: number; py: number;              // el píxel del juego (filas hacia abajo)
+  tone: number;
+  noise: number;                       // ruido determinista de este vóxel en [0, 1)
+  seed: number;
+}
+export type FloorBuilder = (site: FloorSite) => number;
+
+// Un tramo de la fachada norte (16 vóxeles de ancho, la cara sur de la pared, en y = faceY): la pieza que el
+// generador puso ahí (layout.facade) y una ayuda para tallar un hueco de 1 vóxel con su fondo
+export interface FacadeSite {
+  model: StaticVoxels;
+  piece: string;
+  cx: number;                          // la columna del mapa
+  x0: number;                          // la x del modelo donde empieza el tramo
+  faceY: number;                       // la y del modelo de la cara de la pared (lo de delante, faceY - 1)
+  seed: number;
+  carve(lx0: number, lx1: number, z0: number, z1: number, inner: (lx: number, z: number) => number): void;
+}
+export type FacadeBuilder = (site: FacadeSite) => void;
+
+// Una fuente de luz de la fachada (layout.sources con id facade-*): quien la construye pone su objeto y su luz
+export interface FixtureSite {
+  model: StaticVoxels;
+  source: Layout['sources'][number];
+  x: number;                           // la x del modelo
+  faceY: number;
+  lights: WorldLight[];
+}
+export type FixtureBuilder = (site: FixtureSite) => void;
+
+// Un mueble (layout.props): su huella en ejes del modelo (x0..x1; yS al sur, yN al norte, incluidos)
+export interface PropSite {
+  model: StaticVoxels;
+  prop: Layout['props'][number];
+  x0: number; x1: number; yS: number; yN: number;
+  lights: WorldLight[];
+  seed: number;
+}
+export type PropBuilder = (site: PropSite) => void;
+
 // Cómo se ve un mundo construido: la paleta (en el orden de M; worldPalette la hace), si lleva la fuente y quién
-// construye las columnas. El motor no sabe de temas: cada juego o demo arma el suyo con esto.
+// construye cada pieza del mapa. El motor no sabe de temas ni lee nombres de pieza: cada juego o demo arma el suyo con
+// esto (los de muestra, en src/samples/pieces.ts). Lo que no se dice, lo hace el motor de la forma más sencilla.
 export interface WorldLook {
   palette: Palette;
   fountain?: boolean;                 // el pilón con agua y fuego (en el sitio libre más cercano a la salida); por defecto no
   pillar?: PillarBuilder | null;      // por defecto roundPillar; null: sin columnas de vóxeles (las pone decorate, o nadie)
+  floor?: FloorBuilder;               // por defecto, la losa con el tono del motor (los tipos de loseta no cambian nada)
+  facade?: FacadeBuilder;             // por defecto, la pared lisa
+  fixture?: FixtureBuilder;           // por defecto, solo la luz (sin objeto), delante de la pared
+  prop?: PropBuilder | null;          // por defecto blockProp; null: sin muebles de vóxeles
 }
 
-// Ruido determinista por vóxel (la misma semilla da el mismo mundo)
+// Lo que el motor hace si el look no dice otra cosa
+export const plainFloor: FloorBuilder = ({ tone }) => material(M.floor, Math.max(0, Math.min(4, tone)));
+export const lightOnlyFixture: FixtureBuilder = ({ source, x, faceY, lights }) => {
+  lights.push({ id: source.id, kind: source.kind, x: x + 0.5, y: faceY - 4, z: 19.5 });
+};
+// Un mueble como un bloque de madera de 12 de alto, metido 1 en su huella
+export const blockProp: PropBuilder = ({ model, x0, x1, yS, yN }) => {
+  for (let x = x0 + 1; x <= x1 - 1; x++) for (let y = yS + 1; y <= yN - 1; y++) for (let z = 0; z < 12; z++)
+    model.set(x, y, z, material(M.wood, z === 11 ? 3 : 2));
+};
+
+// Ruido determinista por vóxel en [0, 1) (la misma semilla da el mismo mundo): el que usa buildWorld, para los constructores
+export function worldNoise(x: number, y: number, z: number, seed: number): number { return hash(x, y, z, seed); }
 function hash(x: number, y: number, z: number, seed: number): number {
   let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(z | 0, 2147483647) + Math.imul(seed | 0, 1442695041)) >>> 0;
   h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
@@ -180,7 +243,8 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
     }
   }
 
-  // ---- suelo (z = 0, o el fondo de la cuenca), con juntas de losetas y variaciones por pieza
+  // ---- suelo (z = 0, o el fondo de la cuenca), con juntas de losetas; cada losa, la del look
+  const floorAt = look.floor ?? plainFloor;
   for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
     const i = cell(cx, cy);
     if (layout.wall[i] !== WALL.none) continue;
@@ -199,13 +263,8 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
         // junta (la horizontal de 2 vóxeles: con el suelo acortado a la mitad sigue saliendo de 1 píxel)
         v = material(M.floor, n < 0.5 ? 0 : 1);
       } else {
-        let tone = 2 + (n < 0.035 ? -1 : n > 0.975 ? 1 : 0);   // poco ruido: el suelo no debe competir con los personajes
-        if (kind.includes('gastado') && hash(cx * 4 + (lx >> 2), cy * 4 + (ly >> 2), 7, seed) > 0.6) tone += 1;   // parches de 4x4
-        if (kind.includes('grieta') && Math.abs(lx - ly) < 1 && lx > 3 && lx < 13) tone = 0;
-        v = material(M.floor, Math.max(0, Math.min(4, tone)));
-        if ((kind.includes('hierba') || kind.includes('paja')) && n > 0.7) v = material(kind.includes('paja') ? M.wood : M.grass, n > 0.9 ? 3 : 2);
-        if (kind.includes('neon') && ly === 8 && lx > 2 && lx < 14) v = material(kind.includes('rosa') ? M.neonPink : M.neonCyan, 3);
-        if (kind.includes('rejilla') && (lx % 3 === 0 || ly % 3 === 0)) v = material(M.metal, 1);
+        const tone = 2 + (n < 0.035 ? -1 : n > 0.975 ? 1 : 0);   // poco ruido: el suelo no debe competir con los personajes
+        v = floorAt({ kind, cx, cy, lx, ly, px, py, tone, noise: n, seed });
       }
       model.set(px, my(py), 0, v);
     }
@@ -244,52 +303,21 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
     }
   }
 
-  // ---- fachada norte: cada pieza decora su tramo de 16 vóxeles de la cara sur de la pared
+  // ---- fachada norte: cada pieza decora su tramo de 16 vóxeles de la cara sur de la pared (la del look)
   const faceY = my(northFront - 1);                // y del modelo de la cara de la pared
-  for (let cx = 1; cx < layout.cols - 1; cx++) {
-    const piece = layout.facade[cx] ?? '';
+  if (look.facade) for (let cx = 1; cx < layout.cols - 1; cx++) {
     const x0 = cx * TILE;
-    const carve = (lx0: number, lx1: number, z0: number, z1: number, inner: (lx: number, z: number) => number) => {
+    look.facade({ model, piece: layout.facade[cx] ?? '', cx, x0, faceY, seed, carve: (lx0, lx1, z0, z1, inner) => {
       for (let lx = lx0; lx <= lx1; lx++) for (let z = z0; z <= z1; z++) {
         model.set(x0 + lx, faceY, z, 0);                                    // hueco de 1 vóxel
         model.set(x0 + lx, faceY + 1, z, inner(lx, z));                     // fondo del hueco
       }
-    };
-    if (piece.includes('puerta')) {
-      carve(3, 12, 1, 22, (lx) => material(M.wood, lx === 3 || lx === 12 ? 1 : lx === 8 ? 1 : 2));
-    } else if (piece.includes('ventana') || piece.includes('tronera')) {
-      const warm = piece.includes('calida') || piece.includes('arco') && hash(cx, 0, 0, seed) > 0.5;
-      const neon = piece.includes('cian') ? M.neonCyan : piece.includes('rosa') ? M.neonPink : null;
-      const narrow = piece.includes('tronera');
-      carve(narrow ? 7 : 4, narrow ? 8 : 11, 12, 24, (lx, z) => material(neon ?? (warm ? M.warmGlass : M.darkGlass), (lx + z) % 5 === 0 ? 3 : 2));
-    } else if (piece.includes('estandarte') || piece.includes('grafica') || piece.includes('cartelera')) {
-      for (let lx = 4; lx <= 11; lx++) for (let z = 8; z <= 27; z++)
-        model.set(x0 + lx, faceY - 1, z, material(piece.includes('cartelera') ? M.wood : M.cloth, lx === 4 || lx === 11 ? 1 : z > 22 ? 3 : 2));
-    } else if (piece.includes('neon')) {
-      const ramp = piece.includes('cian') ? M.neonCyan : M.neonPink;
-      for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, 20, material(ramp, 4));
-      for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, 18, material(ramp, 3));
-    }
+    } });
   }
 
-  // ---- fuentes de luz del generador: un objeto en vóxeles y una luz donde está su llama
-  for (const s of layout.sources) {
-    if (s.id.startsWith('facade-')) {
-      const x = Math.round(s.x);
-      const y = faceY - 1;
-      if (s.kind === 'torch' || s.kind === 'lamp' || s.kind === 'brazier') {
-        // soporte de metal y la llama (o la pantalla del aplique)
-        model.set(x, y, 16, material(M.metal, 2)); model.set(x, y, 17, material(M.metal, 3));
-        model.set(x, y - 1, 18, material(M.metal, 2));
-        const flame = s.kind === 'lamp' ? M.warmGlass : M.flame;
-        model.set(x, y - 1, 19, material(flame, 3)); model.set(x, y - 1, 20, material(flame, 4));
-        model.set(x - 1, y - 1, 19, material(flame, 2)); model.set(x + 1, y - 1, 19, material(flame, 2));
-        lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 5, z: 20.5 });
-      } else {
-        lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 3, z: 19.5 });
-      }
-    }
-  }
+  // ---- fuentes de luz de la fachada: su objeto y su luz (las del look)
+  const fixture = look.fixture ?? lightOnlyFixture;
+  for (const s of layout.sources) if (s.id.startsWith('facade-')) fixture({ model, source: s, x: Math.round(s.x), faceY, lights });
 
   // ---- fuente: en el sitio libre (3x3 losetas sin pared, columna, mueble ni agua) más cercano a la salida
   let fountain: Fountain | null = null;
@@ -364,22 +392,9 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
     const x0 = cx * TILE, yTop = my(cy * TILE);
     pillar({ model, x0, x1: x0 + TILE - 1, y0: yTop - TILE + 1, y1: yTop, cx: x0 + 7.5, cy: my(cy * TILE + 7.5), seed, noise: (x, y, z) => hash(x, y, z, seed) });
   }
-  for (const p of layout.props) {
-    const x0 = p.x * TILE, x1 = (p.x + p.w) * TILE - 1;
-    const yN = my(p.y * TILE), yS = my((p.y + p.h) * TILE - 1);
-    // tablero de madera sobre patas y un monitor al fondo, con la pantalla mirando al sur
-    for (let x = x0 + 1; x <= x1 - 1; x++) for (let y = yS + 1; y <= yN - 1; y++) {
-      model.set(x, y, 11, material(M.wood, 3));
-      model.set(x, y, 10, material(M.wood, 2));
-    }
-    for (const [lx, ly] of [[x0 + 2, yS + 2], [x1 - 2, yS + 2], [x0 + 2, yN - 2], [x1 - 2, yN - 2]] as const)
-      for (let z = 0; z < 10; z++) model.set(lx, ly, z, material(M.wood, 1));
-    const mx = Math.round((x0 + x1) / 2);
-    for (let x = mx - 6; x <= mx + 6; x++) for (let z = 12; z <= 21; z++) {
-      model.set(x, yN - 3, z, material(M.metal, 1));
-      if (z > 12 && z < 21 && Math.abs(x - mx) < 6) model.set(x, yN - 4, z, material(M.screen, z > 18 ? 3 : 2));
-    }
-    if (p.anim.includes('escritorio')) lights.push({ id: `prop-${p.x}-${p.y}`, kind: 'screen', x: mx + 0.5, y: yN - 7, z: 17 });
+  const prop = look.prop === undefined ? blockProp : look.prop;
+  if (prop) for (const p of layout.props) {
+    prop({ model, prop: p, x0: p.x * TILE, x1: (p.x + p.w) * TILE - 1, yN: my(p.y * TILE), yS: my((p.y + p.h) * TILE - 1), lights, seed });
   }
 
   // Lo que sale, en ejes del modelo

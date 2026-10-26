@@ -4,6 +4,7 @@
 import type { WaterPalette } from '../terrain/waterTiles';
 import type { GeneratorSpec } from '../worldgen/spec';
 import { worldPalette, type WorldLook } from '../world/build';
+import { SAMPLE_PIECES } from './pieces';
 
 // Un tema = datos: qué hojas usa, cómo se genera el mapa y cómo se ve.
 export type ThemeId = 'medieval' | 'cyberpunk' | 'oficina';
@@ -29,7 +30,7 @@ const MEDIEVAL: Theme = {
   fountain: true,
   ambient: [0.4, 0.46, 0.64],
   // Los colores por defecto del motor son los del medieval; la fuente y las columnas redondas de piedra
-  look: { palette: worldPalette(), fountain: true },
+  look: { palette: worldPalette(), fountain: true, ...SAMPLE_PIECES },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-grieta', weight: 2 }, { anim: 'piso-hierba', weight: 2 }, { anim: 'piso-paja', weight: 1.5 }],
@@ -56,7 +57,7 @@ const CYBERPUNK: Theme = {
     wall: ['#181a2a', '#24283e', '#343a56', '#485072', '#606a8e'],
     cap: ['#20223a', '#2e3250', '#40466a', '#565e86', '#7078a0'],
     column: ['#22263a', '#3a4260', '#525c80', '#6e789c', '#8a94b8'],
-  }) },
+  }), ...SAMPLE_PIECES },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-raspon', weight: 2 }, { anim: 'piso-rejilla', weight: 1 }, { anim: 'piso-neon-rosa', weight: 0.4 }, { anim: 'piso-neon-cian', weight: 0.4 }],
@@ -89,7 +90,7 @@ const OFICINA: Theme = {
     wall: ['#262a2e', '#3a4046', '#545c64', '#788088', '#98a0a8'],
     cap: ['#2c2a2a', '#403e3e', '#5c5a58', '#827e7a', '#a29e98'],
     column: ['#343234', '#525052', '#6e6c6c', '#8a8886', '#aaa8a4'],
-  }) },
+  }), ...SAMPLE_PIECES },
   spec: {
     cols: 40, rows: 30,
     floors: [{ anim: 'piso', weight: 12 }, { anim: 'piso-gastado', weight: 3 }, { anim: 'piso-raspon', weight: 2 }, { anim: 'piso-mancha', weight: 0.8 }, { anim: 'piso-papel', weight: 0.6 }],

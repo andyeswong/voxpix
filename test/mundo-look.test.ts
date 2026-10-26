@@ -22,7 +22,8 @@ describe('el mundo sin temas', () => {
       for (const f of readdirSync(dir)) {
         const p = join(dir, f);
         if (statSync(p).isDirectory()) { if (f !== 'samples' && f !== 'cli') walk(p); continue; }
-        if (/\.ts$/.test(f) && /from ['"][^'"]*samples\//.test(readFileSync(p, 'utf8'))) bad.push(p);
+        // Cualquier import (estático, de un index o dinámico) de samples
+        if (/\.ts$/.test(f) && /(from|import\()\s*['"][^'"]*samples(\/|['"])/.test(readFileSync(p, 'utf8'))) bad.push(p);
       }
     };
     walk('src');
@@ -56,6 +57,29 @@ describe('el mundo sin temas', () => {
     expect(round.model.get(Math.floor(s0.cx), Math.floor(s0.cy), 20)).not.toBe(0);
     const none = buildWorld(l, { palette: worldPalette(), pillar: null });
     expect(none.model.get(Math.floor(s0.cx), Math.floor(s0.cy), 20)).toBe(0);
+  });
+
+  it('las piezas: el motor no lee sus nombres; lo hace el look (sin él, lo más sencillo)', () => {
+    const l = generateLayout(THEMES.oficina.spec, 2);
+    expect(l.props.length).toBeGreaterThan(0);
+    const p = l.props[0]!, yN = l.rows * TILE - 1 - p.y * TILE, x0 = p.x * TILE;
+    // Por defecto: losas sin variaciones, pared lisa, solo las luces de la fachada y los muebles como bloques
+    const plain = buildWorld(l, { palette: worldPalette() });
+    expect(plain.model.get(x0 + 4, yN - 4, 6)).toBe(material(M.wood, 2));
+    expect(plain.lights.every((x) => String(x.id).startsWith('facade-'))).toBe(true);
+    // Sin muebles: la huella queda libre
+    expect(buildWorld(l, { palette: worldPalette(), prop: null }).model.get(x0 + 4, yN - 4, 6)).toBe(0);
+    // Los constructores del look reciben cada pieza
+    const seen = { floor: new Set<string>(), facade: [] as string[], fixture: 0, prop: 0 };
+    buildWorld(l, { palette: worldPalette(),
+      floor: (s) => { seen.floor.add(s.kind); return material(M.floor, 2); },
+      facade: (s) => { seen.facade.push(s.piece); },
+      fixture: () => { seen.fixture++; },
+      prop: () => { seen.prop++; } });
+    expect([...seen.floor].sort()).toEqual([...new Set(l.floor.filter((k, i) => k && l.wall[i] === 0))].sort());
+    expect(seen.facade).toEqual(l.facade.slice(1, l.cols - 1).map((f) => f ?? ''));
+    expect(seen.fixture).toBe(l.sources.filter((s) => s.id.startsWith('facade-')).length);
+    expect(seen.prop).toBe(l.props.length);
   });
 
   it('la fuente solo si el look la pide', () => {
