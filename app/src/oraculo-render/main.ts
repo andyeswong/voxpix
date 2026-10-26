@@ -162,6 +162,22 @@ async function main(): Promise<void> {
       ok &&= pass;
       results.push({ model: name, label: `fp ${label}`, ...c, share, pass, cpuMs, gpuMs });
       log(`${pass ? 'ok  ' : 'MAL '} ${name.padEnd(12)} ${label.padEnd(22)} color ${String(c.rgba).padStart(5)} · vóxel ${String(c.pick).padStart(5)} de ${String(c.filled).padStart(6)} (${(share * 100).toFixed(3)} %) · cpu ${cpuMs.toFixed(0)} ms · gpu ${gpuMs.toFixed(0)} ms`);
+      // Y su luz: las mismas tres fuentes de antes, alrededor del modelo
+      const lights: PointLight3D[] = [
+        { x: cx - span * 0.3 + 0.5, y: cy - span * 0.4 + 0.5, z: b.maxZ * 0.6 + 0.5, radius: span * 0.9, color: [1, 0.62, 0.28], intensity: 1.3 },
+        { x: cx + span * 0.35 + 0.5, y: cy + 0.5, z: 3.5, radius: span * 0.6, color: [0.3, 0.8, 1], intensity: 1 },
+      ];
+      const lc = lightField3D(m, a, camera({ width: 1, height: 1, originX: 0, originY: 0 }), lights, [0.3, 0.3, 0.35], { floor: false });
+      const lg = gpu.lightFieldFirstPerson(m, cam, o, lights, [0.3, 0.3, 0.35], 1)!;
+      let bad = 0, max = 0;
+      for (let i = 0; i < lc.length; i++) {
+        if (Number.isNaN(a.pickKey![Math.floor(i / 3)]!) || a.pickKey![Math.floor(i / 3)] !== g.pickKey![Math.floor(i / 3)]) continue;   // solo donde los dos ven el mismo vóxel
+        const d = Math.abs(lc[i]! - lg[i]!); max = Math.max(max, d); if (d > 1e-3) bad++;
+      }
+      const ls = bad / (lc.length / 3), lpass = ls <= TOL_SHARE;
+      ok &&= lpass;
+      results.push({ model: name, label: `fp luz ${label}`, bad, max, share: ls, pass: lpass });
+      log(`${lpass ? 'ok  ' : 'MAL '} ${name.padEnd(12)} ${('luz ' + label).padEnd(22)} luz distinta ${String(bad).padStart(5)} · máx ${max.toExponential(1)}`);
     }
   }
   log(ok ? '\nTODO BIEN' : '\nHAY DIFERENCIAS');

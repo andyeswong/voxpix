@@ -37,10 +37,33 @@ export function renderModel(o: RenderOptions, m: VoxelSource = model.value, rev:
   }
   return img;
 }
-// Explorar: la vista en primera persona del modelo del editor (renderFirstPerson), por la GPU si hay
-export function renderExplore(cam: FpCamera, o: FpOptions): Rendered {
+// Explorar: la vista en primera persona del modelo del editor (renderFirstPerson), por la GPU si hay. Con la
+// iluminación encendida, las fuentes del modelo alumbran cada cara (lightField3D, en la GPU lightFieldFirstPerson) y
+// pasa por las mismas capas MULTIPLY/ADD que la vista previa
+export function renderExplore(cam: FpCamera, o: FpOptions, time = 0): Rendered {
   const g = ui.backend === 'gpu' ? gpuRenderer() : null;
-  return (g && g.firstPerson(model.value, cam, o, version.value)) || renderFirstPerson(model.value, cam, o);
+  const img = (g && g.firstPerson(model.value, cam, o, version.value)) || renderFirstPerson(model.value, cam, o);
+  if (!editor.light.enabled) return img;
+  const { width: W, height: H } = o;
+  const a = editor.light.ambient;
+  const ambient: [number, number, number] = [a * 0.86, a * 0.9, a];
+  const lights = lightsAt(time);
+  const total = (g && g.lightFieldFirstPerson(model.value, cam, o, lights, ambient, version.value))
+    || lightField3D(model.value, img, camera({ width: 1, height: 1, originX: 0, originY: 0 }), lights, ambient, { floor: false });
+  // Los píxeles de contorno toman la luz de su vecino con vóxel (como en shot)
+  for (let i = 0; i < W * H; i++) {
+    if (!Number.isNaN(img.pickKey![i]!) || img.rgba[i * 4 + 3] === 0) continue;
+    const x = i % W;
+    for (const n of [i - 1, i + 1, i - W, i + W]) {
+      if (n < 0 || n >= W * H || Math.abs((n % W) - x) > 1 || Number.isNaN(img.pickKey![n]!)) continue;
+      total[i * 3] = total[n * 3]!; total[i * 3 + 1] = total[n * 3 + 1]!; total[i * 3 + 2] = total[n * 3 + 2]!;
+      break;
+    }
+  }
+  const layers = buildLayers({ cell: 1, cols: W, rows: H, ambient, total }, { x: 0, y: 0, width: W, height: H }, { steps: 8, softGlow: true });
+  const rgba = applyLayers(img.rgba, layers) as Uint8ClampedArray<ArrayBuffer>;
+  for (let i = 0; i < W * H; i++) rgba[i * 4 + 3] = img.rgba[i * 4 + 3]!;     // lo vacío sigue vacío (cielo y suelo)
+  return { ...img, rgba };
 }
 
 // Para la barra de estado: si la GPU está disponible (se prueba al arrancar)

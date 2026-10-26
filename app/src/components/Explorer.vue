@@ -78,7 +78,7 @@ function draw(): void {
   const c = canvas.value;
   if (!c) return;
   const cam: FpCamera = { ...walker.eye(), fov: editor.explore.fov };
-  const img = renderExplore(cam, { width: RW, height: RH, outline: editor.view.outline });
+  const img = renderExplore(cam, { width: RW, height: RH, outline: editor.view.outline }, performance.now() / 1000);
   const out = new ImageData(RW, RH);
   const floor = Math.min(0, bounds().minZ);
   // Los rayos de los píxeles vacíos (cielo o suelo): la base de la cámara una vez, no por píxel
@@ -98,7 +98,8 @@ function draw(): void {
       const h = Math.max(0, Math.min(1, d[2] / Math.hypot(d[0], d[1], d[2]) * 2));
       col = SKY[1].map((v, n) => Math.round(v + (SKY[0][n]! - v) * h));
     }
-    out.data[o] = col[0]!; out.data[o + 1] = col[1]!; out.data[o + 2] = col[2]!; out.data[o + 3] = 255;
+    const k = editor.light.enabled ? Math.min(1, editor.light.ambient * 1.4) : 1;     // de noche, también más oscuros
+    out.data[o] = col[0]! * k; out.data[o + 1] = col[1]! * k; out.data[o + 2] = col[2]! * k; out.data[o + 3] = 255;
   }
   c.getContext('2d')!.putImageData(out, 0, 0);
 }

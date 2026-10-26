@@ -303,7 +303,7 @@ uniform bool uShadows, uAo;
 uniform vec2 uTh;
 uniform int uRampLen[${MAX_RAMPS}];
 uniform int uRampSun[${MAX_RAMPS}];
-layout(location = 0) out ivec4 oPick;      // x, y, z, tono * 8 + cara (-1: nada)
+layout(location = 0) out ivec4 oPick;      // como el rasterizado: tono, x, y, z * 8 + cara (tono -1: nada)
 layout(location = 1) out vec4 oDepth;
 const ivec3 DIRS[6] = ivec3[6](ivec3(1, 0, 0), ivec3(-1, 0, 0), ivec3(0, 1, 0), ivec3(0, -1, 0), ivec3(0, 0, 1), ivec3(0, 0, -1));
 const ivec3 PU[6] = ivec3[6](ivec3(0, 1, 0), ivec3(0, 1, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0), ivec3(1, 0, 0));
@@ -348,7 +348,7 @@ bool inShadow(ivec3 c, bool mats) {
 uniform bool uMats;                          // la paleta tiene materiales que dejan pasar luz (si no, todo opaco)
 void main() {
   int i = int(gl_FragCoord.x), j = int(gl_FragCoord.y);
-  oPick = ivec4(0, 0, 0, -1); oDepth = vec4(1e30, 0.0, 0.0, 0.0);
+  oPick = ivec4(-1); oDepth = vec4(1e30, 0.0, 0.0, 0.0);
   float a = (float(i) + 0.5) / float(uW) * 2.0 - 1.0, b = 1.0 - (float(j) + 0.5) / float(uH) * 2.0;
   vec3 d = uF + uR * (a * uTanH) + uU * (b * uTanV);
   d /= length(d);
@@ -381,7 +381,7 @@ void main() {
     }
     int ramp = rampOf(v), tone = int(v - 1u) - ramp * 16;
     int shade = ramp * 16 + clamp(tone + level, 0, uRampLen[ramp] - 1);
-    oPick = ivec4(c, shade * 8 + face);
+    oPick = ivec4(shade, c.x, c.y, c.z * 8 + face);
     oDepth = vec4(t, 0.0, 0.0, 0.0);
     return;
   }
@@ -389,6 +389,9 @@ void main() {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Uniforms = Record<string, any>;
+
+// Qué pose y opciones de primera persona hay pintadas en el destino (para no repintar al pedir su luz)
+const fpKey = (cam: FpCamera, o: FpOptions) => 'fp:' + JSON.stringify([cam, o]);
 
 // Los materiales de cada rampa para los shaders (los mismos números que la tabla de la CPU)
 interface RampMats { sun: Int32Array<ArrayBuffer>; light: Float32Array<ArrayBuffer>; back: Float32Array<ArrayBuffer> }
@@ -553,14 +556,15 @@ export class GpuVoxelRenderer {
     gl.readPixels(0, 0, W, H, gl.RGBA_INTEGER, gl.INT, pick);
     gl.readBuffer(gl.COLOR_ATTACHMENT1);
     gl.readPixels(0, 0, W, H, gl.RGBA, gl.FLOAT, dep);
-    this.lastRender = '';
+    this.lastRender = fpKey(cam, o);
     const color = new Int32Array(W * H).fill(-1), depth = new Float32Array(W * H).fill(Infinity);
     const pickKey = new Float64Array(W * H).fill(NaN), pickFace = new Int8Array(W * H).fill(-1);
     for (let p = 0; p < W * H; p++) {
-      const w = pick[p * 4 + 3]!;
-      if (w < 0) continue;
-      color[p] = w >> 3; pickFace[p] = w & 7; depth[p] = dep[p * 4]!;
-      pickKey[p] = key(pick[p * 4]!, pick[p * 4 + 1]!, pick[p * 4 + 2]!);
+      const s = pick[p * 4]!;
+      if (s < 0) continue;
+      const w = pick[p * 4 + 3]!, f = w & 7;
+      color[p] = s; pickFace[p] = f; depth[p] = dep[p * 4]!;
+      pickKey[p] = key(pick[p * 4 + 1]!, pick[p * 4 + 2]!, (w - f) / 8);
     }
     return finishRender(pal, { width: W, height: H, originX: 0, originY: 0, outline: o.outline ?? 'none' }, color, depth, pickKey, pickFace);
   }
@@ -673,9 +677,24 @@ export class GpuVoxelRenderer {
       if (!this.render(model, { ...o, pick: true }, rev)) return null;
       this.lastRender = JSON.stringify(o);
     }
+    const g0 = cam.groundPoint(0, 0), gx = cam.groundPoint(1, 0), gy = cam.groundPoint(0, 1);
+    const floor = (options.floor ?? true) && !!g0 && !!gx && !!gy ? [g0!, gx!, gy!] as const : null;
+    return this.lightPass(o.width, o.height, lights, ambient, floor);
+  }
+
+  // La luz de las fuentes en cada píxel de la vista en primera persona (como lightField3D sobre renderFirstPerson,
+  // sin suelo). Si lo último pintado no es esta pose, la pinta antes.
+  lightFieldFirstPerson(model: VoxelSource, cam: FpCamera, o: FpOptions, lights: readonly PointLight3D[], ambient: readonly [number, number, number], rev?: unknown): Float32Array | null {
+    if (lights.length > MAX_LIGHTS) return null;
+    if (model !== this.modelOf || rev !== this.rev || this.lastRender !== fpKey(cam, o)) {
+      if (!this.firstPerson(model, cam, o, rev)) return null;
+    }
+    return this.lightPass(o.width, o.height, lights, ambient, null);
+  }
+
+  private lightPass(W: number, H: number, lights: readonly PointLight3D[], ambient: readonly [number, number, number], floor: readonly [readonly [number, number], readonly [number, number], readonly [number, number]] | null): Float32Array {
     const gl = this.gl;
     const t0 = performance.now();
-    const { width: W, height: H } = o;
     let T = this.lightTarget;
     if (!T || T.w !== W || T.h !== H) {
       if (T) { gl.deleteFramebuffer(T.fbo); gl.deleteTexture(T.tex); }
@@ -712,13 +731,12 @@ export class GpuVoxelRenderer {
     gl.uniform2fv(u.uLSpot2, spot2);
     gl.uniform3f(u.uAmbient, ambient[0], ambient[1], ambient[2]);
     // El suelo bajo un píxel es afín en (sx, sy): se pasa como origen y dos ejes
-    const g0 = cam.groundPoint(0, 0), gx = cam.groundPoint(1, 0), gy = cam.groundPoint(0, 1);
-    const floor = (options.floor ?? true) && !!g0 && !!gx && !!gy;
     gl.uniform1i(u.uFloor, floor ? 1 : 0);
     if (floor) {
-      gl.uniform2f(u.uG0, g0![0], g0![1]);
-      gl.uniform2f(u.uGX, gx![0] - g0![0], gx![1] - g0![1]);
-      gl.uniform2f(u.uGY, gy![0] - g0![0], gy![1] - g0![1]);
+      const [g0, gx, gy] = floor;
+      gl.uniform2f(u.uG0, g0[0], g0[1]);
+      gl.uniform2f(u.uGX, gx[0] - g0[0], gx[1] - g0[1]);
+      gl.uniform2f(u.uGY, gy[0] - g0[0], gy[1] - g0[1]);
     }
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);

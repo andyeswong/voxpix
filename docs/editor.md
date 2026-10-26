@@ -99,7 +99,8 @@ invisible: caminas por tu escena, tu edificio o tu personaje como en un juego.
   vadea. Debajo del modelo hay un suelo infinito.
 - El render es el del núcleo (`renderFirstPerson`, `src/core/explore.ts`) con la paleta cerrada y el contorno de la
   vista; por la GPU si hay (va a 60 fps), y el oráculo del render compara las dos rutas.
-- Por ahora se ve con la luz del sol; las fuentes de luz del modelo todavía no alumbran en Explorar.
+- Con **Iluminación** encendida, las fuentes de luz del modelo alumbran en Explorar igual que en la vista previa (la
+  misma luz por cara y las mismas capas MULTIPLY/ADD), y el cielo y el suelo se oscurecen con el ambiente.
 
 ## Exportar
 
