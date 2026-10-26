@@ -135,6 +135,15 @@ export class WaterLayer {
   }
 }
 
+// Las filas de celdas cuyo agua puede caer en la vista (filas vy..vy+vh de la imagen horneada). Por abajo de la vista
+// se ve la fila más al sur con la superficie más ALTA, y por arriba la más al norte con la más BAJA (estaban cruzadas:
+// el agua desaparecía en la franja de arriba y en la de abajo)
+export const WATER_ZMIN = -16, WATER_ZMAX = 32;
+export function waterRows(originY: number, a: number, vy: number, vh: number, gh: number): [number, number] {
+  const yOf = (sy: number, z: number) => (originY - sy - z) / a;
+  return [Math.max(0, Math.floor(yOf(vy + vh, WATER_ZMAX) / CELL) - 2), Math.min(gh - 1, Math.ceil(yOf(vy, WATER_ZMIN) / CELL) + 2)];
+}
+
 // Cuánto de "hondo" tiene una celda para su color: 0 hasta DEEP_FROM de profundidad media (la de las celdas con agua
 // a DEEP_R o menos), 1 desde DEEP_TO
 export const DEEP_FROM = 3, DEEP_TO = 6, DEEP_R = 2;
@@ -183,9 +192,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
   const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);
 
   const gx0 = Math.max(0, Math.floor(vx / CELL) - 1), gx1 = Math.min(gw - 1, Math.ceil((vx + vw) / CELL) + 1);
-  // Filas de celdas que pueden caer en la vista (la superficie va de z = -12 a 12)
-  const yOf = (sy: number, z: number) => (originY - sy - z) / a;
-  const gy0 = Math.max(0, Math.floor(yOf(vy + vh, -12) / CELL) - 2), gy1 = Math.min(gh - 1, Math.ceil(yOf(vy, 12) / CELL) + 2);
+  const [gy0, gy1] = waterRows(originY, a, vy, vh, gh);
   for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
     const i = gy * gw + gx;
     const d = sim.depth[i]!;

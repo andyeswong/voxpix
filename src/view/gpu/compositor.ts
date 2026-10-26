@@ -14,6 +14,7 @@ import { DIR_VECTORS, unkey } from '../../core';
 import { resolveLight } from '../../world/lightutil';
 import { backlitAt, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
+import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState } from '../../world/state';
 import type { WorldLight } from '../../world/build';
@@ -313,9 +314,8 @@ export class GpuCompositor {
       const originY = b.options.originY ?? 0;
       const vlen = Math.hypot(f1, f2);
       const CELL = 2;
-      const yOf = (sy: number, z: number) => (originY - sy - z) / a;
       const gx0 = Math.max(0, Math.floor(o.vx / CELL) - 1), gx1 = Math.min(wl.gw - 1, Math.ceil((o.vx + o.vw) / CELL) + 1);
-      const gy0 = Math.max(0, Math.floor(yOf(o.vy + o.vh, -12) / CELL) - 2), gy1 = Math.min(wl.gh - 1, Math.ceil(yOf(o.vy, 12) / CELL) + 2);
+      const [gy0, gy1] = waterRows(originY, a, o.vy, o.vh, wl.gh);
       gl.uniform2i(w.u.uGrid, wl.gw, wl.gh);
       gl.uniform4i(w.u.uCells, gx0, gx1, gy0, gy1);
       gl.uniform1f(w.u.uA, a);

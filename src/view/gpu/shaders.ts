@@ -4,7 +4,7 @@
 //
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
-import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
+import { DEEP_FROM, DEEP_TO, DEEP_R, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -246,7 +246,7 @@ void main() {
   int gx = px / CELL;
   if (gx < uCells.x || gx > uCells.y) return;
   // La celda que pinta este píxel: la de gy más alto que lo cubre y no queda tapada (en la CPU, la última en escribir)
-  float yLo = (uOriginY - float(sy) - 32.0) / uA, yHi = (uOriginY - float(sy) + 16.0) / uA;
+  float yLo = (uOriginY - float(sy) - ${WATER_ZMAX.toFixed(1)}) / uA, yHi = (uOriginY - float(sy) - (${WATER_ZMIN.toFixed(1)})) / uA;
   int gyA = max(uCells.z, int(floor(yLo / float(CELL))) - 2), gyB = min(uCells.w, int(ceil(yHi / float(CELL))) + 2);
   int gy = -1;
   float d = 0.0, zs = 0.0, depthHere = 0.0;
