@@ -385,6 +385,38 @@ void main() {
   oLight = vec4(uDropLight, 0.0);
 }`;
 
+// ---- 3b) Los efectos y partículas (src/world/effects.ts, drawEffects): puntos de 1 o 2 píxeles con su color, con la
+// misma prueba de profundidad que las gotas y sin escribir profundidad. Dos pasadas: el color de todos (uPass 0) y la
+// luz propia de los que la llevan (uPass 1), así en un píxel el color es el del último y la luz, emisiva si alguno lo es
+export const VERT_FX = `#version 300 es
+in vec3 aPos;          // x, y (píxel de la vista), profundidad
+in vec3 aCol;          // 0..255
+in vec2 aMisc;         // tamaño, emisiva
+uniform vec2 uViewSize;
+out float vDepth;
+out vec3 vCol;
+out float vEm;
+void main() {
+  vDepth = aPos.z; vCol = aCol / 255.0; vEm = aMisc.y;
+  gl_Position = vec4((aPos.xy + aMisc.x * 0.5) / uViewSize * 2.0 - 1.0, 0.0, 1.0);
+  gl_PointSize = aMisc.x;
+}`;
+
+export const FRAG_FX = `${HEADER}
+uniform sampler2D uDepthNow;
+uniform int uPass;
+in float vDepth;
+in vec3 vCol;
+in float vEm;
+layout(location = 0) out vec4 oColor;
+layout(location = 1) out vec4 oLight;
+void main() {
+  if (vDepth >= texelFetch(uDepthNow, ivec2(gl_FragCoord.xy), 0).r - 0.3) discard;
+  if (uPass == 1 && vEm < 0.5) discard;
+  oColor = vec4(vCol, 1.0);
+  oLight = vec4(1.0, 1.0, 1.0, 0.0);
+}`;
+
 // ---- 4) La luz a pixel art (buildLayers + applyLayers, con steps 8 y brillo suave) y al lienzo
 export const FRAG_SHADE = `${HEADER}
 uniform sampler2D uColorTex;

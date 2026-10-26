@@ -15,6 +15,8 @@ import { decode, key, unkey, materialsOf, type MaterialTable } from '../core';
 import type { WorldLight, Fountain } from './build';
 import type { WaterLayer } from './water';
 import { Drops } from './particles';
+import { FxSystem, fxRandom, type FxState } from '../core/effects';
+import { fxWorldLights, type EffectsLayer } from './effects';
 import { Floaters } from './floaters';
 
 export const CHUNK = 16;
@@ -359,6 +361,8 @@ export interface RenderState {
   readonly water: WaterSurface | null;
   readonly drops: DropSource;
   readonly palette: Palette;
+  // Efectos y partículas (src/core/effects.ts): opcional, sin ellos el cuadro es el de siempre
+  readonly effects?: EffectsLayer | null;
 }
 
 export class WorldState {
@@ -369,13 +373,29 @@ export class WorldState {
   readonly lights = new LightList();
   readonly models: ModelRegistry;
   readonly drops: Drops;
+  // Efectos VISUALES (chispas, humo, lluvia...): con su propio azar, fuera de la instantánea y de la huella; encenderlos
+  // o apagarlos (effectsOn) no cambia la partida. Leen los vóxeles para chocar, nunca los cambian.
+  readonly fx: FxSystem;
+  effectsOn = true;
+  // Partículas de SIMULACIÓN genéricas (las gotas son las primeras, en `drops`): con el azar del mundo, en la
+  // instantánea y, si alguna vez se usaron, en la huella (así un mundo sin ellas da la huella de siempre)
+  readonly simFx: FxSystem;
+  // Lo que bloquea a una partícula: los vóxeles que no se atraviesan y lo que hay bajo el fondo
+  readonly fxSolid = (x: number, y: number, z: number): boolean => {
+    const s = this.solid;
+    if (z < s.zMin) return true;
+    if (x < 0 || y < 0 || x >= s.width || y >= s.depth || z > s.zMax) return false;
+    return s.blocks(s.get(x, y, z));
+  };
+  // Lo que se pinta de los efectos (los visuales solo si están encendidos) y sus luces, cada sistema con su tope
+  readonly effects: EffectsLayer;
   // Lo que flota en el agua (nenúfares...): entidades que mueve el agua (floaters.ts)
   readonly floaters: Floaters = new Floaters(this);
   tick = 0;
   private rngState: number;
 
   constructor(readonly solid: StaticVoxels, lights: WorldLight[], public water: WaterLayer | null,
-    opts: { seed?: number; fountain?: Fountain | null } = {}) {
+    opts: { seed?: number; fountain?: Fountain | null; fx?: import('../core/effects').FxOptions } = {}) {
     this.palette = solid.palette;
     this.models = new ModelRegistry(this);
     this.dynamicVersions = new Uint32Array(solid.versions.length);
@@ -386,6 +406,13 @@ export class WorldState {
     this.rngState = (opts.seed ?? 1) >>> 0;
     this.fountain = opts.fountain ?? null;
     this.drops = new Drops(() => this.random());
+    this.fx = new FxSystem(fxRandom(((opts.seed ?? 1) ^ 0x9e3779b9) >>> 0), opts.fx);
+    this.simFx = new FxSystem(() => this.random(), opts.fx);
+    const self = this;
+    this.effects = {
+      get sources() { return self.effectsOn ? [self.fx, self.simFx] : [self.simFx]; },
+      lights: () => [...(this.effectsOn ? fxWorldLights(this.fx) : []), ...fxWorldLights(this.simFx, undefined, 'fxs')],
+    };
   }
 
   readonly fountain: Fountain | null;
@@ -607,6 +634,8 @@ export class WorldState {
     }
     this.drops.step(dt, this.water, (x, y) => this.groundAt(x, y));
     this.floaters.step(dt, this.water);
+    this.simFx.step(dt, this.fxSolid);
+    if (this.effectsOn) this.fx.step(dt, this.fxSolid);
     this.placeFollowers();
     this.tick++;
   }
@@ -637,6 +666,7 @@ export class WorldState {
       water: this.water ? this.water.sim.exportState() : null,
       drops: this.drops.exportState(),
       floaters: this.floaters.exportState(),
+      simFx: this.simFx.exportState(),
       entities: [...this.entities].sort((a, b) => byId(a.id, b.id)).map((e) => ({ id: e.id, modelId: e.modelId, x: e.x, y: e.y, z: e.z, yaw: e.yaw, castsShadow: e.castsShadow })),
       lights: [...this.lights].sort((a, b) => byId(a.id, b.id)).map((l) => ({ ...l })),
       next: { entity: this.entities.next, light: this.lights.next },
@@ -650,6 +680,7 @@ export class WorldState {
     if (this.water && s.water) this.water.sim.importState(s.water);
     this.drops.importState(s.drops);
     this.floaters.importState(s.floaters);
+    this.simFx.importState(s.simFx);
     // Las entidades y luces vuelven a ser exactamente las de la instantánea (las nuevas se van, las quitadas vuelven)
     this.entities.length = 0;
     for (const se of s.entities) {
@@ -673,6 +704,11 @@ export class WorldState {
     h.num(s.drops.n); h.bytes(s.drops.data);
     // Los flotantes, solo si alguna vez hubo (así un mundo sin ellos da la huella de siempre)
     if (s.floaters.next > 1) { h.num(s.floaters.next); for (const f of s.floaters.list) { h.str(String(f.id)); h.f64(f.x); h.f64(f.y); h.f64(f.vx); h.f64(f.vy); h.f64(f.yaw); } }
+    // Las partículas de simulación genéricas, solo si alguna vez hubo
+    if (s.simFx.used) {
+      h.num(s.simFx.n); h.bytes(s.simFx.data); h.num(s.simFx.nextId);
+      for (const e of s.simFx.emitters) { h.num(e.id); h.num(e.spec); h.f64(e.x); h.f64(e.y); h.f64(e.z); h.num(e.on ? 1 : 0); h.f64(e.acc); }
+    }
     for (const e of s.entities) { h.str(String(e.id)); h.num(e.modelId); h.f64(e.x); h.f64(e.y); h.f64(e.z); h.f64(e.yaw); h.num(e.castsShadow === 'always' ? 2 : e.castsShadow ? 1 : 0); }
     for (const l of s.lights) { h.str(String(l.id)); h.str(l.kind); h.f64(l.x); h.f64(l.y); h.f64(l.z); h.num(l.baked ? 1 : 0); h.f64(l.intensity ?? -1); h.f64(l.radius ?? -1); h.f64(l.dir?.[0] ?? 9); h.f64(l.dir?.[1] ?? 9); h.f64(l.dir?.[2] ?? 9); h.f64(l.cone ?? -1); h.str(String(l.owner ?? '')); h.str(l.follow ? JSON.stringify(l.follow) : ''); }
     h.num(s.next.entity); h.num(s.next.light);
@@ -690,6 +726,7 @@ export interface WorldSnapshot {
   water: ReturnType<import('../fluid/shallow').ShallowWater['exportState']> | null;
   drops: { data: Float32Array; n: number };
   floaters: ReturnType<Floaters['exportState']>;
+  simFx: FxState;
   entities: Array<{ id: EntityId; modelId: number; x: number; y: number; z: number; yaw: number; castsShadow: ShadowMode }>;
   lights: WorldLight[];
   next: { entity: number; light: number };

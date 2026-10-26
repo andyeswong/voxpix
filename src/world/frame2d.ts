@@ -7,6 +7,7 @@ import { lightView, worldPointAt, unprojector, rowP, worldYAt, type Baked } from
 import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
+import { withEffectLights, drawEffectsLayer } from './effects';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -121,6 +122,7 @@ export function shadeLayers(total: Float32Array, o: Frame2DOptions): LightLayers
 // El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
 // hace lo mismo; la prueba del oráculo compara los dos.
 export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null } {
+  state = withEffectLights(state);
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
   const depthBuf = new Float32Array(vw * vh).fill(Infinity);
@@ -203,8 +205,9 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     }
   }
 
-  // El agua (tapa lo sumergido) y las gotas
+  // El agua (tapa lo sumergido), los efectos y las gotas
   state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo');
+  if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   if (drop) state.drops.draw(b, view, depthBuf, total, vx, vy, vw, vh, drop.color, drop.light);
   return { view, total };

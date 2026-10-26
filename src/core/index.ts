@@ -11,3 +11,4 @@ export * from './materials';
 export * from './explore';
 export * from './anim';
 export * from './gif';
+export * from './effects';

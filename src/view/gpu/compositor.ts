@@ -10,7 +10,8 @@
 //   - una vez por modelo y giro: el sprite de la entidad (color, profundidad, vóxel y cara de cada píxel) y su cuerpo;
 //   - cada cuadro: la profundidad del agua de las columnas visibles, las gotas proyectadas, un registro por entidad
 //     (dónde va, qué sprite) y la tabla de luces.
-import { DIR_VECTORS, unkey } from '../../core';
+import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
+import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
 import { backlitAt, highlightMask, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
@@ -19,7 +20,7 @@ import { materialsOf } from '../../core';
 import type { RenderState } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
-import { FRAG_CONTACT, FRAG_DROPS, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
+import { FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 // Un modelo para precalentar: en qué giros (por defecto los 8 rumbos) y si da sombra de verdad
@@ -40,6 +41,10 @@ export class GpuCompositor {
   private readonly scene: Program;
   private readonly water: Program;
   private readonly drops: Program;
+  private readonly fx: Program;
+  private readonly fxVao: WebGLVertexArrayObject;
+  private readonly fxBuf: WebGLBuffer;
+  private fxData = new Float32Array(0);
   private readonly shade: Program;
   private readonly ent: Program;
   private readonly contact: Program;
@@ -57,7 +62,7 @@ export class GpuCompositor {
   // la GPU sigue gastando en el hilo principal
   uploadMs = 0;
   // y de eso, por partes (para medir): horneado y pesos, entidades, agua, gotas
-  readonly parts = { baked: 0, entities: 0, casters: 0, water: 0, drops: 0 };
+  readonly parts = { baked: 0, entities: 0, casters: 0, water: 0, drops: 0, fx: 0 };
 
   // Lo subido del horneado
   private baked: Baked | null = null;
@@ -121,6 +126,7 @@ export class GpuCompositor {
     this.scene = program(gl, VERT_FULLSCREEN, FRAG_SCENE);
     this.water = program(gl, VERT_FULLSCREEN, FRAG_WATER);
     this.drops = program(gl, VERT_DROPS, FRAG_DROPS);
+    this.fx = program(gl, VERT_FX, FRAG_FX);
     this.shade = program(gl, VERT_FULLSCREEN, FRAG_SHADE);
     this.ent = program(gl, VERT_ENTITY, FRAG_ENTITY);
     this.contact = program(gl, VERT_CONTACT, FRAG_CONTACT);
@@ -158,6 +164,16 @@ export class GpuCompositor {
     const loc = gl.getAttribLocation(this.drops.prog, 'aPos');
     gl.enableVertexAttribArray(loc);
     gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+    // Los efectos: x, y, profundidad, r, g, b, tamaño, emisiva (8 floats por punto)
+    this.fxVao = gl.createVertexArray()!;
+    this.fxBuf = gl.createBuffer()!;
+    gl.bindVertexArray(this.fxVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
+    for (const [name, k, off] of [['aPos', 3, 0], ['aCol', 3, 3], ['aMisc', 2, 6]] as const) {
+      const l = gl.getAttribLocation(this.fx.prog, name);
+      gl.enableVertexAttribArray(l);
+      gl.vertexAttribPointer(l, k, gl.FLOAT, false, 32, off * 4);
+    }
     gl.bindVertexArray(null);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
     this.tBody = gl.createTexture()!;
@@ -204,6 +220,7 @@ export class GpuCompositor {
   // ---- los pasos
 
   private compose(state: RenderState, b: Baked, o: Frame2DOptions): void {
+    state = withEffectLights(state);
     const gl = this.gl;
     let up = performance.now();
     this.syncBaked(b);
@@ -349,12 +366,32 @@ export class GpuCompositor {
     }
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
-    // 3) las gotas, sobre lo que dejó el agua
+    // 3) los efectos y las gotas, sobre lo que dejó el agua
+    up = performance.now();
+    const nfx = state.effects ? this.projectFx(state, b, o) : 0;
+    this.parts.fx = performance.now() - up;
+    if (nfx) {
+      const p = this.fx;
+      gl.useProgram(p.prog);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, B.dropsFbo);
+      bindTex(gl, 0, gl.TEXTURE_2D, B.depth, p.u.uDepthNow);
+      gl.uniform2f(p.u.uViewSize, o.vw, o.vh);
+      gl.bindVertexArray(this.fxVao);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.NONE]);
+      gl.uniform1i(p.u.uPass, 0);
+      gl.drawArrays(gl.POINTS, 0, nfx);
+      if (o.lights) {
+        gl.drawBuffers([gl.NONE, gl.COLOR_ATTACHMENT1]);
+        gl.uniform1i(p.u.uPass, 1);
+        gl.drawArrays(gl.POINTS, 0, nfx);
+      }
+      gl.bindVertexArray(this.vao);
+    }
     const drop = dropLook(state, o.ambient);
     up = performance.now();
     const n = drop ? this.projectDrops(state, b, o) : 0;
     this.parts.drops = performance.now() - up;
-    this.uploadMs = upMs + this.parts.drops;
+    this.uploadMs = upMs + this.parts.drops + this.parts.fx;
     if (n && drop) {
       const d = this.drops;
       gl.useProgram(d.prog);
@@ -775,6 +812,35 @@ export class GpuCompositor {
 
   private waterTones(state: RenderState): Float32Array {
     return new Float32Array(state.water!.toneColors.flat());
+  }
+
+  // Los puntos de los efectos, proyectados en la CPU (como las gotas: así la GPU pinta los mismos píxeles)
+  private projectFx(state: RenderState, b: Baked, o: Frame2DOptions): number {
+    const gl = this.gl;
+    let total = 0;
+    for (const s of state.effects!.sources) total += s.count;
+    if (!total) return 0;
+    if (this.fxData.length < total * 8) this.fxData = new Float32Array(Math.max(256, total * 2) * 8);
+    const out = this.fxData;
+    let n = 0;
+    for (const s of state.effects!.sources) {
+      const d = s.packed;
+      for (let k = 0; k < s.count; k++) {
+        const q = k * FX_STRIDE;
+        const [sx, sy, depth] = b.cam.project(d[q]!, d[q + 1]!, d[q + 2]!);
+        const tx = Math.floor(sx) - o.vx, ty = Math.floor(sy) - o.vy, px = d[q + 6]!;
+        if (tx + px <= 0 || ty + px <= 0 || tx >= o.vw || ty >= o.vh) continue;
+        const w = n * 8;
+        out[w] = tx; out[w + 1] = ty; out[w + 2] = depth;
+        out[w + 3] = d[q + 3]!; out[w + 4] = d[q + 4]!; out[w + 5] = d[q + 5]!; out[w + 6] = px; out[w + 7] = d[q + 7]!;
+        n++;
+      }
+    }
+    if (n) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.fxBuf);
+      gl.bufferData(gl.ARRAY_BUFFER, out.subarray(0, n * 8), gl.DYNAMIC_DRAW);
+    }
+    return n;
   }
 
   private projectDrops(state: RenderState, b: Baked, o: Frame2DOptions): number {

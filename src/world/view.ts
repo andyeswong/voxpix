@@ -31,6 +31,8 @@ import { bakeWorld, bakeWorldJob, worldPointAt } from './bake';
 import { unkey, type Palette } from '../core';
 import { drawWater, WATER_CELL, type WaterLayer } from './water';
 import { drawDrops, MAX_DROPS } from './particles';
+import { FX_STRIDE, type FxSource } from '../core';
+import { fxWorldLights, type EffectsLayer } from './effects';
 
 export type Quarter = 0 | 1 | 2 | 3;
 
@@ -168,6 +170,23 @@ class DropsView implements DropSource {
   draw(...args: Parameters<DropSource['draw']>): void { drawDrops(this.d, this.n, ...args); }
 }
 
+// Los efectos vistos desde la cámara: sus puntos girados, cada cuadro (las luces, giradas al pedirlas)
+class FxView implements FxSource {
+  packed = new Float32Array(0);
+  count = 0;
+  constructor(private readonly cam: ViewCamera) {}
+  refresh(src: FxSource): void {
+    this.count = src.count;
+    const d = src.packed, n = this.count * FX_STRIDE;
+    if (this.packed.length < n) this.packed = new Float32Array(Math.max(256 * FX_STRIDE, n * 2));
+    this.packed.set(d.subarray(0, n));
+    for (let q = 0; q < n; q += FX_STRIDE) {
+      const [x, y] = this.cam.pointToView(d[q]!, d[q + 1]!);
+      this.packed[q] = x; this.packed[q + 1] = y;
+    }
+  }
+}
+
 // Vestir la vista: el contenido que depende del lado de la cámara (bajar la pared de delante, quitar lo que tapa).
 // Se llama sobre view.static (la copia de la vista, nunca el mundo) con changed = null la primera vez, antes de
 // hornear, y después con los trozos de la vista que se acaban de volver a copiar del mundo (lo vestido en ellos se
@@ -182,6 +201,8 @@ export class WorldView implements RenderState {
   lights: WorldLight[] = [];
   readonly water: WaterSurface | null;
   readonly drops: DropSource;
+  effects: EffectsLayer | null = null;
+  private fxViews: FxView[] = [];
   private synced: number;
   private readonly waterView: WaterView | null = null;
   private readonly dropsView: DropsView | null = null;
@@ -248,7 +269,7 @@ export class WorldView implements RenderState {
       if (touched.size && this.dress) this.dress(this, [...touched]);
     }
     const hide = this.hideLight;
-    if (this.quarter === 0) { this.entities = st.entities; this.lights = hide ? st.lights.filter((l) => !hide(l)) : st.lights; return; }
+    if (this.quarter === 0) { this.entities = st.entities; this.lights = hide ? st.lights.filter((l) => !hide(l)) : st.lights; this.effects = st.effects; return; }
     // Entidades: su celda y su giro en la vista (la entidad del mundo no se toca)
     this.entities = st.entities.map((e) => { const [x, y] = cam.cellToView(e.x, e.y); return { ...e, x, y, yaw: cam.yawToView(e.yaw) }; });
     // Luces: su punto y su foco en la vista (el mismo id: el mismo parpadeo)
@@ -259,6 +280,15 @@ export class WorldView implements RenderState {
     });
     this.waterView?.refresh();
     this.dropsView?.refresh();
+    // Los efectos, girados (mismo orden de sistemas y de puntos)
+    const srcs = st.effects.sources;
+    while (this.fxViews.length < srcs.length) this.fxViews.push(new FxView(cam));
+    srcs.forEach((s, k) => this.fxViews[k]!.refresh(s));
+    const views = this.fxViews.slice(0, srcs.length), map = (x: number, y: number) => cam.pointToView(x, y);
+    this.effects = {
+      sources: views,
+      lights: () => [...(st.effectsOn ? fxWorldLights(st.fx, map) : []), ...fxWorldLights(st.simFx, map, 'fxs')],
+    };
   }
 
   // Una caja del mundo (x0, y0, z0, x1, y1, z1, celdas incluidas) en ejes de esta vista: para Frame2DOptions.highlight

@@ -248,6 +248,29 @@ for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({
     rt.player.x = f.x - 30; rt.player.y = f.y - 30; rt.syncEntity();
   },
 });
+// Efectos y partículas (src/core/effects.ts): humo, brasas y chispas con luz, polvo y lluvia que chocan con el
+// escenario, con MAIAs que los tapan en parte, de noche, en los 4 giros; y la multitud de 200 con chispas al morir
+const fxSetup = (s: WorldState, rt: Runtime) => {
+  const p = rt.player;
+  for (const [dx, dy] of [[-12, -10], [10, -14], [6, 12]] as const) s.entities.add({ model: maiaModel, x: Math.round(p.x + dx), y: Math.round(p.y + dy), z: p.z, facing: 0, castsShadow: true });
+  s.fx.add('humo', p.x - 16, p.y + 4, p.z + 6);
+  s.fx.add('brasas', p.x + 14, p.y - 2, p.z + 2);
+  s.fx.add('lluvia', p.x, p.y, p.z + 40);
+  for (let k = 0; k < 4; k++) s.fx.burst('chispas', p.x + k * 5 - 8, p.y - 6, p.z + 8);
+  s.fx.burst('polvo', p.x + 2, p.y + 6, p.z + 1);
+};
+for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `medieval efectos, giro ${q}`, theme: 'medieval', ticks: 50, quarter: q, setup: fxSetup });
+SCENARIOS.push({ name: 'cyberpunk efectos', theme: 'cyberpunk', ticks: 50, setup: fxSetup });
+SCENARIOS.push({
+  name: 'medieval multitud de 200 con chispas', theme: 'medieval', ticks: 30,
+  setup: (s, rt) => {
+    crowd(200)(s, rt);
+    // Cada 4 ticks, 10 de ellos "mueren" con chispas (el tope de luces elige siempre las mismas)
+    let t = 0;
+    const tick = rt.step.bind(rt);
+    rt.step = (inp) => { if (t++ % 4 === 0) s.entities.slice(1 + (t % 20) * 10, 11 + (t % 20) * 10).forEach((e) => s.fx.burst('chispas', e.x, e.y, e.z + 6)); return tick(inp); };
+  },
+});
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
 }

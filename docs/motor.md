@@ -68,7 +68,7 @@ requestAnimationFrame(loop);
 |---|---|
 | `worldgen`, `content/themes`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente) y tres temas: `oficina`, `medieval` y `cyberpunk`, con sus paletas y su luz ambiente. |
 | `world/build` | `buildWorldState(layout, tema)`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. |
-| `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas y su huella (`hash`, `snapshot`, `restore`). |
+| `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas, los efectos y su huella (`hash`, `snapshot`, `restore`). |
 | `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo lo que cambió. Ojo: `baked.rgba` es la imagen SIN luz; la luz horneada está en `baked.lights[].weight` (un peso por píxel de su zona) y se suma al componer cada cuadro. Para comprobar un cambio de luz, mira los pesos o el cuadro compuesto, no `rgba`. |
 | `view/compositor` | `createCompositor(canvas)`: compone cada cuadro (escenario, entidades con su luz por cara y sus sombras, agua, gotas). GPU con WebGL2 o CPU de reserva con el mismo resultado. Si la GPU pierde el contexto, sigue la CPU. |
 | `world/frame3d` | El modo vóxel: el mismo estado visto en 3D. |
@@ -191,6 +191,42 @@ const plan = planFoliage(m, ..., { type: 'lilies', waterDepth: worldWaterDepth(w
   partida es la misma con y sin ellos. Sus ids (`flota-N`) no tocan la secuencia numérica de las entidades.
 - Entran en la instantánea y en la huella del mundo (un mundo sin flotantes da la huella de siempre).
 - Las entidades se iluminan como sólidas: los materiales (follaje, vidrio) son del escenario.
+
+## Efectos y partículas
+
+`src/core/effects.ts` tiene un sistema de partículas general (`FxSystem`): puntos de 1 o 2 píxeles con velocidad,
+vida y una rampa de color, que salen de **emisores descritos con datos** (`EmitterSpec`, sin código): forma (punto,
+caja, disco), ritmo (`rate` por segundo) o ráfaga (`burst`), vida, rapidez, dirección y apertura del cono, gravedad
+(negativa sube), frenado, viento, vaivén, colores a lo largo de la vida, tamaño, luz propia y qué hacen al chocar con
+los vóxeles que bloquean (`collide`: atravesar, pararse, rebotar o morir).
+
+Efectos ya hechos (`FX_PRESETS`): `chispas`, `humo`, `polvo`, `brasas`, `lluvia`, `nieve`, `hojas`, `burbujas`.
+
+El mundo tiene dos sistemas:
+
+```ts
+// VISUALES: con su propio azar (semilla del mundo), fuera de la instantánea y de la huella
+const id = state.fx.add('humo', x, y, z);        // un emisor encendido; da su id
+state.fx.move(id, x, y, z); state.fx.setOn(id, false); state.fx.remove(id);
+state.fx.burst('chispas', x, y, z);              // una ráfaga suelta (un golpe, una muerte); o burst(spec, x, y, z, n)
+state.effectsOn = false;                         // apagarlos (ni avanzan ni se pintan): la partida no cambia
+// DE SIMULACIÓN: con el azar del mundo, en la instantánea y (si alguna vez se usaron) en la huella
+state.simFx.add({ life: [1, 2], speed: [4, 8], colors: ['#ffffff'] }, x, y, z);
+```
+
+- Las gotas del agua (`state.drops`) son la primera partícula de simulación y no cambian: dan las mismas huellas
+  que antes (hay prueba).
+- **Topes** (`new WorldState(..., { fx: { maxAlive, maxLights } })`, por defecto 2000 y 8 por sistema): al llegar a
+  `maxAlive` las nuevas no nacen, y el azar se gasta igual (lo que sale después no cambia). Solo alumbran las
+  `maxLights` primeras partículas con luz, en el orden del sistema. Nada depende del reloj.
+- Se pintan después del agua y antes de las gotas, con la misma prueba de profundidad y sin escribir profundidad (en
+  un píxel gana la última). Las que llevan luz se ven con luz propia y alumbran como luces dinámicas (una linterna sin
+  parpadeo que se apaga al morir la partícula). En la CPU, la GPU (`FRAG_FX`, dos pasadas: color y luz) y los 4 giros;
+  el oráculo del juego lo compara (`medieval efectos, giro N`, `cyberpunk efectos`, `multitud de 200 con chispas`).
+- Fuera del mundo, `new FxSystem(fxRandom(semilla))` sirve igual: `step(dt, solido)` y `packed` (x, y, z, r, g, b,
+  tamaño, emisiva por punto).
+- Antes de usarlas en una oleada, el coste se mide en el Flip con el caso de juego (200 enemigos con chispas al
+  morir): la puerta sigue siendo p95 ≤ 16,8 ms.
 
 ## Explorar un mundo en primera persona
 
