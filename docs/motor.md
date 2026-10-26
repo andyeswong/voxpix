@@ -12,7 +12,7 @@ vóxeles**: lo estático, el agua, las entidades, las luces y las gotas. Dos ren
 
 VoxPix no tiene paquete en npm. Se instala desde GitHub fijado a un commit, y se usa su TypeScript directamente:
 
-    npm install github:andyeswong/voxpix#<commit>
+    bun add github:andyeswong/voxpix#<commit>
 
 En `vite.config`, `vitest.config` y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src`. Si usas el puente
 con pxl (`src/pxl`), también `pxl-core` -> `node_modules/voxpix/vendor/pxl/src/core/index.ts`.

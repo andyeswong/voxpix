@@ -1,7 +1,7 @@
 # Pruebas
 
-    npm test               # Vitest: todas
-    npm run typecheck      # tsc sin emitir (vue-tsc --noEmit -p . para incluir los .vue)
+    bun run test           # Vitest: todas (no `bun test`, que es otro programa)
+    bun run typecheck      # tsc sin emitir (vue-tsc --noEmit -p . para incluir los .vue)
 
 Las pruebas cubren:
 - el render: determinismo, pivote fijo, paleta cerrada y contorno;

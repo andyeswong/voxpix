@@ -1,6 +1,6 @@
 # El editor
 
-`npm run dev` y abre http://localhost:5190. La app arranca con la escena de muestra: un rincón medieval de 32 x 32
+`bun run dev` y abre http://localhost:5190. La app arranca con la escena de muestra: un rincón medieval de 32 x 32
 vóxeles con sus luces.
 
 ![El editor en 3D](img/editor-3d.png)

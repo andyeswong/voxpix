@@ -111,16 +111,16 @@ en vivo, y sin navegador con `voxpix world receta.json mundo.png`. La referencia
 
 ## La línea de comandos
 
-    npm run voxpix -- render <modelo.json|sample> salida.png [--yaw 0] [--elev 30] [--turn 8] [--scale 8] [--size WxH]
-    npm run voxpix -- export-pxl <modelo.json|sample> salida.px.js [--turn 8]
-    npm run voxpix -- import-pxl arte.px.js <sprite|-> modelo.json
-    npm run voxpix -- import-pxl arte.px.js --stack <prefijo> modelo.json      # capas <prefijo>_zNN
+    bun run voxpix render <modelo.json|sample> salida.png [--yaw 0] [--elev 30] [--turn 8] [--scale 8] [--size WxH]
+    bun run voxpix export-pxl <modelo.json|sample> salida.px.js [--turn 8]
+    bun run voxpix import-pxl arte.px.js <sprite|-> modelo.json
+    bun run voxpix import-pxl arte.px.js --stack <prefijo> modelo.json      # capas <prefijo>_zNN
 
 Sin `--size`, el encuadre se ajusta al modelo: 64x48 si cabe; si no, uno que lo contiene en cualquier giro.
 
 Un GIF del modelo dando una vuelta (los de arriba salen de aquí; `--luz` lo ilumina con las fuentes del modelo):
 
-    npx tsx --tsconfig tsconfig.runtime.json scripts/gif-rotacion.ts <modelo.voxpix.json|sample> salida.gif [--cuadros 36] [--escala 3] [--luz]
+    bunx tsx --tsconfig tsconfig.runtime.json scripts/gif-rotacion.ts <modelo.voxpix.json|sample> salida.gif [--cuadros 36] [--escala 3] [--luz]
 
 ## Cómo está hecho
 
@@ -151,14 +151,14 @@ usa `vendor/pxl-core.d.ts`. El puente con la app está en `src/pxl/bridge.ts`.
 - Al importar, trae la paleta con sus rampas, un sprite como plano de vóxeles o una pila de capas `<prefijo>_zNN`.
 - Al exportar, escribe la paleta, las rampas, un sprite por ángulo y una hoja. Después se construye con
   `node vendor/pxl/bin/pxl.js build salida.px.js`.
-- Los iconos de la interfaz están dibujados con pxl (`app/icons/icons.px.js`); `npm run icons` los reconstruye.
+- Los iconos de la interfaz están dibujados con pxl (`app/icons/icons.px.js`); `bun run icons` los reconstruye.
 
 ## Usarlo como motor
 
 VoxPix no tiene paquete en npm, pero se puede instalar desde GitHub fijado a un commit y usar su código TypeScript
 directamente:
 
-    npm install github:andyeswong/voxpix#<commit>
+    bun add github:andyeswong/voxpix#<commit>
 
 En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y `pxl-core` ->
 `node_modules/voxpix/vendor/pxl/src/core/index.ts` si usas el puente con pxl). Las piezas para un juego:

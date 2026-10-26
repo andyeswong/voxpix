@@ -24,10 +24,10 @@ La receta está en `src/world/recipe.ts`. Quien escriba código puede usar direc
 }
 ```
 
-Desde un clon limpio (`git clone`, `npm ci`), en la raíz del repo:
+Desde un clon limpio (`git clone`, `bun install --frozen-lockfile`), en la raíz del repo:
 
 ```sh
-npm run voxpix -- world scripts/mundos/toxico.json toxico.png --at 140,330 --scale 2 --info toxico.json
+bun run voxpix world scripts/mundos/toxico.json toxico.png --at 140,330 --scale 2 --info toxico.json
 ```
 
 Sale `toxico.png` (768 x 432): el lago verde brillando en medio de la vista. `toxico.json` trae la información del
@@ -154,7 +154,7 @@ const shot = await page.evaluate(() => window.voxpixWorld.png({ scale: 2 }));   
 ## Sin navegador: la CLI
 
 ```sh
-npm run voxpix -- world receta.json mundo.png [--at x,y] [--size 384x216] [--ticks 30] [--scale 2] [--whole] [--lights no] [--info info.json]
+bun run voxpix world receta.json mundo.png [--at x,y] [--size 384x216] [--ticks 30] [--scale 2] [--whole] [--lights no] [--info info.json]
 ```
 
 Pinta en la CPU la vista centrada en `--at` (por defecto, la salida) tras `--ticks` pasos del mundo, o el mundo entero
