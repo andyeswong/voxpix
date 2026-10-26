@@ -46,6 +46,7 @@ centro del lienzo, y la capa 0 es el suelo. *Edición > Tamaño del lienzo* camb
 | Cubo | G | Rellena la mancha contigua de la capa (o la vacía con el botón derecho). |
 | Luz | L | Pone una fuente de luz en la celda, o la quita si ya hay una. El tipo se elige en sus opciones: antorcha, lámpara, brasero, neón rosa, neón cian o pantalla. |
 | Fluido | F | Agua. *Verter*: cae mientras mantienes pulsado y se reparte. *Grifo*: un clic deja una fuente continua. *Llenar*: llena de una vez, hasta esa altura, todo lo conectado, como una cuenca. *Fijar* lo deja como vóxeles. |
+| Efecto | K | En 3D, pone un emisor de partículas en la celda (humo, chispas, brasas, polvo, lluvia, nieve, hojas, burbujas), o lo quita si ya hay uno. Corren solos en 3D, en Animación y en Explorar, y se guardan con el modelo. *Pausa* las para. |
 | Espejo | M | Pinta también lo simétrico respecto al eje x que indiques. |
 
 Ctrl+Z deshace y Ctrl+Y (o Ctrl+Mayús+Z) rehace. Cada trazo, caja, relleno o vertido es un solo paso.

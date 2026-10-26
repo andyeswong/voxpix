@@ -5,7 +5,7 @@ import { medievalScene } from '../../src/samples/medieval';
 // Estado del editor. El modelo es mutable y no reactivo (es un Map grande); cada cambio sube `version` y
 // los componentes que dibujan escuchan ese número.
 
-export type Tool = 'pen' | 'erase' | 'paint' | 'pick' | 'box' | 'fill' | 'light' | 'fluid';
+export type Tool = 'pen' | 'erase' | 'paint' | 'pick' | 'box' | 'fill' | 'light' | 'fluid' | 'fx';
 export type LightKind = 'torch' | 'lamp' | 'brazier' | 'neon-pink' | 'neon-cyan' | 'screen';
 
 // La escena de muestra: un rincón medieval de 32 x 32 con sus luces (src/samples/medieval.ts)

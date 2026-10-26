@@ -205,7 +205,8 @@ Efectos ya hechos (`FX_PRESETS`): `chispas`, `humo`, `polvo`, `brasas`, `lluvia`
 
 En la demo de escenario: brasas en antorchas y braseros (humo en los braseros), polvo al pisar, **E** chispas delante
 de MAIA, **N** el tiempo (nada, lluvia, nieve; cyberpunk empieza con lluvia) y **F** apaga los efectos. `?efectos=no`
-y `?tiempo=lluvia|nieve|nada` en la URL. Falta pintarlos en el modo vóxel y en primera persona.
+y `?tiempo=lluvia|nieve|nada` en la URL. En el editor son la herramienta **Efecto** y la API `effect`, `burst`
+(`docs/api-agentes.md`). Falta pintarlos en el modo vóxel y en la primera persona de la demo de escenario.
 
 El mundo tiene dos sistemas:
 

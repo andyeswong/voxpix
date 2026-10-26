@@ -5,6 +5,7 @@ import Voxel3DEditor from './components/Voxel3DEditor.vue';
 import Viewport from './components/Viewport.vue';
 import Explorer from './components/Explorer.vue';
 import { toFile, loadAnimated, anim } from './anim';
+import { fx, FX_KINDS } from './effects';
 import Timeline from './components/Timeline.vue';
 import RigPanel from './components/RigPanel.vue';
 import PalettePanel from './components/PalettePanel.vue';
@@ -23,16 +24,17 @@ const LIGHT_KINDS: Array<[LightKind, string]> = [['torch', 'antorcha'], ['lamp',
 const TOOLS: Array<[Tool, string, string, string, string]> = [
   ['pen', 'pen', 'Lápiz', 'B', 'Lápiz'], ['erase', 'erase', 'Borrar', 'E', 'Borrar'], ['paint', 'paint', 'Repintar', 'P', 'Repintar'],
   ['pick', 'pick', 'Cuentagotas', 'I', 'Gotero'], ['box', 'box', 'Caja', 'R', 'Caja'], ['fill', 'fill', 'Cubo de pintura', 'G', 'Cubo'],
-  ['light', 'light', 'Fuente de luz', 'L', 'Luz'], ['fluid', 'fluid', 'Fluido', 'F', 'Fluido'],
+  ['light', 'light', 'Fuente de luz', 'L', 'Luz'], ['fluid', 'fluid', 'Fluido', 'F', 'Fluido'], ['fx', 'fx', 'Efecto (partículas)', 'K', 'Efecto'],
 ];
 // Lo que hace cada herramienta, para la píldora de opciones
 const TOOL_HINT: Record<Tool, string> = {
   pen: 'clic pinta · clic derecho borra', erase: 'clic borra', paint: 'cambia el material de lo que ya hay',
   pick: 'copia el material de un vóxel', light: 'clic pone una fuente; sobre una fuente, la quita', fluid: 'mantén pulsado para verter',
   box: 'arrastra de una esquina a otra · clic derecho borra', fill: 'rellena la mancha de la capa · clic derecho la borra',
+  fx: 'en 3D: clic pone un emisor; sobre uno, lo quita',
 };
 // En 3D el botón derecho gira: la caja va de hueco a hueco (con las alturas entre los dos) y el cubo no borra
-const TOOL_HINT_3D: Partial<Record<Tool, string>> = { pen: 'clic pinta', box: 'arrastra de un hueco a otro: rellena la caja entre los dos', fill: 'rellena la mancha de su capa' };
+const TOOL_HINT_3D: Partial<Record<Tool, string>> = { fx: 'clic pone un emisor; sobre uno, lo quita', pen: 'clic pinta', box: 'arrastra de un hueco a otro: rellena la caja entre los dos', fill: 'rellena la mancha de su capa' };
 // Escala de la exportación a PNG
 const pngScale = ref(4);
 // Los menús se cierran al hacer clic fuera
@@ -155,6 +157,7 @@ function key(e: KeyboardEvent): void {
   else if (e.key === 'f') editor.tool = 'fluid';
   else if (e.key === 'r') editor.tool = 'box';
   else if (e.key === 'g') editor.tool = 'fill';
+  else if (e.key === 'k') editor.tool = 'fx';
   else if (e.key === 'Tab') { e.preventDefault(); editor.mode = editor.mode === 'layers' ? 'voxel3d' : 'layers'; }
   else if (e.key === 'm') editor.mirrorX = !editor.mirrorX;
   else if (e.key === 'PageUp' || e.key === 'w') editor.z = Math.min(editor.grid.maxZ, editor.z + 1);
@@ -257,6 +260,11 @@ void version;
       <span class="hint">{{ editor.tool === 'fluid' && fluidState.fillMode ? 'clic llena de agua hasta esa altura' : editor.tool === 'fluid' && fluidState.faucetMode ? 'clic pone o quita un grifo' : editor.mode !== 'layers' ? (TOOL_HINT_3D[editor.tool] ?? TOOL_HINT[editor.tool]) : TOOL_HINT[editor.tool] }}</span>
       <template v-if="editor.tool === 'light'">
         <select v-model="editor.light.kind"><option v-for="[k, name] in LIGHT_KINDS" :key="k" :value="k">{{ name }}</option></select>
+      </template>
+      <template v-if="editor.tool === 'fx'">
+        <select v-model="fx.kind"><option v-for="k in FX_KINDS" :key="k" :value="k">{{ k }}</option></select>
+        <button :class="{ on: !fx.running }" title="Parar o seguir las partículas" @click="fx.running = !fx.running">{{ fx.running ? 'Pausa' : 'Seguir' }}</button>
+        <span class="hint">{{ fx.sources.length }} emisor(es) · {{ fx.alive }} partículas</span>
       </template>
       <template v-if="editor.tool === 'fluid'">
         <div class="seg">

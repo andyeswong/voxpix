@@ -8,6 +8,7 @@ import { History, Model, animationToFile, animationFromFile, fitFrame, encodeGIF
 import { shot } from './preview';
 import { rigFrames, rigFromSpec, type RigSpec } from '../../src/anim/rig';
 import { model, history, touch, replaceModel, editor, type LightSource3D } from './store';
+import { fx, loadEffects, type EffectSource } from './effects';
 
 interface Frame { model: Model; history: History; ms: number }
 let frames: Frame[] = [];
@@ -121,14 +122,15 @@ export function generateFromRig(spec = anim.rig): number {
 }
 
 // ---- archivo
-export function toFile(lights: LightSource3D[]): (ModelFile | ModelFileV2) & { lights: LightSource3D[] } {
+// Con los emisores de efectos (effects.ts) solo si hay alguno: así un modelo sin ellos se guarda como siempre
+export function toFile(lights: LightSource3D[]): (ModelFile | ModelFileV2) & { lights: LightSource3D[]; effects?: EffectSource[] } {
   ensure();
   frames[anim.current]!.model.palette = model.value.palette;
   for (const f of frames) f.model.palette = model.value.palette;
-  return { ...animationToFile(frames, anim.rig ?? undefined), lights };
+  return { ...animationToFile(frames, anim.rig ?? undefined), lights, ...(fx.sources.length ? { effects: fx.sources.map((s) => ({ ...s })) } : {}) };
 }
 
-export function loadAnimated(f: (ModelFile | ModelFileV2) & { lights?: LightSource3D[] }): void {
+export function loadAnimated(f: (ModelFile | ModelFileV2) & { lights?: LightSource3D[]; effects?: EffectSource[] }): void {
   play(false);
   const a = animationFromFile(f);
   replaceModel(a.frames[0]!.model);
@@ -137,6 +139,7 @@ export function loadAnimated(f: (ModelFile | ModelFileV2) & { lights?: LightSour
   anim.rig = (a.rig as RigSpec | undefined) ?? null;
   editor.light.sources.splice(0, editor.light.sources.length, ...(f.lights ?? []));
   if (f.lights?.length) editor.light.enabled = true;
+  loadEffects(f.effects);
   touch();
 }
 

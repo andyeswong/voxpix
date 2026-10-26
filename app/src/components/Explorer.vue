@@ -3,6 +3,7 @@ import { ref, onMounted, onUnmounted, computed } from 'vue';
 import { Walker, fpBasis, materialsOf, type FpCamera } from '@core/index';
 import { model, editor, ui } from '../store';
 import { renderExplore } from '../preview';
+import { drawEffectsFp } from '../effects';
 import PxIcon from './PxIcon.vue';
 
 // EXPLORAR (pedido de Andrés): caminar por dentro del modelo en primera persona, con un personaje invisible de la
@@ -101,6 +102,7 @@ function draw(): void {
     const k = editor.light.enabled ? Math.min(1, editor.light.ambient * 1.4) : 1;     // de noche, también más oscuros
     out.data[o] = col[0]! * k; out.data[o + 1] = col[1]! * k; out.data[o + 2] = col[2]! * k; out.data[o + 3] = 255;
   }
+  drawEffectsFp(out.data, cam, img);
   c.getContext('2d')!.putImageData(out, 0, 0);
 }
 

@@ -28,7 +28,7 @@ el resultado se ve en la app, como si lo hiciera una persona.
 
 | Función | Devuelve | Qué hace |
 |---|---|---|
-| `info()` | objeto | Nombre, vóxeles, lienzo, rampas, luces, tipos de luz, la vista y si se renderiza en la GPU o en la CPU. |
+| `info()` | objeto | Nombre, vóxeles, lienzo, rampas, luces, tipos de luz, emisores de efectos y sus tipos, la vista y si se renderiza en la GPU o en la CPU. |
 | `newModel(name, w, d, h)` | `info()` | Un modelo vacío con la paleta actual y un lienzo de w x d x h. Quita las luces. |
 | `palette([{ name, colors, emissive?, material?, props? }], outline?)` | rampas | Cambia la paleta: rampas de 1 a 16 colores `#rrggbb`, de oscuro a claro. `emissive` hace que la rampa brille sola. `material` es uno de los de `materials()` y `props` ajusta sus propiedades (ver Materiales). No se deshace, y falla si el modelo usa una rampa o un tono que la nueva paleta no tiene, o si el material o una propiedad no existen. |
 | `materials()` | lista | Los materiales con todas sus propiedades. |
@@ -66,6 +66,24 @@ El espejo de la interfaz (M) también se aplica a `set`, `voxels`, `box` y `fill
 | `removeLight(id)` o `removeLight(x, y, z)` | si había | La quita. |
 | `lights()` | lista | Las fuentes, con su id, tipo y celda. |
 
+### Efectos y partículas
+
+Emisores de partículas en celdas del modelo, como las luces. Corren solos (60 pasos por segundo) en el editor 3D, en el
+modo Animación y en Explorar, chocan con los vóxeles que bloquean y con el suelo, y se guardan con el modelo
+(`effects` en el `.voxpix.json`, solo si hay alguno). No cambian los vóxeles ni la paleta. Son los efectos ya hechos
+del motor (`FX_PRESETS`, ver `docs/motor.md`): `chispas`, `humo`, `polvo`, `brasas`, `lluvia`, `nieve`, `hojas` y
+`burbujas`.
+
+| Función | Devuelve | Qué hace |
+|---|---|---|
+| `effect(x, y, z, preset?)` | id | Un emisor en la celda (`humo` por defecto). Si ya hay uno ahí, lo sustituye. |
+| `removeEffect(id)` | si había | Lo quita. |
+| `effects()` | lista | Los emisores, con su id, efecto y celda. |
+| `burst(preset, x, y, z, count?)` | - | Una ráfaga suelta, sin emisor (un golpe, una explosión): `count` partículas o las del efecto. |
+| `fxPause(on?)` | si está en pausa | Para o sigue las partículas (sin argumento, cambia). |
+
+En la interfaz es la herramienta **Efecto** (K): en 3D, clic pone un emisor del tipo elegido y, sobre uno, lo quita.
+
 ### Ver y exportar
 
 | Función | Devuelve | Qué hace |
@@ -74,7 +92,7 @@ El espejo de la interfaz (M) también se aplica a `set`, `voxels`, `box` y `fill
 | `png({ sheet?, scale? })` | promesa de `{name, base64}` | El PNG de la vista, o la hoja de 8 ángulos con `sheet: true`, con fondo transparente, un encuadre que contiene el modelo entero y luz si `lit`. |
 | `firstPerson({ x, y, z, yaw?, pitch?, fov?, width?, height?, scale? })` | promesa de `{name, base64}` | El PNG en primera persona desde ese ojo, con fondo transparente: para previsualizar el modelo por dentro. `x, y, z`: el ojo, en vóxeles (los mismos ejes que el modelo; z = 0 es el suelo). `yaw`: en GRADOS, 0 mira al norte (+y), 90 al este (+x), 180 al sur, 270 al oeste. `pitch`: en grados, positivo hacia arriba, de -89 a 89. `fov`: campo de visión horizontal en grados (70). `width, height`: la resolución del render (320 x 180); `scale`: ampliación entera sin suavizar. Con la iluminación encendida (`view({ lit: true })`), alumbran las fuentes del modelo. |
 | `explore(open?, { height?, fov? })` | `{open, height, fov}` | Abre (o cierra) la vista Explorar. `height`: la altura del personaje invisible en vóxeles, de 1 a 64 (el ojo va al 90 % de esa altura); `fov` en grados. |
-| `tool(name)` | - | Cambia la herramienta de la interfaz, para que quien mire vea qué haces: `pen`, `erase`, `paint`, `pick`, `box`, `fill`, `light` o `fluid`. |
+| `tool(name)` | - | Cambia la herramienta de la interfaz, para que quien mire vea qué haces: `pen`, `erase`, `paint`, `pick`, `box`, `fill`, `light`, `fluid` o `fx`. |
 
 ## Animación
 

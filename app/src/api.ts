@@ -6,11 +6,12 @@
 // Coordenadas: x hacia el este, y hacia el norte, z hacia arriba (z >= 0); el pivote (0, 0, 0) en el centro del
 // lienzo. Material: un número (rampa*16 + tono + 1), "nombre" (la rampa con ese nombre, en su tono del medio, como mucho el 2),
 // "nombre:tono", [rampa, tono] o null (vacío = borrar).
-import { Model, material as mat, decode, validatePalette, planFoliage, rampMaterial, MATERIALS, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, type ModelFile, type FoliageType, type Ramp, type MaterialProps } from '@core/index';
+import { Model, material as mat, decode, validatePalette, planFoliage, rampMaterial, MATERIALS, FOLIAGE_TYPES, FOLIAGE_RAMPS, FOLIAGE_DEFAULTS, FX_PRESETS, type FxPreset, type ModelFile, type FoliageType, type Ramp, type MaterialProps } from '@core/index';
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob, renderExplore } from './preview';
 import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, setRig, generateFromRig, frameMs as framesMs, toFile, loadAnimated, sheetPng, animGif } from './anim';
+import { fx, FX_KINDS, addEffect, removeEffect, burstEffect, type EffectSource } from './effects';
 import type { RigSpec } from '../../src/anim/rig';
 import { loadPxl, paletteFromPxl, stackFromPxl, stackPrefixes, pxlDirectives, applyDirectives } from '../../src/pxl/bridge';
 import { SOURCE_PRESETS } from '../../src/lighting';
@@ -64,6 +65,11 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   light(x, y, z, kind?)                    una fuente de luz (kind: ${KINDS.join(', ')}); da su id
   removeLight(idOrX, y?, z?)               la quita
   lights()                                 las fuentes
+  effect(x, y, z, preset?)                 un emisor de efectos en la celda (preset: ${FX_KINDS.join(', ')}; humo por
+                                           defecto): corre en el editor 3D y en Explorar, y se guarda con el modelo; da su id
+  removeEffect(id), effects()              lo quita / los emisores, con su id, efecto y celda
+  burst(preset, x, y, z, count?)           una ráfaga suelta (sin emisor), para probar un golpe
+  fxPause(on?)                             para o sigue las partículas
   palette([{name, colors, emissive?, material?, props?}], outline?)   cambia la paleta entera. material: ${Object.keys(MATERIALS).join(', ')}
                                            (follaje: la luz lo atraviesa y se anda a través; vidrio: pasa la luz, no el agua
                                            ni el jugador); props ajusta {light, backlit, bed, blocks, emissive, reflect} (rampas de oscuro a claro; no se deshace)
@@ -117,7 +123,7 @@ export const api = {
     return {
       name: model.value.name, voxels: model.value.size,
       canvas: { w: s.w, d: s.d, h: s.h, minX: g.minX, maxX: g.maxX, minY: g.minY, maxY: g.maxY, maxZ: g.maxZ },
-      ramps: ramps(), lights: api.lights(), lightKinds: KINDS,
+      ramps: ramps(), lights: api.lights(), lightKinds: KINDS, effects: api.effects(), effectKinds: FX_KINDS,
       view: { ...editor.view, lit: editor.light.enabled, ambient: editor.light.ambient },
       backend: ui.backend,
     };
@@ -206,6 +212,22 @@ export const api = {
   },
 
   lights(): LightSource3D[] { return editor.light.sources.map((l) => ({ ...l })); },
+
+  // ---- efectos (effects.ts): emisores en celdas del modelo, como las luces
+  effect(x: number, y: number, z: number, preset: FxPreset = 'humo'): string {
+    int(x, y, z);
+    if (z < 0) throw new Error('z >= 0');
+    const old = fx.sources.find((s) => s.x === x && s.y === y && s.z === z);
+    if (old) removeEffect(old.id);
+    return addEffect(preset, x, y, z);
+  },
+  removeEffect(id: string): boolean { return removeEffect(id); },
+  effects(): EffectSource[] { return fx.sources.map((s) => ({ ...s })); },
+  burst(preset: FxPreset, x: number, y: number, z: number, count?: number): void {
+    if (!FX_PRESETS[preset]) throw new Error(`efecto desconocido: ${preset} (hay ${FX_KINDS.join(', ')})`);
+    burstEffect(preset, x, y, z, count);
+  },
+  fxPause(on = fx.running): boolean { fx.running = !on; return !fx.running; },
 
   // Cambia la paleta: rampas de 1 a 16 colores (#rrggbb), de oscuro a claro. No se deshace. Los vóxeles guardan el
   // índice de rampa y tono: si ya hay modelo, las rampas que usa tienen que seguir existiendo.

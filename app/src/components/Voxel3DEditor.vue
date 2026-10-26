@@ -4,6 +4,8 @@ import { camera, key, unkey, decode, DIR_VECTORS, type RenderOptions, type Rende
 import { renderModel } from '../preview';
 import { model, history, version, editor, paint, currentMaterial, touch, toggleLight } from '../store';
 import { anim, frameModels } from '../anim';
+import { fx, toggleEffect, drawEffects3D } from '../effects';
+import { FX_PRESETS } from '@core/index';
 import { SOURCE_PRESETS } from '../../../src/lighting';
 import { startPour, stopPour, fluidState } from '../fluidTool';
 import { fillBox, floodLayer } from '../edit';
@@ -15,6 +17,7 @@ import { fillBox, floodLayer } from '../edit';
 // El lienzo tiene el tamaño del escenario
 let W = 640, H = 520;
 const canvas = ref<HTMLCanvasElement>();
+const fxCanvas = ref<HTMLCanvasElement>();
 const box = ref<HTMLDivElement>();
 let last: Rendered | null = null;
 let opts: RenderOptions | null = null;
@@ -102,6 +105,18 @@ function draw(): void {
     g.beginPath(); g.arc(px, py, Math.max(4, editor.view3d.zoom * 0.35), 0, Math.PI * 2); g.fill(); g.stroke();
   }
 
+  // Emisores de efectos: un rombo del primer color del efecto en su celda, con su hilo al suelo
+  for (const s of fx.sources) {
+    const [px, py] = cam.project(s.x + 0.5, s.y + 0.5, s.z + 0.5);
+    const [fx0, fy0] = cam.project(s.x + 0.5, s.y + 0.5, 0);
+    g.strokeStyle = 'rgba(255,255,255,0.25)';
+    g.setLineDash([3, 3]); g.beginPath(); g.moveTo(px, py); g.lineTo(fx0, fy0); g.stroke(); g.setLineDash([]);
+    const rr = Math.max(5, editor.view3d.zoom * 0.4);
+    g.fillStyle = FX_PRESETS[s.preset].colors[0]; g.strokeStyle = '#121018'; g.lineWidth = 2;
+    g.beginPath(); g.moveTo(px, py - rr); g.lineTo(px + rr, py); g.lineTo(px, py + rr); g.lineTo(px - rr, py); g.closePath(); g.fill(); g.stroke(); g.lineWidth = 1;
+  }
+  drawFx();
+
   // Grifos abiertos: un anillo cian en su celda
   for (const [fx, fy, fz] of fluidState.faucets) {
     const [px, py] = cam.project(fx + 0.5, fy + 0.5, fz + 0.5);
@@ -114,6 +129,17 @@ function draw(): void {
   else if (hover) outlineVoxel(g, cam, hover);
 }
 
+// Las partículas, en su propio lienzo encima (se repinta con cada paso de los efectos, sin volver a renderizar el modelo)
+function drawFx(): void {
+  const c = fxCanvas.value;
+  if (!c || !last || !opts) return;
+  if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+  const g = c.getContext('2d')!;
+  g.clearRect(0, 0, W, H);
+  const cam = camera(opts);
+  drawEffects3D(g, (x, y, z) => cam.project(x, y, z), last, editor.view3d.zoom);
+}
+
 // Fuente bajo el ratón (a pocos píxeles de su punto), para quitarla con la herramienta de luz
 function lightUnder(e: MouseEvent): [number, number, number] | null {
   if (!opts) return null;
@@ -122,6 +148,18 @@ function lightUnder(e: MouseEvent): [number, number, number] | null {
   for (const l of editor.light.sources) {
     const [lx, ly] = cam.project(l.x + 0.5, l.y + 0.5, l.z + 0.5);
     if (Math.hypot(lx - px, ly - py) <= Math.max(8, editor.view3d.zoom * 0.5)) return [l.x, l.y, l.z];
+  }
+  return null;
+}
+
+// Emisor bajo el ratón, para quitarlo con la herramienta de efectos
+function fxUnder(e: MouseEvent): [number, number, number] | null {
+  if (!opts) return null;
+  const [px, py] = pixelOf(e);
+  const cam = camera(opts);
+  for (const s of fx.sources) {
+    const [sx, sy] = cam.project(s.x + 0.5, s.y + 0.5, s.z + 0.5);
+    if (Math.hypot(sx - px, sy - py) <= Math.max(8, editor.view3d.zoom * 0.5)) return [s.x, s.y, s.z];
   }
   return null;
 }
@@ -187,6 +225,12 @@ function apply(e: MouseEvent, first: boolean): void {
     if (at && at[2] >= 0) floodLayer(at[0], at[1], at[2], currentMaterial());
     return;
   }
+  if (editor.tool === 'fx') {
+    if (!first) return;
+    const cell = fxUnder(e) ?? place;
+    if (cell && cell[2] >= 0) toggleEffect(cell[0], cell[1], cell[2]);
+    return;
+  }
   if (editor.tool === 'light') {
     if (!first) return;
     const existing = lightUnder(e);
@@ -236,7 +280,7 @@ function move(e: MouseEvent): void {
   }
   if (action === 1 && editor.tool !== 'pen') apply(e, false);
   const t = target(e);
-  hover = ['pen', 'light', 'fluid', 'box'].includes(editor.tool) ? (lightUnder(e) ?? t.place) : t.hit;
+  hover = ['pen', 'light', 'fluid', 'box', 'fx'].includes(editor.tool) ? ((editor.tool === 'fx' ? fxUnder(e) : lightUnder(e)) ?? t.place) : t.hit;
   draw();
 }
 
@@ -269,16 +313,19 @@ function fit(): void {
 }
 onMounted(() => { ro = new ResizeObserver(fit); if (box.value) ro.observe(box.value); fit(); });
 onUnmounted(() => ro?.disconnect());
-watch([version, () => JSON.stringify(fluidState.faucets), () => JSON.stringify(editor.light.sources), () => ({ ...editor.view3d }), () => editor.mirrorX, () => editor.mirrorAxis, () => editor.grid, () => editor.mode, () => anim.onion], draw, { deep: true });
+watch([version, () => JSON.stringify(fluidState.faucets), () => JSON.stringify(editor.light.sources), () => ({ ...editor.view3d }), () => editor.mirrorX, () => editor.mirrorAxis, () => editor.grid, () => editor.mode, () => anim.onion, () => JSON.stringify(fx.sources)], draw, { deep: true });
+watch(() => fx.frame, drawFx);
 </script>
 
 <template>
   <div ref="box" class="v3d">
     <canvas ref="canvas" @auxclick.prevent="recenter" @mousedown="down" @mousemove="move" @mouseup="up" @mouseleave="up" @contextmenu.prevent @wheel="wheel" />
+    <canvas ref="fxCanvas" class="fx" />
   </div>
 </template>
 
 <style scoped>
 .v3d { position: absolute; inset: 0; }
 canvas { width: 100%; height: 100%; cursor: crosshair; image-rendering: auto; }
+.fx { position: absolute; inset: 0; pointer-events: none; }
 </style>
