@@ -5,7 +5,7 @@
 import { generateLayout, TILE, type Layout } from '../../../src/worldgen';
 import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, FX_PRESETS, type ModelFile } from '@core/index';
-import { buildWorldState, type World } from '../../../src/world/build';
+import { buildWorldState, DEFAULT_WALL_H, type World } from '../../../src/world/build';
 import { bakeWorld, rebakeChangedJobs, type Baked } from '../../../src/world/bake';
 import { FrameBudget } from '../../../src/view/budget';
 import { walkFrames } from '../../../src/anim/walk';
@@ -225,7 +225,7 @@ function input(): TickInput {
 function viewOrigin(b: Baked, st: WorldState, m: Entity): { vx: number; vy: number } {
   const feet = b.cam.project(m.x + 0.5, m.y, m.z);
   const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
-  const top = Math.floor(b.cam.project(0, st.depth - 1 - 2 * TILE, 32)[1]);   // la tapa de la pared norte
+  const top = Math.floor(b.cam.project(0, st.depth - 1 - 2 * TILE, world?.wallHeight ?? DEFAULT_WALL_H)[1]);   // la tapa de la pared norte
   return { vx, vy: Math.max(top, Math.min(b.height - VH, Math.floor(feet[1]) - VH / 2 - 12)) };
 }
 

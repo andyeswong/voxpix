@@ -124,8 +124,9 @@ function play(fxMode: 'sin' | 'con' | 'apagados', ticks = 100): string[] {
 describe('efectos en el mundo', () => {
   it('los visuales, encendidos o apagados, no cambian la huella; las gotas dan la de siempre', () => {
     const base = play('sin');
-    // La huella de esta partida con gotas desde antes de los efectos (las gotas son la primera partícula de simulación)
-    expect(base).toEqual(['2000e11e', 'f7c71f7f']);
+    // La huella de esta partida con gotas desde antes de los efectos (las gotas son la primera partícula de simulación).
+    // Cambió solo cuando todas las paredes pasaron a medir 16 (antes 2000e11e, f7c71f7f)
+    expect(base).toEqual(['c9b0e542', '33c3dbcb']);
     expect(play('con')).toEqual(base);
     expect(play('apagados')).toEqual(base);
   });

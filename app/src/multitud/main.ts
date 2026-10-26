@@ -39,7 +39,7 @@ if (q.get('linterna') === '1' && ids.length) state.lights.add({ kind: 'lamp', x:
 
 const feet = baked.cam.project(cx + 0.5, cy, 1);
 const vx = Math.max(0, Math.min(baked.width - VW, Math.floor(feet[0]) - VW / 2));
-const top = Math.floor(baked.cam.project(0, state.depth - 1 - 2 * TILE, 32)[1]);
+const top = Math.floor(baked.cam.project(0, state.depth - 1 - 2 * TILE, world.wallHeight ?? 16)[1]);
 const vy = Math.max(top, Math.min(baked.height - VH, Math.floor(feet[1]) - VH / 2));
 
 // ?precalentar=1: los sprites del walk (8 cuadros x 8 rumbos, con su sombra) se suben antes del primer cuadro

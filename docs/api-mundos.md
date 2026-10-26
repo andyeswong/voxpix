@@ -31,7 +31,7 @@ npm run voxpix -- world scripts/mundos/toxico.json toxico.png --at 140,330 --sca
 ```
 
 Sale `toxico.png` (768 x 432): el lago verde brillando en medio de la vista. `toxico.json` trae la información del
-mundo; su `hash` es la huella, la misma en cualquier máquina: `987b32a6`.
+mundo; su `hash` es la huella, la misma en cualquier máquina: `281c7658`.
 
 ## La receta
 
@@ -56,6 +56,7 @@ mundo; su `hash` es la huella, la misma en cualquier máquina: `987b32a6`.
 | `theme` | un tema de MUESTRA (`medieval`, `cyberpunk`, `oficina`): completa generador, colores, fuente, luz ambiente y piezas (puertas, ventanas, escritorios). Lo que pongas encima, manda |
 | `ramps` | los colores de cada papel: `floor`, `wall`, `cap`, `column`, `water`, `wood`, `metal`, `flame`, `neonPink`, `neonCyan`, `screen`, `cloth`, `warmGlass`, `darkGlass`, `grass`. Cada uno, una lista de colores o `{ colors, emissive, material }`. El agua emisiva brilla sola |
 | `fountain` | el pilón con agua y fuego |
+| `wallHeight` | el alto de todas las paredes, de 2 a 40 (16 por defecto). Todas miden lo mismo: la norte con su fachada, las de los lados, la del sur y las de una sala con forma |
 | `pillar` | `"round"` (por defecto), `"none"` o un modelo de vóxeles, que se estampa centrado en cada loseta de columna |
 | `prop` | `"block"` (por defecto), `"none"` o un modelo, que se estampa centrado en la huella de cada mueble |
 | `foliage` | vegetación: `[{ type, density, ramp, heads, on }]`. Tipos: `grass`, `flowers`, `reeds`, `lilies`, `bush`. Las rampas van por nombre; si falta una de las de vegetación, se añade |
@@ -74,7 +75,7 @@ taza en el editor (`window.voxpix`) y la pone en el mundo con la receta. Sus ram
 como las de fuera, y lo que queda fuera de la sala es el vacío: ni suelo ni pared. Todo el suelo queda conectado: si una
 zona queda suelta, se cierra. El agua, las columnas, los muebles, la salida y los materiales caen siempre dentro. Las
 columnas dejan dos losetas libres hasta cualquier pared, para no tapar un pasillo. La fachada norte solo está donde da a
-la sala. Una pared que tiene suelo al norte es baja, como la del sur, para no tapar ese suelo.
+la sala.
 
 | `kind` | Opciones |
 |---|---|

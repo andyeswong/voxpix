@@ -11,7 +11,8 @@
 import { generateLayout, TILE } from '../../../src/worldgen';
 import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
-import { buildWorldState, addWorldFloaters, worldWaterDepth, type WorldLook } from '../../../src/world/build';
+import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
+import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
@@ -62,6 +63,7 @@ interface Scenario {
   lightCap?: number;      // tope de luces por entidad (entityLightCap)
   theme: ThemeId;
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
+  shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
@@ -147,6 +149,8 @@ const SCENARIOS: Scenario[] = [
   { name: 'medieval lago con pisotones', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42 },
   // El líquido brilla solo cuando su rampa es emisiva (WaterLayer.glow): la GPU lo pinta igual, también en la vista girada
   { name: 'lago tóxico emisivo', theme: 'medieval', look: toxic, pos: [172, 170], ticks: 120, stompEvery: 42 },
+  { name: 'laberinto medieval', theme: 'medieval', shape: { kind: 'maze' }, ticks: 60 },
+  { name: 'oficina en T, giro 1', theme: 'oficina', shape: { kind: 'T' }, quarter: 1, ticks: 60 },
   { name: 'lago tóxico emisivo, giro 1', theme: 'medieval', look: toxic, quarter: 1, pos: [172, 170], ticks: 120 },
   { name: 'medieval lago sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false },
   {
@@ -288,7 +292,7 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
 function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
   const feet = b.cam.project(x + 0.5, y, z);
   const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
-  const top = Math.max(0, Math.floor(b.cam.project(0, depth - 1 - 2 * TILE, 32)[1]));
+  const top = Math.max(0, Math.floor(b.cam.project(0, depth - 1 - 2 * TILE, DEFAULT_WALL_H)[1]));
   const vy = Math.max(top, Math.min(b.height - VH, Math.floor(feet[1]) - VH / 2 - 12));
   return { vx, vy };
 }
@@ -354,7 +358,7 @@ async function run(): Promise<void> {
   for (const sc of SCENARIOS) {
     out.textContent += `${sc.name}…\n`;
     await new Promise((r) => setTimeout(r, 0));
-    const layout = generateLayout(THEMES[sc.theme].spec, 7);
+    const layout = generateLayout(sc.shape ? { ...THEMES[sc.theme].spec, shape: sc.shape } : THEMES[sc.theme].spec, 7);
     const look = sc.look ? sc.look(THEMES[sc.theme].look) : THEMES[sc.theme].look;
     let { world, state } = buildWorldState(layout, look);
     if (sc.crop || sc.veg || sc.glass) {

@@ -35,6 +35,7 @@ export interface WorldRecipe {
   shape?: ShapeSpec;                                       // la forma de la sala (L, T, pasillos, laberinto, plano); manda sobre la del generator
   ramps?: Partial<Record<WorldRole, WorldRampSpec>>;      // los colores de cada papel (worldPalette); el agua emisiva brilla
   fountain?: boolean;
+  wallHeight?: number;                                     // el alto de todas las paredes (16 por defecto)
   pillar?: 'round' | 'none' | ModelFile;                   // un modelo: se estampa centrado en cada loseta de columna (z = 0)
   prop?: 'block' | 'none' | ModelFile;                     // un modelo: centrado en la huella de cada mueble (z = 0)
   foliage?: FoliageRecipe[];
@@ -120,6 +121,7 @@ export function buildRecipe(r: WorldRecipe, code: Partial<WorldLook> = {}): Buil
     prop = ({ model, x0, x1, yS, yN }) => { stampInto(model, m, merged.map, Math.floor((x0 + x1 + 1) / 2), Math.floor((yS + yN + 1) / 2), 0); };
   }
   const look: WorldLook = { ...code, palette, fountain: r.fountain ?? code.fountain ?? false,
+    ...(r.wallHeight !== undefined ? { wallHeight: r.wallHeight } : {}),
     ...(pillar !== undefined ? { pillar } : code.pillar !== undefined ? { pillar: code.pillar } : {}),
     ...(prop !== undefined ? { prop } : code.prop !== undefined ? { prop: code.prop } : {}) };
 

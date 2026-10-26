@@ -88,6 +88,7 @@ export interface FacadeSite {
   cx: number;                          // la columna del mapa
   x0: number;                          // la x del modelo donde empieza el tramo
   faceY: number;                       // la y del modelo de la cara de la pared (lo de delante, faceY - 1)
+  height: number;                      // el alto de la pared (la tapa, en height - 1)
   seed: number;
   carve(lx0: number, lx1: number, z0: number, z1: number, inner: (lx: number, z: number) => number): void;
 }
@@ -99,6 +100,7 @@ export interface FixtureSite {
   source: Layout['sources'][number];
   x: number;                           // la x del modelo
   faceY: number;
+  height: number;                      // el alto de la pared
   lights: WorldLight[];
 }
 export type FixtureBuilder = (site: FixtureSite) => void;
@@ -124,12 +126,13 @@ export interface WorldLook {
   facade?: FacadeBuilder;             // por defecto, la pared lisa
   fixture?: FixtureBuilder;           // por defecto, solo la luz (sin objeto), delante de la pared
   prop?: PropBuilder | null;          // por defecto blockProp; null: sin muebles de vóxeles
+  wallHeight?: number;                // el alto de todas las paredes; por defecto DEFAULT_WALL_H (16)
 }
 
 // Lo que el motor hace si el look no dice otra cosa
 export const plainFloor: FloorBuilder = ({ tone }) => material(M.floor, Math.max(0, Math.min(4, tone)));
-export const lightOnlyFixture: FixtureBuilder = ({ source, x, faceY, lights }) => {
-  lights.push({ id: source.id, kind: source.kind, x: x + 0.5, y: faceY - 4, z: 19.5 });
+export const lightOnlyFixture: FixtureBuilder = ({ source, x, faceY, height, lights }) => {
+  lights.push({ id: source.id, kind: source.kind, x: x + 0.5, y: faceY - 4, z: Math.round(height * 0.6) + 0.5 });
 };
 // Un mueble como un bloque de madera de 12 de alto, metido 1 en su huella
 export const blockProp: PropBuilder = ({ model, x0, x1, yS, yN }) => {
@@ -145,9 +148,9 @@ function hash(x: number, y: number, z: number, seed: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
-export const WALL_H = 32;          // alto de la pared norte (la fachada del juego mide 32)
-export const SIDE_WALL_H = 12;           // paredes de los lados: bajas, como tapas (en el juego solo se ve la tapa)
-export const SOUTH_WALL_H = 6;           // la del sur, más baja: si no, taparía el suelo de delante
+// El alto de las paredes, todas iguales (la del norte con su fachada, las de los lados, la del sur y las de dentro de una
+// sala con forma). Lo cambia WorldLook.wallHeight
+export const DEFAULT_WALL_H = 16;
 const COLUMN_H = 34;
 
 // La columna de piedra redonda (la de siempre): un fuste de radio 6,5 con basa y capitel de 7,5, en la rampa columna
@@ -192,6 +195,7 @@ export interface World {
   fountain: Fountain | null;
   // Lo que flota al empezar (nenúfares...): buildWorldState los pone en el agua como flotantes (world/floaters.ts)
   floaters?: Array<{ x: number; y: number; model: VoxelSource; yaw?: number }>;
+  wallHeight?: number;          // el alto de todas las paredes (buildWorld lo pone; la tapa está en wallHeight - 1)
 }
 
 // Fuente: pilón redondo con agua por encima del suelo, fuste central y un cuenco con fuego arriba
@@ -281,17 +285,16 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
     for (let z = low; z < g0; z++) model.set(px, my(py), z, material(M.floor, (z & 1) === 0 ? 0 : 1));
   }
 
-  // ---- paredes. La norte ocupa solo la última de sus filas y mide 32: en la proyección del juego su cara (la
-  // fachada) cae sobre las filas 1 y 2 y su tapa sobre la fila 0, como los tiles de pared del juego. Las demás, bajas.
+  // ---- paredes, todas de wallH. La norte ocupa solo la última de sus filas: con la inclinación de 0,5 y 16 de alto, su
+  // cara (la fachada) tapa las dos filas de detrás
+  const wallH = look.wallHeight ?? DEFAULT_WALL_H;
+  if (!(wallH >= 2 && wallH <= 40)) throw new Error(`wallHeight va de 2 a 40 (es ${wallH})`);
   const northFront = NORTH * TILE;                 // primera fila de píxeles libre al sur de la pared norte
   for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
     const i = cell(cx, cy);
     if (layout.wall[i] === WALL.none || layout.wall[i] === WALL.outside) continue;   // el vacío: ni suelo ni pared
     if (cy < NORTH - 1) continue;                  // detrás de la pared norte: lo tapa la propia pared
-    const north = cy === NORTH - 1;
-    // Una pared con suelo al norte (de una sala con forma) es baja, como la del sur: si no, taparía ese suelo
-    const southFacing = cy >= NORTH && layout.wall[i - layout.cols] === WALL.none;
-    const h = north ? WALL_H : cy === layout.rows - 1 || southFacing ? SOUTH_WALL_H : SIDE_WALL_H;
+    const h = wallH;
     for (let ly = 0; ly < TILE; ly++) for (let lx = 0; lx < TILE; lx++) {
       const px = cx * TILE + lx, py = cy * TILE + ly;
       for (let z = 0; z < h; z++) {
@@ -310,7 +313,7 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
   if (look.facade) for (let cx = 1; cx < layout.cols - 1; cx++) {
     if (layout.wall[cell(cx, NORTH - 1)] === WALL.outside) continue;   // sobre el vacío no hay fachada
     const x0 = cx * TILE;
-    look.facade({ model, piece: layout.facade[cx] ?? '', cx, x0, faceY, seed, carve: (lx0, lx1, z0, z1, inner) => {
+    look.facade({ model, piece: layout.facade[cx] ?? '', cx, x0, faceY, height: wallH, seed, carve: (lx0, lx1, z0, z1, inner) => {
       for (let lx = lx0; lx <= lx1; lx++) for (let z = z0; z <= z1; z++) {
         model.set(x0 + lx, faceY, z, 0);                                    // hueco de 1 vóxel
         model.set(x0 + lx, faceY + 1, z, inner(lx, z));                     // fondo del hueco
@@ -320,7 +323,7 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
 
   // ---- fuentes de luz de la fachada: su objeto y su luz (las del look)
   const fixture = look.fixture ?? lightOnlyFixture;
-  for (const s of layout.sources) if (s.id.startsWith('facade-')) fixture({ model, source: s, x: Math.round(s.x), faceY, lights });
+  for (const s of layout.sources) if (s.id.startsWith('facade-')) fixture({ model, source: s, x: Math.round(s.x), faceY, height: wallH, lights });
 
   // ---- fuente: en el sitio libre (3x3 losetas sin pared, columna, mueble ni agua) más cercano a la salida
   let fountain: Fountain | null = null;
@@ -403,7 +406,7 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
   // Lo que sale, en ejes del modelo
   const wetM = new Uint8Array(W * D), topM = new Int8Array(W * D);
   for (let py = 0; py < D; py++) for (let px = 0; px < W; px++) { const a = py * W + px, b = my(py) * W + px; wetM[b] = wet[a]!; topM[b] = waterTop[a]!; }
-  return { model, lights, width: W, depth: D, wet: wetM, waterTop: topM, fountain };
+  return { model, lights, width: W, depth: D, wet: wetM, waterTop: topM, fountain, wallHeight: wallH };
 }
 
 // El estado del mundo completo de un nivel: lo estático, el agua (fluido), las luces y las gotas

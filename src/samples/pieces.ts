@@ -15,38 +15,47 @@ export const sampleFloor: FloorBuilder = ({ kind, cx, cy, lx, ly, tone, noise: n
   return v;
 };
 
+// Las alturas de las piezas están pensadas para una pared de 32 y se escalan a la de verdad (16 por defecto)
+const scaler = (height: number) => (z: number) => Math.max(1, Math.min(height - 2, Math.round((z * height) / 32)));
+
 // Fachada: puertas de madera, ventanas (cálidas, oscuras o de neón) y troneras, estandartes y carteleras, rótulos de neón
-export const sampleFacade: FacadeBuilder = ({ model, piece, cx, x0, faceY, seed, carve }) => {
+export const sampleFacade: FacadeBuilder = ({ model, piece, cx, x0, faceY, height, seed, carve }) => {
+  const z = scaler(height);
   if (piece.includes('puerta')) {
-    carve(3, 12, 1, 22, (lx) => material(M.wood, lx === 3 || lx === 12 ? 1 : lx === 8 ? 1 : 2));
+    carve(3, 12, 1, z(22), (lx) => material(M.wood, lx === 3 || lx === 12 ? 1 : lx === 8 ? 1 : 2));
   } else if (piece.includes('ventana') || piece.includes('tronera')) {
     const warm = piece.includes('calida') || piece.includes('arco') && worldNoise(cx, 0, 0, seed) > 0.5;
     const neon = piece.includes('cian') ? M.neonCyan : piece.includes('rosa') ? M.neonPink : null;
     const narrow = piece.includes('tronera');
-    carve(narrow ? 7 : 4, narrow ? 8 : 11, 12, 24, (lx, z) => material(neon ?? (warm ? M.warmGlass : M.darkGlass), (lx + z) % 5 === 0 ? 3 : 2));
+    carve(narrow ? 7 : 4, narrow ? 8 : 11, z(12), z(24), (lx, zz) => material(neon ?? (warm ? M.warmGlass : M.darkGlass), (lx + zz) % 5 === 0 ? 3 : 2));
   } else if (piece.includes('estandarte') || piece.includes('grafica') || piece.includes('cartelera')) {
-    for (let lx = 4; lx <= 11; lx++) for (let z = 8; z <= 27; z++)
-      model.set(x0 + lx, faceY - 1, z, material(piece.includes('cartelera') ? M.wood : M.cloth, lx === 4 || lx === 11 ? 1 : z > 22 ? 3 : 2));
+    const top = z(27), fringe = z(22);
+    for (let lx = 4; lx <= 11; lx++) for (let zz = z(8); zz <= top; zz++)
+      model.set(x0 + lx, faceY - 1, zz, material(piece.includes('cartelera') ? M.wood : M.cloth, lx === 4 || lx === 11 ? 1 : zz > fringe ? 3 : 2));
   } else if (piece.includes('neon')) {
     const ramp = piece.includes('cian') ? M.neonCyan : M.neonPink;
-    for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, 20, material(ramp, 4));
-    for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, 18, material(ramp, 3));
+    const hi = z(20), lo = Math.min(hi - 1, z(18));
+    for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, hi, material(ramp, 4));
+    for (let lx = 2; lx <= 13; lx++) model.set(x0 + lx, faceY - 1, lo, material(ramp, 3));
   }
 };
 
 // Antorchas, apliques y braseros de pared: un soporte de metal con su llama (o la pantalla del aplique) y su luz.
 // Las demás fuentes (neón), solo la luz delante de la pared
-export const sampleFixture: FixtureBuilder = ({ model, source: s, x, faceY, lights }) => {
+export const sampleFixture: FixtureBuilder = ({ model, source: s, x, faceY, height, lights }) => {
   const y = faceY - 1;
+  // El soporte (2), el brazo (1) y la llama (2): 5 vóxeles que acaban 1 por debajo de la tapa en una pared de 16 o
+  // menos, y a la altura de siempre (z 16..20) en una de 32
+  const b = Math.min(16, Math.max(1, height - 7));
   if (s.kind === 'torch' || s.kind === 'lamp' || s.kind === 'brazier') {
-    model.set(x, y, 16, material(M.metal, 2)); model.set(x, y, 17, material(M.metal, 3));
-    model.set(x, y - 1, 18, material(M.metal, 2));
+    model.set(x, y, b, material(M.metal, 2)); model.set(x, y, b + 1, material(M.metal, 3));
+    model.set(x, y - 1, b + 2, material(M.metal, 2));
     const flame = s.kind === 'lamp' ? M.warmGlass : M.flame;
-    model.set(x, y - 1, 19, material(flame, 3)); model.set(x, y - 1, 20, material(flame, 4));
-    model.set(x - 1, y - 1, 19, material(flame, 2)); model.set(x + 1, y - 1, 19, material(flame, 2));
-    lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 5, z: 20.5 });
+    model.set(x, y - 1, b + 3, material(flame, 3)); model.set(x, y - 1, b + 4, material(flame, 4));
+    model.set(x - 1, y - 1, b + 3, material(flame, 2)); model.set(x + 1, y - 1, b + 3, material(flame, 2));
+    lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 5, z: b + 4.5 });
   } else {
-    lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 3, z: 19.5 });
+    lights.push({ id: s.id, kind: s.kind, x: x + 0.5, y: y - 3, z: b + 3.5 });
   }
 };
 

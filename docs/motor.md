@@ -129,6 +129,7 @@ const look: WorldLook = {
     water: { colors: ['#0a2a10', '#145a20', '#22a03a', '#4ee060', '#b0ffb8'], emissive: true },   // brilla solo
   }),
   fountain: false,               // el pilón con agua y fuego; por defecto no
+  wallHeight: 16,                // el alto de TODAS las paredes (por defecto 16)
   pillar: miMampara,             // quien construye cada columna del mapa; por defecto roundPillar; null, ninguna
 };
 ```
