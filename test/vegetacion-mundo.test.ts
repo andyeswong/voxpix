@@ -26,7 +26,9 @@ describe('sin follaje, todo da lo mismo que antes', () => {
     const img = render(m, o);
     const t = lightField3D(m, img, camera(o), [{ x: 3.5, y: 2.5, z: 6.5, radius: 30, color: [1, 0.6, 0.3], intensity: 1.2 }], [0.3, 0.3, 0.35]);
     expect({ bake: h(b.rgba), weights: h(new Float32Array(b.lights.flatMap((l) => [...l.weight]))), frame: h(f), render: h(img.rgba), light: h(t) })
-      .toEqual({ bake: '16ba0b9afa358c56', weights: '1b8e8448d24159ed', frame: '131238de0fec0c86', render: 'bb67a43624a8b6d9', light: 'd4d74866a7d23f78' });
+      // frame: el cuadro lleva agua, y el tono del agua honda cambió a propósito (paso con trama en vez de corte seco, por
+      // los "picos" que vio Andrés): la huella de antes de ese cambio era 131238de0fec0c86
+      .toEqual({ bake: '16ba0b9afa358c56', weights: '1b8e8448d24159ed', frame: 'f51035648b20c85c', render: 'bb67a43624a8b6d9', light: 'd4d74866a7d23f78' });
   }, 60000);
 });
 

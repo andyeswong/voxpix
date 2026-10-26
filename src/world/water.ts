@@ -128,6 +128,21 @@ export class WaterLayer {
   }
 }
 
+// Cuánto de "hondo" tiene una celda para su color: 0 hasta DEEP_FROM de profundidad media (la de las celdas con agua
+// a DEEP_R o menos), 1 desde DEEP_TO
+export const DEEP_FROM = 3, DEEP_TO = 6, DEEP_R = 2;
+function deepness(sim: WaterGrid['sim'], gw: number, gh: number, gx: number, gy: number): number {
+  let sum = 0, n = 0;
+  for (let dy = -DEEP_R; dy <= DEEP_R; dy++) for (let dx = -DEEP_R; dx <= DEEP_R; dx++) {
+    const x = gx + dx, y = gy + dy;
+    if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
+    const j = y * gw + x, dd = sim.depth[j]!;
+    if (sim.solid[j] || dd < 0.04) continue;
+    sum += dd; n++;
+  }
+  return Math.max(0, Math.min(1, (sum / n - DEEP_FROM) / (DEEP_TO - DEEP_FROM)));
+}
+
 // La rejilla que dibuja drawWater: la del simulador del mundo (WaterLayer) o la de una vista girada (view.ts)
 export interface WaterGrid {
   readonly gw: number;
@@ -180,15 +195,16 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     const lap = (sE + sW + sS + sN - 4 * zs) / (CELL * CELL);
     const nx = -sx, ny = -sy, nz = 1, nl = Math.hypot(nx, ny, nz);
     const key = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;
-    let tone = d > 4.5 ? 2 : 3;
-    if (key > 0.04) tone += 1; else if (key < -0.04) tone -= 1;
+    // Lo hondo, más oscuro: con la profundidad media de la celda y sus vecinas con agua, y pasando de un tono al otro
+    // con trama entre DEEP_FROM y DEEP_TO (un corte seco sobre un fondo en escalones dibujaba picos)
+    const deepT = deepness(sim, gw, gh, gx, gy);
+    const lean = key > 0.04 ? 1 : key < -0.04 ? -1 : 0;
     const steep = Math.hypot(sx, sy);
-    if (steep > 0.45) tone = 4;                                         // espuma en las crestas
-    if (d < 0.6 && !w.basin[i]) tone = 3;                            // suelo mojado: una película clara
-    tone = Math.max(0, Math.min(4, tone));
-    const tc = w.tones[tone]!, r = tc[0], g = tc[1], bl = tc[2];
+    const foam = steep > 0.45;                                         // espuma en las crestas
+    const film = d < 0.6 && !w.basin[i];                               // suelo mojado: una película clara
+    const toneAt = (px: number, sy: number) => film ? 3 : foam ? 4 : Math.max(0, Math.min(4, (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 < deepT ? 2 : 3) + lean));
     // Opaca donde es honda; la trama (transparencia) solo en la orilla y en el suelo mojado
-    const alpha = !w.basin[i] ? Math.min(0.6, d) : d >= 1.5 ? 1 : Math.min(1, 0.45 + d * 0.35 + (tone === 4 ? 0.4 : 0));
+    const alphaFor = (tn: number) => (!w.basin[i] ? Math.min(0.6, d) : d >= 1.5 ? 1 : Math.min(1, 0.45 + d * 0.35 + (tn === 4 ? 0.4 : 0)));
     // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
     let lr = ambient[0] * 1.25, lg = ambient[1] * 1.25, lb = ambient[2] * 1.3, spec = 0, sr = 0, sg = 0, sb = 0;
     const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
@@ -219,7 +235,8 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
         const t = ty * vw + tx;
         if (depthHere >= srcDepth[t]! - 0.3) continue;                // lo que hay delante (orilla, personaje) tapa el agua
         const o = t * 4, q = t * 3;
-        if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alpha) {
+        const tn = toneAt(px, sy);
+        if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alphaFor(tn)) {
           // Se ve el fondo a través del agua: refractado, algo azulado y con las cáusticas
           const t2 = ty * vw + Math.max(0, Math.min(vw - 1, tx + shift));
           view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05);
@@ -227,7 +244,8 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
           continue;
         }
         // Superficie: su color, el reflejo de lo que tiene encima y el brillo de las fuentes
-        let cr = r, cg = g, cb = bl, ltr = lr + sr, ltg = lg + sg, ltb = lb + sb;
+        const tc = w.tones[tn]!;
+        let cr = tc[0], cg = tc[1], cb = tc[2], ltr = lr + sr, ltg = lg + sg, ltb = lb + sb;
         const col = Math.max(0, Math.min(vw - 1, tx + shift));
         if (reflect) for (let k = 2; k <= MARCH; k += 2) {
           if (ty - k < 0) break;
@@ -238,7 +256,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
           const kk = prev !== Infinity && prev < depthHere + k1 * tPerPx * dPerT - 0.5 ? k1 : k;
           const rt = (ty - kk) * vw + col;
           {
-            const m = REFLECT * (tone === 4 ? 0.3 : 1);
+            const m = REFLECT * (tn === 4 ? 0.3 : 1);
             cr += (srcView[rt * 4]! - cr) * m; cg += (srcView[rt * 4 + 1]! - cg) * m; cb += (srcView[rt * 4 + 2]! - cb) * m;
             if (srcTotal) { ltr += (srcTotal[rt * 3]! - ltr) * m; ltg += (srcTotal[rt * 3 + 1]! - ltg) * m; ltb += (srcTotal[rt * 3 + 2]! - ltb) * m; }
             break;

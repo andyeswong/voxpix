@@ -4,6 +4,7 @@
 //
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
+import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -275,12 +276,23 @@ void main() {
   float lap = (sE + sW + sS + sN - 4.0 * zs) / float(CELL * CELL);
   float nx = -sx, ny = -syl, nz = 1.0, nl = length(vec3(nx, ny, nz));
   float keyL = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;
-  int tone = d > 4.5 ? 2 : 3;
+  // deepness() de water.ts: la profundidad media de las celdas con agua a DEEP_R o menos, y el tono hondo con trama entre
+  // DEEP_FROM y DEEP_TO
+  float dsum = 0.0; int dn = 0;
+  for (int ddy = -${DEEP_R}; ddy <= ${DEEP_R}; ddy++) for (int ddx = -${DEEP_R}; ddx <= ${DEEP_R}; ddx++) {
+    ivec2 cc = c + ivec2(ddx, ddy);
+    if (cc.x < 0 || cc.y < 0 || cc.x >= uGrid.x || cc.y >= uGrid.y) continue;
+    float dd = wDepth(cc);
+    if (wStatic(cc).g != 0.0 || dd < 0.04) continue;
+    dsum += dd; dn++;
+  }
+  float deepT = clamp((dsum / float(dn) - ${DEEP_FROM.toFixed(2)}) / ${(DEEP_TO - DEEP_FROM).toFixed(2)}, 0.0, 1.0);
+  int tone = (float(BAYER[(px & 3) + ((sy & 3) << 2)]) / 16.0 < deepT ? 2 : 3);
   if (keyL > 0.04) tone += 1; else if (keyL < -0.04) tone -= 1;
+  tone = clamp(tone, 0, 4);
   float steep = length(vec2(sx, syl));
   if (steep > 0.45) tone = 4;
   if (d < 0.6 && !basin) tone = 3;
-  tone = clamp(tone, 0, 4);
   vec3 tc = uTones[tone];
   float alpha = !basin ? min(0.6, d) : d >= 1.5 ? 1.0 : min(1.0, 0.45 + d * 0.35 + (tone == 4 ? 0.4 : 0.0));
   vec3 lt = uAmbient * vec3(1.25, 1.25, 1.3);
