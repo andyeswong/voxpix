@@ -88,8 +88,7 @@ let theme: WorldTheme = (THEME_IDS.includes(q.get('tema') as WorldTheme) ? q.get
 let seed = Number(q.get('seed') ?? 7);
 let lightsOn = true;
 // Contorno (como el de VoxPix): exterior, exterior + interior (los saltos de profundidad: paredes, columnas) o ninguno.
-// ?contorno=exterior|interior|no
-// Cada uno, con el tono más oscuro de la rampa vecina (como VoxPix) o marcado: casi negro.
+// Cada uno, con el tono más oscuro de la rampa vecina (como VoxPix) o marcado: casi negro. El estándar es interior.
 // ?contorno=exterior|exterior-negro|interior|interior-negro|no
 const INK = '#0d0c12';
 const OUTLINES = [
@@ -97,7 +96,7 @@ const OUTLINES = [
   { name: 'interior', id: 'both', color: undefined }, { name: 'interior-negro', id: 'both', color: INK },
   { name: 'no', id: 'none', color: undefined },
 ] as const;
-let outlineIx = Math.max(0, OUTLINES.findIndex((o) => o.name === (q.get('contorno') ?? 'no')));
+let outlineIx = Math.max(0, OUTLINES.findIndex((o) => o.name === (q.get('contorno') ?? 'interior')));   // el estándar (Andrés): contorno interior
 let outline: 'outer' | 'both' | 'none' = OUTLINES[outlineIx]!.id;
 let outlineColor: string | undefined = OUTLINES[outlineIx]!.color;
 let layout: Layout = generateLayout(THEMES[theme].spec, seed);

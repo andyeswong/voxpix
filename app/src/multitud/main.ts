@@ -2,7 +2,7 @@
 // para medir cuántas caben (un juego de hordas pide ~200). No es un juego: las mueve la vista, sin
 // runtime. ?n=200  ?ruta=cpu  ?tema=oficina  ?sombras=0 (sin sombra de verdad)
 //   ?antorchas=10: las 10 primeras llevan una antorcha (luz puntual que va con ellas)   ?linterna=1: y una linterna
-//   ?luces=N: tope de luces por entidad (solo las N más cercanas la alumbran)
+//   ?luces=N: tope de luces por entidad (solo las N más cercanas la alumbran)   ?contorno=no: sin el contorno interior
 import { generateLayout, TILE } from '../../../src/worldgen';
 import { THEMES } from '../../../src/content/themes';
 import { Model, type ModelFile } from '@core/index';
@@ -27,7 +27,7 @@ const maia = Model.fromJSON(maiaFile as unknown as ModelFile);
 const walk = walkFrames(maia);
 const layout = generateLayout(THEMES[theme].spec, 7);
 const { world, state } = buildWorldState(layout, theme);
-const baked = bakeWorld(world, { topZ: 40, incline: 0.5 });
+const baked = bakeWorld(world, { topZ: 40, incline: 0.5, outline: q.get('contorno') === 'no' ? 'none' : 'both' });   // el estándar: contorno interior
 const cx = layout.spawn.x, cy = world.depth - 1 - layout.spawn.y;
 // Cada una en su órbita alrededor de la salida, a su velocidad
 const orbits = Array.from({ length: N }, (_, k) => ({ r: 14 + 7 * Math.sqrt(k), a0: k * 2.39996, w: (k % 2 ? 1 : -1) * (0.25 + (k % 7) * 0.04) }));
