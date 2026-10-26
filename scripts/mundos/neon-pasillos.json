@@ -1,0 +1,59 @@
+{
+  "theme": "cyberpunk",
+  "seed": 9,
+  "shape": {
+    "kind": "corridors",
+    "rooms": 4,
+    "width": 3
+  },
+  "effects": [
+    {
+      "preset": "humo",
+      "x": 160,
+      "y": 160,
+      "z": 4
+    }
+  ],
+  "lights": [
+    {
+      "kind": "neon-pink",
+      "x": 120,
+      "y": 330,
+      "z": 10,
+      "radius": 110,
+      "intensity": 1.6
+    },
+    {
+      "kind": "neon-cyan",
+      "x": 330,
+      "y": 330,
+      "z": 10,
+      "radius": 110,
+      "intensity": 1.6
+    },
+    {
+      "kind": "neon-pink",
+      "x": 560,
+      "y": 290,
+      "z": 10,
+      "radius": 110,
+      "intensity": 1.6
+    },
+    {
+      "kind": "neon-cyan",
+      "x": 80,
+      "y": 150,
+      "z": 10,
+      "radius": 110,
+      "intensity": 1.6
+    },
+    {
+      "kind": "lamp",
+      "x": 300,
+      "y": 120,
+      "z": 14,
+      "radius": 110,
+      "intensity": 1.6
+    }
+  ]
+}

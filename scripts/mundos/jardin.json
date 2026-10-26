@@ -1,0 +1,12 @@
+{
+  "theme": "medieval",
+  "seed": 11,
+  "shape": { "kind": "L", "corner": "se" },
+  "foliage": [
+    { "type": "grass", "density": 0.5 },
+    { "type": "flowers", "density": 0.2 },
+    { "type": "reeds", "density": 0.4 },
+    { "type": "lilies", "density": 0.3 },
+    { "type": "bush", "density": 0.1 }
+  ]
+}

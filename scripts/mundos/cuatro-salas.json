@@ -1,0 +1,11 @@
+{
+  "theme": "medieval",
+  "seed": 5,
+  "size": [24, 18],
+  "rooms": [
+    { "gx": 0, "gy": 0, "shape": { "kind": "maze" } },
+    { "gx": 1, "gy": 0, "shape": { "kind": "T", "bar": "south" } },
+    { "gx": 1, "gy": 1, "shape": { "kind": "L", "corner": "nw" } },
+    { "gx": 2, "gy": 1, "shape": { "kind": "corridors", "rooms": 3 } }
+  ]
+}

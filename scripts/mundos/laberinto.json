@@ -1,0 +1,6 @@
+{
+  "theme": "medieval",
+  "seed": 7,
+  "shape": { "kind": "maze", "loops": 0.2 },
+  "foliage": [{ "type": "grass", "density": 0.25 }]
+}

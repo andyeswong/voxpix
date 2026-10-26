@@ -1,0 +1,5 @@
+{
+  "theme": "oficina",
+  "seed": 4,
+  "shape": { "kind": "T", "bar": "north", "stem": 0.35 }
+}
