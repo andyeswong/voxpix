@@ -32,6 +32,8 @@ export interface FoliageSource {
   readonly height?: Int16Array;
   readonly width?: number;
   readonly depth?: number;
+  readonly zMin?: number;                  // con width y depth (StaticVoxels): lo planeado se recorta al mundo
+  readonly zMax?: number;
 }
 
 export const FOLIAGE_DENSITY: Record<FoliageType, number> = { grass: 0.35, flowers: 0.06, reeds: 0.35, lilies: 0.012, bush: 0.005 };
@@ -201,7 +203,11 @@ export function planFoliage(src: FoliageSource, x0: number, y0: number, x1: numb
     }
   }
   const voxels: FoliagePlan['voxels'] = [];
-  for (const [k, v] of planned) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; voxels.push([x, y, z, v]); }
+  // Una planta junto al borde se extiende a las columnas vecinas: con un mundo de medida conocida, lo que caería fuera
+  // no se planea (antes salía "vóxel fuera del mundo" al aplicarlo; p. ej. una puerta abierta en el borde)
+  const inside = (x: number, y: number, z: number) => (src.width === undefined || (x >= 0 && x < src.width)) && (src.depth === undefined || (y >= 0 && y < src.depth))
+    && (src.zMin === undefined || z >= src.zMin) && (src.zMax === undefined || z <= src.zMax);
+  for (const [k, v] of planned) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (inside(x, y, z)) voxels.push([x, y, z, v]); }
   return { voxels, plants, floats };
 }
 

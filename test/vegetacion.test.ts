@@ -155,3 +155,25 @@ describe('la herramienta de vegetación', () => {
     }
   });
 });
+
+// Junto al borde de un mundo de medida conocida (StaticVoxels), una planta no se sale: antes, una puerta abierta en el
+// borde dejaba suelo en x = 0 y la hierba ponía vóxeles en x = -1 ("vóxel fuera del mundo" al aplicarla)
+describe('vegetación en el borde del mundo', () => {
+  it('lo planeado cae siempre dentro del mundo', async () => {
+    const { StaticVoxels } = await import('../src/world/state');
+    const W = 10, D = 10, grass = VEG_PALETTE.ramps.findIndex((r) => r.name === 'hierba');
+    const w = new StaticVoxels(VEG_PALETTE, W, D, -2, 12);
+    for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) w.set(x, y, 0, material(grass, 2));
+    let total = 0;
+    for (const type of ['grass', 'flowers', 'bush'] as const) for (const seed of [1, 2, 3, 4]) {
+      const plan = planFoliage(w, 0, 0, W - 1, D - 1, 12, { type, seed, density: 1, zMin: -2, ramp: VEG_PALETTE.ramps.findIndex((r) => r.name === 'hierba-alta') });
+      total += plan.voxels.length;
+      for (const [x, y, z] of plan.voxels) {
+        expect(x >= 0 && x < W && y >= 0 && y < D && z >= -2 && z <= 12, `${type} ${seed}: ${x},${y},${z}`).toBe(true);
+        w.get(x, y, z);
+      }
+      for (const [x, y, z, v] of plan.voxels) { w.set(x, y, z, v); w.set(x, y, z, 0); }   // aplicarlo no lanza
+    }
+    expect(total).toBeGreaterThan(50);
+  });
+});
