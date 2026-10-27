@@ -4,6 +4,7 @@ import { material, type Palette, type Ramp, type VoxelSource } from '../core';
 import { StaticVoxels } from './state';
 import { WALL, TILE, NORTH, type Layout } from '../worldgen';
 import type { SourceKind } from '../lighting/lights';
+import { captureObject, type ObjectSpec } from './objects';
 
 // Materiales del mundo (índice de rampa): el papel de cada rampa en la paleta del mundo. buildWorld pinta el suelo, las
 // paredes, la fachada, la fuente y los muebles con estos índices; quien construye el mundo da los colores (WorldLook).
@@ -18,6 +19,9 @@ const ROLE_NAMES: Record<WorldRole, string> = {
   floor: 'suelo', wall: 'pared', cap: 'tapa', column: 'columna', water: 'agua', wood: 'madera', metal: 'metal', flame: 'llama',
   neonPink: 'neón rosa', neonCyan: 'neón cian', screen: 'pantalla', cloth: 'tela', warmGlass: 'ventana cálida', darkGlass: 'ventana oscura', grass: 'hierba',
 };
+
+// El material de los papeles que no son piedra (su peso: los objetos lo suman). Una rampa con material propio manda
+const ROLE_MATERIALS: Partial<Record<WorldRole, string>> = { wood: 'madera', metal: 'metal', cloth: 'tela' };
 
 // Los colores por defecto de cada papel (neutros: piedra gris y agua azul). Quien construye el mundo cambia los que quiera
 export const DEFAULT_WORLD_RAMPS: Readonly<Record<WorldRole, readonly string[]>> = {
@@ -49,6 +53,7 @@ export function worldPalette(ramps: Partial<Record<WorldRole, WorldRampSpec>> = 
       const spec = Array.isArray(r) ? { colors: r as readonly string[] } : r as Exclude<WorldRampSpec, readonly string[]>;
       const ramp: Ramp = { name: ROLE_NAMES[role], colors: [...spec.colors] };
       if (spec.material) ramp.material = spec.material;
+      else if (ROLE_MATERIALS[role]) ramp.material = ROLE_MATERIALS[role];
       if (spec.emissive) ramp.emissive = true;
       if (spec.props) ramp.props = { ...spec.props };
       return ramp;
@@ -127,6 +132,9 @@ export interface WorldLook {
   fixture?: FixtureBuilder;           // por defecto, solo la luz (sin objeto), delante de la pared
   prop?: PropBuilder | null;          // por defecto blockProp; null: sin muebles de vóxeles
   wallHeight?: number;                // el alto de todas las paredes; por defecto DEFAULT_WALL_H (16)
+  // Columnas y muebles como OBJETOS (world/objects.ts): se registra qué vóxeles pinta cada uno, para moverlos o
+  // romperlos. Por defecto no (el mundo y su huella son los de siempre)
+  objects?: boolean;
 }
 
 // Lo que el motor hace si el look no dice otra cosa
@@ -196,6 +204,8 @@ export interface World {
   // Lo que flota al empezar (nenúfares...): buildWorldState los pone en el agua como flotantes (world/floaters.ts)
   floaters?: Array<{ x: number; y: number; model: VoxelSource; yaw?: number }>;
   wallHeight?: number;          // el alto de todas las paredes (buildWorld lo pone; la tapa está en wallHeight - 1)
+  // Con look.objects: las columnas y los muebles, como objetos. buildWorldState los registra en state.objects
+  objects?: ObjectSpec[];
 }
 
 // Fuente: pilón redondo con agua por encima del suelo, fuste central y un cuenco con fuego arriba
@@ -391,22 +401,30 @@ export function buildWorld(layout: Layout, look: WorldLook = { palette: worldPal
   }
 
   // ---- columnas (las construye el look) y muebles
+  // Con look.objects, lo que pinta cada uno se registra como objeto (con las luces que ponga)
+  const objects: ObjectSpec[] | undefined = look.objects ? [] : undefined;
+  const piece = (kind: string, name: string | undefined, draw: () => void) => {
+    if (!objects) { draw(); return; }
+    const before = lights.length;
+    const o = captureObject(model, kind, draw, name);
+    if (o) objects.push(lights.length > before ? { ...o, lights: lights.slice(before).map((l) => l.id) } : o);
+  };
   const pillar = look.pillar === undefined ? roundPillar : look.pillar;
   if (pillar) for (let cy = 0; cy < layout.rows; cy++) for (let cx = 0; cx < layout.cols; cx++) {
     const i = cell(cx, cy);
     if (!layout.pillar[i] || layout.prop[i]) continue;
     const x0 = cx * TILE, yTop = my(cy * TILE);
-    pillar({ model, x0, x1: x0 + TILE - 1, y0: yTop - TILE + 1, y1: yTop, cx: x0 + 7.5, cy: my(cy * TILE + 7.5), seed, noise: (x, y, z) => hash(x, y, z, seed) });
+    piece('pillar', undefined, () => pillar({ model, x0, x1: x0 + TILE - 1, y0: yTop - TILE + 1, y1: yTop, cx: x0 + 7.5, cy: my(cy * TILE + 7.5), seed, noise: (x, y, z) => hash(x, y, z, seed) }));
   }
   const prop = look.prop === undefined ? blockProp : look.prop;
   if (prop) for (const p of layout.props) {
-    prop({ model, prop: p, x0: p.x * TILE, x1: (p.x + p.w) * TILE - 1, yN: my(p.y * TILE), yS: my((p.y + p.h) * TILE - 1), lights, seed });
+    piece('prop', p.anim, () => prop({ model, prop: p, x0: p.x * TILE, x1: (p.x + p.w) * TILE - 1, yN: my(p.y * TILE), yS: my((p.y + p.h) * TILE - 1), lights, seed }));
   }
 
   // Lo que sale, en ejes del modelo
   const wetM = new Uint8Array(W * D), topM = new Int8Array(W * D);
   for (let py = 0; py < D; py++) for (let px = 0; px < W; px++) { const a = py * W + px, b = my(py) * W + px; wetM[b] = wet[a]!; topM[b] = waterTop[a]!; }
-  return { model, lights, width: W, depth: D, wet: wetM, waterTop: topM, fountain, wallHeight: wallH };
+  return { model, lights, width: W, depth: D, wet: wetM, waterTop: topM, fountain, wallHeight: wallH, ...(objects ? { objects } : {}) };
 }
 
 // El estado del mundo completo de un nivel: lo estático, el agua (fluido), las luces y las gotas
@@ -438,6 +456,7 @@ export function buildWorldState(layout: Layout, look?: WorldLook, opts: { decora
   opts.decorate?.(world);
   const water = new WaterLayer(world);
   const state = new WorldState(world.model, world.lights, water, { seed: layout.seed, fountain: world.fountain });
+  for (const o of world.objects ?? []) state.objects.add(o);
   addWorldFloaters(state, world);
   state.warmUp();
   return { world, state };

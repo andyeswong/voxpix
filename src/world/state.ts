@@ -18,6 +18,7 @@ import { Drops } from './particles';
 import { FxSystem, fxRandom, type FxState } from '../core/effects';
 import { fxWorldLights, type EffectsLayer } from './effects';
 import { Floaters } from './floaters';
+import { ObjectLayer, type ObjectsState } from './objects';
 
 export const CHUNK = 16;
 
@@ -31,6 +32,8 @@ export class StaticVoxels implements VoxelSource {
   // entidades (WorldState.changedSince), así una versión dice "todo lo anterior a este momento"
   readonly versions: Uint32Array;
   clock = 0;
+  // Si está puesto, oye cada cambio de vóxel (antes de hacerse): buildWorld lo usa para saber qué pinta cada mueble
+  onSet: ((x: number, y: number, z: number, old: number, value: number) => void) | null = null;
   // Altura de la cara de arriba del vóxel sólido más alto de cada columna (índice y * width + x); zMin si no hay
   readonly height: Int16Array;
 
@@ -61,6 +64,7 @@ export class StaticVoxels implements VoxelSource {
     if (c < 0) throw new Error(`vóxel fuera del mundo: ${x},${y},${z}`);
     if (!data) { if (!value) return; data = this.chunks[c] = new Uint16Array(CHUNK * CHUNK * this.zh); }
     if (data[i] === value) return;
+    if (this.onSet) this.onSet(x, y, z, data[i]!, value);
     data[i] = value;
     this.versions[c] = ++this.clock;
     if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
@@ -403,6 +407,8 @@ export class WorldState {
   readonly effects: EffectsLayer;
   // Lo que flota en el agua (nenúfares...): entidades que mueve el agua (floaters.ts)
   readonly floaters: Floaters = new Floaters(this);
+  // Muebles, columnas... que se pueden mover o romper (objects.ts): de quién es cada vóxel, su peso y su vida
+  readonly objects: ObjectLayer;
   tick = 0;
   private rngState: number;
 
@@ -410,6 +416,7 @@ export class WorldState {
     opts: { seed?: number; fountain?: Fountain | null; fx?: import('../core/effects').FxOptions } = {}) {
     this.palette = solid.palette;
     this.models = new ModelRegistry(this);
+    this.objects = new ObjectLayer(solid);
     this.dynamicVersions = new Uint32Array(solid.versions.length);
     this.entities.owner = this;
     this.lights.owner = this;
@@ -680,6 +687,7 @@ export class WorldState {
       drops: this.drops.exportState(),
       floaters: this.floaters.exportState(),
       simFx: this.simFx.exportState(),
+      objects: this.objects.exportState(),
       entities: [...this.entities].sort((a, b) => byId(a.id, b.id)).map((e) => ({ id: e.id, modelId: e.modelId, x: e.x, y: e.y, z: e.z, yaw: e.yaw, castsShadow: e.castsShadow })),
       lights: [...this.lights].sort((a, b) => byId(a.id, b.id)).map((l) => ({ ...l })),
       next: { entity: this.entities.next, light: this.lights.next },
@@ -694,6 +702,7 @@ export class WorldState {
     this.drops.importState(s.drops);
     this.floaters.importState(s.floaters);
     this.simFx.importState(s.simFx);
+    if (s.objects) this.objects.importState(s.objects);
     // Las entidades y luces vuelven a ser exactamente las de la instantánea (las nuevas se van, las quitadas vuelven)
     this.entities.length = 0;
     for (const se of s.entities) {
@@ -722,6 +731,11 @@ export class WorldState {
       h.num(s.simFx.n); h.bytes(s.simFx.data); h.num(s.simFx.nextId);
       for (const e of s.simFx.emitters) { h.num(e.id); h.num(e.spec); h.f64(e.x); h.f64(e.y); h.f64(e.z); h.num(e.on ? 1 : 0); h.f64(e.acc); }
     }
+    // Los objetos, solo si alguna vez hubo
+    if (s.objects && s.objects.next > 1) {
+      h.num(s.objects.next);
+      for (const o of s.objects.list) { h.num(o.id); h.str(o.kind); h.num(o.x); h.num(o.y); h.num(o.z); h.bytes(o.cells); h.bytes(o.under); h.f64(o.hp); h.f64(o.maxHp); h.str(o.lights.join(',')); }
+    }
     for (const e of s.entities) { h.str(String(e.id)); h.num(e.modelId); h.f64(e.x); h.f64(e.y); h.f64(e.z); h.f64(e.yaw); h.num(e.castsShadow === 'always' ? 2 : e.castsShadow ? 1 : 0); }
     for (const l of s.lights) { h.str(String(l.id)); h.str(l.kind); h.f64(l.x); h.f64(l.y); h.f64(l.z); h.num(l.baked ? 1 : 0); h.f64(l.intensity ?? -1); h.f64(l.radius ?? -1); h.f64(l.dir?.[0] ?? 9); h.f64(l.dir?.[1] ?? 9); h.f64(l.dir?.[2] ?? 9); h.f64(l.cone ?? -1); h.str(String(l.owner ?? '')); h.str(l.follow ? JSON.stringify(l.follow) : ''); }
     h.num(s.next.entity); h.num(s.next.light);
@@ -740,6 +754,7 @@ export interface WorldSnapshot {
   drops: { data: Float32Array; n: number };
   floaters: ReturnType<Floaters['exportState']>;
   simFx: FxState;
+  objects?: ObjectsState;                       // opcional: las instantáneas de antes no lo traen
   entities: Array<{ id: EntityId; modelId: number; x: number; y: number; z: number; yaw: number; castsShadow: ShadowMode }>;
   lights: WorldLight[];
   next: { entity: number; light: number };

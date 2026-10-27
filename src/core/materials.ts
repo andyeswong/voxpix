@@ -25,18 +25,26 @@ export interface MaterialProps {
                       // altura (un arbusto: si no, su cúpula de 1-2-3-4 se sube como una escalera)
   emissive: boolean;  // da luz propia: la luz del mundo no lo oscurece
   reflect: number;    // 0..1: cuánto refleja. RESERVADO: todavía no lo pinta ningún render (metal, agua: fase 2)
+  density: number;    // kg/m³: el peso de lo que está hecho de esto (un vóxel mide VOXEL_M de lado). Lo usan los objetos
 }
 
-export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0 };
+// El lado de un vóxel en metros: una loseta de 16 vóxeles es 1 m. La masa de un vóxel es density * VOXEL_M³
+export const VOXEL_M = 1 / 16;
+export const VOXEL_M3 = VOXEL_M ** 3;
+
+export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400 };
 
 // La lista de materiales. Añadir uno es añadir una fila; las propiedades que no se dicen son las del sólido.
 export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>>> = {
-  solido: {},
-  follaje: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: false },   // hierba, flores, hojas
-  arbusto: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: true, climb: false },   // follaje que no se atraviesa ni se sube
-  atravesable: { bed: false, blocks: false },                                         // opaco pero se cruza: cables, alfombras, charcos de papel
-  vidrio: { light: 0.85 },                                                             // translúcido: pasa la luz, no el agua ni el jugador
-  metal: { reflect: 0.6 },
+  solido: {},                                                                          // piedra
+  follaje: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: false, density: 300 },   // hierba, flores, hojas
+  arbusto: { light: FOLIAGE_T, backlit: FOLIAGE_BACKLIT, bed: false, blocks: true, climb: false, density: 400 },   // follaje que no se atraviesa ni se sube
+  atravesable: { bed: false, blocks: false, density: 800 },                           // opaco pero se cruza: cables, alfombras, charcos de papel
+  vidrio: { light: 0.85, density: 2500 },                                              // translúcido: pasa la luz, no el agua ni el jugador
+  metal: { reflect: 0.6, density: 7800 },
+  madera: { density: 600 },
+  tela: { density: 300 },
+  tierra: { density: 1500 },
 };
 
 // Las propiedades de una rampa: las del sólido, encima las de su material, encima sus props
