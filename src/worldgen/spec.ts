@@ -73,4 +73,7 @@ export interface GeneratorSpec {
   materials: number;                       // materiales sueltos por el suelo
   shape?: ShapeSpec;                       // la forma de la sala; sin ella, el rectángulo entero
   doors?: DoorSpec;                        // con esto, la sala trae sus cuatro huecos de puerta (cerrados)
+  // El punto de partida, junto al hueco de ese lado en vez de en el centro (se entra por esa puerta). Con doors.
+  // Columnas y muebles se apartan de él igual que del centro
+  spawnNear?: Side;
 }

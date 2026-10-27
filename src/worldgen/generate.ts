@@ -171,11 +171,20 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
     }
     return true;
   };
+  // El ancla: el centro, o el hueco de spec.spawnNear
+  let ax = cols / 2, ay = rows / 2;
+  if (spec.spawnNear) {
+    const d = doors?.find((s) => s.side === spec.spawnNear);
+    if (!d) throw new Error(`spawnNear: '${spec.spawnNear}' necesita spec.doors`);
+    const mid = (d.from + d.to + 1) / 2;
+    [ax, ay] = d.side === 'n' ? [mid, 0] : d.side === 's' ? [mid, rows] : d.side === 'w' ? [0, mid] : [cols, mid];
+  }
   let sx = cols >> 1, sy = (rows >> 1) + 2, best = Infinity;
-  // Con 2 losetas libres alrededor; si la forma no lo deja (pasillos estrechos), con 1, y si no, la loseta sola
-  for (let r = 2; r >= 0 && best === Infinity; r--) for (let y = NORTH + r; y < rows - r; y++) for (let x = r; x < cols - r; x++) {
+  // Con 2 losetas libres alrededor; si la forma no lo deja (pasillos estrechos), con 1, y si no, la loseta sola.
+  // Junto a una puerta basta 1 de margen: mejor cerca de ella (en un pasillo) que en la otra punta con 2
+  for (let r = spec.spawnNear ? 1 : 2; r >= 0 && best === Infinity; r--) for (let y = NORTH + r; y < rows - r; y++) for (let x = r; x < cols - r; x++) {
     if ((r === 2 && (y < NORTH + 2 || y >= rows - 2 || x < 2 || x >= cols - 2)) || !landish(x, y, r)) continue;
-    const d = (x - cols / 2) ** 2 + (y - rows / 2) ** 2;
+    const d = (x - ax) ** 2 + (y - ay) ** 2;
     if (d < best) { best = d; sx = x; sy = y; }
   }
 

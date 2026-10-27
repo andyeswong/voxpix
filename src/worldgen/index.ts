@@ -3,3 +3,4 @@
 export * from './spec';
 export * from './generate';
 export * from './rooms';
+export * from './floors';

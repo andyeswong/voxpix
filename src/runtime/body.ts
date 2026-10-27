@@ -93,3 +93,38 @@ export function moveBody(world: WorldState, body: Body, dx: number, dy: number, 
   }
   return blocked;
 }
+
+// Un dash: avanza `dist` en la dirección (dx, dy) en línea recta, de una vez (llamarlo en el tick de la simulación).
+// Respeta la colisión como moveBody pero sin rodear esquinas: si el avance entero choca, desliza por el eje que aún
+// avanza (a lo largo de la pared), y si ninguno avanza se para ahí. Devuelve dónde acabó, cuánto recorrió y si chocó.
+// Las cargas, el enfriamiento y la invulnerabilidad son del juego
+export interface DashResult { x: number; y: number; z: number; traveled: number; hit: boolean }
+export function dashBody(world: WorldState, body: Body, dx: number, dy: number, dist: number, rules: MoveRules = DEFAULT_RULES): DashResult {
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0) || !(dist > 0)) return { x: body.x, y: body.y, z: body.z, traveled: 0, hit: false };
+  const ux = dx / len * dist, uy = dy / len * dist;
+  const n = Math.max(1, Math.ceil(dist / SUBSTEP));
+  const sx = ux / n, sy = uy / n;
+  let hit = false, traveled = 0;
+  const go = (nx: number, ny: number) => {
+    if (!fits(world, nx, ny, body.z, body.r, rules)) return false;
+    traveled += Math.hypot(nx - body.x, ny - body.y);
+    body.x = nx;
+    body.y = ny;
+    body.z = restZ(world, nx, ny, body.r);
+    return true;
+  };
+  for (let i = 0; i < n; i++) {
+    if (go(body.x + sx, body.y + sy)) continue;
+    hit = true;
+    // Desliza por la pared: el eje que más avanza primero
+    const axes = Math.abs(sx) >= Math.abs(sy) ? (['x', 'y'] as const) : (['y', 'x'] as const);
+    let slid = false;
+    for (const a of axes) {
+      const d = a === 'x' ? sx : sy;
+      if (d !== 0 && go(a === 'x' ? body.x + d : body.x, a === 'y' ? body.y + d : body.y)) { slid = true; break; }
+    }
+    if (!slid) break;
+  }
+  return { x: body.x, y: body.y, z: body.z, traveled, hit };
+}
