@@ -51,6 +51,21 @@ describe('rehorneado por trozos', () => {
     same(b, bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5 }));
   });
 
+  it('cambios sueltos en esquinas opuestas: un recuadro por cada uno, no el mundo entero, y da lo mismo', () => {
+    const { s, lights } = yard();
+    const b = bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5 });
+    s.set(2, 2, 1, material(0, 4));
+    s.set(77, 61, 1, material(0, 4));
+    const jobs = rebakeChangedJobs(b, lights);
+    expect(jobs.filter((j) => j.key.startsWith('rect:')).length).toBe(2);
+    for (const j of jobs) while (!j.run(Infinity)) { /* */ }
+    same(b, bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5 }));
+    s.set(3, 3, 1, material(0, 4));
+    s.set(76, 60, 1, material(0, 4));
+    const r = rebakeChanged(b, lights);
+    expect(r.pixels).toBeLessThan(b.width * b.height / 2);        // el recuadro que une los dos sería la imagen entera
+  });
+
   it('sin cambios no rehace nada; changedSince separa vóxeles de agua y entidades', () => {
     const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const v = state.version;

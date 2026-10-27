@@ -78,6 +78,28 @@ describe('VoxelFall', () => {
     expect(c).toBe(a);
   });
 
+  it("rebuild con commit 'end': el mundo no cambia mientras caen y al final queda igual que pieza a pieza", () => {
+    const box: FallBox = { x0: 2 * TILE, y0: 4 * TILE, z0: -10, x1: 8 * TILE - 1, y1: 9 * TILE - 1, z1: 40 };
+    const run = (commit: 'landing' | 'end') => {
+      const w = fresh(), ents = w.entities.length;
+      const f = new VoxelFall(w);
+      f.rebuild(box, { piece: 8, drop: 50, launch: 0.5, commit });
+      let changes = 0, t = 0, last = count(w, box);
+      while (!f.done && t++ < 2000) {
+        f.step();
+        const n = count(w, box);
+        if (n !== last) { changes++; last = n; }
+      }
+      expect(f.done).toBe(true);
+      expect(w.entities.length).toBe(ents);
+      return { voxels: voxels(w), changes };
+    };
+    const each = run('landing'), end = run('end');
+    expect(end.voxels).toBe(each.voxels);
+    expect(end.changes).toBe(1);                                 // solo al acabar
+    expect(each.changes).toBeGreaterThan(10);                    // pieza a pieza: casi cada tick
+  });
+
   it('caja fuera del mundo o vacía: nada', () => {
     const w = fresh();
     const f = new VoxelFall(w);

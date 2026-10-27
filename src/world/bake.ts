@@ -288,9 +288,9 @@ function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number): BakedL
 export function rebake(b: Baked, chunks: readonly number[], lights: readonly WorldLight[]): { pixels: number; lights: number } {
   // Lo mismo que los trabajos, de una vez (las pruebas comparan los dos caminos)
   const jobs = rebakeJobs(b, chunks, lights);
-  for (const j of jobs) while (!j.run(Infinity)) { /* el de luz espera al recuadro, que va antes */ }
-  const { rect } = chunks.length ? chunkRect(b, chunks) : { rect: { x0: 0, x1: -1, y0: 0, y1: -1 } };
-  return { pixels: (rect.x1 - rect.x0 + 1) * (rect.y1 - rect.y0 + 1), lights: jobs.length - (chunks.length ? 1 : 0) };
+  for (const j of jobs) while (!j.run(Infinity)) { /* el de luz espera a los recuadros, que van antes */ }
+  const rects = chunkGroups(b, chunks).map((g) => chunkRect(b, g).rect);
+  return { pixels: rects.reduce((n, r) => n + (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1), 0), lights: jobs.length - rects.length };
 }
 
 // ---- el recuadro de pantalla de unos trozos, por franjas de columnas
@@ -319,6 +319,32 @@ function chunkRect(b: Baked, chunks: readonly number[]): { rect: ScreenRect; pla
     y0: Math.max(0, Math.floor(O - a * (Y1 + 1) - (s.zMax + 1)) - 1), y1: Math.min(b.height - 1, Math.ceil(O - a * Y0 - s.zMin) + 1),
   };
   return { rect, plan: { X0, Y0, X1, Y1 } };
+}
+
+// Los trozos cambiados, en grupos que se rehornean cada uno con su recuadro: por columna de trozos, los tramos
+// seguidos en y. Dos tramos de la misma columna van juntos si el hueco entre ellos cuesta menos píxeles que la altura
+// de las paredes que repetirían dos recuadros. Así unos cambios sueltos por todo el mundo (una caída) no rehacen el
+// mundo entero de un recuadro.
+function chunkGroups(b: Baked, chunks: readonly number[]): number[][] {
+  const s = b.source, a = b.options.oblique?.y ?? 1;
+  const gap = Math.max(1, Math.floor((s.zMax - s.zMin + 2) / (a * CHUNK)));
+  const byCol = new Map<number, number[]>();
+  for (const c of new Set(chunks)) {
+    const cx = c % s.cols;
+    const l = byCol.get(cx);
+    if (l) l.push(c); else byCol.set(cx, [c]);
+  }
+  const groups: number[][] = [];
+  for (const cx of [...byCol.keys()].sort((p, q) => p - q)) {
+    const col = byCol.get(cx)!.sort((p, q) => p - q);
+    let g = [col[0]!];
+    for (let i = 1; i < col.length; i++) {
+      if (Math.floor(col[i]! / s.cols) - Math.floor(col[i - 1]! / s.cols) > gap) { groups.push(g); g = []; }
+      g.push(col[i]!);
+    }
+    groups.push(g);
+  }
+  return groups;
 }
 
 // Renderiza las columnas de píxeles c0..c1 del recuadro en sus búferes
@@ -360,37 +386,50 @@ const LIGHT_BAND = 4;     // filas de pesos por paso de una luz
 
 export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[]): ViewJob[] {
   if (!chunks.length) return [];
-  const { rect, plan } = chunkRect(b, chunks);
-  // La rejilla de sombras se pone al día ya (es barata): los pesos viejos siguen publicados hasta que se rehagan
-  fillOcc(b, plan.X0, plan.Y0, plan.X1, plan.Y1);
+  // La rejilla de sombras se pone al día ya, solo en los trozos cambiados (es barata): los pesos viejos siguen
+  // publicados hasta que se rehagan
+  const s = b.source;
+  for (const c of new Set(chunks)) {
+    const X0 = (c % s.cols) * CHUNK, Y0 = Math.floor(c / s.cols) * CHUNK;
+    fillOcc(b, X0, Y0, Math.min(s.width, X0 + CHUNK) - 1, Math.min(s.depth, Y0 + CHUNK) - 1);
+  }
   const jobs: ViewJob[] = [];
-  // 1) el recuadro, por franjas de columnas
-  const buf = rectBuffers(rect);
-  let col = rect.x0, rectDone = false;
-  jobs.push({
-    key: `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`,
-    run(deadline) {
-      do {
-        const c1 = Math.min(rect.x1, col + RECT_BAND - 1);
-        renderColumns(b, rect, buf, col, c1);
-        col = c1 + 1;
-      } while (col <= rect.x1 && performance.now() < deadline);
-      if (col <= rect.x1) return false;
-      publishRect(b, rect, buf);
-      rectDone = true;
-      return true;
-    },
-  });
-  // 2) las luces fijas que alcanzan la zona, por filas (después del recuadro: leen qué vóxel se ve en cada píxel)
+  // 1) un recuadro por grupo de trozos, por franjas de columnas (los búferes se piden al empezar, no aquí)
+  const plans: Array<{ X0: number; Y0: number; X1: number; Y1: number }> = [];
+  let pending = 0;
+  for (const g of chunkGroups(b, chunks)) {
+    const { rect, plan } = chunkRect(b, g);
+    plans.push(plan);
+    pending++;
+    let buf: RectBuffers | null = null, col = rect.x0;
+    jobs.push({
+      key: `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`,
+      run(deadline) {
+        if (col > rect.x1) return true;
+        buf ??= rectBuffers(rect);
+        do {
+          const c1 = Math.min(rect.x1, col + RECT_BAND - 1);
+          renderColumns(b, rect, buf, col, c1);
+          col = c1 + 1;
+        } while (col <= rect.x1 && performance.now() < deadline);
+        if (col <= rect.x1) return false;
+        publishRect(b, rect, buf);
+        buf = null;
+        pending--;
+        return true;
+      },
+    });
+  }
+  // 2) las luces fijas que alcanzan algún grupo, por filas (después de los recuadros: leen qué vóxel se ve en cada píxel)
   for (const l of lights) {
     if (l.baked === false) continue;
     const r = resolveLight(l, 0).radius;
-    if (l.x + r < plan.X0 || l.x - r > plan.X1 + 1 || l.y + r < plan.Y0 || l.y - r > plan.Y1 + 1) continue;
+    if (!plans.some((p) => !(l.x + r < p.X0 || l.x - r > p.X1 + 1 || l.y + r < p.Y0 || l.y - r > p.Y1 + 1))) continue;
     let zone: BakedLight | null | undefined, row = 0;
     jobs.push({
       key: `light:${l.id}`,
       run(deadline) {
-        if (!rectDone) return false;                       // espera al recuadro
+        if (pending > 0) return false;                     // espera a los recuadros
         if (zone === undefined) zone = lightZone(b, l);
         if (zone) do {
           const r1 = Math.min(zone.rect.h, row + LIGHT_BAND);

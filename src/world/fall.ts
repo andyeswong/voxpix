@@ -24,6 +24,10 @@ export interface RebuildOptions {
   piece?: number;                               // lado de cada pieza (8)
   drop?: number;                                // desde cuánto más arriba caen (60)
   launch?: number;                              // segundos entre la primera y la última que se sueltan (1,2)
+  // Cuándo vuelven al mundo: 'landing', cada una al aterrizar; 'end', todas juntas cuando ha aterrizado la última
+  // (hasta entonces se quedan quietas en su sitio como entidades). Con 'end' el mundo cambia dos veces (al soltarse y
+  // al acabar) y se rehornea dos veces, no en cada tick de la caída. El final es el mismo. ('landing')
+  commit?: 'landing' | 'end';
 }
 
 interface Piece {
@@ -36,6 +40,8 @@ interface Piece {
   wait: number;                                 // segundos hasta soltarse
   bottom: Array<[number, number, number]>;      // por columna de la pieza: (lx, ly, la z más baja)
   settle: 'stay' | 'vanish';
+  hold: boolean;                                // commit 'end': al llegar se queda quieta como entidad
+  held: boolean;                                // ya llegó y espera a las demás
 }
 
 const GRAVITY = 260;                            // vóxeles/s², la de las gotas
@@ -63,7 +69,7 @@ export class VoxelFall {
   }
 
   rebuild(box: FallBox, o: RebuildOptions = {}): number {
-    const drop = o.drop ?? 60, launch = o.launch ?? 1.2, w = this.world;
+    const drop = o.drop ?? 60, launch = o.launch ?? 1.2, hold = o.commit === 'end', w = this.world;
     const made = this.lift(box, o.piece ?? 8);
     // De abajo arriba; a igual altura, al azar
     const order = made.map((p) => ({ p, k: p.z + w.random() * 0.5 })).sort((a, b) => a.k - b.k).map((e) => e.p);
@@ -71,6 +77,7 @@ export class VoxelFall {
       p.target = p.z;
       p.z += drop;
       p.wait = order.length > 1 ? (launch * i) / (order.length - 1) : 0;
+      p.hold = hold;
       w.entities.remove(p.id!);
       p.id = null;
     });
@@ -82,13 +89,17 @@ export class VoxelFall {
     const w = this.world, s = w.solid;
     const keep: Piece[] = [];
     for (const p of this.pieces) {
+      if (p.held) { keep.push(p); continue; }
       if (p.wait > 0) { p.wait -= dt; keep.push(p); continue; }
       if (p.id === null) p.id = w.entities.add({ model: p.model, x: p.x, y: p.y, z: p.z, castsShadow: false });
       const z0 = p.z;
       p.vz -= this.gravity * dt;
       p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt;
       if (p.target !== null) {
-        if (p.z <= p.target) { this.land(p, p.target); continue; }
+        if (p.z <= p.target) {
+          if (!p.hold) { this.land(p, p.target); continue; }
+          p.z = p.target; p.held = true;
+        }
       } else {
         if (Math.round(p.x) < -16 || Math.round(p.y) < -16 || Math.round(p.x) >= s.width + 16 || Math.round(p.y) >= s.depth + 16 || p.z < s.zMin - 32) { this.drop(p); continue; }
         let floor = this.floorUnder(p, p.x, p.y);
@@ -107,6 +118,8 @@ export class VoxelFall {
       keep.push(p);
     }
     this.pieces = keep;
+    // commit 'end': cuando todas han llegado, vuelven al mundo de una vez
+    if (keep.length && keep.every((p) => p.held)) { for (const p of keep) this.land(p, p.target!); this.pieces = []; }
   }
 
   // De golpe: el mismo final que a ticks
@@ -143,7 +156,7 @@ export class VoxelFall {
       for (const [x, y, z] of model.entries()) s.set(px + x, py + y, pz + z, 0);
       const bottom = [...low].map(([k, lz]) => [k % n, (k / n) | 0, lz] as [number, number, number]);
       const id = w.entities.add({ model, x: px, y: py, z: pz, castsShadow: false });
-      const p: Piece = { id, model, ox: px, oy: py, x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0, target: null, wait: 0, bottom, settle: 'stay' };
+      const p: Piece = { id, model, ox: px, oy: py, x: px, y: py, z: pz, vx: 0, vy: 0, vz: 0, target: null, wait: 0, bottom, settle: 'stay', hold: false, held: false };
       made.push(p);
       this.pieces.push(p);
     }
