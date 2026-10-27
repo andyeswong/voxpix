@@ -27,6 +27,8 @@ export interface RebuildOptions {
   // Cuándo vuelven al mundo: 'landing', cada una al aterrizar; 'end', todas juntas cuando ha aterrizado la última
   // (hasta entonces se quedan quietas en su sitio como entidades). Con 'end' el mundo cambia dos veces (al soltarse y
   // al acabar) y se rehornea dos veces, no en cada tick de la caída. El final es el mismo. ('landing')
+  // Con 'end', al acabar las piezas siguen dibujadas encima de sus vóxeles hasta release(): el rehorneado tarda unos
+  // cuadros y, si se quitaran ya, se vería el sitio vacío. Llamar a release() cuando la vista lo haya publicado.
   commit?: 'landing' | 'end';
 }
 
@@ -49,10 +51,14 @@ const GRAVITY = 260;                            // vóxeles/s², la de las gotas
 export class VoxelFall {
   private pieces: Piece[] = [];
   private rect: FallRect | null = null;
+  private lingering: EntityId[] = [];           // commit 'end': las ya escritas en el mundo, hasta release()
   constructor(readonly world: WorldState, readonly gravity = GRAVITY) {}
 
   get done(): boolean { return this.pieces.length === 0; }
   get active(): number { return this.pieces.length; }
+  // Piezas ya escritas en el mundo que aún se dibujan (commit 'end'), hasta release()
+  get held(): number { return this.lingering.length; }
+  release(): void { for (const id of this.lingering) this.world.entities.remove(id); this.lingering = []; }
   // Las columnas que han cambiado (o cambiarán) desde que se creó: para rehornear solo eso
   get touched(): FallRect | null { return this.rect ? { ...this.rect } : null; }
 
@@ -119,7 +125,10 @@ export class VoxelFall {
     }
     this.pieces = keep;
     // commit 'end': cuando todas han llegado, vuelven al mundo de una vez
-    if (keep.length && keep.every((p) => p.held)) { for (const p of keep) this.land(p, p.target!); this.pieces = []; }
+    if (keep.length && keep.every((p) => p.held)) {
+      for (const p of keep) { this.lingering.push(p.id!); p.id = null; this.land(p, p.target!); }
+      this.pieces = [];
+    }
   }
 
   // De golpe: el mismo final que a ticks

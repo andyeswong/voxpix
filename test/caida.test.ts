@@ -91,6 +91,12 @@ describe('VoxelFall', () => {
         if (n !== last) { changes++; last = n; }
       }
       expect(f.done).toBe(true);
+      if (commit === 'end') {
+        expect(f.held).toBeGreaterThan(10);                      // siguen dibujadas hasta que la vista rehornee
+        expect(w.entities.length).toBe(ents + f.held);
+        f.release();
+      }
+      expect(f.held).toBe(0);
       expect(w.entities.length).toBe(ents);
       return { voxels: voxels(w), changes };
     };
