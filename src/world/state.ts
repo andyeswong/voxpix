@@ -217,6 +217,9 @@ export interface Entity {
   // Tinte plano temporal (r, g, b de 0 a 1), p. ej. el destello de un golpe: sus vóxeles se pintan de ese color, con
   // luz propia, y el contorno se queda. Solo aspecto: no entra en la huella ni hace falta guardarlo (lo pone la vista)
   tint?: readonly [number, number, number] | null;
+  // Fantasma: ya no es de la partida (un objeto que se durmió y sigue dibujado hasta que se vea su rehorneado). Lleva
+  // la versión del mundo a partir de la cual sobra; no entra en la instantánea ni en la huella (objects.dropGhosts)
+  ghost?: number;
 }
 
 // Las entidades del mundo: un array (se recorre y se busca como siempre) con add / move / remove
@@ -416,7 +419,7 @@ export class WorldState {
     opts: { seed?: number; fountain?: Fountain | null; fx?: import('../core/effects').FxOptions } = {}) {
     this.palette = solid.palette;
     this.models = new ModelRegistry(this);
-    this.objects = new ObjectLayer(solid);
+    this.objects = new ObjectLayer(this);
     this.dynamicVersions = new Uint32Array(solid.versions.length);
     this.entities.owner = this;
     this.lights.owner = this;
@@ -549,7 +552,9 @@ export class WorldState {
   // Altura (entera) de la cara de arriba del sólido más alto de la columna: donde se apoya el pie. El agua no
   // cuenta: sus alturas fraccionarias solo salen por waterAt. El follaje que se atraviesa tampoco.
   groundAt(x: number, y: number): number {
-    return this.solid.walkAt(Math.floor(x), Math.floor(y));
+    const g = this.solid.walkAt(Math.floor(x), Math.floor(y));
+    // Los objetos despiertos (objects.ts) no están en los vóxeles: su huella cuenta aparte
+    return this.objects.awake.length ? Math.max(g, this.objects.groundAt(Math.floor(x), Math.floor(y))) : g;
   }
 
   // Agua en la columna: profundidad y altura de la superficie (null si está seca)
@@ -654,6 +659,7 @@ export class WorldState {
     }
     this.drops.step(dt, this.water, (x, y) => this.groundAt(x, y));
     this.floaters.step(dt, this.water);
+    this.objects.step(dt);
     this.simFx.step(dt, this.fxSolid);
     if (this.effectsOn) this.fx.step(dt, this.fxSolid);
     this.placeFollowers();
@@ -688,7 +694,7 @@ export class WorldState {
       floaters: this.floaters.exportState(),
       simFx: this.simFx.exportState(),
       objects: this.objects.exportState(),
-      entities: [...this.entities].sort((a, b) => byId(a.id, b.id)).map((e) => ({ id: e.id, modelId: e.modelId, x: e.x, y: e.y, z: e.z, yaw: e.yaw, castsShadow: e.castsShadow })),
+      entities: [...this.entities].filter((e) => e.ghost === undefined).sort((a, b) => byId(a.id, b.id)).map((e) => ({ id: e.id, modelId: e.modelId, x: e.x, y: e.y, z: e.z, yaw: e.yaw, castsShadow: e.castsShadow })),
       lights: [...this.lights].sort((a, b) => byId(a.id, b.id)).map((l) => ({ ...l })),
       next: { entity: this.entities.next, light: this.lights.next },
       clock: this.solid.clock, dynamicVersions: this.dynamicVersions.slice(),

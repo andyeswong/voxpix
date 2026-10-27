@@ -95,3 +95,139 @@ describe('objetos', () => {
     expect(material(M.wood, 0)).toBeGreaterThan(0);
   });
 });
+
+// ---- fase 2: despertar, dormir, empujar
+import { SLEEP_AFTER } from '../src/world/objects';
+import { TICK } from '../src/world/state';
+import { bakeWorld, rebakeChanged } from '../src/world/bake';
+import { objectAhead } from '../src/runtime/body';
+
+const officeWorld = () => buildWorldState(layout(), { ...THEMES.oficina.look, objects: true }).state;
+// El primer mueble con luz que se pueda mover en alguna dirección (la primera de E, O, N, S que avance)
+function movable(w: WorldState) {
+  for (const o of w.objects) {
+    if (o.kind !== 'prop' || !o.lights.length || !w.objects.fitsSprite(o.id)) continue;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const snap = w.snapshot();
+      const r = w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 3, TICK);
+      w.restore(snap);
+      if (r.moved > 0) return { o: w.objects.get(o.id)!, dx, dy };
+    }
+  }
+  throw new Error('ningún mueble se puede mover');
+}
+const steps = (w: WorldState, n: number) => { for (let i = 0; i < n; i++) w.step(); };
+const sleepTicks = Math.ceil(SLEEP_AFTER / TICK) + 2;
+
+describe('objetos: empujar', () => {
+  it('sin fuerza suficiente es pared: no se despierta ni cambia nada', () => {
+    const w = officeWorld();
+    const { o, dx, dy } = movable(w);
+    const h = w.hash();
+    const r = w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 0.99, TICK);
+    expect(r).toMatchObject({ moved: 0, heavy: true });
+    expect(o.awake).toBe(false);
+    expect(w.hash()).toBe(h);
+  });
+
+  it('empujado se despierta y avanza; quieto se duerme en su sitio nuevo, con el suelo de antes intacto', () => {
+    const w = officeWorld();
+    const { o, dx, dy } = movable(w);
+    const x0 = o.x, y0 = o.y, ents = w.entities.length, under0 = o.under.slice();
+    const cell0 = [x0 + o.cells[0]!, y0 + o.cells[1]!, o.z + o.cells[2]!] as const;
+    let moved = 0;
+    for (let i = 0; i < 30; i++) moved += w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 3, TICK).moved;
+    expect(o.awake).toBe(true);
+    expect(moved).toBeGreaterThan(2);
+    expect(w.entities.length).toBe(ents + 1);
+    expect(w.objects.at(...cell0)).toBeUndefined();                   // despierto: sus vóxeles no están en el mundo
+    // Su huella choca: el suelo de su columna nueva está a su altura
+    const fx = Math.round(o.px) + o.cells[0]!, fy = Math.round(o.py) + o.cells[1]!;
+    expect(w.groundAt(fx + 0.5, fy + 0.5)).toBeGreaterThan(o.z + 1);
+    steps(w, sleepTicks);
+    expect(o.awake).toBe(false);
+    expect(o.x - x0 + (o.y - y0)).toBe(Math.round(moved) * (dx + dy));
+    // Sus vóxeles están en el sitio nuevo y son suyos; donde estaba y ya no está, vuelve lo que había debajo
+    const now = new Set<string>();
+    for (let i = 0; i < o.cells.length; i += 4) now.add(`${o.x + o.cells[i]!},${o.y + o.cells[i + 1]!},${o.z + o.cells[i + 2]!}`);
+    let freed = 0;
+    for (let i = 0; i < o.cells.length; i += 4) {
+      const x = x0 + o.cells[i]!, y = y0 + o.cells[i + 1]!, z = o.z + o.cells[i + 2]!;
+      if (now.has(`${x},${y},${z}`)) continue;
+      expect(w.solid.get(x, y, z)).toBe(under0[i >> 2]);
+      freed++;
+    }
+    expect(freed).toBeGreaterThan(0);
+    for (let i = 0; i < o.cells.length; i += 4) {
+      const x = o.x + o.cells[i]!, y = o.y + o.cells[i + 1]!, z = o.z + o.cells[i + 2]!;
+      expect(w.solid.get(x, y, z)).toBe(o.cells[i + 3]);
+      expect(w.objects.at(x, y, z)?.id).toBe(o.id);
+    }
+    // La entidad queda como fantasma (dibujada, fuera de la partida) hasta que se vea el rehorneado
+    expect(w.entities.length).toBe(ents + 1);
+    const snapEnts = w.snapshot().entities.length;
+    expect(snapEnts).toBe(ents);
+    expect(w.objects.dropGhosts(w.solid.clock)).toBe(1);
+    expect(w.entities.length).toBe(ents);
+  });
+
+  it('sus luces van con él y vuelven a ser fijas al dormirse; el rehorneado da lo mismo que hornear de cero', () => {
+    const w = officeWorld();
+    const { o, dx, dy } = movable(w);
+    const lights = () => [...w.lights];
+    const b = bakeWorld({ model: w.solid, lights: lights(), width: w.width, depth: w.depth }, { topZ: 40, incline: 0.5 });
+    const l0 = o.lights.map((id) => { const l = w.lights.get(id)!; return [l.x, l.y] as const; }), x0 = o.x, y0 = o.y;
+    for (let i = 0; i < 20; i++) w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 3, TICK);
+    expect(o.lights.every((id) => w.lights.get(id)!.baked === false)).toBe(true);
+    rebakeChanged(b, lights());
+    expect(b.lights.some((bl) => o.lights.includes(bl.light.id))).toBe(false);   // despierta, su luz no está horneada
+    steps(w, sleepTicks);
+    o.lights.forEach((id, k) => {
+      const l = w.lights.get(id)!;
+      expect(l.baked).toBe(true);
+      expect(l.x - l0[k]![0]).toBeCloseTo(o.x - x0, 6);
+      expect(l.y - l0[k]![1]).toBeCloseTo(o.y - y0, 6);
+    });
+    rebakeChanged(b, lights());
+    const fresh = bakeWorld({ model: w.solid, lights: lights(), width: w.width, depth: w.depth }, { topZ: 40, incline: 0.5 });
+    expect(Buffer.from(b.rgba.buffer).equals(Buffer.from(fresh.rgba.buffer))).toBe(true);
+    expect(b.lights.map((l) => l.light.id).sort()).toEqual(fresh.lights.map((l) => l.light.id).sort());
+    for (const fl of fresh.lights) expect(b.lights.find((l) => l.light.id === fl.light.id)!.weight).toEqual(fl.weight);
+  });
+
+  it('contra la pared se para y nunca la pisa', () => {
+    const w = officeWorld();
+    const { o, dx, dy } = movable(w);
+    let last = 1;
+    for (let i = 0; i < 2000 && last > 0; i++) last = w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 50, TICK).moved;
+    expect(last).toBe(0);
+    steps(w, sleepTicks);
+    // Dormido en el sitio donde se paró: ningún vóxel suyo cayó sobre otro sólido (lo de debajo es suelo o vacío)
+    for (let i = 0; i < o.under.length; i++) expect(o.under[i] === 0 || o.cells[i * 4 + 2] === 0).toBe(true);
+  });
+
+  it('determinista: instantánea a medio empujón, y seguir da lo mismo', () => {
+    const run = (cut: boolean) => {
+      const w = officeWorld();
+      const { o, dx, dy } = movable(w);
+      const f = w.objects.forceToMove(o.id) * 3;
+      for (let i = 0; i < 10; i++) { w.objects.push(o.id, dx, dy, f, TICK); w.step(); }
+      if (cut) { const s = w.snapshot(); steps(w, 7); w.restore(s); }
+      for (let i = 0; i < 10; i++) { w.objects.push(o.id, dx, dy, f, TICK); w.step(); }
+      steps(w, sleepTicks);
+      return w.hash();
+    };
+    expect(run(true)).toBe(run(false));
+  });
+
+  it('objectAhead: el cuerpo que va hacia el mueble lo encuentra; hacia el vacío, nada', () => {
+    const w = officeWorld();
+    const { o } = movable(w);
+    // Un cuerpo al oeste del mueble, a media altura de su huella, mirando al este
+    let ly = 0;
+    for (let i = 0; i < o.cells.length; i += 4) if (o.cells[i] === 0) { ly = o.cells[i + 1]!; break; }
+    const body = { x: o.x - 4, y: o.y + ly + 0.5, z: 1, r: 3 };
+    expect(objectAhead(w, body, 1, 0, 2)).toBe(o.id);
+    expect(objectAhead(w, body, -1, 0, 2)).not.toBe(o.id);
+  });
+});

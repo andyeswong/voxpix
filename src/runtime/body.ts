@@ -128,3 +128,20 @@ export function dashBody(world: WorldState, body: Body, dx: number, dy: number, 
   }
   return { x: body.x, y: body.y, z: body.z, traveled, hit };
 }
+
+// El objeto (world/objects.ts) que tiene delante el cuerpo en la dirección (dx, dy), a `reach` vóxeles: el que le
+// cortaría el paso (más alto que lo que sube de un paso). Para empujarlo: moveBody choca y el juego llama a
+// world.objects.push con la fuerza de quien empuja. null si delante no hay objeto
+export function objectAhead(world: WorldState, body: Body, dx: number, dy: number, reach = 1, rules: MoveRules = DEFAULT_RULES): number | null {
+  const len = Math.hypot(dx, dy);
+  if (!(len > 0) || !world.objects.size) return null;
+  const tx = body.x + dx / len * reach, ty = body.y + dy / len * reach;
+  let best: number | null = null;
+  for (const [cx, cy] of footprint(tx, ty, body.r)) {
+    for (const o of world.objects.inColumn(cx, cy)) {
+      if (world.groundAt(cx + 0.5, cy + 0.5) - body.z <= rules.step) continue;
+      if (best === null || o.id < best) best = o.id;
+    }
+  }
+  return best;
+}

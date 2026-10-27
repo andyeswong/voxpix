@@ -422,7 +422,12 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   }
   // 2) las luces fijas que alcanzan algún grupo, por filas (después de los recuadros: leen qué vóxel se ve en cada píxel)
   for (const l of lights) {
-    if (l.baked === false) continue;
+    if (l.baked === false) {
+      // Una fija que pasó a dinámica (la de un objeto que se despertó): sus pesos horneados sobran
+      const i = b.lights.findIndex((bl) => bl.light.id === l.id);
+      if (i >= 0) b.lights.splice(i, 1);
+      continue;
+    }
     const r = resolveLight(l, 0).radius;
     if (!plans.some((p) => !(l.x + r < p.X0 || l.x - r > p.X1 + 1 || l.y + r < p.Y0 || l.y - r > p.Y1 + 1))) continue;
     let zone: BakedLight | null | undefined, row = 0;
