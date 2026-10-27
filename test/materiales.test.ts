@@ -11,7 +11,7 @@ import { Runtime } from '../src/runtime/runtime';
 describe('las propiedades de una rampa', () => {
   it('sin material es el sólido; los materiales con nombre y las props se suman encima; la forma vieja sigue valiendo', () => {
     const r = (x: Partial<Ramp>): Ramp => ({ name: 'r', colors: ['#000000'], ...x });
-    expect(rampMaterial(r({}))).toEqual({ light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400 });
+    expect(rampMaterial(r({}))).toEqual({ light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false });
     expect(rampMaterial(r({ material: 'vidrio' }))).toMatchObject({ light: 0.85, bed: true, blocks: true });
     expect(rampMaterial(r({ material: 'vidrio', props: { light: 0.6 } })).light).toBe(0.6);
     expect(rampMaterial(r({ kind: 'foliage' }))).toEqual(rampMaterial(r({ material: 'follaje' })));

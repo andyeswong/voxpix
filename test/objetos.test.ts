@@ -231,3 +231,111 @@ describe('objetos: empujar', () => {
     expect(objectAhead(w, body, -1, 0, 2)).not.toBe(o.id);
   });
 });
+
+// ---- fase 3: romper, morder y aplastar
+import { VoxelFall } from '../src/world/fall';
+import { crushAt } from '../src/world/crush';
+import { StaticVoxels, WorldState as WS } from '../src/world/state';
+
+describe('objetos: romper', () => {
+  const desk = (w: WorldState) => [...w.objects].find((o) => o.kind === 'prop' && o.lights.length)!;
+  const legsOnFloor = (w: WorldState, o: ReturnType<typeof desk>) => {
+    const out: Array<[number, number, number, number]> = [];
+    for (let i = 0; i < o.cells.length; i += 4) if (o.under[i >> 2]) out.push([o.x + o.cells[i]!, o.y + o.cells[i + 1]!, o.z + o.cells[i + 2]!, o.under[i >> 2]!]);
+    return out;
+  };
+
+  it('el daño baja la vida; sin llegar a 0 no cambia nada más', () => {
+    const w = officeWorld();
+    const o = desk(w), v = voxels(w);
+    expect(w.objects.damage(o.id, 10)).toEqual({ hp: o.maxHp - 10, destroyed: false, pieces: 0 });
+    expect(voxels(w)).toBe(v);
+  });
+
+  it('a 0 sin caída: desaparece, vuelve el suelo que pisaba, se apagan sus luces y deja de ser objeto', () => {
+    const w = officeWorld();
+    const o = desk(w), legs = legsOnFloor(w, o), lights = [...o.lights];
+    expect(legs.length).toBeGreaterThan(0);
+    expect(w.objects.damage(o.id, o.hp + 1)).toMatchObject({ hp: 0, destroyed: true, pieces: 0 });
+    for (const [x, y, z, under] of legs) expect(w.solid.get(x, y, z)).toBe(under);
+    for (let i = 0; i < o.cells.length; i += 4) if (!o.under[i >> 2]) expect(w.solid.get(o.x + o.cells[i]!, o.y + o.cells[i + 1]!, o.z + o.cells[i + 2]!)).toBe(0);
+    for (const id of lights) expect(w.lights.get(id)).toBeUndefined();
+    expect(w.objects.get(o.id)).toBeUndefined();
+  });
+
+  it('con caída se desmorona en piezas; el escombro no es de nadie y el suelo vuelve', () => {
+    const w = officeWorld();
+    const o = desk(w), legs = legsOnFloor(w, o), n = o.cells.length / 4;
+    const f = new VoxelFall(w);
+    const r = w.objects.damage(o.id, Infinity, f, { piece: 4 });
+    expect(r.destroyed).toBe(true);
+    expect(r.pieces).toBeGreaterThan(5);
+    for (const [x, y, z, under] of legs) expect(w.solid.get(x, y, z)).toBe(under);
+    f.finish();
+    let owned = 0;
+    for (const [x, y, z] of w.solid.entries()) if (w.objects.at(x, y, z)) owned++;
+    expect(owned).toBe([...w.objects].reduce((a, b) => a + b.cells.length / 4, 0));
+    expect(n).toBeGreaterThan(0);
+  });
+
+  it('despierto: se duerme antes, sin dejar fantasma', () => {
+    const w = officeWorld();
+    const { o, dx, dy } = movable(w);
+    const ents = w.entities.length;
+    for (let i = 0; i < 5; i++) w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 3, TICK);
+    expect(w.entities.length).toBe(ents + 1);
+    w.objects.destroy(o.id);
+    expect(w.entities.length).toBe(ents);
+    expect(w.objects.awake.length).toBe(0);
+  });
+
+  it('chip: le arranca lo que hay cerca del golpe, baja su masa y sigue siendo objeto', () => {
+    const w = officeWorld();
+    const o = desk(w), n0 = o.cells.length / 4, m0 = o.mass;
+    // Un golpe en su esquina más alta
+    let k = 0;
+    for (let i = 0; i < o.cells.length; i += 4) if (o.cells[i + 2]! > o.cells[k + 2]!) k = i;
+    const hx = o.x + o.cells[k]! + 0.5, hy = o.y + o.cells[k + 1]! + 0.5, hz = o.z + o.cells[k + 2]! + 0.5;
+    const lost = w.objects.chip(o.id, hx, hy, hz, 3);
+    expect(lost).toBeGreaterThan(0);
+    expect(o.cells.length / 4).toBe(n0 - lost);
+    expect(o.mass).toBeLessThan(m0);
+    expect(w.solid.get(Math.floor(hx), Math.floor(hy), Math.floor(hz))).toBe(0);
+    expect(w.objects.get(o.id)).toBe(o);
+    for (let i = 0; i < o.cells.length; i += 4) expect(w.objects.at(o.x + o.cells[i]!, o.y + o.cells[i + 1]!, o.z + o.cells[i + 2]!)?.id).toBe(o.id);
+  });
+});
+
+describe('crushAt', () => {
+  const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060', '#808080', '#a0a0a0'] }, { name: 'hierba', colors: ['#102010', '#204020', '#306030', '#408040', '#50a050'], material: 'follaje' }] };
+  const meadow = () => {
+    const s = new StaticVoxels(structuredClone(PAL), 32, 32, -2, 20);
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) {
+      s.set(x, y, 0, material(0, 2));
+      for (let z = 1; z <= 4; z++) s.set(x, y, z, material(1, 3));
+    }
+    s.set(16, 16, 5, material(0, 2));                     // una piedra encima de la hierba en el centro
+    return new WS(s, [], null);
+  };
+  const col = (w: WS, x: number, y: number) => { let n = 0; for (let z = 1; z <= 6; z++) if (w.solid.get(x, y, z)) n++; return n; };
+
+  it('flatten deja la hierba de 1 de alto en el círculo; fuera, intacta; la piedra no se aplasta', () => {
+    const w = meadow();
+    const n = crushAt(w, 10, 10, 3);
+    expect(n).toBeGreaterThan(0);
+    expect(col(w, 10, 10)).toBe(1);
+    expect(col(w, 20, 20)).toBe(4);
+    expect(crushAt(w, 10, 10, 3)).toBe(0);                // ya aplastada: no cambia nada (no rehornea cada tick)
+    crushAt(w, 16, 16, 1);
+    expect(w.solid.get(16, 16, 5)).toBe(material(0, 2));
+  });
+
+  it('break se la lleva entera; darken oscurece lo que queda', () => {
+    const w = meadow();
+    crushAt(w, 5, 5, 2, { mode: 'break' });
+    expect(col(w, 5, 5)).toBe(0);
+    expect(w.solid.get(5, 5, 0)).toBe(material(0, 2));
+    crushAt(w, 25, 25, 2, { darken: true });
+    expect(w.solid.get(25, 25, 1)).toBe(material(1, 2));
+  });
+});

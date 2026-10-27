@@ -10,6 +10,7 @@
 import { decode, rampMaterial, VOXEL_M, VOXEL_M3, type Palette } from '../core';
 import { Model } from '../core/model';
 import type { WorldState, LightId, EntityId } from './state';
+import type { VoxelFall, CrumbleOptions } from './fall';
 
 // Un objeto tal como sale de buildWorld (o lo describe el juego): sus vóxeles relativos a la esquina (x, y, z) y lo
 // que había en el mundo debajo de cada uno antes de ponerlo (si el mueble pisa el suelo, el suelo de esa celda)
@@ -25,7 +26,7 @@ export interface ObjectSpec {
 
 export interface WorldObject extends ObjectSpec {
   readonly id: number;
-  readonly mass: number;                         // kg
+  mass: number;                                  // kg (baja si pierde vóxeles: chip)
   hp: number;
   maxHp: number;
   lights: readonly LightId[];
@@ -265,6 +266,75 @@ export class ObjectLayer implements Iterable<WorldObject> {
     return { moved, heavy: false, blocked, need };
   }
 
+  // Daño: le quita vida y, si llega a 0, lo rompe. Con `fall`, se desmorona en piezas (VoxelFall.crumble: escombro o
+  // nada, lo que diga opts.settle) que el juego avanza con fall.step; sin ella, desaparece de golpe. Lo que había debajo
+  // (el suelo que pisaba) vuelve, sus luces se apagan y deja de ser objeto. Despierto, se duerme antes en su sitio.
+  damage(id: number, amount: number, fall?: VoxelFall, opts: CrumbleOptions = {}): { hp: number; destroyed: boolean; pieces: number } {
+    const o = this.byId.get(id);
+    if (!o) return { hp: 0, destroyed: false, pieces: 0 };
+    o.hp = Math.max(0, o.hp - Math.max(0, amount));
+    if (o.hp > 0) return { hp: o.hp, destroyed: false, pieces: 0 };
+    return { hp: 0, destroyed: true, pieces: this.destroy(id, fall, opts) };
+  }
+
+  // Lo rompe ya (lo que hace damage al llegar a 0). Devuelve las piezas que suelta
+  destroy(id: number, fall?: VoxelFall, opts: CrumbleOptions = {}): number {
+    const o = this.byId.get(id);
+    if (!o) return 0;
+    if (o.awake) this.sleep(id);
+    this.dropGhostOf(o);
+    const w = this.w, s = w.solid;
+    let pieces = 0;
+    if (fall) {
+      let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+      for (let i = 0; i < o.cells.length; i += 4) {
+        const x = o.x + o.cells[i]!, y = o.y + o.cells[i + 1]!, z = o.z + o.cells[i + 2]!;
+        x0 = Math.min(x0, x); y0 = Math.min(y0, y); z0 = Math.min(z0, z); x1 = Math.max(x1, x); y1 = Math.max(y1, y); z1 = Math.max(z1, z);
+      }
+      pieces = fall.crumble({ x0, y0, z0, x1, y1, z1 }, { ...opts, only: (x, y, z) => this.owner.get(this.key(x, y, z)) === o.id && (!opts.only || opts.only(x, y, z)) });
+    }
+    // Lo suyo que quede en el mundo se va, y vuelve lo de debajo (crumble lo deja vacío)
+    for (let i = 0; i < o.cells.length; i += 4) {
+      const x = o.x + o.cells[i]!, y = o.y + o.cells[i + 1]!, z = o.z + o.cells[i + 2]!;
+      if (this.owner.get(this.key(x, y, z)) !== o.id) continue;
+      const v = s.get(x, y, z);
+      if (v === o.cells[i + 3] || v === 0) s.set(x, y, z, o.under[i >> 2]!);
+    }
+    for (const lid of o.lights) w.lights.remove(lid);
+    this.release(o);
+    this.byId.delete(id);
+    this.shapes.delete(id);
+    return pieces;
+  }
+
+  // Le arranca los vóxeles a menos de `r` de (x, y, z) (un golpe que muerde): vuelve lo de debajo y baja su masa.
+  // Despierto, se duerme antes. Devuelve cuántos perdió; si no le queda ninguno, deja de ser objeto
+  chip(id: number, x: number, y: number, z: number, r: number): number {
+    const o = this.byId.get(id);
+    if (!o) return 0;
+    if (o.awake) this.sleep(id);
+    this.dropGhostOf(o);
+    const s = this.w.solid;
+    const keep: number[] = [], keepUnder: number[] = [];
+    let lost = 0;
+    for (let i = 0; i < o.cells.length; i += 4) {
+      const cx = o.x + o.cells[i]!, cy = o.y + o.cells[i + 1]!, cz = o.z + o.cells[i + 2]!;
+      if ((cx + 0.5 - x) ** 2 + (cy + 0.5 - y) ** 2 + (cz + 0.5 - z) ** 2 < r * r) {
+        if (s.get(cx, cy, cz) === o.cells[i + 3]) s.set(cx, cy, cz, o.under[i >> 2]!);
+        const k = this.key(cx, cy, cz);
+        if (this.owner.get(k) === o.id) this.owner.delete(k);
+        lost++;
+      } else { keep.push(o.cells[i]!, o.cells[i + 1]!, o.cells[i + 2]!, o.cells[i + 3]!); keepUnder.push(o.under[i >> 2]!); }
+    }
+    if (!lost) return 0;
+    if (!keepUnder.length) { this.destroy(id); return lost; }
+    o.cells = Int32Array.from(keep); o.under = Uint16Array.from(keepUnder);
+    o.mass = massOf(o.cells, this.w.solid.palette);
+    o.modelId = null;                              // el modelo de entidad se rehace al despertar
+    this.shapes.delete(id);
+    return lost;
+  }
+
   // Un tick: los despiertos que llevan SLEEP_AFTER quietos se duermen
   step(dt: number): void {
     for (const o of [...this.awakeList]) {
@@ -296,6 +366,16 @@ export class ObjectLayer implements Iterable<WorldObject> {
   }
 
   // ---- por dentro
+
+  // El fantasma que dejó al dormirse (si sigue): al romperlo o morderlo ya no vale
+  private dropGhostOf(o: WorldObject): void {
+    const ents = this.w.entities;
+    for (let i = ents.length - 1; i >= 0; i--) {
+      const e = ents[i]!;
+      if (e.ghost !== undefined && e.modelId === o.modelId) ents.splice(i, 1);
+    }
+    ents.reindex();
+  }
 
   private key(x: number, y: number, z: number): number { return ((z - this.w.solid.zMin) * this.w.solid.depth + y) * this.w.solid.width + x; }
   private claim(o: WorldObject): void { for (let i = 0; i < o.cells.length; i += 4) this.owner.set(this.key(o.x + o.cells[i]!, o.y + o.cells[i + 1]!, o.z + o.cells[i + 2]!), o.id); }
