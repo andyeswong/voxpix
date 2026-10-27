@@ -327,6 +327,8 @@ export class ModelRegistry {
     if (i >= 0) return i;
     const w = this.owner;
     let off = this.paletteOffset.get(model.palette);
+    // Con la paleta del propio mundo (p. ej. un trozo del mundo que cae, world/fall.ts): sus rampas ya están
+    if (off === undefined && model.palette === w.palette) off = 0;
     if (off === undefined) {
       off = w.palette.ramps.length;
       this.paletteOffset.set(model.palette, off);

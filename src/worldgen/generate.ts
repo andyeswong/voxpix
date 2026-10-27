@@ -188,6 +188,18 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
     if (d < best) { best = d; sx = x; sy = y; }
   }
 
+  // El paso de cada hueco de puerta queda libre de muebles y columnas: el hueco, una loseta a cada lado y, hacia
+  // dentro, hasta 3 losetas pasado el borde de la sala
+  const doorway = new Uint8Array(cols * rows);
+  for (const d of doors ?? []) for (let k = d.from - 1; k <= d.to + 1; k++) {
+    let floorSeen = 0;
+    for (let i = 0; i < Math.max(cols, rows) && floorSeen < 3; i++) {
+      const [x, y] = d.side === 'n' ? [k, i] : d.side === 's' ? [k, rows - 1 - i] : d.side === 'w' ? [i, k] : [cols - 1 - i, k];
+      if (x < 0 || y < 0 || x >= cols || y >= rows) break;
+      doorway[at(x, y)] = 1;
+      if (wall[at(x, y)] === WALL.none) floorSeen++;
+    }
+  }
   const pillar = new Uint8Array(cols * rows);
   const prop = new Uint8Array(cols * rows);
   const props: PlacedProp[] = [];
@@ -207,6 +219,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
         const cx = x + dx, cy = y + dy;
         const inside = dx >= 0 && dx < ps.w && dy >= 0 && dy < ps.h;
         if (cx < 0 || cy < 0 || cx >= cols || cy >= rows || water[at(cx, cy)] === 1 || pillar[at(cx, cy)] === 1) ok = false;
+        else if (inside && doorway[at(cx, cy)]) ok = false;
         else if (wall[at(cx, cy)] !== WALL.none && (inside || !ps.edge)) ok = false;   // pegado a la pared sí, dentro de ella no
       }
       for (let dy = 0; dy < ps.h && ok; dy++) for (let dx = 0; dx < ps.w; dx++) if (Math.hypot(x + dx - sx, y + dy - sy) < 4.5) ok = false;
@@ -222,7 +235,7 @@ export function generateLayout(spec: GeneratorSpec, seed: number): Layout {
   let placed = 0;
   for (let tries = 0; tries < 400 && placed < spec.pillars; tries++) {
     const x = 3 + Math.floor(rng() * (cols - 6)), y = NORTH + 2 + Math.floor(rng() * (rows - NORTH - 5));
-    if (!landish(x, y, 1) || Math.hypot(x - sx, y - sy) < 4.5) continue; // 4,5 celdas: deja >= 48 px libres para pelear
+    if (!landish(x, y, 1) || doorway[at(x, y)] || Math.hypot(x - sx, y - sy) < 4.5) continue; // 4,5 celdas: deja >= 48 px libres para pelear
     if (wallDist && wallDist[at(x, y)]! < 3) continue;                     // con forma, ni en un pasillo: 2 losetas libres hasta la pared
     let near = false;
     for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) if (pillar[at(x + dx, y + dy)]) near = true;
