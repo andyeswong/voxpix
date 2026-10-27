@@ -86,3 +86,25 @@ describe('cámara del editor 3D', () => {
     }
   });
 });
+
+// Contorno interior con poca inclinación: un suelo plano no se marca a sí mismo (antes, con oblicua 0,35, cada fila
+// del suelo pasaba el umbral fijo de 2,5 y todo el suelo salía con el tono 0)
+describe('contorno interior y la inclinación', () => {
+  const slab = new Model(TEST_PALETTE);
+  for (let x = 0; x < 40; x++) for (let y = 0; y < 40; y++) slab.set(x, y, 0, material(0, 2));
+  for (const a of [0.25, 0.35, 0.5, 1]) it(`oblicua ${a}: el suelo plano no lleva contorno interior`, () => {
+    const base: RenderOptions = { width: 60, height: 60, originX: 10, originY: 50, yaw: 0, oblique: { y: a, z: 1 }, pivot: [0, 0, 0], smooth: 0, shadows: false, ao: false, pick: false };
+    const none = render(slab, { ...base, outline: 'none' }), both = render(slab, { ...base, outline: 'both' });
+    let inside = 0, changed = 0;
+    for (let j = 1; j < 59; j++) for (let i = 1; i < 59; i++) {
+      const k = j * 60 + i;
+      if (!Number.isFinite(none.depth[k]!)) continue;
+      // solo el interior: los cuatro vecinos también son suelo
+      if (![k - 1, k + 1, k - 60, k + 60].every((n) => Number.isFinite(none.depth[n]!))) continue;
+      inside++;
+      if (none.rgba[k * 4] !== both.rgba[k * 4] || none.rgba[k * 4 + 1] !== both.rgba[k * 4 + 1]) changed++;
+    }
+    expect(inside).toBeGreaterThan(200);
+    expect(changed).toBe(0);
+  });
+});

@@ -274,6 +274,14 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
   return finishRender(pal, o, color, depth, pickKey, pickFace);
 }
 
+// El salto de profundidad que marca contorno interior por defecto: 2,5, o 1,3 veces lo que avanza un suelo plano por
+// píxel si es más (así el suelo nunca se marca a sí mismo)
+export function innerGapFor(o: RenderOptions): number {
+  const c = camera(o);
+  const floorStep = c.up[1] > 1e-3 ? Math.abs(c.fwd[1] / c.up[1]) / c.ppu : 0;
+  return Math.max(2.5, 1.3 * floorStep);
+}
+
 // Lo que sigue al rasterizado, común a la CPU y a la GPU (src/view/gpu/voxrender.ts): los contornos y los colores.
 // `color` es el índice plano de cada píxel (rampa*16 + tono; -1 = vacío) y `depth` su profundidad.
 export function finishRender(pal: Palette, o: RenderOptions, color: Int32Array, depth: Float32Array, pickKey: Float64Array | null, pickFace: Int8Array | null): Rendered {
@@ -283,7 +291,9 @@ export function finishRender(pal: Palette, o: RenderOptions, color: Int32Array, 
   const final = Int32Array.from(color);
   const OUTLINE = -2;
   if (mode === 'both') {
-    const gap = o.innerGap ?? 2.5;
+    // El umbral crece con lo que avanza en profundidad un suelo plano por cada píxel hacia abajo: con poca inclinación
+    // (oblicua de 0,35, o poca elevación) cada fila del suelo ya es un salto de más de 2,5 y todo el suelo salía marcado
+    const gap = o.innerGap ?? innerGapFor(o);
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
       const idx = j * W + i;
       if (color[idx]! < 0) continue;
