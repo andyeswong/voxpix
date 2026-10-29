@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import { floorLayout, type GeneratorSpec } from '../src/worldgen';
 import { THEMES } from '../src/samples/themes';
 import { buildWorld, buildWorldState, blockProp, M } from '../src/world/build';
-import { VOXEL_M3, material, decode } from '../src/core';
+import { VOXEL_M3, MAX_RAMPS, Model, material, decode } from '../src/core';
 import type { WorldState } from '../src/world/state';
 
 const SPEC: GeneratorSpec = { ...THEMES.oficina.spec, cols: 20, rows: 14 };
@@ -337,5 +337,44 @@ describe('crushAt', () => {
     expect(w.solid.get(5, 5, 0)).toBe(material(0, 2));
     crushAt(w, 25, 25, 2, { darken: true });
     expect(w.solid.get(25, 25, 1)).toBe(material(1, 2));
+  });
+});
+
+describe('objetos: paleta de una partida', () => {
+  // En una partida, cada modelo con paleta propia (personaje, enemigos, proyectiles) suma sus rampas a la del mundo,
+  // que pasa de MAX_RAMPS. Despertar un objeto o desmoronarlo hace modelos con los vóxeles del mundo: no deben cargar
+  // con esas rampas (new Model valida el tope)
+  function crowded(): WorldState {
+    const w = officeWorld();
+    const own = w.palette.ramps.length;
+    for (let i = 0; i < MAX_RAMPS + 6 - own; i++) {
+      const m = new Model({ ramps: [{ name: `bicho-${i}`, colors: ['#102030', '#405060'] }] }, `bicho-${i}`);
+      m.set(0, 0, 0, material(0, 1));
+      w.entities.add({ model: m, x: 2, y: 2, z: 1 });
+    }
+    expect(w.palette.ramps.length).toBeGreaterThan(MAX_RAMPS);
+    return w;
+  }
+
+  it('empujar despierta el objeto con la paleta propia del mundo: sus valores valen tal cual', () => {
+    const w = crowded(), own = w.models.worldPalette().ramps.length;
+    const { o, dx, dy } = movable(w);
+    const ents = w.entities.length;
+    w.objects.push(o.id, dx, dy, w.objects.forceToMove(o.id) * 3, TICK);
+    expect(o.awake).toBe(true);
+    const e = w.entities[ents]!;
+    expect(e.rampOffset).toBe(0);
+    expect(e.model.palette.ramps.length).toBe(own);
+    expect(w.palette.ramps.length).toBe(MAX_RAMPS + 6);              // y la del mundo no crece
+  });
+
+  it('romperlo con caída también', () => {
+    const w = crowded(), n = w.palette.ramps.length;
+    const f = new VoxelFall(w);
+    const o = [...w.objects].find((x) => x.kind === 'prop' && x.lights.length)!;
+    const r = w.objects.damage(o.id, Infinity, f, { piece: 4 });
+    expect(r.pieces).toBeGreaterThan(5);
+    f.finish();
+    expect(w.palette.ramps.length).toBe(n);
   });
 });

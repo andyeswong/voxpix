@@ -152,7 +152,7 @@ export class VoxelFall {
     this.grow({ x0, y0, x1, y1 });
     const n = Math.max(1, Math.round(size));
     for (let pz = z0; pz <= z1; pz += n) for (let py = y0; py <= y1; py += n) for (let px = x0; px <= x1; px += n) {
-      const model = new Model(w.palette, 'fall');
+      const model = new Model(w.models.worldPalette(), 'fall');
       const low = new Map<number, number>();
       for (let z = pz; z < pz + n && z <= z1; z++) for (let y = py; y < py + n && y <= y1; y++) for (let x = px; x < px + n && x <= x1; x++) {
         const v = s.get(x, y, z);

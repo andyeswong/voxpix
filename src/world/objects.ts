@@ -412,7 +412,7 @@ export class ObjectLayer implements Iterable<WorldObject> {
   }
 
   private model(o: WorldObject): Model {
-    const m = new Model(this.w.palette, `objeto-${o.id}`);
+    const m = new Model(this.w.models.worldPalette(), `objeto-${o.id}`);
     const [cx, cy] = this.center(o);
     for (let i = 0; i < o.cells.length; i += 4) m.set(o.cells[i]! - cx, o.cells[i + 1]! - cy, o.cells[i + 2]!, o.cells[i + 3]!);
     return m;

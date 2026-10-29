@@ -328,16 +328,31 @@ export class ModelRegistry {
   private offsets: number[] = [];
   // Los modelos que comparten paleta (p. ej. los cuadros de una animación) comparten sus rampas en la del mundo
   private paletteOffset = new Map<object, number>();
+  // Cuántas rampas son del mundo (las de los modelos van detrás); null mientras no se haya sumado ninguna
+  private own: number | null = null;
+  private ownPalette: Palette | null = null;
   constructor(private owner: WorldState) {}
+  // La paleta de las rampas propias del mundo, para modelos hechos con sus vóxeles (un trozo que cae, un objeto
+  // despierto): sus valores valen tal cual (desplazamiento 0) y no carga con las rampas de los modelos, que en una
+  // partida pasan de MAX_RAMPS. Siempre el mismo objeto mientras no cambien las rampas propias.
+  worldPalette(): Palette {
+    const w = this.owner, n = this.own ?? w.palette.ramps.length;
+    const cur = this.ownPalette;
+    if (!cur || cur.ramps.length !== n || cur.ramps.some((r, i) => r !== w.palette.ramps[i]) || cur.outline !== w.palette.outline) {
+      this.ownPalette = { ...w.palette, ramps: w.palette.ramps.slice(0, n) };
+    }
+    return this.ownPalette!;
+  }
   register(model: VoxelSource): number {
     const i = this.list.indexOf(model);
     if (i >= 0) return i;
     const w = this.owner;
     let off = this.paletteOffset.get(model.palette);
     // Con la paleta del propio mundo (p. ej. un trozo del mundo que cae, world/fall.ts): sus rampas ya están
-    if (off === undefined && model.palette === w.palette) off = 0;
+    if (off === undefined && (model.palette === w.palette || model.palette === this.ownPalette)) off = 0;
     if (off === undefined) {
       off = w.palette.ramps.length;
+      this.own ??= off;
       this.paletteOffset.set(model.palette, off);
       w.palette = { ...w.palette, ramps: [...w.palette.ramps, ...model.palette.ramps] };
       w.solid.palette = w.palette;
