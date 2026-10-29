@@ -132,3 +132,60 @@ describe('directivas de VoxPix en el .px.js (contorno y rampas emisivas)', () =>
     expect(applyDirectives(paletteFromPxl(p, 'arma_z00'), d, '#000000').outline).toBe('#000000');
   });
 });
+
+describe('pxl: lo que cae fuera del lienzo', () => {
+  it('se apunta con el sprite y la coordenada; lo de dentro, no', async () => {
+    const { pxlClipped } = await import('../src/pxl/bridge');
+    const p = loadPxl('pal({ a: "#ff0000" })\nsprite("dentro", { w: 4, h: 4 }, (c) => { c.px(0, 0, "a"); c.px(3, 3, "a") })\n' +
+      'sprite("punta", { w: 4, h: 4 }, (c) => { for (let x = 0; x < 7; x++) c.px(x, 1, "a") })');
+    p.image('dentro'); p.image('punta');
+    expect(pxlClipped(p)).toEqual([{ sprite: 'punta', x: 4, y: 1 }, { sprite: 'punta', x: 5, y: 1 }, { sprite: 'punta', x: 6, y: 1 }]);
+  });
+
+  it('un proyecto sin recortes no apunta nada, y no se mezcla con otro', async () => {
+    const { pxlClipped } = await import('../src/pxl/bridge');
+    const a = loadPxl('pal({ a: "#ff0000" })\nsprite("s", { w: 2, h: 2 }, (c) => c.px(9, 9, "a"))');
+    const b = loadPxl('pal({ a: "#ff0000" })\nsprite("s", { w: 2, h: 2 }, (c) => c.px(1, 1, "a"))');
+    a.image('s'); b.image('s');
+    expect(pxlClipped(a).length).toBe(1);
+    expect(pxlClipped(b)).toEqual([]);
+  });
+});
+
+describe('pxl: capas con z negativa y el global vox', () => {
+  it('_z-01 es z = -1: el origen del modelo no depende de la capa más baja, y la ida y vuelta lo respeta', async () => {
+    const { toPxlStack, stackFromPxl } = await import('../src/pxl/bridge');
+    const m = new Model(TEST_PAL);
+    m.set(0, 0, 0, 1); m.set(1, 0, -2, 1); m.set(0, 1, 3, 1);
+    const src = toPxlStack(m, 'arma');
+    expect(src).toContain('sprite("arma_z-02"');
+    const back = new Model(TEST_PAL);
+    expect(stackFromPxl(loadPxl(src), 'arma', back)).toBe(3);
+    expect([...back.entries()].sort()).toEqual([...m.entries()].sort());
+  });
+
+  it('vox: girar, mover, subir tono y sacar capas; importado, el agarre sigue en el origen', async () => {
+    const { stackFromPxl } = await import('../src/pxl/bridge');
+    const src = `pal({ a: "#300000", b: "#900000", c: "#ff0000" })\nramps("abc")
+      const arma = new Map([["0,0,0", "a"], ["0,1,0", "a"], ["0,2,0", "b"], ["0,2,1", "b"]])
+      globalThis.__t = {
+        rot: [...vox.rotate(arma, 90).entries()].sort(),
+        pitch: [...vox.rotate(arma, 90, { axis: 'x' }).entries()].sort(),
+        up: [...vox.toneUp(arma, ["abc"], 5).values()],
+        shift: [...vox.shift(arma, 0, -2, -1).keys()].sort(),
+      }
+      vox.layers("pose", vox.shift(arma, 0, 0, -1))`;
+    const p = loadPxl(src);
+    const t = (globalThis as unknown as { __t: Record<string, unknown> }).__t;
+    expect(t.rot).toEqual([['-1,0,0', 'a'], ['-2,0,0', 'b'], ['-2,0,1', 'b'], ['0,0,0', 'a']].sort());
+    expect(t.pitch).toEqual([['0,-1,2', 'b'], ['0,0,0', 'a'], ['0,0,1', 'a'], ['0,0,2', 'b']].sort());
+    expect(t.up).toEqual(['c', 'c', 'c', 'c']);
+    expect(t.shift).toEqual(['0,-1,-1', '0,-2,-1', '0,0,-1', '0,0,0'].sort());
+    expect(pxlAssets(p)).toEqual(['pose_z-01', 'pose_z00']);
+    const m = new Model(paletteFromPxl(p, 'pose_z00'));
+    expect(stackFromPxl(p, 'pose', m)).toBe(4);
+    expect(decode(m.get(0, 0, -1)).tone).toBe(0);                  // el agarre bajado 1
+    expect(decode(m.get(0, 2, 0)).tone).toBe(1);
+    delete (globalThis as unknown as { __t?: unknown }).__t;
+  });
+});

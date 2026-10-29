@@ -19,6 +19,13 @@ declare module 'pxl-core' {
     exported(): string[];
     image(name: string, seed?: number, t?: number): Img;
   }
+  // Lo que dibuja un sprite pasa por plot (bridge.ts la envuelve para ver lo que cae fuera del lienzo)
+  export class Canvas {
+    readonly img: Img;
+    readonly ox: number;
+    readonly oy: number;
+    plot(x: number, y: number, c: Color | null): boolean;
+  }
   export function toHex(c: Color): string;
   export function channels(c: Color): [number, number, number, number];
 }

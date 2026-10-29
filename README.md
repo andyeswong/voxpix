@@ -116,6 +116,13 @@ en vivo, y sin navegador con `voxpix world receta.json mundo.png`. La referencia
     bun run voxpix import-pxl arte.px.js <sprite|-> modelo.json
     bun run voxpix import-pxl arte.px.js --stack <prefijo> modelo.json      # capas <prefijo>_zNN
 
+`import-pxl` avisa de lo que un sprite dibujó fuera de su lienzo (pxl lo descarta sin decir nada), con la capa y la
+coordenada; con `--strict` falla y no escribe el modelo. En una pila, `NN` es la z de la capa en el modelo y puede ser
+negativa (`_z-02`): el origen del modelo (el agarre de un arma) queda donde la fuente lo pone, aunque una pose baje de
+él. Dentro del `.px.js`, el global `vox` trae mapas de vóxeles para hacer poses sin repetir código: `rotate`, `shift`,
+`recolor`, `toneUp`, `merge` y `layers` (que escribe las capas de la pila). La referencia está en
+[src/pxl/voxmap.ts](src/pxl/voxmap.ts).
+
 Sin `--size`, el encuadre se ajusta al modelo: 64x48 si cabe; si no, uno que lo contiene en cualquier giro.
 
 Un GIF del modelo dando una vuelta (los de arriba salen de aquí; `--luz` lo ilumina con las fuentes del modelo):

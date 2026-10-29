@@ -4,7 +4,7 @@ import { encodePNG, onBackground } from '../core/png';
 import { medievalScene } from '../samples/medieval';
 import { buildSampleRecipe } from '../samples/recipes';
 import { describeWorld, snapshotWorld } from '../world/recipe';
-import { loadPxl, paletteFromPxl, spriteToVoxels, toPxlSource, pxlAssets, stackFromPxl, toPxlStack, pxlDirectives, applyDirectives } from '../pxl/bridge';
+import { loadPxl, paletteFromPxl, spriteToVoxels, toPxlSource, pxlAssets, stackFromPxl, toPxlStack, pxlDirectives, applyDirectives, pxlClipped } from '../pxl/bridge';
 
 // CLI de VoxPix.
 //   voxpix render <modelo.json|sample> <salida.png> [--yaw 0] [--elev 30] [--scale 8] [--size WxH] [--origin x,y]   (sin --size: el encuadre que lo contiene)
@@ -14,7 +14,9 @@ import { loadPxl, paletteFromPxl, spriteToVoxels, toPxlSource, pxlAssets, stackF
 //   voxpix import-pxl <arte.px.js> <sprite|-> <salida.json> [--plane front|top] [--z n]
 //                (sprite "-": solo la paleta; el modelo sale vacío con esas rampas)
 //   voxpix import-pxl <arte.px.js> --stack <prefijo> <salida.json>   capas <prefijo>_zNN vistas desde arriba
+//                (NN es la z en el modelo, también negativa: _z-02; la fuente puede usar el global vox, src/pxl/voxmap.ts)
 //                [--outline #rrggbb]   color fijo del contorno (si no, el de la directiva // voxpix: outline del .px.js)
+//                [--strict]   falla si algún sprite dibujó fuera de su lienzo (sin él, solo avisa)
 //   voxpix export-pxl <modelo.json> <salida.px.js> --stack <prefijo>    el modelo como esas capas
 //   voxpix world <receta.json> <salida.png|-> [--at x,y] [--size WxH] [--ticks n] [--scale n] [--whole] [--lights no]
 //                [--info info.json]   un mundo entero desde una receta (src/world/recipe.ts; con "theme", uno de muestra).
@@ -30,6 +32,17 @@ function load(src: string): Model {
   return Model.fromJSON(JSON.parse(readFileSync(src, 'utf8')));
 }
 
+// pxl descarta sin avisar lo que se dibuja fuera del lienzo: se dice qué sprite y dónde, y con --strict se falla
+function reportClipped(p: ReturnType<typeof loadPxl>, out: string): void {
+  const c = pxlClipped(p);
+  if (!c.length) return;
+  const by = new Map<string, typeof c>();
+  for (const e of c) by.set(e.sprite, [...(by.get(e.sprite) ?? []), e]);
+  console.error(`${process.argv.includes('--strict') ? 'error' : 'aviso'}: ${c.length} píxeles dibujados fuera del lienzo (pxl los descarta):`);
+  for (const [name, list] of by) console.error(`  ${name}: ${list.length} (${list.slice(0, 4).map((e) => `${e.x},${e.y}`).join(' ')}${list.length > 4 ? ' ...' : ''})`);
+  if (process.argv.includes('--strict')) { console.error(`${out}: no se escribe`); process.exit(2); }
+}
+
 function importPxl(): void {
   const stack = arg('stack', '');
   if (stack) {
@@ -39,6 +52,7 @@ function importPxl(): void {
     const p = loadPxl(src, art);
     const m = new Model(applyDirectives(paletteFromPxl(p, `${stack}_z00`), pxlDirectives(src), arg('outline', '') || undefined), stack);
     const n = stackFromPxl(p, stack, m);
+    reportClipped(p, out);
     writeFileSync(out, JSON.stringify(m.toJSON()) + '\n');
     console.log(`${out}: ${n} vóxeles desde las capas ${stack}_zNN`);
     return;
@@ -51,6 +65,7 @@ function importPxl(): void {
   if (sprite !== '-' && !names.includes(sprite)) { console.error(`no hay sprite "${sprite}"; hay: ${names.join(', ')}`); process.exit(1); }
   const m = new Model(applyDirectives(paletteFromPxl(p, sprite === '-' ? undefined : sprite), pxlDirectives(src), arg('outline', '') || undefined), sprite === '-' ? 'importado' : sprite);
   const n = sprite === '-' ? 0 : spriteToVoxels(p, sprite, m, { plane: arg('plane', 'front') as 'front' | 'top', z: Number(arg('z', '0')) });
+  reportClipped(p, out);
   writeFileSync(out, JSON.stringify(m.toJSON()) + '\n');
   console.log(`${out}: ${m.palette.ramps.length} rampas, ${n} vóxeles`);
 }

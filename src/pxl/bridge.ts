@@ -6,16 +6,49 @@
 //   van de oscuro a claro) y sus sprites (para pasarlos a vóxeles).
 // - Exportar: un render de VoxPix se escribe como .px.js (pal + ramps + un sprite por ángulo + una hoja), que
 //   `pxl build` convierte en PNG, hoja + JSON y vistas previas, igual que el resto del arte del equipo.
-import { Project, toHex, channels, type Img } from '#pxl-core';   // importación del paquete (package.json "imports"): funciona también instalado en node_modules
+import { Project, Canvas, toHex, channels, type Img } from '#pxl-core';   // importación del paquete (package.json "imports"): funciona también instalado en node_modules
 import { Model, material, rgbOf, decode, type Palette, type Ramp } from '../core';
+import { voxHelpers, stackLayerName } from './voxmap';
 
 // ---------------------------------------------------------------- importar
 
-// Evalúa la fuente de un .px.js (sin include: los ficheros incluidos no se pueden leer desde aquí)
+// Lo que un sprite dibujó fuera de su lienzo: pxl lo descarta sin avisar, y un modelo recortado sigue pareciendo
+// entero (las armas del juego perdieron la punta así). Se apunta mientras se dibuja cada sprite de un proyecto
+// cargado con loadPxl; el resto de pxl no se entera.
+export interface PxlClip { sprite: string; x: number; y: number }
+const clipped = new WeakMap<Project, Map<string, PxlClip>>();
+let drawing: { list: Map<string, PxlClip>; sprite: string } | null = null;
+const plot = Canvas.prototype.plot;
+Canvas.prototype.plot = function (this: Canvas, x: number, y: number, c: Parameters<Canvas['plot']>[2]): boolean {
+  const ok = plot.call(this, x, y, c);
+  if (!ok && drawing && c !== null) {
+    const X = Math.floor(x) + this.ox, Y = Math.floor(y) + this.oy;
+    if (X < 0 || Y < 0 || X >= this.img.w || Y >= this.img.h) drawing.list.set(`${drawing.sprite}:${X},${Y}`, { sprite: drawing.sprite, x: X, y: Y });
+  }
+  return ok;
+};
+
+// Los píxeles que los sprites del proyecto dibujaron fuera de su lienzo (de los que ya se han construido)
+export function pxlClipped(p: Project): PxlClip[] {
+  return [...(clipped.get(p)?.values() ?? [])];
+}
+
+// Evalúa la fuente de un .px.js (sin include: los ficheros incluidos no se pueden leer desde aquí). Además del DSL de
+// pxl, la fuente tiene `vox` (src/pxl/voxmap.ts): mapas de vóxeles y sus capas para import-pxl --stack.
 export function loadPxl(source: string, name = 'art.px.js'): Project {
   const p = new Project();
-  const env = p.env();
+  const env = p.env() as Record<string, unknown>;
   p.addFile(name);
+  const list = new Map<string, PxlClip>();
+  clipped.set(p, list);
+  // Cada dibujo de un sprite, envuelto para saber de quién es lo que cae fuera
+  const sprite = env.sprite as (name: unknown, ...rest: unknown[]) => unknown;
+  env.sprite = (sname: unknown, ...rest: unknown[]) => sprite(sname, ...rest.map((r) => typeof r !== 'function' ? r : (...a: unknown[]) => {
+    const prev = drawing;
+    drawing = { list, sprite: String(sname) };
+    try { return (r as (...a: unknown[]) => unknown)(...a); } finally { drawing = prev; }
+  }));
+  env.vox = voxHelpers(env.sprite as Parameters<typeof voxHelpers>[0]);
   // La fuente es arte del propio usuario: se ejecuta con las funciones del DSL como únicas variables globales
   new Function(...Object.keys(env), source)(...Object.values(env));
   return p;
@@ -185,14 +218,16 @@ export function toPxlSource(model: Model, frames: PxlFrame[], opts: { sheet?: st
 //
 // Un modelo como pila de capas horizontales: un sprite `<prefijo>_zNN` por altura, visto desde arriba
 // (norte arriba), todos del mismo tamaño impar y con el pivote en el centro: columna x = 0 en el centro del
-// ancho y fila y = 0 en el centro del alto. Es el mismo formato al importar y al exportar.
+// ancho y fila y = 0 en el centro del alto. NN es la z de la capa en el modelo, y puede ser negativa (`_z-02`):
+// así el origen del modelo (el agarre de un arma) no depende de la capa más baja. Es el mismo formato al importar
+// y al exportar.
 
-const STACK_RE = (prefix: string) => new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_z(\\d+)$`);
+const STACK_RE = (prefix: string) => new RegExp(`^${prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}_z(-?\\d+)$`);
 
 // Prefijos de pila que hay en un proyecto de pxl (sprites que acaban en _zNN)
 export function stackPrefixes(p: Project): string[] {
   const out = new Set<string>();
-  for (const n of p.exported()) { const m = /^(.*)_z\d+$/.exec(n); if (m) out.add(m[1]!); }
+  for (const n of p.exported()) { const m = /^(.*)_z-?\d+$/.exec(n); if (m) out.add(m[1]!); }
   return [...out];
 }
 
@@ -217,10 +252,10 @@ export function toPxlStack(model: Model, prefix: string, opts: { comment?: strin
   const { keyOf, lines } = paletteSource(model);
   const halfX = b ? Math.max(-b.minX, b.maxX, 0) : 0, halfY = b ? Math.max(-b.minY, b.maxY, 0) : 0;
   const w = 2 * halfX + 1, h = 2 * halfY + 1;
-  const top = b ? b.maxZ : 0;
+  const top = b ? b.maxZ : 0, bottom = b ? Math.min(0, b.minZ) : 0;
   const hexOf = (v: number) => { const { ramp, tone } = decode(v); return model.palette.ramps[ramp]!.colors[tone]!.toLowerCase(); };
   const sprites: string[] = [];
-  for (let z = 0; z <= top; z++) {
+  for (let z = bottom; z <= top; z++) {
     const rows: string[] = [];
     for (let py = 0; py < h; py++) {
       let row = '';
@@ -230,10 +265,10 @@ export function toPxlStack(model: Model, prefix: string, opts: { comment?: strin
       }
       rows.push('  ' + row);
     }
-    sprites.push(`sprite("${prefix}_z${String(z).padStart(2, '0')}", { w: ${w}, h: ${h} }, \`\n${rows.join('\n')}\`)`);
+    sprites.push(`sprite("${stackLayerName(prefix, z)}", { w: ${w}, h: ${h} }, \`\n${rows.join('\n')}\`)`);
   }
   return [
-    `// ${opts.comment ?? `VoxPix: ${model.name} como pila de ${top + 1} capas de ${w}x${h} (vistas desde arriba, norte arriba, pivote en el centro)`}`,
+    `// ${opts.comment ?? `VoxPix: ${model.name} como pila de ${top - bottom + 1} capas de ${w}x${h} (vistas desde arriba, norte arriba, pivote en el centro)`}`,
     ...lines,
     '',
     ...sprites,
