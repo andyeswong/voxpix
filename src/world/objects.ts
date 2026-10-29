@@ -190,6 +190,7 @@ export class ObjectLayer implements Iterable<WorldObject> {
     const [cx, cy] = this.center(o);
     o.entity = w.entities.add({ model: o.modelId, x: o.x + cx, y: o.y + cy, z: o.z });
     o.awake = true; o.px = o.x; o.py = o.y; o.still = 0;
+    this.notify(o);
     for (const lid of o.lights) { const l = w.lights.get(lid); if (l) l.baked = false; }
     this.awakeList.push(o);
     this.awakeList.sort((a, b) => a.id - b.id);
@@ -202,6 +203,7 @@ export class ObjectLayer implements Iterable<WorldObject> {
     const o = this.byId.get(id);
     if (!o || !o.awake) return;
     const w = this.w, s = w.solid;
+    this.notify(o);                                // deja su huella de despierto sin escribir vóxeles
     const X = Math.round(o.px), Y = Math.round(o.py);
     this.moveLights(o, X - o.px, Y - o.py);
     o.x = X; o.y = Y; o.px = X; o.py = Y;
@@ -260,6 +262,7 @@ export class ObjectLayer implements Iterable<WorldObject> {
       if (!any) break;
     }
     o.still = 0;
+    if (moved > 0) { this.notify(o, x0, y0); this.notify(o); }
     const [cx, cy] = this.center(o);
     this.w.entities.move(o.entity!, o.px + cx, o.py + cy, o.z);
     this.moveLights(o, o.px - x0, o.py - y0);
@@ -366,6 +369,16 @@ export class ObjectLayer implements Iterable<WorldObject> {
   }
 
   // ---- por dentro
+
+  // Avisa a los oyentes de cambios (changes.ts) de la huella de un despierto en (px, py) (por defecto, donde está):
+  // floor/ceil de la posición continua y su altura entera, para cubrir cualquier celda que pise
+  private notify(o: WorldObject, px = o.px, py = o.py): void {
+    const watchers = this.w.changes.list;
+    if (!watchers) return;
+    const sh = this.shape(o);
+    const r = { x0: Math.floor(px), y0: Math.floor(py), z0: o.z, x1: Math.ceil(px) + sh.w - 1, y1: Math.ceil(py) + sh.d - 1, z1: o.z + sh.h - 1 };
+    for (const w of watchers) w.object(o.id, r);
+  }
 
   // El fantasma que dejó al dormirse (si sigue): al romperlo o morderlo ya no vale
   private dropGhostOf(o: WorldObject): void {

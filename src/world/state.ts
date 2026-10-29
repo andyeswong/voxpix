@@ -19,6 +19,7 @@ import { FxSystem, fxRandom, type FxState } from '../core/effects';
 import { fxWorldLights, type EffectsLayer } from './effects';
 import { Floaters } from './floaters';
 import { ObjectLayer, type ObjectsState } from './objects';
+import { ChangeFeed, type ChangeWatch } from './changes';
 
 export const CHUNK = 16;
 
@@ -34,6 +35,8 @@ export class StaticVoxels implements VoxelSource {
   clock = 0;
   // Si está puesto, oye cada cambio de vóxel (antes de hacerse): buildWorld lo usa para saber qué pinta cada mueble
   onSet: ((x: number, y: number, z: number, old: number, value: number) => void) | null = null;
+  // Los oyentes de cambios del mundo (changes.ts; lo pone WorldState): cada vóxel que cambia de verdad se les avisa
+  feed: ChangeFeed | null = null;
   // Altura de la cara de arriba del vóxel sólido más alto de cada columna (índice y * width + x); zMin si no hay
   readonly height: Int16Array;
 
@@ -67,6 +70,8 @@ export class StaticVoxels implements VoxelSource {
     if (this.onSet) this.onSet(x, y, z, data[i]!, value);
     data[i] = value;
     this.versions[c] = ++this.clock;
+    const watchers = this.feed?.list;
+    if (watchers) for (const w of watchers) w.voxel(c, x, y, z);
     if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
     // Rejilla de alturas: subir es directo; si se vacía el de arriba del todo, se busca el siguiente hacia abajo
     const h = y * this.width + x;
@@ -427,6 +432,8 @@ export class WorldState {
   readonly floaters: Floaters = new Floaters(this);
   // Muebles, columnas... que se pueden mover o romper (objects.ts): de quién es cada vóxel, su peso y su vida
   readonly objects: ObjectLayer;
+  // Los oyentes de "esta zona cambió" (changes.ts): watchChanges()
+  readonly changes: ChangeFeed;
   tick = 0;
   private rngState: number;
 
@@ -435,6 +442,10 @@ export class WorldState {
     this.palette = solid.palette;
     this.models = new ModelRegistry(this);
     this.objects = new ObjectLayer(this);
+    this.changes = new ChangeFeed(
+      () => ({ x0: 0, y0: 0, z0: solid.zMin, x1: solid.width - 1, y1: solid.depth - 1, z1: solid.zMax }),
+      () => this.solid.clock);
+    solid.feed = this.changes;
     this.dynamicVersions = new Uint32Array(solid.versions.length);
     this.entities.owner = this;
     this.lights.owner = this;
@@ -716,7 +727,12 @@ export class WorldState {
     };
   }
 
+  // Suscribirse a las zonas del mundo que cambian (changes.ts): take() da las cajas desde la vez anterior
+  watchChanges(): ChangeWatch { return this.changes.add(); }
+
   restore(s: WorldSnapshot): void {
+    const watchers = this.changes.list;
+    if (watchers) for (const w of watchers) w.everything();
     this.tick = s.tick; this.rngState = s.rng;
     this.solid.importChunks(s.chunks);
     if (this.water && s.water) this.water.sim.importState(s.water);
