@@ -27,6 +27,7 @@ export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 export interface WarmItem { model: VoxelSource; yaws?: readonly number[]; casts?: boolean }
 // Tope del atlas de sprites de entidades (48x72 cada uno, ~40 KB en la GPU y ~60 KB en la CPU)
 export const MAX_SPRITE_LAYERS = 1024;
+export interface AtlasStats { inFrame: number; sprites: number; cap: number; evicted: number }
 
 interface Target { fbo: WebGLFramebuffer; color: WebGLTexture; light: WebGLTexture; depth: WebGLTexture; dropsFbo: WebGLFramebuffer }
 // La capa de entidades (con z-buffer) y la de sombras de contacto
@@ -93,6 +94,10 @@ export class GpuCompositor {
   // Cuándo se usó cada capa por última vez (en cuadros): con el atlas lleno, la nueva ocupa la menos usada
   private spriteUse: number[] = [];
   private frameNo = 0;
+  // Para atlasStats: sprites distintos del último cuadro, cuántos sacaron a otro del atlas y si es un precalentado
+  private usedNow = 0;
+  private evicted = 0;
+  private warming = false;
   private tSprColor: WebGLTexture | null = null;
   private tSprDepth: WebGLTexture | null = null;
   private tSprVox: WebGLTexture | null = null;
@@ -190,6 +195,7 @@ export class GpuCompositor {
   // Pinta el cuadro en el lienzo
   frame(state: RenderState, b: Baked, o: Frame2DOptions): void {
     this.frameNo++;
+    this.usedNow = 0;
     this.compose(state, b, o);
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
@@ -200,6 +206,7 @@ export class GpuCompositor {
   read(state: RenderState, b: Baked, o: Frame2DOptions, what: GpuOutput = 'frame'): Uint8Array {
     const gl = this.gl;
     this.frameNo++;
+    this.usedNow = 0;
     this.compose(state, b, o);
     if (!this.out) {
       const tex = gl.createTexture()!;
@@ -619,7 +626,11 @@ export class GpuCompositor {
   // cada ángulo es un sprite nuevo y el atlas crecía sin fin)
   private spriteLayer(d: EntitySprite): number {
     let layer = this.sprites.get(d.key);
-    if (layer !== undefined) { this.spriteUse[layer] = this.frameNo; return layer; }
+    if (layer !== undefined) {
+      if (!this.warming && this.spriteUse[layer] !== this.frameNo) this.usedNow++;
+      this.spriteUse[layer] = this.frameNo;
+      return layer;
+    }
     const gl = this.gl;
     const cap = Math.min(MAX_SPRITE_LAYERS, gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) as number);
     if (this.spriteImgs.length < cap) {
@@ -641,10 +652,12 @@ export class GpuCompositor {
       for (let i = 1; i < this.spriteUse.length; i++) if (this.spriteUse[i]! < this.spriteUse[layer]!) layer = i;
       if (this.spriteUse[layer] === this.frameNo) warnOnce(`más de ${cap} sprites distintos en un cuadro`);
       for (const [k, v] of this.sprites) if (v === layer) { this.sprites.delete(k); break; }
+      this.evicted++;
       this.spriteImgs[layer] = d.img;
       this.spriteEmissive[layer] = emissiveMask(d);
     }
     this.sprites.set(d.key, layer);
+    if (!this.warming) this.usedNow++;
     this.spriteUse[layer] = this.frameNo;
     this.uploadSprite(d.img, layer, this.spriteEmissive[layer] ?? null);
     return layer;
@@ -658,14 +671,17 @@ export class GpuCompositor {
     const t0 = performance.now();
     let left = 0;
     const occs: Array<ReturnType<typeof occupancy>> = [];
-    for (const it of list) {
-      for (const yaw of it.yaws ?? HEADINGS) {
-        if (performance.now() - t0 > budgetMs) { left++; continue; }
-        this.spriteLayer(entitySprite(b, warmEntity(it.model, yaw), o));
-        if (it.casts) occs.push(occupancy(it.model, yaw));
+    this.warming = true;
+    try {
+      for (const it of list) {
+        for (const yaw of it.yaws ?? HEADINGS) {
+          if (performance.now() - t0 > budgetMs) { left++; continue; }
+          this.spriteLayer(entitySprite(b, warmEntity(it.model, yaw), o));
+          if (it.casts) occs.push(occupancy(it.model, yaw));
+        }
+        if (o.lights) this.body(it.model);
       }
-      if (o.lights) this.body(it.model);
-    }
+    } finally { this.warming = false; }
     this.syncBodies();
     if (occs.length) { const place = this.occPlace; this.syncOcc(occs); this.occPlace = place; }
     return left;
@@ -673,6 +689,13 @@ export class GpuCompositor {
 
   // Cuántos sprites hay en el atlas (para medir)
   get spriteCount(): number { return this.spriteImgs.length; }
+
+  // El atlas de sprites, para medir: los distintos que usó el último cuadro (sin contar los precalentados), los que
+  // hay, el tope (MAX_SPRITE_LAYERS o el de la GPU, el menor) y cuántas veces uno nuevo sacó a otro por estar lleno
+  atlasStats(): AtlasStats {
+    const gl = this.gl;
+    return { inFrame: this.usedNow, sprites: this.spriteImgs.length, cap: Math.min(MAX_SPRITE_LAYERS, gl.getParameter(gl.MAX_ARRAY_TEXTURE_LAYERS) as number), evicted: this.evicted };
+  }
 
   private uploadSprite(img: Rendered, layer: number, emissive: Uint8Array | null): void {
     const gl = this.gl;

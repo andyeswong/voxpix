@@ -7,8 +7,8 @@
 import { frame2D, entitySprite, warmEntity, HEADINGS, type Frame2DOptions } from '../world/frame2d';
 import type { Baked } from '../world/bake';
 import type { RenderState } from '../world/state';
-import { GpuCompositor, type WarmItem } from './gpu/compositor';
-export type { WarmItem };
+import { GpuCompositor, type WarmItem, type AtlasStats } from './gpu/compositor';
+export type { WarmItem, AtlasStats };
 
 export interface CompositorStats {
   frameMs: number;             // lo que tardó frame() en el hilo principal (en la GPU: preparar y subir, no dibujar)
@@ -29,6 +29,8 @@ export interface Compositor {
   // Sube un horneado sin pintar (en la GPU: sus texturas y los pesos de sus luces), para hacerlo fuera de la partida.
   // La GPU guarda los últimos 4 horneados subidos: volver a uno (otro giro de la cámara) no lo vuelve a subir.
   upload(b: Baked): void;
+  // El atlas de sprites de la GPU (sprites distintos en el último cuadro, en el atlas, tope y desalojos); null en la CPU
+  atlasStats(): AtlasStats | null;
 }
 
 export function createCompositor(canvas: HTMLCanvasElement, opts: { prefer?: 'gpu' | 'cpu' } = {}): Compositor {
@@ -70,6 +72,7 @@ class CpuPath implements Compositor {
 
   // La CPU no sube nada
   upload(_b: Baked): void { /* nada */ }
+  atlasStats(): null { return null; }
 
   // En la CPU basta con dejar el render de cada sprite en la caché de frame2d
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs = Infinity): number {
@@ -121,6 +124,7 @@ class GpuPath implements Compositor {
   get canvas(): HTMLCanvasElement { return this.cpu?.canvas ?? this.glCanvas; }
 
   upload(b: Baked): void { this.gpu?.upload(b); }
+  atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
 
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number {
     if (this.gpu) return this.gpu.prewarm(b, o, list, budgetMs);
