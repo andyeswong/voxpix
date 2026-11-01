@@ -593,6 +593,7 @@ export class WorldState {
 
   // ¿Cabe un pie en (x, y) viniendo de la altura feetZ? Sube como mucho `step`; bajar, lo que sea (sin vacío).
   // El agua más honda que `maxWater` no se puede pisar, ni lo que no se sube (materials.ts, climb: los arbustos)
+  // Copiado en línea en moveBody (runtime/body.ts) para no pedir dos veces el suelo: si cambia aquí, cambia allí
   standable(x: number, y: number, feetZ: number, step: number, maxWater = 4.5): boolean {
     const xi = Math.floor(x), yi = Math.floor(y);
     if (!this.solid.hasColumn(xi, yi)) return false;
