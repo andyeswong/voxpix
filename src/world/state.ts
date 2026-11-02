@@ -134,6 +134,17 @@ export class StaticVoxels implements VoxelSource {
     if (g.dirty[h]) this.column(g, x, y, h);
     return g.walk[h]!;
   }
+  // Donde se apoya el pie en la columna (walkAt), o NaN si no se pisa: vacía, fuera del mundo o de un material que no
+  // se sube. Es hasColumn + climbableAt + walkAt en una consulta, para moveBody, que la pide por cada celda que pisa
+  footAt(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return NaN;
+    const h = y * this.width + x;
+    if (!(this.height[h]! > this.zMin)) return NaN;
+    const g = this.foliageGrid();
+    if (!g) return this.height[h]!;
+    if (g.dirty[h]) this.column(g, x, y, h);
+    return g.noClimb[h] ? NaN : g.walk[h]!;
+  }
   // ¿Se puede pisar lo de arriba de la columna? No si es de un material que no se sube (un arbusto): la columna es
   // como una pared, a cualquier altura
   climbableAt(x: number, y: number): boolean {
@@ -593,14 +604,23 @@ export class WorldState {
 
   // ¿Cabe un pie en (x, y) viniendo de la altura feetZ? Sube como mucho `step`; bajar, lo que sea (sin vacío).
   // El agua más honda que `maxWater` no se puede pisar, ni lo que no se sube (materials.ts, climb: los arbustos)
-  // Copiado en línea en moveBody (runtime/body.ts) para no pedir dos veces el suelo: si cambia aquí, cambia allí
+  // moveBody (runtime/body.ts) hace lo mismo celda a celda con footing y waterDepthAt: si cambia aquí, cambia allí
   standable(x: number, y: number, feetZ: number, step: number, maxWater = 4.5): boolean {
     const xi = Math.floor(x), yi = Math.floor(y);
-    if (!this.solid.hasColumn(xi, yi)) return false;
-    if (!this.solid.climbableAt(xi, yi)) return false;
-    if (this.groundAt(xi, yi) - feetZ > step) return false;
-    const w = this.waterAt(xi, yi);
-    return !(w && w.depth > maxWater);
+    if (!(this.footing(xi, yi) - feetZ <= step)) return false;      // NaN: no se pisa
+    const d = this.waterDepthAt(xi, yi);
+    return !(d > 0.01 && d > maxWater);
+  }
+
+  // El suelo de la columna (xi, yi) para un pie, con los objetos despiertos, o NaN si no se pisa (StaticVoxels.footAt)
+  footing(xi: number, yi: number): number {
+    const g = this.solid.footAt(xi, yi);
+    return g === g && this.objects.awake.length ? Math.max(g, this.objects.groundAt(xi, yi)) : g;
+  }
+
+  // La profundidad del agua sin crear objeto (0 si no hay agua); waterAt la da a partir de 0,01
+  waterDepthAt(x: number, y: number): number {
+    return this.water ? this.water.depthAt(x, y) : 0;
   }
 
   // Primer vóxel sólido estático en el segmento de `from` a `to` (DDA): el punto de entrada y la normal de la cara

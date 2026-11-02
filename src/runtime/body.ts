@@ -63,18 +63,22 @@ export function restZ(world: WorldState, x: number, y: number, r: number): numbe
 export function moveBody(world: WorldState, body: Body, dx: number, dy: number, rules: MoveRules = DEFAULT_RULES): boolean {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
   let blocked = false;
-  // fits y restZ en una sola pasada por la huella: standable ya pide el suelo de cada celda y restZ lo volvía a pedir.
-  // Es standable (world/state.ts) en línea y en el mismo orden, así que da lo mismo que fits + restZ con un tercio
-  // menos de consultas (con unos 220 enemigos, moveEnemies del Brotato pasa de ~10 a ~7 ms por paso en escritorio)
+  // fits y restZ en una sola pasada por la huella, sin crear la lista de celdas: por cada celda una consulta del suelo
+  // (footing, que ya dice si se pisa) y otra del agua. Es standable (world/state.ts) celda a celda, así que da lo mismo
+  // que fits + restZ (con unos 220 enemigos esto es lo que más pesa del paso del Brotato)
   const go = (nx: number, ny: number) => {
+    const r = body.r, rr = r * r;
     let top = -Infinity;
-    for (const [cx, cy] of footprint(nx, ny, body.r)) {
-      if (!world.solid.hasColumn(cx, cy) || !world.solid.climbableAt(cx, cy)) return false;
-      const g = world.groundAt(cx + 0.5, cy + 0.5);
-      if (g - body.z > rules.step) return false;
-      const wt = world.waterAt(cx, cy);
-      if (wt && wt.depth > rules.maxWater) return false;
-      if (g > top) top = g;
+    for (let cy = Math.floor(ny - r); cy <= Math.floor(ny + r); cy++) {
+      for (let cx = Math.floor(nx - r); cx <= Math.floor(nx + r); cx++) {
+        const ex = Math.min(Math.max(nx, cx), cx + 1) - nx, ey = Math.min(Math.max(ny, cy), cy + 1) - ny;
+        if (ex * ex + ey * ey >= rr) continue;                 // la misma huella que footprint()
+        const g = world.footing(cx, cy);
+        if (!(g - body.z <= rules.step)) return false;         // NaN: no se pisa
+        const d = world.waterDepthAt(cx, cy);
+        if (d > 0.01 && d > rules.maxWater) return false;
+        if (g > top) top = g;
+      }
     }
     body.x = nx;
     body.y = ny;
