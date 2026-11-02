@@ -1,10 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { material } from '../../src/core';
-import { StaticVoxels, WorldState } from '../../src/world/state';
+import { NO_FOOT, StaticVoxels, WorldState } from '../../src/world/state';
 import { buildWorldState } from '../../src/world/build';
 import { generateLayout, floorLayout } from '../../src/worldgen';
 import { THEMES } from '../../src/samples/themes';
-import { footprint, moveBody, restZ, type Body, type MoveRules, DEFAULT_RULES } from '../../src/runtime/body';
+import { footprint, moveBody, objectAhead, restZ, type Body, type MoveRules, DEFAULT_RULES } from '../../src/runtime/body';
 
 // moveBody y standable piden el suelo con una sola consulta por celda (footing: hasColumn + climbableAt + groundAt) y
 // el agua sin crear objeto (waterDepthAt). Esto comprueba que dan lo mismo que las consultas sueltas de siempre, en
@@ -122,7 +122,7 @@ describe('la pisada en una consulta', () => {
     for (let y = -1; y <= w.depth; y++) for (let x = -1; x <= w.width; x++) {
       const ok = w.solid.hasColumn(x, y) && w.solid.climbableAt(x, y);
       const f = w.footing(x, y);
-      if (ok) expect(f).toBe(w.groundAt(x, y)); else expect(f).toBeNaN();
+      if (ok) expect(f).toBe(w.groundAt(x, y)); else expect(f).toBe(NO_FOOT);
       const g = ok ? w.groundAt(x, y) : 0;
       for (const feet of [g - 3, g - 2, g - 1, g, g + 5]) for (const maxWater of [-1, 0, 4.5]) {
         const want = refStandable(w, x, y, feet, 2, maxWater);
@@ -196,5 +196,66 @@ describe('la pisada en una consulta', () => {
     const b: Body = { x: 20.5, y: 17.61, z: 1, r: 2 };
     expect(moveBody(w, b, 0, 0.4)).toBe(true);
     expect([b.x, b.y]).toEqual([19.7, 17.61 + 0.4]);
+  });
+
+  // objectAhead recorre la huella en línea y pide el menor id de cada columna sin crear nada: lo mismo que con
+  // footprint() e inColumn(), con los objetos dormidos (en los vóxeles) y despiertos (por su huella)
+  it.each([false, true])('objectAhead da lo de siempre (despiertos: %s)', (wake) => {
+    const { state: w } = buildWorldState(floorLayout({ ...THEMES.oficina.spec, cols: 20, rows: 14 }, 3, 1).layout, { ...THEMES.oficina.look, objects: true });
+    if (wake) for (const o of [...w.objects]) w.objects.wake(o.id);
+    const ref = (b: Body, dx: number, dy: number, reach: number): number | null => {
+      const len = Math.hypot(dx, dy);
+      const tx = b.x + dx / len * reach, ty = b.y + dy / len * reach;
+      let best: number | null = null;
+      for (const [cx, cy] of footprint(tx, ty, b.r)) for (const o of w.objects.inColumn(cx, cy)) {
+        if (w.groundAt(cx + 0.5, cy + 0.5) - b.z > DEFAULT_RULES.step && (best === null || o.id < best)) best = o.id;
+      }
+      return best;
+    };
+    let found = 0, n = 0;
+    for (const o of [...w.objects]) {
+      const cx = o.awake ? o.px : o.x, cy = o.awake ? o.py : o.y;
+      for (let k = 0; k < 24; k++) {
+        const ang = (k / 24) * Math.PI * 2, dist = 3 + (k % 4) * 2;
+        const b: Body = { x: cx + 1 - Math.cos(ang) * dist, y: cy + 1 - Math.sin(ang) * dist, z: 1, r: [2, 3.5, 6][k % 3]! };
+        b.z = restZ(w, b.x, b.y, b.r);
+        if (!Number.isFinite(b.z)) continue;
+        for (const reach of [1, 2, 4]) {
+          const want = ref(b, Math.cos(ang), Math.sin(ang), reach);
+          expect(objectAhead(w, b, Math.cos(ang), Math.sin(ang), reach), `objeto ${o.id} ángulo ${k} alcance ${reach}`).toBe(want);
+          if (want !== null) found++;
+          n++;
+        }
+      }
+    }
+    expect(found, 'nunca había objeto delante: la prueba no prueba nada').toBeGreaterThan(20);
+    expect(n - found).toBeGreaterThan(20);
+  }, SLOW);
+
+  // Casos que los mundos de muestra casi no tienen: dos objetos en la misma columna (gana el menor id), uno que sube
+  // justo un escalón (no corta el paso) y un despierto encima de una columna que no se pisa (sigue sin pisarse)
+  it('objectAhead y footing en los bordes: columna con dos objetos, escalón justo, despierto sobre un hueco', () => {
+    const s = new StaticVoxels({ ramps: [{ name: 'p', colors: ['#202020', '#404040'] }] }, 40, 40, -4, 30);
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) if (x !== 30 || y !== 30) s.set(x, y, 0, material(0, 1));
+    const w = new WorldState(s, [], null);
+    const box = (x: number, y: number, z0: number, h: number, w2 = 2) => {
+      const cells: number[] = [];
+      for (let lz = 0; lz < h; lz++) for (let ly = 0; ly < w2; ly++) for (let lx = 0; lx < w2; lx++) {
+        cells.push(lx, ly, lz, material(0, 1));
+        s.set(x + lx, y + ly, z0 + lz, material(0, 1));
+      }
+      return w.objects.add({ kind: 'prop', x, y, z: z0, cells: Int32Array.from(cells), under: new Uint16Array(cells.length / 4) });
+    };
+    const low = box(15, 15, 1, 2), high = box(15, 15, 3, 2), step = box(15, 25, 1, 2), hole = box(29, 29, 1, 2, 3);
+    expect(low).toBeLessThan(high);
+    // Hacia la pila de dos: el de abajo, que tiene el menor id
+    expect(objectAhead(w, { x: 11, y: 16, z: 1, r: 2 }, 1, 0, 3)).toBe(low);
+    // Hacia la caja de 2 de alto sobre el suelo (z 1): sube justo un escalón, no corta el paso
+    expect(objectAhead(w, { x: 11, y: 26, z: 1, r: 2 }, 1, 0, 3)).toBeNull();
+    expect(objectAhead(w, { x: 11, y: 26, z: 0, r: 2 }, 1, 0, 3)).toBe(step);
+    // El hueco (30, 30) bajo una caja despierta: footing sigue diciendo que no se pisa
+    expect(w.objects.wake(hole)).toBe(true);
+    expect(w.footing(30, 30)).toBe(NO_FOOT);
+    expect(w.footing(29, 29)).toBe(w.groundAt(29, 29));
   });
 });

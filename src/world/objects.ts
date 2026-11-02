@@ -158,6 +158,15 @@ export class ObjectLayer implements Iterable<WorldObject> {
     return [...out];
   }
 
+  // El menor id de inColumn(x, y) sin crear nada (objectAhead lo pide por cada celda delante de quien empuja), o -1
+  lowestIdInColumn(x: number, y: number): number {
+    let best = -1;
+    const s = this.w.solid;
+    for (let z = s.zMin; z <= s.zMax; z++) { const o = this.at(x, y, z); if (o && (best < 0 || o.id < best)) best = o.id; }
+    for (const o of this.awakeList) if ((best < 0 || o.id < best) && this.topAt(o, x, y) !== null) best = o.id;
+    return best;
+  }
+
   // La masa y la fuerza (N) que hace falta para moverlo
   forceToMove(id: number, mu = MU): number {
     const o = this.byId.get(id);

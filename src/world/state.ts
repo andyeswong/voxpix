@@ -23,6 +23,11 @@ import { ChangeFeed, type ChangeWatch } from './changes';
 
 export const CHUNK = 16;
 
+// footAt y footing: la columna no se pisa. Un entero y no NaN: el suelo sale de una función que V8 no siempre
+// incrusta, y un double devuelto así se guarda en el montón en cada llamada (basura por celda en moveBody, FERN
+// 2026-11-02); los enteros pequeños no. Ninguna altura de vóxel llega a él
+export const NO_FOOT = -1_000_000_000;
+
 // Vóxeles estáticos en trozos: una matriz tipada por trozo con la columna entera de zMin a zMax
 export class StaticVoxels implements VoxelSource {
   readonly cols: number;
@@ -134,16 +139,16 @@ export class StaticVoxels implements VoxelSource {
     if (g.dirty[h]) this.column(g, x, y, h);
     return g.walk[h]!;
   }
-  // Donde se apoya el pie en la columna (walkAt), o NaN si no se pisa: vacía, fuera del mundo o de un material que no
-  // se sube. Es hasColumn + climbableAt + walkAt en una consulta, para moveBody, que la pide por cada celda que pisa
+  // Donde se apoya el pie en la columna (walkAt), o NO_FOOT si no se pisa: vacía, fuera del mundo o de un material que
+  // no se sube. Es hasColumn + climbableAt + walkAt en una consulta, para moveBody, que la pide por cada celda que pisa
   footAt(x: number, y: number): number {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return NaN;
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth) return NO_FOOT;
     const h = y * this.width + x;
-    if (!(this.height[h]! > this.zMin)) return NaN;
+    if (!(this.height[h]! > this.zMin)) return NO_FOOT;
     const g = this.foliageGrid();
     if (!g) return this.height[h]!;
     if (g.dirty[h]) this.column(g, x, y, h);
-    return g.noClimb[h] ? NaN : g.walk[h]!;
+    return g.noClimb[h] ? NO_FOOT : g.walk[h]!;
   }
   // ¿Se puede pisar lo de arriba de la columna? No si es de un material que no se sube (un arbusto): la columna es
   // como una pared, a cualquier altura
@@ -607,15 +612,16 @@ export class WorldState {
   // moveBody (runtime/body.ts) hace lo mismo celda a celda con footing y waterDepthAt: si cambia aquí, cambia allí
   standable(x: number, y: number, feetZ: number, step: number, maxWater = 4.5): boolean {
     const xi = Math.floor(x), yi = Math.floor(y);
-    if (!(this.footing(xi, yi) - feetZ <= step)) return false;      // NaN: no se pisa
+    const g = this.footing(xi, yi);
+    if (g === NO_FOOT || !(g - feetZ <= step)) return false;
     const d = this.waterDepthAt(xi, yi);
     return !(d > 0.01 && d > maxWater);
   }
 
-  // El suelo de la columna (xi, yi) para un pie, con los objetos despiertos, o NaN si no se pisa (StaticVoxels.footAt)
+  // El suelo de la columna (xi, yi) para un pie, con los objetos despiertos, o NO_FOOT si no se pisa (StaticVoxels.footAt)
   footing(xi: number, yi: number): number {
     const g = this.solid.footAt(xi, yi);
-    return g === g && this.objects.awake.length ? Math.max(g, this.objects.groundAt(xi, yi)) : g;
+    return g !== NO_FOOT && this.objects.awake.length ? Math.max(g, this.objects.groundAt(xi, yi)) : g;
   }
 
   // La profundidad del agua sin crear objeto (0 si no hay agua); waterAt la da a partir de 0,01

@@ -1,6 +1,6 @@
 // RUNTIME (FERN): el movimiento de un cuerpo sobre el estado del mundo. Puro y determinista: solo lee
 // las consultas del mundo (WorldQuery), sin reloj ni azar. Ejes del modelo: x este, y norte, z arriba.
-import type { WorldState } from '../world/state';
+import { NO_FOOT, type WorldState } from '../world/state';
 
 // Un cuerpo es un círculo de radio r apoyado en el suelo: (x, y) su centro y z la altura de sus pies
 export interface Body {
@@ -67,7 +67,7 @@ function step(world: WorldState, body: Body, rules: MoveRules, nx: number, ny: n
       const ex = Math.min(Math.max(nx, cx), cx + 1) - nx, ey = Math.min(Math.max(ny, cy), cy + 1) - ny;
       if (ex * ex + ey * ey >= rr) continue;                 // la misma huella que footprint()
       const g = world.footing(cx, cy);
-      if (!(g - body.z <= rules.step)) return false;         // NaN: no se pisa
+      if (g === NO_FOOT || !(g - body.z <= rules.step)) return false;
       const d = world.waterDepthAt(cx, cy);
       if (d > 0.01 && d > rules.maxWater) return false;
       if (g > top) top = g;
@@ -152,12 +152,18 @@ export function objectAhead(world: WorldState, body: Body, dx: number, dy: numbe
   const len = Math.hypot(dx, dy);
   if (!(len > 0) || !world.objects.size) return null;
   const tx = body.x + dx / len * reach, ty = body.y + dy / len * reach;
-  let best: number | null = null;
-  for (const [cx, cy] of footprint(tx, ty, body.r)) {
-    for (const o of world.objects.inColumn(cx, cy)) {
-      if (world.groundAt(cx + 0.5, cy + 0.5) - body.z <= rules.step) continue;
-      if (best === null || o.id < best) best = o.id;
+  // La huella de footprint() recorrida en línea y el menor id de cada columna, sin crear listas: lo llama cada enemigo
+  // que empuja, en cada paso
+  const r = body.r, rr = r * r;
+  let best = -1;
+  for (let cy = Math.floor(ty - r); cy <= Math.floor(ty + r); cy++) {
+    for (let cx = Math.floor(tx - r); cx <= Math.floor(tx + r); cx++) {
+      const ex = Math.min(Math.max(tx, cx), cx + 1) - tx, ey = Math.min(Math.max(ty, cy), cy + 1) - ty;
+      if (ex * ex + ey * ey >= rr) continue;
+      const id = world.objects.lowestIdInColumn(cx, cy);
+      if (id < 0 || world.groundAt(cx + 0.5, cy + 0.5) - body.z <= rules.step) continue;
+      if (best < 0 || id < best) best = id;
     }
   }
-  return best;
+  return best < 0 ? null : best;
 }
