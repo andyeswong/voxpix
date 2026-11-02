@@ -89,7 +89,31 @@ function stairs(): WorldState {
   return new WorldState(s, [], null);
 }
 
-const WORLDS: Array<[string, () => WorldState]> = [['arbustos', bushes], ['agua honda', deepWater], ['objetos despiertos', awake], ['escalones de 2', stairs]];
+// Columnas redondas de radios 2 a 5 en rejilla: contra ellas moveBody se desvía de lado (el caso que rodea la curva)
+function pillars(): WorldState {
+  const s = new StaticVoxels({ ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060'] }] }, 80, 80, -4, 30);
+  for (let y = 0; y < 80; y++) for (let x = 0; x < 80; x++) {
+    s.set(x, y, 0, material(0, 1));
+    for (let py = 10; py < 80; py += 20) for (let px = 10; px < 80; px += 20) {
+      const pr = 2 + ((px + py) / 10) % 4;
+      if (Math.hypot(x + 0.5 - px, y + 0.5 - py) < pr) for (let z = 1; z < 12; z++) s.set(x, y, z, material(0, 1));
+    }
+  }
+  return new WorldState(s, [], null);
+}
+
+// Postes de un vóxel sueltos: de frente contra uno, los dos lados del desvío pueden quedar libres, y entonces importa
+// cuál se prueba primero
+function posts(): WorldState {
+  const s = new StaticVoxels({ ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060'] }] }, 60, 60, -4, 30);
+  for (let y = 0; y < 60; y++) for (let x = 0; x < 60; x++) {
+    s.set(x, y, 0, material(0, 1));
+    if (x % 7 === 3 && y % 7 === 3) for (let z = 1; z < 12; z++) s.set(x, y, z, material(0, 1));
+  }
+  return new WorldState(s, [], null);
+}
+
+const WORLDS: Array<[string, () => WorldState]> = [['arbustos', bushes], ['agua honda', deepWater], ['objetos despiertos', awake], ['escalones de 2', stairs], ['columnas redondas', pillars], ['postes', posts]];
 
 describe('la pisada en una consulta', () => {
   it.each(WORLDS)('%s: footing y standable dan lo de las consultas sueltas en cada celda', (_name, make) => {
@@ -135,7 +159,42 @@ describe('la pisada en una consulta', () => {
       }
       walks++;
     }
+    // Hacia cada columna (si las hay) desde los cuatro lados y en diagonal, algo descentrados: el desvío de lado, con el
+    // otro eje a cero, a favor y en contra
+    for (let py = 10; py < w.depth && w.depth === 80; py += 20) for (let px = 10; px < w.width; px += 20) {
+      for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 0.3], [1, -0.3], [-0.3, 1], [0.3, -1], [0.7, 0.7]] as const) {
+        // El desvío solo sirve rozando: descentrado cerca de la suma de los radios (de frente se queda parado)
+        const pr = 2 + ((px + py) / 10) % 4;
+        for (const [f, r] of [[-1, 2], [-0.9, 3.5], [-0.75, 2], [0, 3.5], [0.75, 3.5], [0.9, 2], [1, 3.5]] as const) {
+          const off = f * (pr + r);
+          const a: Body = { x: px - ux * 12 - uy * off, y: py - uy * 12 + ux * off, z: 1, r }, b: Body = { ...a };
+          for (let i = 0; i < 40; i++) {
+            const ba = moveBody(w, a, ux * 0.8, uy * 0.8), bb = refMove(w, b, ux * 0.8, uy * 0.8);
+            expect([a.x, a.y, a.z, ba], `columna ${px},${py} dir ${ux},${uy} off ${off} paso ${i}`).toEqual([b.x, b.y, b.z, bb]);
+            if (ba) stopped++;
+          }
+          walks++;
+        }
+      }
+    }
     expect(walks).toBeGreaterThan(50);
     expect(stopped, 'ningún recorrido chocó: la prueba no mira los bordes').toBeGreaterThan(0);
   }, SLOW);
+
+  // De frente contra un poste de un vóxel, casi rozándolo: con el otro eje quieto los dos lados del desvío quedan
+  // libres, y va primero hacia el lado negativo (y 19,7 o x 19,7, no 21,3)
+  it('el desvío, con los dos lados libres, va primero hacia el negativo', () => {
+    const s = new StaticVoxels({ ramps: [{ name: 'p', colors: ['#202020', '#404040'] }] }, 40, 40, -4, 30);
+    for (let y = 0; y < 40; y++) for (let x = 0; x < 40; x++) {
+      s.set(x, y, 0, material(0, 1));
+      if (x === 20 && y === 20) for (let z = 1; z < 12; z++) s.set(x, y, z, material(0, 1));
+    }
+    const w = new WorldState(s, [], null);
+    const a: Body = { x: 17.61, y: 20.5, z: 1, r: 2 };
+    expect(moveBody(w, a, 0.4, 0)).toBe(true);
+    expect([a.x, a.y]).toEqual([17.61 + 0.4, 19.7]);
+    const b: Body = { x: 20.5, y: 17.61, z: 1, r: 2 };
+    expect(moveBody(w, b, 0, 0.4)).toBe(true);
+    expect([b.x, b.y]).toEqual([19.7, 17.61 + 0.4]);
+  });
 });

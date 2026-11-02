@@ -55,6 +55,30 @@ export function restZ(world: WorldState, x: number, y: number, r: number): numbe
   return z;
 }
 
+// Lleva el cuerpo a (nx, ny) si cabe: fits y restZ en una sola pasada por la huella, sin crear la lista de celdas. Por
+// cada celda una consulta del suelo (footing, que ya dice si se pisa) y otra del agua: es standable (world/state.ts)
+// celda a celda, así que da lo mismo que fits + restZ. Va fuera de moveBody y sin crear nada (ni una función por
+// llamada): con unos 220 enemigos es lo que más pesa del paso del Brotato, y lo que se crea ahí lo paga el GC
+function step(world: WorldState, body: Body, rules: MoveRules, nx: number, ny: number): boolean {
+  const r = body.r, rr = r * r;
+  let top = -Infinity;
+  for (let cy = Math.floor(ny - r); cy <= Math.floor(ny + r); cy++) {
+    for (let cx = Math.floor(nx - r); cx <= Math.floor(nx + r); cx++) {
+      const ex = Math.min(Math.max(nx, cx), cx + 1) - nx, ey = Math.min(Math.max(ny, cy), cy + 1) - ny;
+      if (ex * ex + ey * ey >= rr) continue;                 // la misma huella que footprint()
+      const g = world.footing(cx, cy);
+      if (!(g - body.z <= rules.step)) return false;         // NaN: no se pisa
+      const d = world.waterDepthAt(cx, cy);
+      if (d > 0.01 && d > rules.maxWater) return false;
+      if (g > top) top = g;
+    }
+  }
+  body.x = nx;
+  body.y = ny;
+  body.z = top;
+  return true;
+}
+
 // Mueve el cuerpo (dx, dy) en subpasos, cada eje por separado: si un eje choca, el otro sigue, y así resbala por
 // las paredes. Contra algo redondo (una columna) eso no basta: los dos ejes chocan con la curva y el cuerpo se queda
 // clavado. Entonces el eje que choca prueba a avanzar desviándose un poco hacia un lado (lo mismo que avanza, o el
@@ -62,51 +86,28 @@ export function restZ(world: WorldState, x: number, y: number, r: number): numbe
 // lo frenó.
 export function moveBody(world: WorldState, body: Body, dx: number, dy: number, rules: MoveRules = DEFAULT_RULES): boolean {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
+  const ddx = dx / n, ddy = dy / n;
   let blocked = false;
-  // fits y restZ en una sola pasada por la huella, sin crear la lista de celdas: por cada celda una consulta del suelo
-  // (footing, que ya dice si se pisa) y otra del agua. Es standable (world/state.ts) celda a celda, así que da lo mismo
-  // que fits + restZ (con unos 220 enemigos esto es lo que más pesa del paso del Brotato)
-  const go = (nx: number, ny: number) => {
-    const r = body.r, rr = r * r;
-    let top = -Infinity;
-    for (let cy = Math.floor(ny - r); cy <= Math.floor(ny + r); cy++) {
-      for (let cx = Math.floor(nx - r); cx <= Math.floor(nx + r); cx++) {
-        const ex = Math.min(Math.max(nx, cx), cx + 1) - nx, ey = Math.min(Math.max(ny, cy), cy + 1) - ny;
-        if (ex * ex + ey * ey >= rr) continue;                 // la misma huella que footprint()
-        const g = world.footing(cx, cy);
-        if (!(g - body.z <= rules.step)) return false;         // NaN: no se pisa
-        const d = world.waterDepthAt(cx, cy);
-        if (d > 0.01 && d > rules.maxWater) return false;
-        if (g > top) top = g;
-      }
-    }
-    body.x = nx;
-    body.y = ny;
-    body.z = top;
-    return true;
-  };
   for (let i = 0; i < n; i++) {
     let moved = false;
-    for (const axis of ['x', 'y'] as const) {
-      const d = (axis === 'x' ? dx : dy) / n;
-      if (d === 0) continue;
-      if (go(axis === 'x' ? body.x + d : body.x, axis === 'y' ? body.y + d : body.y)) { moved = true; continue; }
-      blocked = true;
-    }
+    if (ddx !== 0) { if (step(world, body, rules, body.x + ddx, body.y)) moved = true; else blocked = true; }
+    if (ddy !== 0) { if (step(world, body, rules, body.x, body.y + ddy)) moved = true; else blocked = true; }
     if (moved) continue;
-    // Ningún eje avanzó: desvío. Se prueba el avance entero con un paso de lado, hacia fuera de lo que choca.
-    deflect: for (const axis of ['x', 'y'] as const) {
-      const d = (axis === 'x' ? dx : dy) / n;
-      if (d === 0) continue;
-      const other = axis === 'x' ? dy : dx;
-      const signs = other > 0 ? [-1, 1] : other < 0 ? [1, -1] : [-1, 1];
-      for (const k of [1, 2]) for (const s of signs) {
-        const side = s * k * Math.abs(d);
-        if (go(axis === 'x' ? body.x + d : body.x + side, axis === 'y' ? body.y + d : body.y + side)) break deflect;
-      }
-    }
+    // Ningún eje avanzó: desvío. Se prueba el avance entero con un paso de lado, hacia fuera de lo que choca: el eje x
+    // y luego el y, 1 y luego 2 veces lo que avanza, primero hacia donde no empuja el otro eje
+    if (ddx !== 0 && deflect(world, body, rules, ddx, dy, true)) continue;
+    if (ddy !== 0) deflect(world, body, rules, ddy, dx, false);
   }
   return blocked;
+}
+
+function deflect(world: WorldState, body: Body, rules: MoveRules, d: number, other: number, alongX: boolean): boolean {
+  const first = other > 0 ? -1 : other < 0 ? 1 : -1;
+  for (let k = 1; k <= 2; k++) for (let t = 0; t < 2; t++) {
+    const side = (t ? -first : first) * k * Math.abs(d);
+    if (step(world, body, rules, alongX ? body.x + d : body.x + side, alongX ? body.y + side : body.y + d)) return true;
+  }
+  return false;
 }
 
 // Un dash: avanza `dist` en la dirección (dx, dy) en línea recta, de una vez (llamarlo en el tick de la simulación).
