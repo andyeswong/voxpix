@@ -357,8 +357,15 @@ export class ObjectLayer implements Iterable<WorldObject> {
 
   // La altura de la cara de arriba de los despiertos en la columna (x, y), o -Infinity: para groundAt
   groundAt(x: number, y: number): number {
-    let g = -Infinity;
-    for (const o of this.awakeList) { const t = this.topAt(o, x, y); if (t !== null) g = Math.max(g, t); }
+    return this.topOver(x, y, -Infinity);
+  }
+
+  // La cara de arriba más alta de los despiertos en la columna (x, y), o `floor` si ninguno pasa de ahí: el suelo con
+  // los despiertos sin Math.max ni -Infinity, para que con `floor` entero todo sea entero (footing lo pide por celda en
+  // moveBody, y un double devuelto se guarda en el montón cuando V8 no incrusta la llamada)
+  topOver(x: number, y: number, floor: number): number {
+    let g = floor;
+    for (const o of this.awakeList) { const t = this.topAt(o, x, y); if (t !== null && t > g) g = t; }
     return g;
   }
 

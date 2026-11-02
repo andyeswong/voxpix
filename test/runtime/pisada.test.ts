@@ -196,6 +196,10 @@ describe('la pisada en una consulta', () => {
     const b: Body = { x: 20.5, y: 17.61, z: 1, r: 2 };
     expect(moveBody(w, b, 0, 0.4)).toBe(true);
     expect([b.x, b.y]).toEqual([19.7, 17.61 + 0.4]);
+    // Bajando en y (y el x quieto): también primero hacia el negativo, el lado no depende de hacia dónde va el eje
+    const c: Body = { x: 20.5, y: 23.39, z: 1, r: 2 };
+    expect(moveBody(w, c, 0, -0.4)).toBe(true);
+    expect([c.x, c.y]).toEqual([19.7, 23.39 - 0.4]);
   });
 
   // objectAhead recorre la huella en línea y pide el menor id de cada columna sin crear nada: lo mismo que con
@@ -247,12 +251,14 @@ describe('la pisada en una consulta', () => {
       return w.objects.add({ kind: 'prop', x, y, z: z0, cells: Int32Array.from(cells), under: new Uint16Array(cells.length / 4) });
     };
     const low = box(15, 15, 1, 2), high = box(15, 15, 3, 2), step = box(15, 25, 1, 2), hole = box(29, 29, 1, 2, 3);
+    const thin = box(15, 35, 1, 3, 1);                     // de un vóxel de ancho: su columna y la de al lado difieren
     expect(low).toBeLessThan(high);
     // Hacia la pila de dos: el de abajo, que tiene el menor id
     expect(objectAhead(w, { x: 11, y: 16, z: 1, r: 2 }, 1, 0, 3)).toBe(low);
     // Hacia la caja de 2 de alto sobre el suelo (z 1): sube justo un escalón, no corta el paso
     expect(objectAhead(w, { x: 11, y: 26, z: 1, r: 2 }, 1, 0, 3)).toBeNull();
     expect(objectAhead(w, { x: 11, y: 26, z: 0, r: 2 }, 1, 0, 3)).toBe(step);
+    expect(objectAhead(w, { x: 12, y: 35.5, z: 1, r: 2 }, 1, 0, 2)).toBe(thin);
     // El hueco (30, 30) bajo una caja despierta: footing sigue diciendo que no se pisa
     expect(w.objects.wake(hole)).toBe(true);
     expect(w.footing(30, 30)).toBe(NO_FOOT);

@@ -596,7 +596,7 @@ export class WorldState {
   groundAt(x: number, y: number): number {
     const g = this.solid.walkAt(Math.floor(x), Math.floor(y));
     // Los objetos despiertos (objects.ts) no están en los vóxeles: su huella cuenta aparte
-    return this.objects.awake.length ? Math.max(g, this.objects.groundAt(Math.floor(x), Math.floor(y))) : g;
+    return this.objects.awake.length ? this.objects.topOver(Math.floor(x), Math.floor(y), g) : g;
   }
 
   // Agua en la columna: profundidad y altura de la superficie (null si está seca)
@@ -621,7 +621,7 @@ export class WorldState {
   // El suelo de la columna (xi, yi) para un pie, con los objetos despiertos, o NO_FOOT si no se pisa (StaticVoxels.footAt)
   footing(xi: number, yi: number): number {
     const g = this.solid.footAt(xi, yi);
-    return g !== NO_FOOT && this.objects.awake.length ? Math.max(g, this.objects.groundAt(xi, yi)) : g;
+    return g !== NO_FOOT && this.objects.awake.length ? this.objects.topOver(xi, yi, g) : g;
   }
 
   // La profundidad del agua sin crear objeto (0 si no hay agua); waterAt la da a partir de 0,01

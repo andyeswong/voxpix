@@ -55,11 +55,17 @@ export function restZ(world: WorldState, x: number, y: number, r: number): numbe
   return z;
 }
 
-// Lleva el cuerpo a (nx, ny) si cabe: fits y restZ en una sola pasada por la huella, sin crear la lista de celdas. Por
-// cada celda una consulta del suelo (footing, que ya dice si se pisa) y otra del agua: es standable (world/state.ts)
-// celda a celda, así que da lo mismo que fits + restZ. Va fuera de moveBody y sin crear nada (ni una función por
-// llamada): con unos 220 enemigos es lo que más pesa del paso del Brotato, y lo que se crea ahí lo paga el GC
-function step(world: WorldState, body: Body, rules: MoveRules, nx: number, ny: number): boolean {
+// Los doubles que moveBody pasa a step y deflect, en un búfer en vez de como argumentos: en el navegador V8 no siempre
+// las incrusta, y un double pasado o devuelto así se guarda en el montón en cada llamada (FERN, muestreo del Brotato,
+// 2026-11-02). [0, 1] el destino de step; [2] lo que avanza el eje que se desvía
+const MOVE = new Float64Array(3);
+
+// Lleva el cuerpo a (MOVE[0], MOVE[1]) si cabe: fits y restZ en una sola pasada por la huella, sin crear la lista de
+// celdas. Por cada celda una consulta del suelo (footing, que ya dice si se pisa) y otra del agua: es standable
+// (world/state.ts) celda a celda, así que da lo mismo que fits + restZ. Con unos 220 enemigos es lo que más pesa del
+// paso del Brotato, y lo que se crea aquí lo paga el GC: no crea nada
+function step(world: WorldState, body: Body, rules: MoveRules): boolean {
+  const nx = MOVE[0]!, ny = MOVE[1]!;
   const r = body.r, rr = r * r;
   let top = -Infinity;
   for (let cy = Math.floor(ny - r); cy <= Math.floor(ny + r); cy++) {
@@ -87,25 +93,29 @@ function step(world: WorldState, body: Body, rules: MoveRules, nx: number, ny: n
 export function moveBody(world: WorldState, body: Body, dx: number, dy: number, rules: MoveRules = DEFAULT_RULES): boolean {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
   const ddx = dx / n, ddy = dy / n;
+  // Hacia qué lado se desvía primero cada eje: hacia donde no empuja el otro
+  const firstX = dy > 0 ? -1 : dy < 0 ? 1 : -1, firstY = dx > 0 ? -1 : dx < 0 ? 1 : -1;
   let blocked = false;
   for (let i = 0; i < n; i++) {
     let moved = false;
-    if (ddx !== 0) { if (step(world, body, rules, body.x + ddx, body.y)) moved = true; else blocked = true; }
-    if (ddy !== 0) { if (step(world, body, rules, body.x, body.y + ddy)) moved = true; else blocked = true; }
+    if (ddx !== 0) { MOVE[0] = body.x + ddx; MOVE[1] = body.y; if (step(world, body, rules)) moved = true; else blocked = true; }
+    if (ddy !== 0) { MOVE[0] = body.x; MOVE[1] = body.y + ddy; if (step(world, body, rules)) moved = true; else blocked = true; }
     if (moved) continue;
     // Ningún eje avanzó: desvío. Se prueba el avance entero con un paso de lado, hacia fuera de lo que choca: el eje x
     // y luego el y, 1 y luego 2 veces lo que avanza, primero hacia donde no empuja el otro eje
-    if (ddx !== 0 && deflect(world, body, rules, ddx, dy, true)) continue;
-    if (ddy !== 0) deflect(world, body, rules, ddy, dx, false);
+    if (ddx !== 0) { MOVE[2] = ddx; if (deflect(world, body, rules, firstX, true)) continue; }
+    if (ddy !== 0) { MOVE[2] = ddy; deflect(world, body, rules, firstY, false); }
   }
   return blocked;
 }
 
-function deflect(world: WorldState, body: Body, rules: MoveRules, d: number, other: number, alongX: boolean): boolean {
-  const first = other > 0 ? -1 : other < 0 ? 1 : -1;
+function deflect(world: WorldState, body: Body, rules: MoveRules, first: number, alongX: boolean): boolean {
+  const d = MOVE[2]!;
   for (let k = 1; k <= 2; k++) for (let t = 0; t < 2; t++) {
     const side = (t ? -first : first) * k * Math.abs(d);
-    if (step(world, body, rules, alongX ? body.x + d : body.x + side, alongX ? body.y + side : body.y + d)) return true;
+    MOVE[0] = alongX ? body.x + d : body.x + side;
+    MOVE[1] = alongX ? body.y + side : body.y + d;
+    if (step(world, body, rules)) return true;
   }
   return false;
 }
@@ -161,7 +171,7 @@ export function objectAhead(world: WorldState, body: Body, dx: number, dy: numbe
       const ex = Math.min(Math.max(tx, cx), cx + 1) - tx, ey = Math.min(Math.max(ty, cy), cy + 1) - ty;
       if (ex * ex + ey * ey >= rr) continue;
       const id = world.objects.lowestIdInColumn(cx, cy);
-      if (id < 0 || world.groundAt(cx + 0.5, cy + 0.5) - body.z <= rules.step) continue;
+      if (id < 0 || world.groundAt(cx, cy) - body.z <= rules.step) continue;   // celda entera: groundAt redondea igual, sin pasar un double
       if (best < 0 || id < best) best = id;
     }
   }
