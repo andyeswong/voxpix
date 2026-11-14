@@ -96,6 +96,17 @@ describe('lo cercano primero', () => {
     expect(frames(near, 'luz')).toBe(1);                          // los 3 que le faltan, el cuadro siguiente
   });
 
+  it('un trabajo que espera a otro de detrás no lo bloquea, aunque el reloj avance un poco en cada llamada', () => {
+    let clock = 0, done = false;
+    const q = new FrameBudget(3, () => (clock += 0.001));         // un reloj fino: cada consulta avanza algo
+    q.push({ key: 'espera', priority: 0, run: () => done });      // espera a "trabajo", que va detrás
+    q.push({ key: 'trabajo', priority: 1, run: () => { done = true; return true; } });
+    q.run();
+    expect(done).toBe(true);
+    q.run();
+    expect(q.pending).toBe(0);
+  });
+
   it('rebakeChangedJobs con near: el recuadro del cambio cercano antes que el lejano', () => {
     const st = world();
     const b = bakeWorld({ model: st.solid, lights: [], width: 64, depth: 64 }, { topZ: 31, incline: 0.5 });

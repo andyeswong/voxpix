@@ -266,7 +266,7 @@ export class WorldView implements RenderState {
         const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
         for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {
           const [vx, vy] = cam.cellToView(x, y);
-          const cz = this.cutTopAt(x, y);
+          const cz = this.appliedAt(x, y);
           for (let z = src.zMin; z <= src.zMax; z++) this.static.set(vx, vy, z, z >= cz ? 0 : src.get(x, y, z));
           touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
         }
@@ -298,44 +298,75 @@ export class WorldView implements RenderState {
   }
 
   // ---- el corte
-  private cut: ViewCut | null = null;
+  private cut: ViewCut | null = null;            // el que se quiere
+  private applied: Float32Array | null = null;   // por columna del mundo, desde qué z está cortada en la copia (Infinity: nada)
+  private pending: { x0: number; y0: number; x1: number; y1: number } | null = null;   // lo que falta por repasar
+  private cursor = 0;                            // por dónde va el repaso (índice dentro de pending)
   get currentCut(): ViewCut | null { return this.cut ? { ...this.cut } : null; }
-  // Desde qué z se esconde la columna (x, y) del mundo (Infinity: nada)
+  // Desde qué z se quiere esconder la columna (x, y) del mundo (Infinity: nada)
   private cutTopAt(x: number, y: number): number {
     const c = this.cut;
     return c && x >= c.x0 && x <= c.x1 && y >= c.y0 && y <= c.y1 ? c.zTop : Infinity;
   }
+  // Desde qué z está escondida ya en la copia
+  private appliedAt(x: number, y: number): number {
+    return this.applied ? this.applied[y * this.state.solid.width + x]! : Infinity;
+  }
 
-  // Pone, mueve o quita (null) el corte: en la copia de la vista, las columnas de la caja pierden lo que tienen de zTop
-  // para arriba, y las que salen de la caja lo recuperan del mundo. Solo se reescriben las columnas que cambian (las
-  // franjas que entran y salen al mover la caja, o todas si cambia zTop), así que rebakeChangedJobs rehace solo eso.
-  // La vista tiene que tener copia (new WorldView(state, q, { cut: true }), o estar girada o vestida). Devuelve cuántas
-  // columnas se reescribieron
+  // Pone, mueve o quita (null) el corte DE UNA VEZ: en la copia de la vista, las columnas de la caja pierden lo que
+  // tienen de zTop para arriba, y las que salen de la caja lo recuperan del mundo. Solo se reescriben las columnas cuyo
+  // corte cambia (las franjas que entran y salen al mover la caja, o todas si cambia zTop), así que rebakeChangedJobs
+  // rehace solo eso. Para no parar el cuadro, cutJob. La vista tiene que tener copia (new WorldView(state, q,
+  // { cut: true }), o estar girada o vestida). Devuelve cuántas columnas se reescribieron
   setCut(cut: ViewCut | null): number {
+    this.want(cut);
+    return this.applyCut(Infinity).columns;
+  }
+
+  // Lo mismo como un trabajo de la cola (FrameBudget): reescribe columnas hasta el plazo de cada cuadro, y lo que va
+  // cambiando lo recoge rebakeChangedJobs. Si llega otro corte antes de acabar, el trabajo nuevo (misma key) sigue
+  // desde donde está: el resultado es el mismo que con setCut
+  cutJob(cut: ViewCut | null): ViewJob {
+    this.want(cut);
+    return { key: 'view-cut', priority: 0, run: (deadline: number) => this.applyCut(deadline).done };
+  }
+
+  private want(cut: ViewCut | null): void {
     if (!this.copied) throw new Error('para cortar, la vista necesita su copia de los vóxeles: new WorldView(state, giro, { cut: true })');
     this.refresh();
-    const old = this.cut, src = this.state.solid, cam = this.camera;
-    const norm = cut ? { x0: Math.max(0, Math.min(cut.x0, cut.x1)), y0: Math.max(0, Math.min(cut.y0, cut.y1)), x1: Math.min(src.width - 1, Math.max(cut.x0, cut.x1)), y1: Math.min(src.depth - 1, Math.max(cut.y0, cut.y1)), zTop: cut.zTop } : null;
-    this.cut = norm;
-    let n = 0;
+    const src = this.state.solid, old = this.cut;
+    this.cut = cut ? { x0: Math.max(0, Math.min(cut.x0, cut.x1)), y0: Math.max(0, Math.min(cut.y0, cut.y1)), x1: Math.min(src.width - 1, Math.max(cut.x0, cut.x1)), y1: Math.min(src.depth - 1, Math.max(cut.y0, cut.y1)), zTop: cut.zTop } : null;
+    // Lo que hay que repasar: lo pendiente, la caja vieja y la nueva
+    for (const b of [old, this.cut]) if (b) {
+      const p = this.pending;
+      this.pending = p ? { x0: Math.min(p.x0, b.x0), y0: Math.min(p.y0, b.y0), x1: Math.max(p.x1, b.x1), y1: Math.max(p.y1, b.y1) } : { x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1 };
+    }
+    this.cursor = 0;
+    if (this.cut && !this.applied) this.applied = new Float32Array(src.width * src.depth).fill(Infinity);
+  }
+
+  // Repasa columnas de lo pendiente hasta el plazo (una por lo menos): reescribe las que no tienen el corte que toca
+  private applyCut(deadline: number): { done: boolean; columns: number } {
+    const p = this.pending;
+    if (!p) return { done: true, columns: 0 };
+    const src = this.state.solid, cam = this.camera, w = p.x1 - p.x0 + 1, n = w * (p.y1 - p.y0 + 1);
+    let cols = 0;
     const touched = new Set<number>();
-    const redo = (x: number, y: number) => {
-      const was = old && x >= old.x0 && x <= old.x1 && y >= old.y0 && y <= old.y1 ? old.zTop : Infinity;
-      const now = this.cutTopAt(x, y);
-      if (was === now) return;
+    while (this.cursor < n) {
+      const x = p.x0 + (this.cursor % w), y = p.y0 + Math.floor(this.cursor / w);
+      this.cursor++;
+      const was = this.appliedAt(x, y), now = this.cutTopAt(x, y);
+      if (was === now) continue;
       const [vx, vy] = cam.cellToView(x, y);
       for (let z = Math.max(src.zMin, Math.min(was, now)); z <= src.zMax; z++) this.static.set(vx, vy, z, z >= now ? 0 : src.get(x, y, z));
+      if (this.applied) this.applied[y * src.width + x] = now;
       touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
-      n++;
-    };
-    // Las columnas de la caja que envuelve la vieja y la nueva (redo no hace nada donde no cambia)
-    const bs = [old, norm].filter((b): b is ViewCut => !!b);
-    if (bs.length) {
-      const X0 = Math.min(...bs.map((b) => b.x0)), X1 = Math.max(...bs.map((b) => b.x1)), Y0 = Math.min(...bs.map((b) => b.y0)), Y1 = Math.max(...bs.map((b) => b.y1));
-      for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) redo(x, y);
+      cols++;
+      if ((cols & 15) === 0 && performance.now() >= deadline) break;
     }
     if (touched.size && this.dress) this.dress(this, [...touched]);
-    return n;
+    if (this.cursor >= n) { this.pending = null; this.cursor = 0; return { done: true, columns: cols }; }
+    return { done: false, columns: cols };
   }
 
   // Una caja del mundo (x0, y0, z0, x1, y1, z1, celdas incluidas) en ejes de esta vista: para Frame2DOptions.highlight

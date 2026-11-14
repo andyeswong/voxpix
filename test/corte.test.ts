@@ -82,3 +82,20 @@ describe('corte de vista', () => {
     expect(v.setCut({ x0: 11, y0: 10, x1: 42, y1: 41, zTop: 30 })).toBe(0);
   });
 });
+
+describe('corte incremental (cutJob)', () => {
+  it('a trozos, y con otro corte a mitad, acaba igual que hornear sin esos vóxeles; el horneado se va poniendo al día', () => {
+    const st = world();
+    const view = new WorldView(st, 1, { cut: true });
+    const b = bakeWorld(view.bakeable(), OPTS);
+    const c1 = { x0: 16, y0: 12, x1: 47, y1: 35, zTop: 32 }, c2 = { x0: 26, y0: 12, x1: 57, y1: 35, zTop: 26 };
+    let job = view.cutJob(c1), calls = 0;
+    while (calls < 3 && !job.run(-1)) { rebakeChanged(b, view.frame().lights); calls++; }   // plazo vencido: 16 columnas por llamada
+    job = view.cutJob(c2);                                       // otro corte antes de acabar
+    while (!job.run(-1)) { rebakeChanged(b, view.frame().lights); calls++; }
+    rebakeChanged(b, view.frame().lights);
+    expect(calls).toBeGreaterThan(10);
+    same(b, reference(1, c2));
+    expect(job.key).toBe('view-cut');
+  });
+});

@@ -60,9 +60,8 @@ export class FrameBudget {
       while (i < this.queue.length && this.now() < nd) {
         const job = this.queue[i]!;
         if (job.priority === undefined || !(job.priority < nr.below)) break;
-        const t = this.now();
         if (job.run(nd)) this.queue.splice(i, 1);
-        else if (this.now() === t) i++;
+        else i++;
       }
       if (!this.queue.length) return this.now() - start;
     }
@@ -74,14 +73,15 @@ export class FrameBudget {
       deadline = start2;         // una porción mínima: el primer trabajo hace una unidad y para
     }
     this.starved = 0;
-    // En orden; un trabajo que no puede avanzar todavía (no acaba ni gasta tiempo: p. ej. una luz que espera a que
-    // se publique su recuadro, que va detrás en la cola) se salta en este cuadro y se sigue con el siguiente
+    // En orden. Un trabajo que no acaba se deja para el cuadro siguiente y se sigue con el de detrás: o se le acabó el
+    // plazo (y entonces este bucle para), o no puede avanzar todavía (una luz que espera a que se publique su
+    // recuadro, que va detrás en la cola). Antes se distinguía mirando si el reloj había avanzado, y con un reloj fino
+    // una espera de nada lo mueve: la cola se quedaba reintentando la espera hasta el plazo y lo de detrás no corría
     let i = 0;
     do {
       const job = this.queue[i]!;
-      const t = this.now();
       if (job.run(deadline)) this.queue.splice(i, 1);
-      else if (this.now() === t) i++;
+      else i++;
     } while (i < this.queue.length && this.now() < deadline);
     return this.now() - start;
   }

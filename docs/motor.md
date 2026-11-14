@@ -520,10 +520,22 @@ view.setCut(null);                                          // al salir
 - El resultado es el mismo, byte a byte, que hornear un mundo al que le faltan esos vóxeles (hay prueba en los 4
   giros, con una luz fija dentro de la zona cortada).
 - Mover la caja solo reescribe las columnas que entran y salen; cambiar `zTop`, todas las de la caja.
-- Coste (sin freno, terreno de 384 x 384 x 96 con 30 antorchas, caja de 64 x 64): poner o quitar el corte cuesta
-  ~5 ms de escribir y ~50-80 ms de rehorneado (que reparte la cola); moverlo un vóxel, ~0,5 ms y ~10 ms; bajarlo 8,
-  ~5 ms y ~50 ms. Es caro: lo que cambia es mucho (todo lo que se destapa y la sombra de todo lo que se quita). Para un
-  juego, mejor una caja pequeña que se mueva a saltos (de 16 en 16) que una grande que siga al jugador vóxel a vóxel.
+- `view.setCut(corte)` lo aplica de una vez. Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
+  (`FrameBudget`, prioridad 0: va con el presupuesto cercano) que reescribe columnas hasta el plazo; lo que va
+  cambiando lo recoge `rebakeChangedJobs` cada cuadro. Si llega otro corte antes de acabar, sigue desde donde está y
+  acaba igual que `setCut` (hay prueba).
+- El coste depende de cuánto se quita, no solo de la caja: lo que se destapa se rehornea, y la sombra de lo quitado
+  cambia para todas las luces cercanas. Medido sin freno (terreno de bloques de 384 x 384 x 96 con 30 antorchas y cielo,
+  `FrameBudget(3, ..., { ms: 8, below: 64 })` con los presupuestos divididos por 6,7, que es lo que sube todo con la CPU
+  frenada a 6x), con un corte hondo (de 12 vóxeles sobre el suelo, quitando hasta 60 por columna):
+
+  | Caja | Poner: aparece / acaba | Mover 16: aparece / acaba | Quitar: aparece / acaba | Cuadro más largo |
+  |---|---|---|---|---|
+  | 32 x 32 | ~35 / ~135 cuadros | ~25 / ~75 | ~20 / ~70 | ~3-6 ms (~20-38 a 6x) |
+
+  ("Aparece": el corte y sus recuadros hechos; "acaba": también las luces y el cielo.) La unidad que no se puede
+  partir es una franja del recuadro, y en un corte hondo cuesta ~1,7-2,5 ms sin freno. Para un juego: caja pequeña,
+  movida a saltos, y `zTop` lo más alto que se pueda (justo por encima de la cabeza del jugador).
 
 ## La silueta de lo que queda detrás
 

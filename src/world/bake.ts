@@ -12,6 +12,10 @@ import type { Box3 } from './changes';
 import type { WorldLight } from './build';
 import type { LightId } from './state';
 
+// Lo que lleva un trabajo de luz: las cajas cambiadas, los píxeles que cambiaron de cara (de cada rehorneado que se
+// le sumó) y a qué recuadros espera
+export interface LightWork { plans: Plan[]; pixels: Array<() => Int32Array>; waits: Array<() => boolean>; started: boolean }
+
 export interface BakedLight {
   light: WorldLight;
   color: readonly [number, number, number];
@@ -47,6 +51,14 @@ export interface Baked {
   // Las fijas nuevas que se están horneando (rebakeJobs): no se vuelven a pedir, y si se quitan antes de acabar, su
   // trabajo no las publica
   pendingLights?: Set<LightId>;
+  // Por luz, el trabajo parcial que está en la cola y aún no ha empezado: los cambios nuevos se le suman (no se crea
+  // otro, ni se sustituye: uno sustituido perdería los cambios que llevaba)
+  lightWork?: Map<LightId, LightWork>;
+  // Las fijas que ya no están (quitadas): un trabajo suyo que quede en la cola no las vuelve a publicar
+  goneLights?: Set<LightId>;
+  // Los recuadros en marcha, por key (con la ficha del último trabajo que la usa: uno nuevo con la misma key sustituye
+  // al viejo en la cola). Las luces y el cielo esperan a que no quede en marcha ninguno de los suyos
+  rectsBusy?: Map<string, object>;
   // Con { sky: true }: cuánto cielo ve la cara de cada píxel, de 0 a SKY_RAYS (los rayos que llegan arriba). Al
   // componer, con Frame2DOptions.cave, la luz ambiente va de la de cueva (0) a la de siempre (todo el cielo)
   sky?: Uint8Array;
@@ -527,7 +539,7 @@ function rectBuffers(r: ScreenRect): RectBuffers {
   return { rgba: new Uint8ClampedArray(w * h * 4), depth: new Float32Array(w * h), face: new Int8Array(w * h), pick: new Float64Array(w * h), w, h };
 }
 
-interface Plan { X0: number; Y0: number; X1: number; Y1: number; Z0: number; Z1: number }
+export interface Plan { X0: number; Y0: number; X1: number; Y1: number; Z0: number; Z1: number }
 function chunkRect(b: Baked, chunks: readonly number[], boxes?: ReadonlyMap<number, Box3>): { rect: ScreenRect; plan: Plan } {
   const s = b.source;
   // La caja de lo cambiado: la de cada trozo si se sabe (changedBox), si no el trozo entero con toda su altura
@@ -632,6 +644,7 @@ const PUBLISHED_KEEP = 32;
 export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number }
 
 const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
+let lightSerial = 0;      // para que cada trabajo parcial de luz tenga su key (la cola no los sustituye entre sí)
 const LIGHT_CELLS = 32;   // píxeles de una zona de luz por paso
 const LIGHT_OWN = 16;     // píxeles cambiados por paso (cada uno, su rayo de sombra)
 
@@ -642,7 +655,9 @@ const LIGHT_OWN = 16;     // píxeles cambiados por paso (cada uno, su rayo de s
 export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>): ViewJob[] {
   const fixed = new Map<LightId, WorldLight>();
   for (const l of lights) if (l.baked !== false) fixed.set(l.id, l);
-  for (let i = b.lights.length - 1; i >= 0; i--) if (!fixed.has(b.lights[i]!.light.id)) b.lights.splice(i, 1);
+  const gone = (b.goneLights ??= new Set());
+  for (let i = b.lights.length - 1; i >= 0; i--) if (!fixed.has(b.lights[i]!.light.id)) { gone.add(b.lights[i]!.light.id); b.lightWork?.delete(b.lights[i]!.light.id); b.lights.splice(i, 1); }
+  for (const id of fixed.keys()) gone.delete(id);
   const pend = (b.pendingLights ??= new Set());
   for (const id of [...pend]) if (!fixed.has(id)) pend.delete(id);
   const added = [...fixed.values()].filter((l) => !pend.has(l.id) && !b.lights.some((bl) => bl.light.id === l.id));
@@ -663,14 +678,17 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     }
     return (changed = Int32Array.from(new Set(out)));
   };
-  let pending = 0;
+  const busy = (b.rectsBusy ??= new Map()), myKeys: string[] = [];
+  // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
+  const waiting = () => myKeys.some((k) => busy.has(k));
   for (const g of chunkGroups(b, chunks)) {
     const { rect, plan } = chunkRect(b, g, boxes);
     plans.push(plan); rects.push(rect);
-    pending++;
+    const key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`, token = {};
+    busy.set(key, token); myKeys.push(key);
     let buf: RectBuffers | null = null, col = rect.x0, est = 0;
     jobs.push({
-      key: `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`,
+      key,
       run(deadline) {
         if (col > rect.x1) return true;
         buf ??= rectBuffers(rect);
@@ -689,7 +707,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         publishRect(b, rect, buf, mask);
         masks.set(rect, mask);
         buf = null;
-        pending--;
+        if (busy.get(key) === token) busy.delete(key);
         return true;
       },
     });
@@ -704,14 +722,23 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     }
     const r = resolveLight(l, 0).radius;
     if (!plans.some((p) => !(l.x + r < p.X0 || l.x - r > p.X1 + 1 || l.y + r < p.Y0 || l.y - r > p.Y1 + 1))) continue;
+    // Si ya hay un trabajo de esta luz esperando en la cola, se le suma esto y no se crea otro
+    const works = (b.lightWork ??= new Map());
+    const queued = works.get(l.id);
+    if (queued && !queued.started) { queued.plans.push(...plans); queued.pixels.push(changedPixels); queued.waits.push(waiting); continue; }
+    const work: LightWork = { plans: [...plans], pixels: [changedPixels], waits: [waiting], started: false };
+    works.set(l.id, work);
     let zone: BakedLight | null | undefined, only: CellFilter | undefined;
     // Lo que hay que rehacer de la zona, en recuadros de la zona [i0, i1) x [j0, j1), y por dónde va
     let spans: Array<[number, number, number, number]> = [], si = 0, row = 0, col = -1, own: number[] = [], oi = 0, staged: Staged | undefined, wctx: WeightCtx | undefined;
     jobs.push({
-      key: `light:${l.id}`,
+      key: `light:${l.id}#${++lightSerial}`,
       run(deadline) {
-        if (pending > 0) return false;                     // espera a los recuadros
+        if (work.waits.some((w) => w())) return false;     // espera a los recuadros (de todos los rehorneados que lleva)
         if (zone === undefined) {
+          work.started = true;
+          if (b.lightWork?.get(l.id) === work) b.lightWork.delete(l.id);
+          const plans = work.plans;
           const prev = b.lights.find((bl) => bl.light.id === l.id);
           // Con la misma luz, los pesos se rehacen sobre los de antes (en un objeto nuevo, para que quien guarda una
           // copia, como la GPU, sepa que cambió)
@@ -725,10 +752,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             staged = { i: [], v: [] };
             const zr = zone.rect, out: Array<[number, number, number, number]> = [];
             // Los píxeles que cambiaron de vóxel o de cara, dentro de la zona: se rehacen todos, primero
-            const cp = changedPixels(), list: number[] = [];
-            for (let q = 0; q < cp.length; q++) {
-              const g = cp[q]!, gx = g % b.width, gy = (g - gx) / b.width;
-              if (gx >= zr.x && gy >= zr.y && gx < zr.x + zr.w && gy < zr.y + zr.h) list.push((gy - zr.y) * zr.w + gx - zr.x);
+            const list: number[] = [], seen = new Set<number>();
+            for (const src of work.pixels) {
+              const cp = src();
+              for (let q = 0; q < cp.length; q++) {
+                const g = cp[q]!, gx = g % b.width, gy = (g - gx) / b.width;
+                if (seen.has(g) || !(gx >= zr.x && gy >= zr.y && gx < zr.x + zr.w && gy < zr.y + zr.h)) continue;
+                seen.add(g); list.push((gy - zr.y) * zr.w + gx - zr.x);
+              }
             }
             own = list;
             const add = (x0: number, y0: number, x1: number, y1: number) => {
@@ -776,6 +807,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         // Los pesos rehechos se ponen ahora, de una vez (la zona es la misma memoria que la publicada)
         if (zone && staged) for (let q = 0; q < staged.i.length; q++) zone.weight[staged.i[q]!] = staged.v[q]!;
         b.pendingLights?.delete(l.id);
+        if (b.goneLights?.has(l.id)) return true;          // se quitó mientras: no se publica
         const i = b.lights.findIndex((bl) => bl.light.id === l.id);
         if (i >= 0) { if (zone) b.lights[i] = zone; else b.lights.splice(i, 1); } else if (zone) b.lights.push(zone);
         return true;
@@ -790,7 +822,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
       run(deadline) {
-        if (pending > 0) return false;
+        if (waiting()) return false;
         do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
         if (row <= r.y1) return false;
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
@@ -802,7 +834,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     });
   }
   // Las fijas nuevas que no alcanzan lo cambiado
-  for (const l of added) if (!jobs.some((j) => j.key === `light:${l.id}`)) jobs.push(lightJob(b, l));
+  for (const l of added) if (!jobs.some((j) => j.key.startsWith(`light:${l.id}#`))) jobs.push(lightJob(b, l));
   return jobs;
 }
 
@@ -847,10 +879,12 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
   const byId = new Map<string, WorldLight>(lights.map((l) => [`light:${l.id}`, l]));
   return jobs.map((j) => {
     let p = 0;
-    const m = j.key.match(/^rect:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/);
-    if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
+    const m = j.key.match(/^rect:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/), sk = j.key.match(/^sky:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/);
+    // El cielo, como las luces: detrás de los recuadros y sin contar como cercano
+    if (sk) p = LIGHT_PRIORITY + Math.hypot(Math.max(0, +sk[1]! - px, px - +sk[3]!), Math.max(0, +sk[2]! - py, py - +sk[4]!));
+    else if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
     else {
-      const l = byId.get(j.key);
+      const l = byId.get(j.key.split('#')[0]!);
       if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = LIGHT_PRIORITY + Math.hypot(lx - px, ly - py); }
     }
     return { key: j.key, priority: p, run: (d: number) => j.run(d) };
