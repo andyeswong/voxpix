@@ -354,6 +354,37 @@ const look: WorldLook = {
 - **Lo demás** (vegetación, cables, adornos) va en `decorate(world)`, antes de crear el agua y el estado. Para algo que
   se cruce y no deje pasar la luz (cables, alfombras), una rampa con `material: 'atravesable'`.
 
+## El ciclo del día
+
+La luz ambiente (y, si se quiere, el fondo) a lo largo del día, por claves. La hora sale del tick de la simulación:
+la misma en cualquier máquina y en una partida repetida.
+
+```ts
+import { DayCycle } from '@voxpix/lighting';
+
+const day = new DayCycle({
+  ticksPerDay: 36000,                                   // 10 minutos a 60 ticks por segundo
+  start: 0.3,                                           // la hora en el tick 0 (0 = medianoche, 0,5 = mediodía)
+  keys: [
+    { at: 0,    ambient: [0.06, 0.08, 0.18], background: [8, 10, 28] },
+    { at: 0.25, ambient: [0.55, 0.45, 0.4] },
+    { at: 0.5,  ambient: [1, 1, 1],          background: [120, 170, 230] },
+    { at: 0.75, ambient: [0.6, 0.4, 0.35] },
+  ],
+});
+// Cada cuadro
+compositor.frame(rs, baked, { ...opciones, ambient: day.ambient(state.tick), background: day.background(state.tick) ?? undefined });
+if (day.isNight(state.tick)) { /* lo que el juego haga de noche */ }
+```
+
+- Entre claves interpola suave (coseno; `smooth: false`, recto), y de la última a la primera da la vuelta a
+  medianoche. `background` solo cuenta en las claves que lo dicen.
+- `phase(tick)` es la hora (0..1), `day(tick)` el número de día e `isNight(tick, umbral)` si la luz ambiente media
+  baja del umbral (0,25).
+- La luz ambiente se aplica en cada cuadro, sin rehornear: cambiarla no cuesta nada. Las antorchas y demás luces se
+  suman encima, así que de noche se ven más.
+- Lo que pasa de noche (qué sale, qué se enciende) es del juego.
+
 ## Agua y eventos
 
 El agua es un fluido por columnas con ondas, reflejos y gotas. Dentro del tick se le habla con eventos:
