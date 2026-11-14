@@ -154,4 +154,45 @@ describe('presupuesto de la vista por cuadro', () => {
     b.run();
     expect(b.expected('light:9#9')).toBe(2);
   });
+  it('contrato: con franjas de 4 ms y plazo cercano de 8, ningún run() pasa de near.ms + ms, y acaba igual que sin plazo', () => {
+    // Trabajos como los de verdad: hacen unidades mientras quepa la siguiente según lo que tardó la anterior (la primera
+    // siempre), y cada unidad escribe su parte del resultado. Recuadros cercanos de franjas de 4 ms, luces y cielo de
+    // lo demás de 1 y 2 ms, que llegan a tandas mientras la cola trabaja
+    let t = 0;
+    const out = new Map<string, number[]>();
+    const make = (key: string, units: number, cost: number, priority: number): ViewJob => {
+      let done = 0;
+      return {
+        key, priority,
+        run(deadline) {
+          let est = 0;
+          do { t += cost; est = cost; (out.get(key) ?? out.set(key, []).get(key)!).push(done++); } while (done < units && t + est < deadline);
+          return done >= units;
+        },
+      };
+    };
+    const batches = (n: number) => Array.from({ length: n }, (_, k) => [
+      make(`rect:${k},0`, 5, 4, k), make(`rect:${k},1`, 3, 4, 20 + k),
+      make(`light:${k}#${k}`, 6, 1, 10000 + k), make(`sky:${k},0`, 3, 2, 10100 + k),
+    ]);
+    // La cola tiene que conocer ya cada clase: la primera llamada de una clase que nunca ha corrido no tiene estimación
+    // (cuenta 0) y puede pasarse de su fase una unidad. Una tanda de calentamiento, aparte
+    const q = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    for (const j of batches(1)[0]!) q.push({ ...j, key: j.key.replace(/^(\w+)[:#]/, '$1:calentar,'), run: (d) => j.run(d) });
+    while (q.pending) q.run();
+    out.clear();
+    // Con plazo: una tanda cada 3 cuadros
+    const plan = batches(8), runs: number[] = [];
+    for (let f = 0; f < 400 && (q.pending || plan.length); f++) {
+      if (f % 3 === 0 && plan.length) for (const j of plan.shift()!) q.push(j);
+      runs.push(q.run());
+    }
+    expect(q.pending).toBe(0);
+    expect(Math.max(...runs)).toBeLessThanOrEqual(8 + 3);
+    const withBudget = new Map(out);
+    // Sin plazo: los mismos trabajos de una vez
+    out.clear();
+    for (const j of batches(8).flat()) while (!j.run(Infinity));
+    expect(withBudget).toEqual(out);
+  });
 });
