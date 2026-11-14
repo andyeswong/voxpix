@@ -88,6 +88,13 @@ describe('exposedEntries', () => {
     for (const [x, y, z] of all) if (D.some(([a, b, c]) => !s.get(x + a!, y + b!, z + c!))) expect(inExp.has(k(x, y, z))).toBe(true);
     const pos = new Map(all.map(([x, y, z], i) => [k(x, y, z), i]));
     for (let i = 1; i < exp.length; i++) expect(pos.get(k(exp[i]![0], exp[i]![1], exp[i]![2]))! > pos.get(k(exp[i - 1]![0], exp[i - 1]![1], exp[i - 1]![2]))!).toBe(true);
+    // forEachExposed da lo mismo que exposedEntries, y con un rango de z, lo mismo filtrado
+    const seen: number[][] = [];
+    s.forEachExposed((x, y, z, v) => seen.push([x, y, z, v]));
+    expect(seen).toEqual(exp);
+    const band: number[][] = [];
+    s.forEachExposed((x, y, z, v) => band.push([x, y, z, v]), { x0: 3, y0: 5, x1: 30, y1: 40, z0: 14, z1: 33 });
+    expect(band).toEqual(exp.filter(([x, y, z]) => x! >= 3 && x! <= 30 && y! >= 5 && y! <= 40 && z! >= 14 && z! <= 33));
     const plain: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries() };
     for (const opt of [{ yaw: 0 }, { yaw: 37, smooth: 0.6, outline: 'both' as const }]) {
       const o = { width: 160, height: 140, originX: 40, originY: 110, oblique: { y: 0.5, z: 1 }, pivot: [0, 0, 0] as [number, number, number], ao: true, pick: true, ...opt };

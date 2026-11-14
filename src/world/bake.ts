@@ -219,7 +219,7 @@ function lightWeights(b: Baked, l: WorldLight): BakedLight | null {
   return rows;
 }
 
-function lightZone(b: Baked, l: WorldLight): BakedLight | null {
+function lightZone(b: Baked, l: WorldLight, weight?: Float32Array): BakedLight | null {
   const p = resolveLight(l, 0);
   const r = p.radius;
   // Zona de la imagen: la proyección de la caja que rodea la esfera de la luz
@@ -231,7 +231,7 @@ function lightZone(b: Baked, l: WorldLight): BakedLight | null {
   const rx = Math.max(0, Math.floor(x0)), ry = Math.max(0, Math.floor(y0));
   const rect = { x: rx, y: ry, w: Math.min(b.width, Math.ceil(x1)) - rx, h: Math.min(b.height, Math.ceil(y1)) - ry };
   if (rect.w <= 0 || rect.h <= 0) return null;
-  return { light: l, color: p.color, intensity: p.base, rect, weight: new Float32Array(rect.w * rect.h) };
+  return { light: l, color: p.color, intensity: p.base, rect, weight: weight && weight.length === rect.w * rect.h ? weight : new Float32Array(rect.w * rect.h) };
 }
 
 // Calcula las filas [j0, j1) de los pesos de una zona (escribe en zone.weight). La caché por cara solo vale dentro de
@@ -251,11 +251,20 @@ function sameLight(a: WorldLight, b: WorldLight): boolean {
 // Los píxeles cuyo peso de la luz l puede haber cambiado: los de los recuadros rehechos (otro vóxel u otra cara) y los
 // que miran a la luz por un segmento que cruza lo cambiado (el rayo de sombra, de transmit). Las cajas llevan ya el
 // margen del rehorneado; aquí, 1 vóxel más para las celdas que el rayo pisa de lado
-function touchedBy(l: WorldLight, plans: readonly Plan[], rects: readonly ScreenRect[]): CellFilter {
+function touchedBy(l: WorldLight, plans: readonly Plan[], rects: readonly ScreenRect[], masks: ReadonlyMap<ScreenRect, Uint8Array>): CellFilter {
   return (px, py, k, f) => {
-    for (const r of rects) if (px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1) return true;
+    // En un recuadro rehecho, los píxeles donde cambió el vóxel o la cara (sin máscara, todos)
+    for (const r of rects) if (px >= r.x0 && px <= r.x1 && py >= r.y0 && py <= r.y1) {
+      const m = masks.get(r);
+      if (!m || m[(py - r.y0) * (r.x1 - r.x0 + 1) + (px - r.x0)]) return true;
+    }
     if (Number.isNaN(k)) return false;
     const [vx, vy, vz] = unkey(k);
+    // El vóxel mismo dentro de lo cambiado (pudo cambiar su material: cuánta luz recibe por detrás)
+    for (let q = 0; q < plans.length; q++) {
+      const p = plans[q]!;
+      if (vx >= p.X0 && vx <= p.X1 && vy >= p.Y0 && vy <= p.Y1 && vz >= p.Z0 && vz <= p.Z1) return true;
+    }
     const n = DIR_VECTORS[f]!;
     const ox = vx + 0.5 + n[0], oy = vy + 0.5 + n[1], oz = vz + 0.5 + n[2];
     for (let q = 0; q < plans.length; q++) {
@@ -264,6 +273,37 @@ function touchedBy(l: WorldLight, plans: readonly Plan[], rects: readonly Screen
     }
     return false;
   };
+}
+
+// El recuadro de pantalla donde puede caer la sombra de la caja p vista desde la luz l (de radio r): la caja y sus
+// esquinas alargadas desde la luz hasta donde la luz ya no llega. 'all' si la luz está casi dentro de la caja (la sombra
+// abre demasiado); null si la caja queda fuera de su alcance
+function shadowRect(b: Baked, l: WorldLight, r: number, p: Plan): ScreenRect | 'all' | null {
+  const x0 = p.X0 - 1, y0 = p.Y0 - 1, z0 = p.Z0 - 1, x1 = p.X1 + 2, y1 = p.Y1 + 2, z1 = p.Z1 + 2;
+  const cx = (x0 + x1) / 2 - l.x, cy = (y0 + y1) / 2 - l.y, cz = (z0 + z1) / 2 - l.z, cl = Math.hypot(cx, cy, cz);
+  const hx = (x1 - x0) / 2, hy = (y1 - y0) / 2, hz = (z1 - z0) / 2;
+  if (cl - Math.hypot(hx, hy, hz) > r) return null;
+  if (cl < 1e-6) return 'all';
+  // Lo más que se abren las esquinas respecto al centro: la sombra hasta r cabe en las esquinas alargadas hasta r / cos
+  let cosMin = 1;
+  const corners: Array<[number, number, number]> = [];
+  for (let c = 0; c < 8; c++) {
+    const ex = (c & 1 ? x1 : x0) - l.x, ey = (c & 2 ? y1 : y0) - l.y, ez = (c & 4 ? z1 : z0) - l.z, el = Math.hypot(ex, ey, ez);
+    if (el < 1e-6) return 'all';
+    cosMin = Math.min(cosMin, (ex * cx + ey * cy + ez * cz) / (el * cl));
+    corners.push([ex, ey, ez]);
+  }
+  if (cosMin < 0.35) return 'all';
+  const far = r / cosMin;
+  let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+  for (const [ex, ey, ez] of corners) {
+    const el = Math.hypot(ex, ey, ez), k = Math.max(1, far / el);
+    for (const t of [1, k]) {
+      const [sx, sy] = b.cam.project(l.x + ex * t, l.y + ey * t, l.z + ez * t);
+      sx0 = Math.min(sx0, sx); sx1 = Math.max(sx1, sx); sy0 = Math.min(sy0, sy); sy1 = Math.max(sy1, sy);
+    }
+  }
+  return { x0: sx0 - 2, y0: sy0 - 2, x1: sx1 + 2, y1: sy1 + 2 };
 }
 
 // ¿Corta el segmento a -> b la caja [x0, x1] x [y0, y1] x [z0, z1]? (por franjas, sin crear nada)
@@ -416,7 +456,15 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
   yLo = Math.max(yLo, Math.floor((O - R1 - 1 - top) / a) - 1);
   const region = { x0: C0 - 1, y0: yLo, x1: C1, y1: yHi };
   const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
-  const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), exposedEntries: () => s.exposedEntries(region) };
+  // Por bandas de 16 filas de y (un trozo), con la franja de alturas que puede caer en las filas R0..R1 (la cara de
+  // arriba del vóxel (y, z) va de la fila O - a*(y+1) - (z+1) a la O - a*y - z): el mismo orden que de una vez
+  const banded = (fn: (x: number, y: number, z: number, v: number) => void) => {
+    for (let y0 = region.y0; y0 <= region.y1; y0 = (y0 | 15) + 1) {
+      const y1 = Math.min(region.y1, y0 | 15);
+      s.forEachExposed(fn, { x0: region.x0, x1: region.x1, y0, y1, z0: Math.floor(O - R1 - a * (y1 + 1)) - 2, z1: Math.ceil(O - R0 - a * y0) + 1 });
+    }
+  };
+  const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });
   for (let j = 0; j < buf.h; j++) for (let i = 0; i < w; i++) {
     const src = (j + 1) * W + i + (c0 - C0), dst = j * buf.w + (c0 - r.x0) + i;
@@ -425,9 +473,11 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
   }
 }
 
-function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers): void {
+// changed (opcional, buf.w x buf.h): se marca 1 donde cambió qué vóxel o qué cara se ve
+function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8Array): void {
   for (let j = 0; j < buf.h; j++) for (let i = 0; i < buf.w; i++) {
     const src = j * buf.w + i, dst = (r.y0 + j) * b.width + r.x0 + i;
+    if (changed && (b.face[dst] !== buf.face[src] || !Object.is(b.pick[dst], buf.pick[src]))) changed[src] = 1;
     b.depth[dst] = buf.depth[src]!; b.face[dst] = buf.face[src]!; b.pick[dst] = buf.pick[src]!;
     for (let ch = 0; ch < 4; ch++) b.rgba[dst * 4 + ch] = buf.rgba[src * 4 + ch]!;
   }
@@ -451,7 +501,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   if (!chunks.length) return [];
   const jobs: ViewJob[] = [];
   // 1) un recuadro por grupo de trozos, por franjas de columnas (los búferes se piden al empezar, no aquí)
-  const plans: Plan[] = [], rects: ScreenRect[] = [];
+  const plans: Plan[] = [], rects: ScreenRect[] = [], masks = new Map<ScreenRect, Uint8Array>();
   let pending = 0;
   for (const g of chunkGroups(b, chunks)) {
     const { rect, plan } = chunkRect(b, g, boxes);
@@ -469,7 +519,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           col = c1 + 1;
         } while (col <= rect.x1 && performance.now() < deadline);
         if (col <= rect.x1) return false;
-        publishRect(b, rect, buf);
+        const mask = new Uint8Array(buf.w * buf.h);
+        publishRect(b, rect, buf, mask);
+        masks.set(rect, mask);
         buf = null;
         pending--;
         return true;
@@ -486,27 +538,50 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     }
     const r = resolveLight(l, 0).radius;
     if (!plans.some((p) => !(l.x + r < p.X0 || l.x - r > p.X1 + 1 || l.y + r < p.Y0 || l.y - r > p.Y1 + 1))) continue;
-    let zone: BakedLight | null | undefined, row = 0, only: CellFilter | undefined;
+    let zone: BakedLight | null | undefined, only: CellFilter | undefined;
+    // Lo que hay que rehacer de la zona, en recuadros de la zona [i0, i1) x [j0, j1), y por dónde va
+    let spans: Array<[number, number, number, number]> = [], si = 0, row = 0;
     jobs.push({
       key: `light:${l.id}`,
       run(deadline) {
         if (pending > 0) return false;                     // espera a los recuadros
         if (zone === undefined) {
-          zone = lightZone(b, l);
-          // Si la luz ya estaba horneada con la misma zona, solo cambian los píxeles de los recuadros rehechos y los
-          // que miran a la luz a través de lo cambiado: se parte de sus pesos y se rehacen esos
           const prev = b.lights.find((bl) => bl.light.id === l.id);
-          if (zone && prev && sameLight(prev.light, l) && prev.rect.x === zone.rect.x && prev.rect.y === zone.rect.y && prev.rect.w === zone.rect.w && prev.rect.h === zone.rect.h) {
-            zone.weight.set(prev.weight);
-            only = touchedBy(l, plans, rects);
+          // Con la misma luz, los pesos se rehacen sobre los de antes (en un objeto nuevo, para que quien guarda una
+          // copia, como la GPU, sepa que cambió)
+          zone = lightZone(b, l, prev && sameLight(prev.light, l) ? prev.weight : undefined);
+          if (zone) spans = [[0, zone.rect.w, 0, zone.rect.h]];
+          // Si la luz ya estaba horneada con la misma zona, solo cambian los píxeles de los recuadros rehechos y los
+          // que miran a la luz a través de lo cambiado: se parte de sus pesos y se rehacen esos, mirando solo los
+          // recuadros rehechos y la sombra de cada caja en pantalla
+          if (zone && prev && zone.weight === prev.weight && prev.rect.x === zone.rect.x && prev.rect.y === zone.rect.y) {
+            only = touchedBy(l, plans, rects, masks);
+            const zr = zone.rect, out: Array<[number, number, number, number]> = [];
+            const add = (x0: number, y0: number, x1: number, y1: number) => {
+              const i0 = Math.max(0, Math.floor(x0) - zr.x), i1 = Math.min(zr.w, Math.ceil(x1) + 1 - zr.x);
+              const j0 = Math.max(0, Math.floor(y0) - zr.y), j1 = Math.min(zr.h, Math.ceil(y1) + 1 - zr.y);
+              if (i0 < i1 && j0 < j1) out.push([i0, i1, j0, j1]);
+            };
+            for (const rc of rects) add(rc.x0, rc.y0, rc.x1, rc.y1);
+            let whole = false;
+            for (const p of plans) {
+              const sh = shadowRect(b, l, r, p);
+              if (sh === 'all') { whole = true; break; }
+              if (sh) add(sh.x0, sh.y0, sh.x1, sh.y1);
+            }
+            if (!whole) spans = out;
           }
         }
-        if (zone) do {
-          const r1 = Math.min(zone.rect.h, row + LIGHT_BAND);
-          weightCells(b, zone, row * zone.rect.w, r1 * zone.rect.w, only);
+        if (zone) while (si < spans.length) {
+          const [i0, i1, j0, j1] = spans[si]!;
+          if (row < j0) row = j0;
+          const r1 = Math.min(j1, row + LIGHT_BAND);
+          for (let j = row; j < r1; j++) weightCells(b, zone, j * zone.rect.w + i0, j * zone.rect.w + i1, only);
           row = r1;
-        } while (row < zone.rect.h && performance.now() < deadline);
-        if (zone && row < zone.rect.h) return false;
+          if (row >= j1) { si++; row = 0; }
+          if (performance.now() >= deadline) break;
+        }
+        if (zone && si < spans.length) return false;
         const i = b.lights.findIndex((bl) => bl.light.id === l.id);
         if (i >= 0) { if (zone) b.lights[i] = zone; else b.lights.splice(i, 1); } else if (zone) b.lights.push(zone);
         return true;

@@ -20,9 +20,9 @@ export interface VoxelSource {
   readonly palette: Palette;
   get(x: number, y: number, z: number): number;
   entries(): Iterable<[number, number, number, number]>;
-  // Opcional: los llenos sin los enterrados (los de 6 vecinos llenos, que no tienen cara a la vista), en el orden de
-  // entries. Si está, el render la usa en vez de entries: mismos píxeles, menos vóxeles que recorrer
-  exposedEntries?(): Iterable<[number, number, number, number]>;
+  // Opcional: llama a fn con los llenos sin los enterrados (los de 6 vecinos llenos, que no tienen cara a la vista), en
+  // el orden de entries. Si está, el render la usa en vez de entries: mismos píxeles, menos vóxeles y sin generador
+  forEachExposed?(fn: (x: number, y: number, z: number, v: number) => void): void;
 }
 
 export interface Bounds { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number }

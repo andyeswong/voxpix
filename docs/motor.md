@@ -95,8 +95,9 @@ ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un 
 
 - `exposedEntries(región)`: como `entries`, pero sin los vóxeles enterrados (los que tienen sus 6 vecinos llenos y
   no enseñan ninguna cara). Se saltan losas enteras; lo que da es un superconjunto de lo que tiene alguna cara al
-  aire, en el mismo orden. El render (`render`, y el horneado con él) la usa si la fuente la tiene
-  (`VoxelSource.exposedEntries`, opcional): los mismos píxeles, recorriendo mucho menos.
+  aire, en el mismo orden. `forEachExposed(fn, región)` es lo mismo sin generador, y la región puede limitar también
+  la altura (`z0..z1`). El render (`render`, y el horneado con él) la usa si la fuente la tiene
+  (`VoxelSource.forEachExposed`, opcional): los mismos píxeles, recorriendo mucho menos.
 - `changedBox(trozo, versión)`: la caja (x, y, z, extremos incluidos) de lo que cambió en ese trozo después de la
   versión, o `null`. Puede ser más grande que lo cambiado, nunca más pequeña. `cut()` cierra los tramos abiertos:
   quien acaba de leer las cajas (el horneado lo hace solo) corta, y lo que cambie después tiene su caja aparte.
@@ -109,16 +110,25 @@ normal suavizada), no el trozo con toda su altura. Quitar o poner vóxeles solo 
 ellos, así que el resultado es el mismo, byte a byte, que hornear el mundo entero (hay pruebas, también con
 contorno). Las sombras de las luces fijas leen los vóxeles directamente: `baked.occ` ya no se usa y va vacío.
 
-- Las luces fijas que alcanzan lo cambiado no se rehacen enteras: se parte de sus pesos y se recalculan solo los
-  píxeles de los recuadros rehechos y los que miran a la luz por un segmento que cruza la caja cambiada (su sombra
-  puede haber cambiado). Si la luz es otra (otro sitio, intensidad, color, radio), se rehace entera.
+- Las luces fijas que alcanzan lo cambiado no se rehacen enteras: sobre sus mismos pesos (en un objeto nuevo, para que
+  la GPU sepa que cambiaron) se recalculan solo los píxeles donde cambió el vóxel o la cara que se ve, los de vóxeles
+  dentro de la caja, y los que miran a la luz por un segmento que cruza la caja (su sombra puede haber cambiado); estos
+  se buscan solo en el recuadro de pantalla de la sombra de la caja vista desde la luz. Si la luz es otra (otro sitio,
+  intensidad, color, radio), se rehace entera.
 - El render salta los vóxeles cuyo cubo cae entero fuera de la imagen sin mirar sus caras: una franja estrecha de un
   mundo grande recorre muchos así.
 
-Medido en un portátil con GPU dedicada, sin freno de CPU, con `bun scripts/bench-picar.ts`: en un mundo de 768 x 768
-x 192 lleno hasta la mitad, con 4 antorchas fijas junto a lo picado, el horneado entero tarda ~1,6 s y picar un bloque
-de 8 x 8 x 8 cuesta ~20 ms en total (p95 ~25 ms), en pasos de menos de 5 ms que la cola (`FrameBudget`) reparte entre
-cuadros.
+Medido en un portátil con GPU dedicada, sin navegador ni freno de CPU, con `bun scripts/bench-picar.ts <lado> <alto>
+<antorchas>` (terreno de bloques de 8 a media altura, antorchas fijas en la cuarta parte central, se pica un bloque
+de arriba junto a una):
+
+| Mundo | Vóxeles | Horneado entero | Picar un bloque: total p50 / p95 | Paso más largo |
+|---|---|---|---|---|
+| 384 x 384 x 96, 30 antorchas | 6 MB | ~0,7 s | ~7-9 / ~9-12 ms | ~1,5 ms |
+| 768 x 768 x 192, 30 antorchas | 23 MB | ~2,0 s | ~6 / ~11 ms | ~3 ms |
+
+Los pasos los reparte la cola (`FrameBudget`) entre cuadros. Con el navegador y la CPU frenada, todo sube varias veces:
+la medida que vale para un juego es la suya.
 
 ## Entidades
 

@@ -180,13 +180,15 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
     const ox = (c & 1 ? ax : 0) + (c & 2 ? bx : 0) + (c & 4 ? cx : 0), oy = (c & 1 ? ay : 0) + (c & 2 ? by : 0) + (c & 4 ? cy : 0);
     lox = Math.min(lox, ox); hix = Math.max(hix, ox); loy = Math.min(loy, oy); hiy = Math.max(hiy, oy);
   }
-  for (const [x, y, z, v] of (model.exposedEntries ? model.exposedEntries() : model.entries())) {
+  // Las caras que miran a la cámara (las de espaldas no se pintan nunca): se mira antes que el vecino
+  const front: number[] = [];
+  for (let f = 0; f < 6; f++) if (dot(DIRS[f]!, viewM) < -1e-9) front.push(f);
+  const visit = (x: number, y: number, z: number, v: number): void => {
     const sx = P0[0] + x * ax + y * bx + z * cx, sy = P0[1] + x * ay + y * by + z * cy;
-    if (sx + hix < -1 || sx + lox > W + 1 || sy + hiy < -1 || sy + loy > H + 1) continue;
-    for (let f = 0; f < 6; f++) {
-      const d = DIRS[f]!;
+    if (sx + hix < -1 || sx + lox > W + 1 || sy + hiy < -1 || sy + loy > H + 1) return;
+    for (let q = 0; q < front.length; q++) {
+      const f = front[q]!, d = DIRS[f]!;
       if (filled(x + d[0], y + d[1], z + d[2])) continue;
-      if (dot(d, viewM) >= -1e-9) continue;          // cara de espaldas a la cámara
 
       const shade = toneFor(x, y, z, f, v);
       const pts = FACE_CORNERS[f]!.map(([cx, cy, cz]) => project(x + cx, y + cy, z + cz));
@@ -194,7 +196,9 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
       raster(pts[0]!, pts[1]!, pts[2]!, shade, k, f);
       raster(pts[0]!, pts[2]!, pts[3]!, shade, k, f);
     }
-  }
+  };
+  if (model.forEachExposed) model.forEachExposed(visit);
+  else for (const [x, y, z, v] of model.entries()) visit(x, y, z, v);
 
   function toneFor(x: number, y: number, z: number, f: number, v: number): number {
     if (o.flat) { const { ramp, tone } = decode(v); return ramp * 16 + tone; }

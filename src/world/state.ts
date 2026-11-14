@@ -36,7 +36,7 @@ export const NO_FOOT = -1_000_000_000;
 //   - 2 bytes por vóxel si tiene más.
 // get/set/entries no cambian por fuera, ni el orden de entries (trozo, z, y, x), ni exportChunks (la columna entera
 // de siempre, así la instantánea y la huella son las mismas byte a byte).
-export const SLAB = 16;
+export const SLAB = 16;           // get usa desplazamientos de 4 bits: CHUNK y SLAB tienen que ser 16
 const SEGS = 4;
 const SLAB_CELLS = CHUNK * CHUNK * SLAB;
 
@@ -96,11 +96,12 @@ export class StaticVoxels implements VoxelSource {
   // (sin crear nada: el render la llama para cada vecino de cada vóxel)
   get(x: number, y: number, z: number): number {
     if (x < 0 || y < 0 || x >= this.width || y >= this.depth || z < this.zMin || z > this.zMax) return 0;
+    // CHUNK y SLAB son 16: desplazamientos en vez de divisiones (es la función más llamada del motor)
     const zz = z - this.zMin;
-    const si = (((y / CHUNK) | 0) * this.cols + ((x / CHUNK) | 0)) * this.nz + ((zz / SLAB) | 0);
+    const si = ((y >> 4) * this.cols + (x >> 4)) * this.nz + (zz >> 4);
     const d = this.data[si];
     if (!d) return this.uni[si]!;
-    const i = ((zz % SLAB) * CHUNK + (y % CHUNK)) * CHUNK + (x % CHUNK);
+    const i = ((zz & 15) << 8) | ((y & 15) << 4) | (x & 15);
     const p = this.pal[si];
     return p ? p[d[i]!]! : d[i]!;
   }
@@ -387,6 +388,46 @@ export class StaticVoxels implements VoxelSource {
   // vóxeles con alguna cara al aire, en el mismo orden que entries: el render da los mismos píxeles con las dos.
   *exposedEntries(region?: { x0: number; y0: number; x1: number; y1: number }): Generator<[number, number, number, number]> {
     yield* this.walk(region, true);
+  }
+
+  // exposedEntries sin generador: llama a fn con cada uno, en el mismo orden (es lo que usa el render). La región puede
+  // limitar también la altura (z0..z1, extremos incluidos)
+  forEachExposed(fn: (x: number, y: number, z: number, v: number) => void, region?: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }): void {
+    const r = region ?? { x0: 0, y0: 0, x1: this.width - 1, y1: this.depth - 1 };
+    const rz0 = Math.max(this.zMin, r.z0 ?? this.zMin), rz1 = Math.min(this.zMax, r.z1 ?? this.zMax);
+    if (rz0 > rz1) return;
+    const s0 = (rz0 - this.zMin) >> 4, s1 = (rz1 - this.zMin) >> 4;
+    const CC = CHUNK * CHUNK;
+    for (let cy = Math.max(0, Math.floor(r.y0 / CHUNK)); cy <= Math.min(this.rows - 1, Math.floor(r.y1 / CHUNK)); cy++)
+      for (let cx = Math.max(0, Math.floor(r.x0 / CHUNK)); cx <= Math.min(this.cols - 1, Math.floor(r.x1 / CHUNK)); cx++) {
+        const lx0 = Math.max(0, r.x0 - cx * CHUNK), lx1 = Math.min(CHUNK - 1, r.x1 - cx * CHUNK);
+        const ly0 = Math.max(0, r.y0 - cy * CHUNK), ly1 = Math.min(CHUNK - 1, r.y1 - cy * CHUNK);
+        const c = cy * this.cols + cx;
+        for (let s = s0; s <= s1; s++) {
+          const si = c * this.nz + s, d = this.data[si], p = this.pal[si], u = this.uni[si]!;
+          if (!d && !u) continue;
+          const hs = Math.min(SLAB, this.zh - s * SLAB), z0 = s * SLAB + this.zMin, X = cx * CHUNK, Y = cy * CHUNK;
+          const lzA = Math.max(0, rz0 - z0), lzB = Math.min(hs - 1, rz1 - z0);
+          let open = -1;
+          if (this.count[si] === this.cap(s)) {
+            open = (this.full(cx - 1, cy, s) ? 0 : 1) | (this.full(cx + 1, cy, s) ? 0 : 2) | (this.full(cx, cy - 1, s) ? 0 : 4) |
+              (this.full(cx, cy + 1, s) ? 0 : 8) | (this.full(cx, cy, s - 1) ? 0 : 16) | (this.full(cx, cy, s + 1) ? 0 : 32);
+            if (!open) continue;
+          }
+          for (let lz = lzA; lz <= lzB; lz++) {
+            const zEdge = open >= 0 && ((lz === 0 && open & 16) || (lz === hs - 1 && open & 32));
+            for (let ly = ly0; ly <= ly1; ly++) {
+              const yEdge = zEdge || (open >= 0 && ((ly === 0 && open & 4) || (ly === CHUNK - 1 && open & 8)));
+              const row = lz * CC + ly * CHUNK;
+              for (let lx = lx0; lx <= lx1; lx++) {
+                if (open >= 0 && !yEdge && !((lx === 0 && open & 1) || (lx === CHUNK - 1 && open & 2))) continue;
+                const v = d ? (p ? p[d[row + lx]!]! : d[row + lx]!) : u;
+                if (v) fn(X + lx, Y + ly, z0 + lz, v);
+              }
+            }
+          }
+        }
+      }
   }
 
   private full(cx: number, cy: number, s: number): boolean {
