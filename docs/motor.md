@@ -71,13 +71,54 @@ requestAnimationFrame(loop);
 | `world/build` | `buildWorldState(layout, look, { decorate })`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. El aspecto (`WorldLook`) lo da quien construye; ver "El aspecto del mundo". |
 | `samples` | Contenido de MUESTRA para la demo y las pruebas: tres temas (`oficina`, `medieval`, `cyberpunk`, en `samples/themes`), escenas y paletas. El motor no lo importa: cópialo o haz el tuyo. |
 | `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas, los efectos y su huella (`hash`, `snapshot`, `restore`). |
-| `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo lo que cambió. Ojo: `baked.rgba` es la imagen SIN luz; la luz horneada está en `baked.lights[].weight` (un peso por píxel de su zona) y se suma al componer cada cuadro. Para comprobar un cambio de luz, mira los pesos o el cuadro compuesto, no `rgba`. |
+| `world/bake` | `bakeWorld`: lo estático pintado una vez, con la luz de las fuentes fijas. `rebakeChangedJobs` rehornea solo la caja de lo que cambió (ver "Rehornear lo que cambió"). Ojo: `baked.rgba` es la imagen SIN luz; la luz horneada está en `baked.lights[].weight` (un peso por píxel de su zona) y se suma al componer cada cuadro. Para comprobar un cambio de luz, mira los pesos o el cuadro compuesto, no `rgba`. |
 | `view/compositor` | `createCompositor(canvas)`: compone cada cuadro (escenario, entidades con su luz por cara y sus sombras, agua, gotas). GPU con WebGL2 o CPU de reserva con el mismo resultado. Si la GPU pierde el contexto, sigue la CPU. |
 | `world/frame3d` | El modo vóxel: el mismo estado visto en 3D. |
 | `runtime/runtime`, `runtime/body` | El tick determinista (entrada -> cuerpos con colisión -> eventos -> mundo), `FixedLoop` para pasar de tiempo real a ticks fijos y `Runtime`, un personaje controlable con su luz de mano. |
 | `view/budget` | `FrameBudget`: el trabajo de la vista que no cabe en un cuadro (rehornear trozos) se reparte entre cuadros. |
 | `anim/walk`, `anim/rig` | Los cuadros de andar de un personaje (`walkFrames`) y la animación genérica por partes de cuerpos de varias patas (`rigFrames`). |
 | `fluid` | El fluido en volumen del editor (verter y grifos). |
+
+## Los vóxeles del mundo: memoria y cambios
+
+`StaticVoxels` guarda el mundo en trozos de 16 x 16 columnas, cada uno con toda la altura (`zMin..zMax`). El trozo
+es la unidad de las versiones (`changedSince`), de `watchChanges` y del rehorneado. Por dentro, cada trozo se parte
+en **losas** de 16 x 16 x 16 (`SLAB`), y cada losa ocupa solo lo que necesita:
+
+- nada, si es toda aire o toda del mismo valor (la roca maciza de un terreno);
+- 1 byte por vóxel, con su propia paleta, mientras tenga como mucho 256 valores distintos;
+- 2 bytes por vóxel si tiene más.
+
+`get`, `set`, `entries` (en su orden de siempre: trozo, z, y, x) y `exportChunks` (la columna entera de cada trozo,
+así que la instantánea y la huella no cambian) son los de antes. Un mundo de 768 x 768 x 192 lleno hasta la mitad
+ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un solo valor (`byteLength` lo dice).
+
+- `exposedEntries(región)`: como `entries`, pero sin los vóxeles enterrados (los que tienen sus 6 vecinos llenos y
+  no enseñan ninguna cara). Se saltan losas enteras; lo que da es un superconjunto de lo que tiene alguna cara al
+  aire, en el mismo orden. El render (`render`, y el horneado con él) la usa si la fuente la tiene
+  (`VoxelSource.exposedEntries`, opcional): los mismos píxeles, recorriendo mucho menos.
+- `changedBox(trozo, versión)`: la caja (x, y, z, extremos incluidos) de lo que cambió en ese trozo después de la
+  versión, o `null`. Puede ser más grande que lo cambiado, nunca más pequeña. `cut()` cierra los tramos abiertos:
+  quien acaba de leer las cajas (el horneado lo hace solo) corta, y lo que cambie después tiene su caja aparte.
+
+## Rehornear lo que cambió
+
+`rebakeChangedJobs(baked, luces)` rehace solo **la caja de lo cambiado** de cada trozo: los píxeles por los que pasa
+esa caja (con 1 vóxel de margen, que es lo que cambian la oclusión y las caras vecinas; 3 si el horneado lleva
+normal suavizada), no el trozo con toda su altura. Quitar o poner vóxeles solo cambia lo que se ve a través de
+ellos, así que el resultado es el mismo, byte a byte, que hornear el mundo entero (hay pruebas, también con
+contorno). Las sombras de las luces fijas leen los vóxeles directamente: `baked.occ` ya no se usa y va vacío.
+
+- Las luces fijas que alcanzan lo cambiado no se rehacen enteras: se parte de sus pesos y se recalculan solo los
+  píxeles de los recuadros rehechos y los que miran a la luz por un segmento que cruza la caja cambiada (su sombra
+  puede haber cambiado). Si la luz es otra (otro sitio, intensidad, color, radio), se rehace entera.
+- El render salta los vóxeles cuyo cubo cae entero fuera de la imagen sin mirar sus caras: una franja estrecha de un
+  mundo grande recorre muchos así.
+
+Medido en un portátil con GPU dedicada, sin freno de CPU, con `bun scripts/bench-picar.ts`: en un mundo de 768 x 768
+x 192 lleno hasta la mitad, con 4 antorchas fijas junto a lo picado, el horneado entero tarda ~1,6 s y picar un bloque
+de 8 x 8 x 8 cuesta ~20 ms en total (p95 ~25 ms), en pasos de menos de 5 ms que la cola (`FrameBudget`) reparte entre
+cuadros.
 
 ## Entidades
 

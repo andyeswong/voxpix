@@ -171,7 +171,18 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
   const toneCache = new Map<number, number>();
   const mt = materialsOf(pal);
 
-  for (const [x, y, z, v] of model.entries()) {
+  // La proyección es afín: con ella, un vóxel cuyo cubo cae entero fuera de la imagen se salta sin mirar sus caras
+  // (una franja estrecha de un mundo grande recorre muchos así; no pintarían nada)
+  const P0 = project(0, 0, 0), PX = project(1, 0, 0), PY = project(0, 1, 0), PZ = project(0, 0, 1);
+  const ax = PX[0] - P0[0], bx = PY[0] - P0[0], cx = PZ[0] - P0[0], ay = PX[1] - P0[1], by = PY[1] - P0[1], cy = PZ[1] - P0[1];
+  let lox = 0, hix = 0, loy = 0, hiy = 0;
+  for (let c = 1; c < 8; c++) {
+    const ox = (c & 1 ? ax : 0) + (c & 2 ? bx : 0) + (c & 4 ? cx : 0), oy = (c & 1 ? ay : 0) + (c & 2 ? by : 0) + (c & 4 ? cy : 0);
+    lox = Math.min(lox, ox); hix = Math.max(hix, ox); loy = Math.min(loy, oy); hiy = Math.max(hiy, oy);
+  }
+  for (const [x, y, z, v] of (model.exposedEntries ? model.exposedEntries() : model.entries())) {
+    const sx = P0[0] + x * ax + y * bx + z * cx, sy = P0[1] + x * ay + y * by + z * cy;
+    if (sx + hix < -1 || sx + lox > W + 1 || sy + hiy < -1 || sy + loy > H + 1) continue;
     for (let f = 0; f < 6; f++) {
       const d = DIRS[f]!;
       if (filled(x + d[0], y + d[1], z + d[2])) continue;

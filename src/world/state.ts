@@ -19,7 +19,7 @@ import { FxSystem, fxRandom, type FxState } from '../core/effects';
 import { fxWorldLights, type EffectsLayer } from './effects';
 import { Floaters } from './floaters';
 import { ObjectLayer, type ObjectsState } from './objects';
-import { ChangeFeed, type ChangeWatch } from './changes';
+import { ChangeFeed, type ChangeWatch, type Box3 } from './changes';
 
 export const CHUNK = 16;
 
@@ -28,12 +28,37 @@ export const CHUNK = 16;
 // 2026-11-02); los enteros pequeños no. Ninguna altura de vóxel llega a él
 export const NO_FOOT = -1_000_000_000;
 
-// Vóxeles estáticos en trozos: una matriz tipada por trozo con la columna entera de zMin a zMax
+// Vóxeles estáticos en trozos. Un TROZO es una columna de CHUNK x CHUNK con toda la altura (zMin..zMax): es la
+// unidad de las versiones, de changedSince, de watchChanges y del rehorneado. Por dentro, cada trozo se guarda en
+// LOSAS de CHUNK x CHUNK x SLAB vóxeles, y cada losa ocupa solo lo que necesita:
+//   - nada: toda aire, o toda del mismo valor (uni[s]: la roca de un terreno, el aire de encima);
+//   - 1 byte por vóxel con una paleta propia (pal[s]) mientras la losa tenga como mucho 256 valores distintos;
+//   - 2 bytes por vóxel si tiene más.
+// get/set/entries no cambian por fuera, ni el orden de entries (trozo, z, y, x), ni exportChunks (la columna entera
+// de siempre, así la instantánea y la huella son las mismas byte a byte).
+export const SLAB = 16;
+const SEGS = 4;
+const SLAB_CELLS = CHUNK * CHUNK * SLAB;
+
 export class StaticVoxels implements VoxelSource {
   readonly cols: number;
   readonly rows: number;
   readonly zh: number;
-  private chunks: Array<Uint16Array | null>;
+  readonly nz: number;                                  // losas por trozo
+  private data: Array<Uint8Array | Uint16Array | null>;   // por losa (trozo * nz + losa)
+  private pal: Array<Uint16Array | null>;                 // la paleta de las losas de 1 byte
+  private palN: Uint16Array;                              // cuántas entradas usa esa paleta
+  private uni: Uint16Array;                               // el valor de toda la losa cuando no tiene datos
+  private count: Uint16Array;                             // vóxeles llenos de cada losa
+  private alloc: Uint8Array;                              // el trozo tuvo algún vóxel alguna vez (exportChunks)
+  // La CAJA de lo cambiado en cada trozo, por tramos de la historia (para rehornear solo eso, changedBox): hasta
+  // SEGS tramos por trozo, cada uno [versión del último cambio, x0, y0, z0, x1, y1, z1]. Un tramo empieza donde acaba
+  // el anterior (el primero, en 0), así que juntos cubren toda la historia del trozo; si no caben, se funden los dos
+  // más viejos (su caja crece, nunca se pierde un cambio). cut() cierra los tramos abiertos: lo que cambie después va
+  // a un tramo nuevo, y quien pregunte desde ese momento tiene una caja ajustada
+  private seg: Int32Array;
+  private segN: Uint8Array;
+  private cutAt = 0;
   // Sello (valor del reloj) del último cambio de VÓXELES de cada trozo. El reloj lo comparten los cambios de agua y
   // entidades (WorldState.changedSince), así una versión dice "todo lo anterior a este momento"
   readonly versions: Uint32Array;
@@ -49,32 +74,55 @@ export class StaticVoxels implements VoxelSource {
     this.cols = Math.ceil(width / CHUNK);
     this.rows = Math.ceil(depth / CHUNK);
     this.zh = zMax - zMin + 1;
-    this.chunks = new Array(this.cols * this.rows).fill(null);
+    this.nz = Math.ceil(this.zh / SLAB);
+    const n = this.cols * this.rows * this.nz;
+    this.data = new Array(n).fill(null);
+    this.pal = new Array(n).fill(null);
+    this.palN = new Uint16Array(n);
+    this.uni = new Uint16Array(n);
+    this.count = new Uint16Array(n);
+    this.alloc = new Uint8Array(this.cols * this.rows);
+    this.seg = new Int32Array(this.cols * this.rows * SEGS * 7);
+    this.segN = new Uint8Array(this.cols * this.rows);
     this.versions = new Uint32Array(this.cols * this.rows);
     this.height = new Int16Array(width * depth).fill(zMin);
   }
 
-  private where(x: number, y: number, z: number): [Uint16Array | null, number, number] {
-    if (x < 0 || y < 0 || x >= this.width || y >= this.depth || z < this.zMin || z > this.zMax) return [null, -1, -1];
-    const c = Math.floor(y / CHUNK) * this.cols + Math.floor(x / CHUNK);
-    return [this.chunks[c]!, c, ((z - this.zMin) * CHUNK + (y % CHUNK)) * CHUNK + (x % CHUNK)];
+  // Vóxeles que caben en la losa s de un trozo (la última puede ser más baja)
+  private cap(s: number): number {
+    return CHUNK * CHUNK * Math.min(SLAB, this.zh - s * SLAB);
   }
 
   // (sin crear nada: el render la llama para cada vecino de cada vóxel)
   get(x: number, y: number, z: number): number {
     if (x < 0 || y < 0 || x >= this.width || y >= this.depth || z < this.zMin || z > this.zMax) return 0;
-    const data = this.chunks[((y / CHUNK) | 0) * this.cols + ((x / CHUNK) | 0)];
-    return data ? data[((z - this.zMin) * CHUNK + (y % CHUNK)) * CHUNK + (x % CHUNK)]! : 0;
+    const zz = z - this.zMin;
+    const si = (((y / CHUNK) | 0) * this.cols + ((x / CHUNK) | 0)) * this.nz + ((zz / SLAB) | 0);
+    const d = this.data[si];
+    if (!d) return this.uni[si]!;
+    const i = ((zz % SLAB) * CHUNK + (y % CHUNK)) * CHUNK + (x % CHUNK);
+    const p = this.pal[si];
+    return p ? p[d[i]!]! : d[i]!;
   }
 
   set(x: number, y: number, z: number, value: number): void {
-    let [data, c, i] = this.where(x, y, z);
-    if (c < 0) throw new Error(`vóxel fuera del mundo: ${x},${y},${z}`);
-    if (!data) { if (!value) return; data = this.chunks[c] = new Uint16Array(CHUNK * CHUNK * this.zh); }
-    if (data[i] === value) return;
-    if (this.onSet) this.onSet(x, y, z, data[i]!, value);
-    data[i] = value;
+    if (x < 0 || y < 0 || x >= this.width || y >= this.depth || z < this.zMin || z > this.zMax) throw new Error(`vóxel fuera del mundo: ${x},${y},${z}`);
+    const zz = z - this.zMin;
+    const c = Math.floor(y / CHUNK) * this.cols + Math.floor(x / CHUNK);
+    const s = Math.floor(zz / SLAB), si = c * this.nz + s;
+    const i = ((zz % SLAB) * CHUNK + (y % CHUNK)) * CHUNK + (x % CHUNK);
+    const d0 = this.data[si];
+    const old = d0 ? (this.pal[si] ? this.pal[si]![d0[i]!]! : d0[i]!) : this.uni[si]!;
+    if (old === value) return;
+    if (this.onSet) this.onSet(x, y, z, old, value);
+    this.write(si, i, value);
+    if (value) this.alloc[c] = 1;
+    if (!old) this.count[si]!++;
+    else if (!value) this.count[si]!--;
+    if (this.count[si] === 0) { this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; }
+    else if (this.count[si] === this.cap(s)) this.tryUniform(si, s);
     this.versions[c] = ++this.clock;
+    this.note(c, x, y, z);
     const watchers = this.feed?.list;
     if (watchers) for (const w of watchers) w.voxel(c, x, y, z);
     if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
@@ -88,13 +136,148 @@ export class StaticVoxels implements VoxelSource {
     }
   }
 
-  // Trozos (con su versión) para snapshot y hash; importChunks rehace la rejilla de alturas
+  // Apunta el vóxel (x, y, z) del trozo c, que acaba de cambiar con la versión this.clock, en su tramo abierto
+  private note(c: number, x: number, y: number, z: number): void {
+    const S = this.seg, base = c * SEGS * 7;
+    let n = this.segN[c]!;
+    if (n > 0) {
+      const o = base + (n - 1) * 7;
+      if (S[o]! > this.cutAt) {
+        S[o] = this.clock;
+        if (x < S[o + 1]!) S[o + 1] = x; if (y < S[o + 2]!) S[o + 2] = y; if (z < S[o + 3]!) S[o + 3] = z;
+        if (x > S[o + 4]!) S[o + 4] = x; if (y > S[o + 5]!) S[o + 5] = y; if (z > S[o + 6]!) S[o + 6] = z;
+        return;
+      }
+    }
+    if (n === SEGS) {
+      // Se funden los dos más viejos: el tramo 0 acaba donde acababa el 1 y su caja es la de los dos
+      const a = base, b = base + 7;
+      S[a] = S[b]!;
+      for (let k = 1; k <= 3; k++) S[a + k] = Math.min(S[a + k]!, S[b + k]!);
+      for (let k = 4; k <= 6; k++) S[a + k] = Math.max(S[a + k]!, S[b + k]!);
+      S.copyWithin(b, b + 7, base + SEGS * 7);
+      n--;
+    }
+    const o = base + n * 7;
+    S[o] = this.clock; S[o + 1] = x; S[o + 2] = y; S[o + 3] = z; S[o + 4] = x; S[o + 5] = y; S[o + 6] = z;
+    this.segN[c] = n + 1;
+  }
+
+  // La caja (en vóxeles, extremos incluidos) que contiene todo lo que cambió en el trozo c después de la versión v,
+  // o null si nada. Puede ser más grande que lo cambiado (tramos fundidos), nunca más pequeña
+  changedBox(c: number, v: number): Box3 | null {
+    const S = this.seg, base = c * SEGS * 7, n = this.segN[c]!;
+    let r: Box3 | null = null;
+    for (let k = 0; k < n; k++) {
+      const o = base + k * 7;
+      if (!(S[o]! > v)) continue;
+      if (!r) r = { x0: S[o + 1]!, y0: S[o + 2]!, z0: S[o + 3]!, x1: S[o + 4]!, y1: S[o + 5]!, z1: S[o + 6]! };
+      else {
+        r.x0 = Math.min(r.x0, S[o + 1]!); r.y0 = Math.min(r.y0, S[o + 2]!); r.z0 = Math.min(r.z0, S[o + 3]!);
+        r.x1 = Math.max(r.x1, S[o + 4]!); r.y1 = Math.max(r.y1, S[o + 5]!); r.z1 = Math.max(r.z1, S[o + 6]!);
+      }
+    }
+    return r;
+  }
+
+  // Cierra los tramos abiertos (lo llama quien acaba de leer las cajas, como el rehorneado)
+  cut(): void {
+    this.cutAt = this.clock;
+  }
+
+  // Escribe un valor en una losa, creando sus datos (de 1 byte) si no tenía, o pasándola a 2 bytes si su paleta se llena
+  private write(si: number, i: number, value: number): void {
+    let d = this.data[si];
+    if (!d) {
+      d = this.data[si] = new Uint8Array(SLAB_CELLS);
+      const p = this.pal[si] = new Uint16Array(256);
+      p[0] = this.uni[si]!; this.palN[si] = 1;
+    }
+    const p = this.pal[si];
+    if (!p) { d[i] = value; return; }
+    let n = this.palN[si]!, k = 0;
+    while (k < n && p[k] !== value) k++;
+    if (k === n) {
+      if (n === 256) { this.repack(si); n = this.palN[si]!; }
+      if (n === 256) {
+        // Más de 256 valores distintos en uso: la losa pasa a 2 bytes por vóxel
+        const w = new Uint16Array(SLAB_CELLS);
+        for (let j = 0; j < SLAB_CELLS; j++) w[j] = p[d[j]!]!;
+        w[i] = value;
+        this.data[si] = w; this.pal[si] = null;
+        return;
+      }
+      p[n] = value; this.palN[si] = n + 1; k = n;
+    }
+    d[i] = k;
+  }
+
+  // Quita de la paleta de una losa los valores que ya no usa ningún vóxel
+  private repack(si: number): void {
+    const d = this.data[si] as Uint8Array, p = this.pal[si]!;
+    const map = new Int16Array(256).fill(-1), q = new Uint16Array(256);
+    let n = 0;
+    for (let j = 0; j < SLAB_CELLS; j++) {
+      const k = d[j]!;
+      if (map[k]! < 0) { map[k] = n; q[n++] = p[k]!; }
+      d[j] = map[k]!;
+    }
+    this.pal[si] = q; this.palN[si] = n;
+  }
+
+  // Una losa llena: si todos sus vóxeles valen lo mismo, se queda sin datos
+  private tryUniform(si: number, s: number): void {
+    const d = this.data[si];
+    if (!d) return;
+    const n = this.cap(s), first = d[0]!;
+    for (let j = 1; j < n; j++) if (d[j] !== first) return;
+    const p = this.pal[si];
+    this.uni[si] = p ? p[first]! : first;
+    this.data[si] = null; this.pal[si] = null;
+  }
+
+  // Trozos (con su versión) para snapshot y hash: cada uno, la columna entera de zMin a zMax como siempre (null si
+  // nunca tuvo un vóxel); importChunks rehace la rejilla de alturas
   exportChunks(): Array<{ version: number; data: Uint16Array | null }> {
-    return this.chunks.map((d, i) => ({ version: this.versions[i]!, data: d ? d.slice() : null }));
+    const out: Array<{ version: number; data: Uint16Array | null }> = [];
+    for (let c = 0; c < this.versions.length; c++) {
+      if (!this.alloc[c]) { out.push({ version: this.versions[c]!, data: null }); continue; }
+      const col = new Uint16Array(CHUNK * CHUNK * this.zh);
+      for (let s = 0; s < this.nz; s++) {
+        const si = c * this.nz + s, d = this.data[si], p = this.pal[si], n = this.cap(s), o = s * SLAB_CELLS;
+        if (!d) { if (this.uni[si]) col.fill(this.uni[si]!, o, o + n); continue; }
+        if (!p) { col.set(d.subarray(0, n), o); continue; }
+        if (this.palN[si] === 1) { if (p[0]) col.fill(p[0], o, o + n); continue; }
+        for (let j = 0; j < n; j++) col[o + j] = p[d[j]!]!;
+      }
+      out.push({ version: this.versions[c]!, data: col });
+    }
+    return out;
   }
 
   importChunks(cs: Array<{ version: number; data: Uint16Array | null }>): void {
-    cs.forEach((c, i) => { this.chunks[i] = c.data ? c.data.slice() : null; this.versions[i] = c.version; });
+    cs.forEach((ch, c) => {
+      this.versions[c] = ch.version;
+      this.alloc[c] = ch.data ? 1 : 0;
+      // Lo cambiado en el trozo pasa a ser el trozo entero (no se sabe qué vóxeles eran)
+      const cx = c % this.cols, cy = Math.floor(c / this.cols), o = c * SEGS * 7;
+      this.segN[c] = ch.version > 0 ? 1 : 0;
+      this.seg.set([ch.version, cx * CHUNK, cy * CHUNK, this.zMin, Math.min(this.width, (cx + 1) * CHUNK) - 1, Math.min(this.depth, (cy + 1) * CHUNK) - 1, this.zMax], o);
+      for (let s = 0; s < this.nz; s++) {
+        const si = c * this.nz + s, n = this.cap(s), o = s * SLAB_CELLS;
+        this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; this.count[si] = 0;
+        if (!ch.data) continue;
+        let filled = 0;
+        for (let j = 0; j < n; j++) {
+          const v = ch.data[o + j]!;
+          if (!v) continue;
+          filled++;
+          this.write(si, j, v);
+        }
+        this.count[si] = filled;
+        if (filled === n) this.tryUniform(si, s);
+      }
+    });
     this.height.fill(this.zMin);
     for (const [x, y, z] of this.entries()) { const h = y * this.width + x; if (z + 1 > this.height[h]!) this.height[h] = z + 1; }
     this.fgrid = null;
@@ -178,10 +361,12 @@ export class StaticVoxels implements VoxelSource {
     return out;
   }
 
-  // Lo que ocupan los vóxeles en memoria (los trozos reservados y la rejilla de alturas)
+  // Lo que ocupan los vóxeles en memoria (las losas con datos, sus paletas y las rejillas por columna)
   get byteLength(): number {
-    let n = this.height.byteLength + this.versions.byteLength;
-    for (const d of this.chunks) if (d) n += d.byteLength;
+    let n = this.height.byteLength + this.versions.byteLength + this.alloc.byteLength;
+    n += this.palN.byteLength + this.uni.byteLength + this.count.byteLength;
+    for (const d of this.data) if (d) n += d.byteLength;
+    for (const p of this.pal) if (p) n += p.byteLength;
     return n;
   }
 
@@ -193,19 +378,53 @@ export class StaticVoxels implements VoxelSource {
   // Vóxeles llenos de una región (en orden fijo: trozo, z, y, x). Recorre solo la parte de cada trozo que cae en la
   // región, no el trozo entero: una franja estrecha y alta (el rehorneado por columnas) toca muchos trozos.
   *entries(region?: { x0: number; y0: number; x1: number; y1: number }): Generator<[number, number, number, number]> {
+    yield* this.walk(region, false);
+  }
+
+  // Como entries, pero sin (casi todos) los vóxeles enterrados: los que tienen sus 6 vecinos llenos no tienen ninguna
+  // cara a la vista y no pintan nada. Se saltan por losas: una losa llena rodeada de losas llenas no se recorre, y de
+  // una llena solo se dan las capas que tocan a una vecina que no lo está. Lo que da es un superconjunto de los
+  // vóxeles con alguna cara al aire, en el mismo orden que entries: el render da los mismos píxeles con las dos.
+  *exposedEntries(region?: { x0: number; y0: number; x1: number; y1: number }): Generator<[number, number, number, number]> {
+    yield* this.walk(region, true);
+  }
+
+  private full(cx: number, cy: number, s: number): boolean {
+    if (cx < 0 || cy < 0 || cx >= this.cols || cy >= this.rows || s < 0 || s >= this.nz) return false;
+    const si = (cy * this.cols + cx) * this.nz + s;
+    return this.count[si] === this.cap(s);
+  }
+
+  private *walk(region: { x0: number; y0: number; x1: number; y1: number } | undefined, exposed: boolean): Generator<[number, number, number, number]> {
     const r = region ?? { x0: 0, y0: 0, x1: this.width - 1, y1: this.depth - 1 };
     const CC = CHUNK * CHUNK;
     for (let cy = Math.max(0, Math.floor(r.y0 / CHUNK)); cy <= Math.min(this.rows - 1, Math.floor(r.y1 / CHUNK)); cy++)
       for (let cx = Math.max(0, Math.floor(r.x0 / CHUNK)); cx <= Math.min(this.cols - 1, Math.floor(r.x1 / CHUNK)); cx++) {
-        const data = this.chunks[cy * this.cols + cx];
-        if (!data) continue;
         const lx0 = Math.max(0, r.x0 - cx * CHUNK), lx1 = Math.min(CHUNK - 1, r.x1 - cx * CHUNK);
         const ly0 = Math.max(0, r.y0 - cy * CHUNK), ly1 = Math.min(CHUNK - 1, r.y1 - cy * CHUNK);
-        for (let lz = 0; lz < this.zh; lz++) for (let ly = ly0; ly <= ly1; ly++) {
-          const row = lz * CC + ly * CHUNK;
-          for (let lx = lx0; lx <= lx1; lx++) {
-            const v = data[row + lx]!;
-            if (v) yield [cx * CHUNK + lx, cy * CHUNK + ly, lz + this.zMin, v];
+        const c = cy * this.cols + cx;
+        for (let s = 0; s < this.nz; s++) {
+          const si = c * this.nz + s, d = this.data[si], p = this.pal[si], u = this.uni[si]!;
+          if (!d && !u) continue;
+          const hs = Math.min(SLAB, this.zh - s * SLAB), z0 = s * SLAB + this.zMin;
+          // Losa llena: qué caras de la losa dan a una vecina que no lo está (esas capas pueden tener caras al aire)
+          let open = 0x3f;
+          if (exposed && this.count[si] === this.cap(s)) {
+            open = (this.full(cx - 1, cy, s) ? 0 : 1) | (this.full(cx + 1, cy, s) ? 0 : 2) | (this.full(cx, cy - 1, s) ? 0 : 4) |
+              (this.full(cx, cy + 1, s) ? 0 : 8) | (this.full(cx, cy, s - 1) ? 0 : 16) | (this.full(cx, cy, s + 1) ? 0 : 32);
+            if (!open) continue;
+          } else open = -1;
+          for (let lz = 0; lz < hs; lz++) {
+            const zEdge = open >= 0 && ((lz === 0 && open & 16) || (lz === hs - 1 && open & 32));
+            for (let ly = ly0; ly <= ly1; ly++) {
+              const yEdge = zEdge || (open >= 0 && ((ly === 0 && open & 4) || (ly === CHUNK - 1 && open & 8)));
+              const row = lz * CC + ly * CHUNK;
+              for (let lx = lx0; lx <= lx1; lx++) {
+                if (open >= 0 && !yEdge && !((lx === 0 && open & 1) || (lx === CHUNK - 1 && open & 2))) continue;
+                const v = d ? (p ? p[d[row + lx]!]! : d[row + lx]!) : u;
+                if (v) yield [cx * CHUNK + lx, cy * CHUNK + ly, z0 + lz, v];
+              }
+            }
           }
         }
       }
@@ -213,7 +432,7 @@ export class StaticVoxels implements VoxelSource {
 
   get size(): number {
     let n = 0;
-    for (const d of this.chunks) if (d) for (let i = 0; i < d.length; i++) if (d[i]) n++;
+    for (let si = 0; si < this.count.length; si++) n += this.count[si]!;
     return n;
   }
 }
