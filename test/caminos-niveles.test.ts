@@ -65,4 +65,32 @@ describe('caminos por niveles', () => {
     expect(d.y).toBeGreaterThan(0.7);
     f.close();
   });
+  it('un cuerpo más ancho que media celda: la celda junto a la cara de un escalón tiene suelo y el escalón se sube', () => {
+    // 128 x 128, suelo en z 16, y un escalón de un bloque (z 16..23) desde y 104
+    const s = new StaticVoxels(PAL, 128, 128, 0, 63);
+    for (let y = 0; y < 128; y++) for (let x = 0; x < 128; x++) for (let z = 0; z < (y >= 104 ? 24 : 16); z++) s.set(x, y, z, material(0, 1));
+    const st = new WorldState(s, [], null);
+    for (const radius of [1, 2, 3]) {
+      const f = new LevelPathField(st, { cell: 4, height: 14, step: 8, radius });
+      expect(f.floorsAt({ x: 34, y: 101 })).toEqual([16]);          // la celda de y 100..103, pegada a la cara
+      const p = f.path({ x: 34, y: 34, z: 16 }, { x: 34, y: 116, z: 24 });
+      expect(p).not.toBeNull();
+      expect(p!.at(-1)!.z).toBe(24);
+      f.close();
+    }
+  });
+
+  it('con un cuerpo que cabe centrado en la celda (radius 1, cell 4), no se corre: una columna suelta junto al centro quita el suelo (y con uno que sobresale, sí)', () => {
+    const s = new StaticVoxels(PAL, 32, 32, 0, 31);
+    for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) for (let z = 0; z < 8; z++) s.set(x, y, z, material(0, 1));
+    for (let z = 8; z < 20; z++) s.set(11, 10, z, material(0, 1));   // junto al centro (10, 10) de la celda (2, 2)
+    const st = new WorldState(s, [], null);
+    const f = new LevelPathField(st, { cell: 4, height: 14, step: 2, radius: 1 });
+    expect(f.floorsAt({ x: 10, y: 10 })).toEqual([]);
+    f.close();
+    // Con radius 3 (sobresale de la celda), corrido hacia una esquina la esquiva: hay suelo
+    const g = new LevelPathField(st, { cell: 4, height: 14, step: 2, radius: 3 });
+    expect(g.floorsAt({ x: 10, y: 10 })).toEqual([8]);
+    g.close();
+  });
 });

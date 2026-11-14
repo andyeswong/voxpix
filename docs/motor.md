@@ -313,6 +313,12 @@ field.floorsAt({ x, y });                                        // los suelos d
   llega. Lo demás, como `PathField`: BFS hacia atrás compartido por todos los que van a la misma meta, rehecho por
   `watchChanges` solo en las celdas tocadas.
 - Va con `moveBodyLevels` (mismos `step` y alto).
+- Un suelo cuenta si el cuerpo (de `radius` y `height`) cabe de pie sobre él. Primero se prueba centrado en la celda;
+  un cuerpo más ancho que media celda sobresale de ella y entonces se prueba también corrido dentro de lo que
+  sobresale, para que lo que sobra quede de un lado. Sin eso, la celda junto a una pared o a la cara de un escalón no
+  tenía nunca suelo con `radius` >= `cell` / 2, y no se subía ni un escalón (hay prueba: escalón de un bloque con radius
+  1, 2 y 3). Un cuerpo que cabe centrado (radius 1 con celdas de 4) no se corre: el campo es el de siempre. Con radius
+  3 construir cuesta más (~36 ms en vez de ~27 en el banco de bloques); buscar, lo mismo.
 - Guarda lo que da cada paso entre dos nodos vecinos (si se pasa o no) y solo lo borra donde cambia el mundo (las
   celdas tocadas y sus vecinas: un paso mira las dos celdas y, en diagonal, las dos de lado). Una búsqueda nueva con el
   mundo igual no vuelve a mirar columnas; el resultado es el mismo que con un campo nuevo (hay prueba, también con un

@@ -46,6 +46,7 @@ export class LevelPathField {
   private goal = '';
   private watch: ChangeWatch;
   private around: number[] = [];
+  private shift: number[] = [];         // desplazamientos del cuerpo que se prueban (el centro primero)
 
   constructor(readonly state: WorldState, o: LevelPathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
@@ -59,6 +60,12 @@ export class LevelPathField {
     this.moves = new Uint8Array(this.cols * this.rows * this.L * 8 * this.L);
     const r = this.radius, span = Math.ceil(r);
     for (let dy = -span; dy <= span; dy++) for (let dx = -span; dx <= span; dx++) if (Math.hypot(dx, dy) <= r) this.around.push(dx, dy);
+    // Lo que el cuerpo sobresale de la celda por cada lado (la columna central es la c >> 1 de la celda)
+    const lo = Math.max(0, span - (this.cell >> 1)), hi = Math.max(0, span - (this.cell - 1 - (this.cell >> 1)));
+    const off: Array<[number, number]> = [];
+    for (let dy = -hi; dy <= lo; dy++) for (let dx = -hi; dx <= lo; dx++) off.push([dx, dy]);
+    off.sort((p, q) => Math.hypot(p[0], p[1]) - Math.hypot(q[0], q[1]) || p[1] - q[1] || p[0] - q[0]);
+    for (const [dx, dy] of off) this.shift.push(dx, dy);
     this.fill(0, 0, this.cols - 1, this.rows - 1);
     this.watch = state.watchChanges();
   }
@@ -82,7 +89,7 @@ export class LevelPathField {
   // para el cuerpo encima (y que no sea de los que no se suben), de arriba abajo, hasta L; y que el cuerpo entero (las
   // columnas a su radio) quepa ahí
   private fill(i0: number, j0: number, i1: number, j1: number): void {
-    const st = this.state, s = st.solid, c = this.cell, a = this.around, mt = materialsOf(s.palette);
+    const st = this.state, s = st.solid, c = this.cell, mt = materialsOf(s.palette);
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
       const base = (j * this.cols + i) * this.L;
       for (let k = 0; k < this.L; k++) this.floor[base + k] = NO_FOOT;
@@ -93,14 +100,28 @@ export class LevelPathField {
         if (!v || (mt && !mt.blocks[v])) { air++; continue; }
         const f = z + 1;
         if (air >= this.height && (!mt || mt.climb[v])) {
-          let fits = true;
-          for (let k = 0; k < a.length && fits; k += 2) if (!this.open(cx + a[k]!, cy + a[k + 1]!, f, f + this.height)) fits = false;
-          if (fits) { this.floor[base + n] = f; this.ceil[base + n] = roof; n++; }
+          if (this.fits(cx, cy, f)) { this.floor[base + n] = f; this.ceil[base + n] = roof; n++; }
         }
         air = 0; roof = z;
       }
       this.floors[j * this.cols + i] = n;
     }
+  }
+
+  // ¿Cabe el cuerpo de pie sobre f en la celda de la columna central (cx, cy)? Primero centrado; un cuerpo más ancho que
+  // media celda sobresale de ella, y entonces se prueba también corrido dentro de lo que sobresale (que lo que sobra
+  // quede de un lado): si no, una celda junto a una pared o a la cara de un escalón no sería nunca suelo y no se
+  // podría subir ni un escalón. Con un cuerpo que cabe centrado, no se corre: lo de siempre
+  private fits(cx: number, cy: number, f: number): boolean {
+    const a = this.around, sh = this.shift, s = this.state.solid;
+    for (let q = 0; q < sh.length; q += 2) {
+      const x = cx + sh[q]!, y = cy + sh[q + 1]!;
+      if (x < 0 || y < 0 || x >= s.width || y >= s.depth) continue;
+      let ok = true;
+      for (let k = 0; k < a.length && ok; k += 2) if (!this.open(x + a[k]!, y + a[k + 1]!, f, f + this.height)) ok = false;
+      if (ok) return true;
+    }
+    return false;
   }
 
   private sync(): void {

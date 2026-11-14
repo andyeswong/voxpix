@@ -1,6 +1,6 @@
 // Coste de LevelPathField en un terreno de bloques de 384 x 384 x 96 (el de bench-picar, con un túnel): construir, la
 // búsqueda al cambiar la meta (lo de toward), dir en caliente y la búsqueda tras picar un bloque. Sin freno.
-// Uso: bun scripts/bench-caminos.ts. Las opciones, las de un cuerpo de 3 x 14 que sube un bloque (cell 4, radius 1,
+// Uso: bun scripts/bench-caminos.ts (RADIO=n: otro radio del cuerpo). Las opciones, las de un cuerpo de 3 x 14 que sube un bloque (cell 4, radius 1,
 // height 14, step 8, maxDrop 64)
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
@@ -50,7 +50,7 @@ if (blockWorld) {
   }
 }
 const st = new WorldState(s, [], null);
-const O = { cell: 4, radius: 1, height: 14, step: 8, maxDrop: 64 };
+const O = { cell: 4, radius: Number(process.env.RADIO ?? 1), height: 14, step: 8, maxDrop: 64 };
 let t = performance.now();
 const f = new LevelPathField(st, O);
 const build = performance.now() - t;
