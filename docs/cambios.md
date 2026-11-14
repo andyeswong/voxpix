@@ -108,7 +108,9 @@ CPU y GPU usan la misma tabla. Las entidades toman el cielo del píxel de sus pi
 
 `WorldView` con `{ cut: true }` y `setCut` / `cutJob` esconde lo que queda por encima de una altura dentro de una caja
 (el jugador en un túnel). El horneado con corte es igual, byte a byte, que hornear sin esos vóxeles, en los 4 giros.
-Ver [Cortar la vista](motor.md#cortar-la-vista).
+Puede llevar varias cajas, cada una con su `zTop` (`setCut([...])`): con la mitad del lado de la cámara hasta los
+pies, el corte de casa de muñecas que deja ver al jugador en un túnel de un bloque de ancho. Ver
+[Cortar la vista](motor.md#cortar-la-vista).
 
 ### Guardar y cargar
 

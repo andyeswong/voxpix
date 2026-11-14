@@ -655,6 +655,15 @@ view.setCut(null);                                          // al salir
 - El resultado es el mismo, byte a byte, que hornear un mundo al que le faltan esos vóxeles (hay prueba en los 4
   giros, con una luz fija dentro de la zona cortada).
 - Mover la caja solo reescribe las columnas que entran y salen; cambiar `zTop`, todas las de la caja.
+- Varias cajas, cada una con su `zTop`: `view.setCut([caja1, caja2])` (y lo mismo en `cutJob`; `currentCut` da lo
+  pedido, caja o lista). Una columna que está en dos cajas se corta desde el `zTop` más bajo. Al cambiar la lista solo
+  se repasan las cajas que entran, salen o cambian; una que se queda igual, no. Sirve para un corte de casa de muñecas
+  en un túnel estrecho: con la cámara oblicua lo que tapa al jugador es la pared del lado de la cámara, que llega hasta
+  justo encima de su cabeza (por debajo del techo). La caja de siempre con `zTop` en el techo, más la mitad del lado
+  de la cámara con `zTop` a la altura de los pies, quita la pared de delante y deja la de detrás. Hay prueba, byte a
+  byte contra hornear sin esos vóxeles, en los 4 giros, y `cutJob` a trozos acaba igual que `setCut`.
+  En `bench-corte.ts` con `DOS=1` (32 x 32 hasta el techo y 16 x 32 hasta los pies), frente a una caja, a 6x: ~18 %
+  más llamadas de recuadro, "aparece" p50 de 13 a 17 cuadros (el máximo, igual, ~20) y el cuadro más largo igual.
 - `view.setCut(corte)` lo aplica de una vez (y devuelve cuántas columnas reescribió; `view.currentCut` es el corte pedido). Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
   (`FrameBudget`, prioridad 0: va con el presupuesto cercano) que reescribe columnas hasta el plazo; lo que va
   cambiando lo recoge `rebakeChangedJobs` cada cuadro. Si llega otro corte antes de acabar, sigue desde donde está y

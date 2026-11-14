@@ -4,7 +4,7 @@
 // señal de desarrollo; la medida de verdad es en el navegador, con freno.
 // Por evento: la llamada a budget.run más larga, los cuadros hasta que no queda trabajo cercano (aparece) y hasta que la
 // cola se vacía (acaba). Y las llamadas que se pasan de 10 ms, con lo que hizo cada trabajo en ellas.
-// Uso: bun scripts/bench-corte.ts [tiradas 3]. ANT=2: dos antorchas fijas dentro del túnel. NEAR=ms: el presupuesto
+// Uso: bun scripts/bench-corte.ts [tiradas 3]. ANT=2: dos antorchas fijas dentro del túnel. DOS=1: dos cajas. NEAR=ms: el presupuesto
 // cercano (como a 6x; 8 por defecto). VER=1: cada evento con sus llamadas, y las estimaciones de la cola al final
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
@@ -54,7 +54,7 @@ const wrap = (j: ViewJob): ViewJob => ({
   },
 });
 const res: Array<{ max: number; appear: number; end: number }> = [];
-function event(cut: ViewCut | null, measure: boolean): void {
+function event(cut: ViewCut | ViewCut[] | null, measure: boolean): void {
   measuring = measure;
   q.push(wrap(view.cutJob(cut)));
   let f = 0, max = 0, appear = -1;
@@ -75,7 +75,12 @@ function event(cut: ViewCut | null, measure: boolean): void {
   if (measure) res.push({ max, appear, end: f });
   if (measure && process.env.VER) console.log('evento', cut ? 'corte' : 'quitar', 'aparece', appear, 'acaba', f, 'llamadas', JSON.stringify(cnt)); for (const k in cnt) delete cnt[k];
 }
-const at = (x0: number): ViewCut => ({ x0, y0: 176, x1: x0 + 31, y1: 207, zTop: 20 });
+// DOS=1: corte de casa de muñecas, la caja de siempre hasta el techo del túnel y la mitad del lado de la cámara (y
+// pequeñas, 16 x 32) hasta los pies (el suelo del túnel, z 8)
+const at = (x0: number): ViewCut | ViewCut[] => {
+  const roof = { x0, y0: 176, x1: x0 + 31, y1: 207, zTop: 20 };
+  return process.env.DOS === '1' ? [roof, { x0, y0: 176, x1: x0 + 31, y1: 191, zTop: 8 }] : roof;
+};
 // Una tirada de calentamiento y RUNS medidas, de 8 eventos cada una
 for (let r = 0; r <= RUNS; r++) {
   const m = r > 0;

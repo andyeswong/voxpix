@@ -99,3 +99,64 @@ describe('corte incremental (cutJob)', () => {
     expect(job.key).toBe('view-cut');
   });
 });
+
+// Varias cajas: cada columna pierde lo que tiene desde el zTop más bajo de las cajas que la cubren
+function referenceMany(q: 0 | 1 | 2 | 3, cuts: readonly ViewCut[]): Baked {
+  const st = world();
+  for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) {
+    let top = Infinity;
+    for (const c of cuts) if (x >= c.x0 && x <= c.x1 && y >= c.y0 && y <= c.y1) top = Math.min(top, c.zTop);
+    for (let z = top; z <= Z; z++) st.solid.set(x, y, z, 0);
+  }
+  return bakeWorld(new WorldView(st, q).bakeable(), OPTS);
+}
+
+describe('corte con varias cajas', () => {
+  // La de siempre hasta encima del túnel, y la mitad del lado de la cámara (y pequeñas) hasta los pies: casa de muñecas
+  const roof = { x0: 16, y0: 12, x1: 47, y1: 35, zTop: 32 }, front = { x0: 16, y0: 12, x1: 47, y1: 23, zTop: 16 };
+  for (const q of [0, 1, 2, 3] as const) it(`giro ${q}: dos cajas que se solapan, moverlas y quitar una dan lo mismo que hornear sin esos vóxeles`, () => {
+    const st = world();
+    const view = new WorldView(st, q, { cut: true });
+    const b = bakeWorld(view.bakeable(), OPTS);
+    const step = (cuts: ViewCut[] | null) => {
+      view.setCut(cuts);
+      rebakeChanged(b, view.frame().lights);
+      same(b, cuts ? referenceMany(q, cuts) : bakeWorld(new WorldView(world(), q).bakeable(), OPTS));
+    };
+    step([roof, front]);
+    step([{ ...roof, x0: 21, x1: 52 }, { ...front, x0: 21, x1: 52 }]);      // el jugador anda: se mueven las dos
+    step([{ ...roof, x0: 21, x1: 52 }]);                                       // queda solo la del techo
+    step(null);
+  });
+
+  it('una caja que no cambia no se repasa; la columna en dos cajas toma el zTop más bajo; currentCut da lo pedido', () => {
+    const v = new WorldView(world(), 0, { cut: true });
+    expect(v.setCut([roof, front])).toBe(32 * 24);                       // las columnas de las dos, una vez cada una
+    // Solo cambia la de delante (baja un poco más): solo sus columnas
+    expect(v.setCut([roof, { ...front, zTop: 12 }])).toBe(32 * 12);
+    // La misma lista otra vez: nada
+    expect(v.setCut([roof, { ...front, zTop: 12 }])).toBe(0);
+    expect(v.currentCut).toEqual([roof, { ...front, zTop: 12 }]);
+    v.setCut(roof);
+    expect(v.currentCut).toEqual(roof);
+    v.setCut(null);
+    expect(v.currentCut).toBeNull();
+  });
+
+  it('cutJob con varias cajas, a trozos y con otra lista a mitad, acaba igual que setCut', () => {
+    const st = world(), view = new WorldView(st, 2, { cut: true });
+    const b = bakeWorld(view.bakeable(), OPTS);
+    let job = view.cutJob([roof, front]), calls = 0;
+    while (calls < 4 && !job.run(-1)) { rebakeChanged(b, view.frame().lights); calls++; }
+    const next = [{ ...roof, y0: 16, y1: 39 }, { ...front, y0: 16, y1: 27 }];
+    job = view.cutJob(next);
+    while (!job.run(-1)) { rebakeChanged(b, view.frame().lights); calls++; }
+    rebakeChanged(b, view.frame().lights);
+    expect(calls).toBeGreaterThan(10);
+    same(b, referenceMany(2, next));
+    const other = new WorldView(world(), 2, { cut: true }), b2 = bakeWorld(other.bakeable(), OPTS);
+    other.setCut(next);
+    rebakeChanged(b2, other.frame().lights);
+    same(b, b2);
+  });
+});
