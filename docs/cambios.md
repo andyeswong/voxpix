@@ -35,7 +35,15 @@ medida que vale para un juego es la suya.
   el mismo que sin plazo.
 - Las luces respetan su plazo: sombras por caja, un reloj cada 4 píxeles y tablas de tamaño fijo, sin `Map` ni `Set`
   que crezcan.
-- En el navegador a 6x, cortando la vista en un túnel con dos antorchas, ningún cuadro pasó de 16,8 ms.
+- Medido en un juego de bloques en el navegador (un túnel; caja de corte de 32 x 32 movida a saltos de 16; 8 eventos x
+  3 tiradas, sin antorchas y con 2):
+
+  | | A 1x | A 6x |
+  |---|---|---|
+  | Cuadros de más de 16,8 ms | - | ninguno |
+  | Lo cortado aparece | p50 4, máx 6-7 cuadros | ~20 cuadros |
+  | Acaba (luces y cielo), sin antorchas / con 2 | 8 / 24 cuadros | 27-35 / 69-76 |
+  | Llamadas de luz | - | ~400 por tirada, máx 6,4 ms |
 - Ver [Editar el mundo en partida](motor.md#editar-el-mundo-en-partida).
 
 ### Editar, bloques y el editor
