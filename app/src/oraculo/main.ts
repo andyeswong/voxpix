@@ -316,6 +316,7 @@ interface Result {
   share: number;
   pass: boolean;
   worst: Array<{ x: number; y: number; cpu: number[]; gpu: number[]; cpuColor: number[]; gpuColor: number[]; cpuMul: number[]; gpuMul: number[]; cpuAdd: number[]; gpuAdd: number[]; total: number[] }>;
+  diffs: Result['worst'];      // los píxeles con el final distinto (hasta 64), con su color, multiply, add y luz
   gpuMs: number;
   cpuMs: number;
 }
@@ -323,6 +324,8 @@ interface Result {
 function compare(name: string, cpu: { color: Uint8ClampedArray; mul: Uint8ClampedArray; add: Uint8ClampedArray; final: Uint8ClampedArray },
   gpu: { color: Uint8Array; mul: Uint8Array; add: Uint8Array; final: Uint8Array }, ambient: readonly number[], lights: boolean, ms: [number, number], total: Float32Array | null): Result {
   const worst: Result['worst'] = [];
+  // Los píxeles con el cuadro final distinto (hasta 64), con todo lo que entra en él: para saber de dónde sale un ±1
+  const diffs: Result['worst'] = [];
   const px = (a: ArrayLike<number>, i: number) => [a[i * 4]!, a[i * 4 + 1]!, a[i * 4 + 2]!];
   const n = VW * VH;
   let differ = 0, colorOff = 0, mulOff1 = 0, mulOff2 = 0, addOff2 = 0, maxFinal = 0;
@@ -338,7 +341,11 @@ function compare(name: string, cpu: { color: Uint8ClampedArray; mul: Uint8Clampe
         ad = Math.max(ad, Math.abs(Math.round((cpu.add[o]! / 255) * 15) - Math.round((gpu.add[o]! / 255) * 15)));
       }
     }
-    if (fd) differ++;
+    if (fd) {
+      differ++;
+      if (diffs.length < 64) diffs.push({ x: i % VW, y: Math.floor(i / VW), cpu: px(cpu.final, i), gpu: px(gpu.final, i), cpuColor: px(cpu.color, i), gpuColor: px(gpu.color, i),
+        cpuMul: px(cpu.mul, i), gpuMul: px(gpu.mul, i), cpuAdd: px(cpu.add, i), gpuAdd: px(gpu.add, i), total: total ? [total[i * 3]!, total[i * 3 + 1]!, total[i * 3 + 2]!] : [] });
+    }
     maxFinal = Math.max(maxFinal, fd);
     if (cd > 2) colorOff++;
     if (md === 1) mulOff1++;
@@ -348,7 +355,7 @@ function compare(name: string, cpu: { color: Uint8ClampedArray; mul: Uint8Clampe
     if (ad > 1) addOff2++;
   }
   const share = differ / n;
-  return { name, pixels: n, differ, colorOff, mulOff1, mulOff2, addOff2, maxFinal, share, pass: share <= TOL_SHARE && !colorOff && !mulOff2 && !addOff2, worst, cpuMs: ms[0], gpuMs: ms[1] };
+  return { name, pixels: n, differ, colorOff, mulOff1, mulOff2, addOff2, maxFinal, share, pass: share <= TOL_SHARE && !colorOff && !mulOff2 && !addOff2, worst, diffs, cpuMs: ms[0], gpuMs: ms[1] };
 }
 
 async function run(): Promise<void> {
