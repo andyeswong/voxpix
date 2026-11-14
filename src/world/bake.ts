@@ -468,21 +468,82 @@ function segmentHitsBox(ax: number, ay: number, az: number, bx: number, by: numb
   return t0 <= t1;
 }
 function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number, only?: CellFilter, out?: Staged, given?: WeightCtx): BakedLight {
-  const ctx = given ?? weightCtx(b, zone, out);
+  const ctx = given ?? weightCtx(b, zone, out, c1 - c0);
   for (let c = c0; c < c1; c++) cellWeight(b, zone, ctx, c, only);
+  if (!given) ctx.cache.give();
   return zone;
+}
+// Lo mismo hasta un plazo: de LIGHT_CHECK en LIGHT_CHECK píxeles (el primer grupo siempre), y devuelve por cuál va. Un
+// píxel cuyo rayo de sombra cruza mucha roca vóxel a vóxel cuesta cien veces lo normal, y un trozo fijo de ellos se
+// pasaba del plazo varios ms. El orden es el mismo: los pesos salen iguales
+function weightCellsUntil(b: Baked, zone: BakedLight, c0: number, c1: number, deadline: number, only: CellFilter | undefined, out: Staged | undefined, ctx: WeightCtx): number {
+  let c = c0;
+  do {
+    const e = Math.min(c1, c + LIGHT_CHECK);
+    for (; c < e; c++) cellWeight(b, zone, ctx, c, only);
+  } while (c < c1 && performance.now() < deadline);
+  return c;
 }
 // Lo mismo para una lista de píxeles de la zona (en orden de lectura de la zona)
 function weightList(b: Baked, zone: BakedLight, cells: ArrayLike<number>, from: number, to: number, out?: Staged, given?: WeightCtx): void {
-  const ctx = given ?? weightCtx(b, zone, out);
+  const ctx = given ?? weightCtx(b, zone, out, to - from);
   for (let q = from; q < to; q++) cellWeight(b, zone, ctx, cells[q]!);
+  if (!given) ctx.cache.give();
 }
 // Pesos rehechos que esperan a publicarse (la zona publicada no cambia hasta que el trabajo acaba): índice y valor
-interface Staged { i: number[]; v: number[] }
-interface WeightCtx { r: number; base: number; mt: ReturnType<typeof materialsOf>; cache: Map<number, number>; out?: Staged }
-function weightCtx(b: Baked, zone: BakedLight, out?: Staged): WeightCtx {
+// En arrays de su tamaño, pedidos de una vez al saber cuántos (una lista que crece se copia entera al crecer: con
+// cientos de miles, un paso de 4 píxeles se llevaba ms)
+interface Staged { i: Int32Array; v: Float64Array; n: number }
+const stagedFor = (n: number): Staged => ({ i: new Int32Array(n), v: new Float64Array(n), n: 0 });
+// El peso de cada cara de vóxel ya calculada (varios píxeles ven la misma cara). Una tabla de tamaño fijo para los
+// píxeles que se van a rehacer: un Map que crece se rehace entero al pasar de 16384 a 16385, y eso era un paso de
+// ~2 ms. Las tablas se reutilizan entre trabajos (pedir una nueva de un MB también costaba): al tomarla solo se borran
+// sus marcas. Si se llena (más caras de las previstas), deja de guardar y se calcula: el resultado es el mismo
+const facePool: FaceCache[] = [];
+class FaceCache {
+  private keys: Float64Array;
+  private vals: Float64Array;
+  private used: Uint8Array;
+  private n = 0;
+  private constructor(readonly bits: number) {
+    const size = 1 << bits;
+    this.keys = new Float64Array(size); this.vals = new Float64Array(size); this.used = new Uint8Array(size);
+  }
+  // Una tabla para unas `expected` caras como mucho (un hueco por cara prevista: llena a la mitad, deja de guardar)
+  static take(expected: number): FaceCache {
+    const bits = Math.max(6, Math.ceil(Math.log2(Math.max(1, expected))));
+    let i = -1;                                             // la más pequeña que valga, hasta 4 veces más grande
+    for (let k = 0; k < facePool.length; k++) { const c = facePool[k]!; if (c.bits >= bits && c.bits <= bits + 2 && (i < 0 || c.bits < facePool[i]!.bits)) i = k; }
+    if (i < 0) return new FaceCache(bits);
+    const c = facePool.splice(i, 1)[0]!;
+    c.used.fill(0); c.n = 0;
+    return c;
+  }
+  // De vuelta al montón, para el siguiente trabajo
+  give(): void { if (facePool.length < 8 && !facePool.includes(this)) facePool.push(this); }
+  private slot(k: number): number {
+    const lo = k >>> 0, hi = Math.floor(k / 4294967296);
+    return Math.imul(lo ^ Math.imul(hi, 0x85ebca77), 0x9e3779b1) >>> (32 - this.bits);
+  }
+  get(k: number): number | undefined {
+    const mask = (1 << this.bits) - 1;
+    for (let i = this.slot(k); this.used[i]; i = (i + 1) & mask) if (this.keys[i] === k) return this.vals[i];
+    return undefined;
+  }
+  set(k: number, v: number): void {
+    if (this.n * 2 >= 1 << this.bits) return;              // llena: no se guarda más
+    const mask = (1 << this.bits) - 1;
+    let i = this.slot(k);
+    while (this.used[i] && this.keys[i] !== k) i = (i + 1) & mask;
+    if (!this.used[i]) { this.used[i] = 1; this.n++; }
+    this.keys[i] = k; this.vals[i] = v;
+  }
+}
+interface WeightCtx { r: number; base: number; mt: ReturnType<typeof materialsOf>; cache: FaceCache; out?: Staged }
+// cells: cuántos píxeles se van a rehacer con este contexto (el tamaño de su tabla)
+function weightCtx(b: Baked, zone: BakedLight, out: Staged | undefined, cells: number): WeightCtx {
   const p = resolveLight(zone.light, 0);
-  return { r: p.radius, base: p.base, mt: materialsOf(b.source.palette), cache: new Map(), ...(out ? { out } : {}) };
+  return { r: p.radius, base: p.base, mt: materialsOf(b.source.palette), cache: FaceCache.take(cells), ...(out ? { out } : {}) };
 }
 function cellWeight(b: Baked, zone: BakedLight, x: WeightCtx, c: number, only?: CellFilter): void {
   const { light: l, rect, weight } = zone, { r, mt, cache } = x;
@@ -491,7 +552,7 @@ function cellWeight(b: Baked, zone: BakedLight, x: WeightCtx, c: number, only?: 
   const k = b.pick[idx]!;
   const f = b.face[idx]!;
   if (only && !only(rect.x + i, rect.y + j, k, f)) return;
-  if (Number.isNaN(k)) { if (x.out) { x.out.i.push(c); x.out.v.push(0); } else weight[c] = 0; return; }
+  if (Number.isNaN(k)) { if (x.out) { x.out.i[x.out.n] = c; x.out.v[x.out.n++] = 0; } else weight[c] = 0; return; }
   const ck = k * 8 + f;
   let w = cache.get(ck);
   if (w === undefined) {
@@ -512,7 +573,7 @@ function cellWeight(b: Baked, zone: BakedLight, x: WeightCtx, c: number, only?: 
     }
     cache.set(ck, w);
   }
-  if (x.out) { x.out.i.push(c); x.out.v.push(w); } else weight[c] = w;
+  if (x.out) { x.out.i[x.out.n] = c; x.out.v[x.out.n++] = w; } else weight[c] = w;
 }
 
 // ---- rehorneado parcial
@@ -652,6 +713,7 @@ const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
 let lightSerial = 0;      // para que cada trabajo parcial de luz tenga su key (la cola no los sustituye entre sí)
 const LIGHT_CELLS = 32;   // píxeles de una zona de luz por paso
 const LIGHT_OWN = 16;     // píxeles cambiados por paso (cada uno, su rayo de sombra)
+const LIGHT_CHECK = 4;    // píxeles entre dos miradas al reloj dentro de un paso de la zona
 
 // boxes (opcional): la caja de lo cambiado en cada trozo (StaticVoxels.changedBox); sin ella, el trozo entero
 // lights son TODAS las luces del mundo (o de la vista): las fijas horneadas que ya no están (quitadas, o que pasaron a
@@ -736,6 +798,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let zone: BakedLight | null | undefined, only: CellFilter | undefined;
     // Lo que hay que rehacer de la zona, en recuadros de la zona [i0, i1) x [j0, j1), y por dónde va
     let spans: Array<[number, number, number, number]> = [], si = 0, row = 0, col = -1, own: number[] = [], oi = 0, staged: Staged | undefined, wctx: WeightCtx | undefined;
+    // La preparación por partes: la sombra en pantalla de cada caja (shadowRows), una por paso, con el plazo entre medias
+    let shade: { prev: BakedLight; list: number[]; out: Array<[number, number, number, number]>; pi: number; whole: boolean } | null = null;
     jobs.push({
       key: `light:${l.id}#${++lightSerial}`,
       run(deadline) {
@@ -754,45 +818,64 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // recuadros rehechos y la sombra de cada caja en pantalla
           if (zone && prev && zone.weight === prev.weight && prev.rect.x === zone.rect.x && prev.rect.y === zone.rect.y) {
             only = touchedBy(l, plans);
-            staged = { i: [], v: [] };
-            const zr = zone.rect, out: Array<[number, number, number, number]> = [];
+            staged = stagedFor(0);              // de su tamaño al acabar la preparación
+            const zr = zone.rect;
             // Los píxeles que cambiaron de vóxel o de cara, dentro de la zona: se rehacen todos, primero
-            const list: number[] = [], seen = new Set<number>();
+            // (sin repetir: una marca por píxel de la zona; un Set que crece se rehace entero, como el Map de los pesos)
+            const list: number[] = [], seen = new Uint8Array(zr.w * zr.h);
             for (const src of work.pixels) {
               const cp = src();
               for (let q = 0; q < cp.length; q++) {
                 const g = cp[q]!, gx = g % b.width, gy = (g - gx) / b.width;
-                if (seen.has(g) || !(gx >= zr.x && gy >= zr.y && gx < zr.x + zr.w && gy < zr.y + zr.h)) continue;
-                seen.add(g); list.push((gy - zr.y) * zr.w + gx - zr.x);
+                if (!(gx >= zr.x && gy >= zr.y && gx < zr.x + zr.w && gy < zr.y + zr.h)) continue;
+                const c = (gy - zr.y) * zr.w + gx - zr.x;
+                if (seen[c]) continue;
+                seen[c] = 1; list.push(c);
               }
             }
             own = list;
-            const add = (x0: number, y0: number, x1: number, y1: number) => {
-              const i0 = Math.max(0, Math.floor(x0) - zr.x), i1 = Math.min(zr.w, Math.ceil(x1) + 1 - zr.x);
-              const j0 = Math.max(0, Math.floor(y0) - zr.y), j1 = Math.min(zr.h, Math.ceil(y1) + 1 - zr.y);
-              if (i0 < i1 && j0 < j1) out.push([i0, i1, j0, j1]);
-            };
-            let whole = false;
-            for (const p of plans) {
-              const sh = shadowRows(b, l, r, p);
-              if (sh === 'all') { whole = true; break; }
-              if (sh) for (const [x0, x1, y] of sh) add(x0, y, x1, y);
-            }
-            if (!whole) {
-              spans = out;
-              let dx0 = Infinity, dy0 = Infinity, dx1 = -Infinity, dy1 = -Infinity;
-              for (const [i0, i1, j0, j1] of out) { dx0 = Math.min(dx0, i0); dx1 = Math.max(dx1, i1); dy0 = Math.min(dy0, j0); dy1 = Math.max(dy1, j1); }
-              for (const c of list) { const ci = c % zr.w, cj = (c - ci) / zr.w; dx0 = Math.min(dx0, ci); dx1 = Math.max(dx1, ci + 1); dy0 = Math.min(dy0, cj); dy1 = Math.max(dy1, cj + 1); }
-              zone.base = prev;
-              prev.base = undefined;                   // solo un eslabón: no se encadenan los horneados viejos
-              zone.dirty = dx1 > dx0 ? { x: dx0, y: dy0, w: dx1 - dx0, h: dy1 - dy0 } : { x: 0, y: 0, w: 0, h: 0 };
-            }
+            shade = { prev, list, out: [], pi: 0, whole: false };
+            if (performance.now() >= deadline) return false;
           }
+        }
+        if (zone && shade) {
+          // La sombra en pantalla de cada caja rehecha: lo que mira a la luz a través de lo cambiado
+          const sh0 = shade, zr = zone.rect, plans = work.plans;
+          const add = (x0: number, y0: number, x1: number, y1: number) => {
+            const i0 = Math.max(0, Math.floor(x0) - zr.x), i1 = Math.min(zr.w, Math.ceil(x1) + 1 - zr.x);
+            const j0 = Math.max(0, Math.floor(y0) - zr.y), j1 = Math.min(zr.h, Math.ceil(y1) + 1 - zr.y);
+            if (i0 < i1 && j0 < j1) sh0.out.push([i0, i1, j0, j1]);
+          };
+          while (sh0.pi < plans.length && !sh0.whole) {
+            const sh = shadowRows(b, l, r, plans[sh0.pi++]!);
+            if (sh === 'all') sh0.whole = true;
+            else if (sh) for (const [x0, x1, y] of sh) add(x0, y, x1, y);
+            if (sh0.pi < plans.length && !sh0.whole && performance.now() >= deadline) return false;
+          }
+          if (!sh0.whole) {
+            spans = sh0.out;
+            const prev = sh0.prev;
+            let dx0 = Infinity, dy0 = Infinity, dx1 = -Infinity, dy1 = -Infinity;
+            for (const [i0, i1, j0, j1] of sh0.out) { dx0 = Math.min(dx0, i0); dx1 = Math.max(dx1, i1); dy0 = Math.min(dy0, j0); dy1 = Math.max(dy1, j1); }
+            for (const c of sh0.list) { const ci = c % zr.w, cj = (c - ci) / zr.w; dx0 = Math.min(dx0, ci); dx1 = Math.max(dx1, ci + 1); dy0 = Math.min(dy0, cj); dy1 = Math.max(dy1, cj + 1); }
+            zone.base = prev;
+            prev.base = undefined;                   // solo un eslabón: no se encadenan los horneados viejos
+            zone.dirty = dx1 > dx0 ? { x: dx0, y: dy0, w: dx1 - dx0, h: dy1 - dy0 } : { x: 0, y: 0, w: 0, h: 0 };
+          }
+          shade = null;
+          // Cuántos pesos se van a rehacer como mucho: los propios y los de cada recuadro (pueden solaparse: cuentan dos)
+          if (staged) {
+            let n = own.length;
+            for (const [i0, i1, j0, j1] of spans) n += (i1 - i0) * (j1 - j0);
+            const t = stagedFor(n);
+            staged.i = t.i; staged.v = t.v; staged.n = 0;
+          }
+          if (performance.now() >= deadline) return false;
         }
         if (zone && oi < own.length) {
           // Los píxeles que cambiaron, de LIGHT_OWN en LIGHT_OWN (su rayo de sombra puede ser largo: en un foso cruza
           // paredes y va vóxel a vóxel)
-          wctx ??= weightCtx(b, zone, staged);
+          wctx ??= weightCtx(b, zone, staged, staged ? staged.i.length : zone.rect.w * zone.rect.h);
           do { const o1 = Math.min(own.length, oi + LIGHT_OWN); weightList(b, zone, own, oi, o1, staged, wctx); oi = o1; } while (oi < own.length && performance.now() < deadline);
           if (oi < own.length) return false;
         }
@@ -802,15 +885,15 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           const [i0, i1, j0, j1] = spans[si]!;
           if (row < j0 || col < 0) { row = Math.max(row, j0); col = i0; }
           const c1 = Math.min(i1, col + LIGHT_CELLS);
-          wctx ??= weightCtx(b, zone, staged);
-          weightCells(b, zone, row * zone.rect.w + col, row * zone.rect.w + c1, only, staged, wctx);
-          col = c1;
+          wctx ??= weightCtx(b, zone, staged, staged ? staged.i.length : zone.rect.w * zone.rect.h);
+          col = weightCellsUntil(b, zone, row * zone.rect.w + col, row * zone.rect.w + c1, deadline, only, staged, wctx) - row * zone.rect.w;
           if (col >= i1) { row++; col = i0; if (row >= j1) { si++; row = 0; col = -1; } }
           if (performance.now() >= deadline) break;
         }
         if (zone && si < spans.length) return false;
         // Los pesos rehechos se ponen ahora, de una vez (la zona es la misma memoria que la publicada)
-        if (zone && staged) for (let q = 0; q < staged.i.length; q++) zone.weight[staged.i[q]!] = staged.v[q]!;
+        if (zone && staged) for (let q = 0; q < staged.n; q++) zone.weight[staged.i[q]!] = staged.v[q]!;
+        wctx?.cache.give(); wctx = undefined;
         b.pendingLights?.delete(l.id);
         if (b.goneLights?.has(l.id)) return true;          // se quitó mientras: no se publica
         const i = b.lights.findIndex((bl) => bl.light.id === l.id);
@@ -853,11 +936,11 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
       const n = zone ? zone.rect.w * zone.rect.h : 0;
       if (zone) do {
         const c1 = Math.min(n, cell + LIGHT_CELLS);
-        wctx ??= weightCtx(b, zone);
-        weightCells(b, zone, cell, c1, undefined, undefined, wctx);
-        cell = c1;
+        wctx ??= weightCtx(b, zone, undefined, zone.rect.w * zone.rect.h);
+        cell = weightCellsUntil(b, zone, cell, c1, deadline, undefined, undefined, wctx);
       } while (cell < n && performance.now() < deadline);
       if (zone && cell < n) return false;
+      wctx?.cache.give(); wctx = undefined;
       if (!b.pendingLights?.delete(l.id)) return true;   // se quitó mientras: no se publica
       const i = b.lights.findIndex((bl) => bl.light.id === l.id);
       if (i >= 0) b.lights.splice(i, 1);

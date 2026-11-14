@@ -55,4 +55,24 @@ describe('cambios seguidos con trabajos de luz a medias', () => {
     drain(q);
     expect(b.lights.map((l) => l.light.id)).toEqual(['b']);
   });
+  it('un cambio con la preparación de la luz a medias (entre la sombra de una caja y la de otra) acaba igual que hornear de cero', () => {
+    const s = ground(), ls = new LightList();
+    ls.addFixed({ id: 'a', kind: 'torch', x: 32.5, y: 32.5, z: 30 });
+    const opts = { topZ: 40, incline: 0.5 };
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    const q = new FrameBudget(1);
+    // Tres hoyos en trozos distintos en un mismo cambio: tres cajas, tres sombras que preparar
+    hole(s, 20, 20); hole(s, 40, 22); hole(s, 26, 42);
+    for (const j of rebakeChangedJobs(b, ls)) q.push(j);
+    // Los recuadros, enteros; la luz, de llamada en llamada con el plazo vencido: la zona y la lista, y una sombra
+    for (const j of queue(q).filter((x) => x.key.startsWith('rect:'))) { while (!j.run(Infinity)); queue(q).splice(queue(q).indexOf(j), 1); }
+    const light = queue(q).find((x) => x.key.startsWith('light:a'))!;
+    expect(light.run(-1)).toBe(false);
+    expect(light.run(-1)).toBe(false);
+    // Otro cambio con la luz a medias de preparar
+    hole(s, 44, 40);
+    for (const j of rebakeChangedJobs(b, ls)) q.push(j);
+    drain(q);
+    expect(weights(b)).toEqual(weights(bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts)));
+  });
 });

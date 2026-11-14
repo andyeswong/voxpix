@@ -41,17 +41,21 @@ const queue = () => (q as unknown as { queue: ViewJob[] }).queue;
 const player = { x: 192, y: 192 };
 const calls: string[] = [];
 const cnt: Record<string, number> = {};
+const byClass: Record<string, number[]> = {};
+let measuring = false;
 const wrap = (j: ViewJob): ViewJob => ({
   key: j.key, priority: j.priority,
   run(d) {
     const t = performance.now(), r = j.run(d);
     const kk = j.key.split(/[:#]/)[0]! + (j.priority !== undefined && j.priority < 64 ? 'c' : ''); cnt[kk] = (cnt[kk] ?? 0) + 1;
+    const ms6 = (performance.now() - t) * K, kc = j.key.split(/[:#]/)[0]!; if (measuring) (byClass[kc] ??= []).push(ms6);
     calls.push(`${j.key.split(/[:#]/)[0]}${j.priority !== undefined && j.priority < 64 ? '(cerca)' : ''}${r ? ' acaba' : ''} ${((performance.now() - t) * K).toFixed(1)}`);
     return r;
   },
 });
 const res: Array<{ max: number; appear: number; end: number }> = [];
 function event(cut: ViewCut | null, measure: boolean): void {
+  measuring = measure;
   q.push(wrap(view.cutJob(cut)));
   let f = 0, max = 0, appear = -1;
   while (f < 400) {
@@ -80,6 +84,7 @@ for (let r = 0; r <= RUNS; r++) {
 }
 const p = (a: number[], x: number) => [...a].sort((u, v) => u - v)[Math.floor(x * (a.length - 1))]!;
 const mx = res.map((r) => r.max), ap = res.map((r) => r.appear), en = res.map((r) => r.end);
+for (const [k, v] of Object.entries(byClass)) { v.sort((a, b) => a - b); console.log(`  llamadas ${k}: n ${v.length}, p50 ${v[v.length >> 1]!.toFixed(1)}, p95 ${v[Math.floor(0.95 * (v.length - 1))]!.toFixed(1)}, máx ${v.at(-1)!.toFixed(1)} ms (a 6x), más de 6,7 (1 ms sin freno): ${v.filter((x) => x > 6.7).length}`); }
 console.log(`${res.length} eventos: budget.run máx por evento (a 6x) p50 ${p(mx, 0.5).toFixed(1)} p95 ${p(mx, 0.95).toFixed(1)} máx ${p(mx, 1).toFixed(1)} ms; ` +
   `aparece p50 ${p(ap, 0.5)} máx ${p(ap, 1)} cuadros; acaba p50 ${p(en, 0.5)} máx ${p(en, 1)}`);
 if (process.env.VER) {

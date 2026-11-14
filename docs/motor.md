@@ -158,6 +158,11 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
   mismo que una de 4 (~1,7 ms).
 - **Rayo por píxel en vez de pintar caras** en el recuadro: más rápido en teoría, pero tiene que dar los mismos píxeles
   que el render, empates de aristas incluidos. Días de trabajo y riesgo; no hecho.
+- **Luces que se pasaban del plazo en el relevo**: las sombras de las cajas se preparan una por paso, los píxeles de la
+  zona miran el reloj cada 4, los pesos por cara van en una tabla de tamaño fijo reutilizada (un Map o un Set que crece
+  se rehace entero al pasar de 16384 y eso eran ~2 ms) y los pesos pendientes en arrays de su tamaño. En
+  `bench-corte.ts` con `ANT=2`: llamadas de luz de más de 1 ms sin freno de 7-9 por tirada (máx 15-22 ms a 6x) a 0-2,
+  y esas son pausas del recolector (la misma celda, repetida, cuesta 0,1-0,2 ms a 6x).
 - **Partir la franja (o que la tonalidad de las caras se guarde entre franjas)**: en el corte de un túnel, una franja
   de 4 x 19 píxeles recorre ~5.800 vóxeles expuestos, ~5.200 caen en la imagen y se rasterizan (lo tapado también se
   pinta), y solo ~600 caras necesitan su tono. Con TODOS los tonos ya guardados, la franja sigue costando ~0,9 ms
