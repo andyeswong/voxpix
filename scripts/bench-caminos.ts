@@ -6,13 +6,43 @@ import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { LevelPathField } from '../src/world/levelpaths';
 import { clearBox } from '../src/world/edit';
+import { BlockSet, BlockGrid } from '../src/world/blocks';
+import { generateTerrain } from '../src/world/terrain';
+import type { Palette } from '../src/core';
 
 const W = 384, ZT = 96, B = 8;
-const pal = { ramps: [{ name: 'piedra', colors: ['#202428', '#3a4048', '#565e68'] }, { name: 'hierba', colors: ['#10301a', '#1e5028', '#2e7038'] }, { name: 'brasa', colors: ['#ff8020', '#ffc040'], emissive: true }] };
+// MUNDO=bloques: un mundo de bloques de 48 x 48 x 12 con generateTerrain (superficie con ruido, capas, vetas y árboles
+// con hojas que no se suben), como el de un juego de bloques. Si no, el terreno de bench-picar con un túnel
+const pal = { ramps: [
+  { name: 'piedra', colors: ['#202428', '#3a4048', '#565e68'] }, { name: 'hierba', colors: ['#10301a', '#1e5028', '#2e7038'] },
+  { name: 'tierra', colors: ['#2a1a10', '#4a3020', '#6a4a30'] }, { name: 'carbon', colors: ['#101010', '#202020', '#303030'] },
+  { name: 'tronco', colors: ['#2b1b12', '#4a2f1d', '#6e4729'] }, { name: 'hojas', colors: ['#1f3a22', '#2f5a2f', '#46803c'], material: 'arbusto' },
+] } as Palette;
 const s = new StaticVoxels(pal, W, W, 0, ZT - 1);
+const blockWorld = process.env.MUNDO === 'bloques';
 const half = Math.floor(ZT / B / 2);
 const hb = (bx: number, by: number) => half + Math.round(3 * Math.sin(bx / 5.3) * Math.cos(by / 4.1));
-for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+if (blockWorld) {
+  const cube = (r: number, keep: (x: number, y: number, z: number) => boolean = () => true) => {
+    const o: Array<[number, number, number, number]> = [];
+    for (let z = 0; z < B; z++) for (let y = 0; y < B; y++) for (let x = 0; x < B; x++) if (keep(x, y, z)) o.push([x, y, z, material(r, (x + y + z) % 3)]);
+    return o;
+  };
+  const set = BlockSet.fromJSON({ format: 'voxpix-set', version: 1, name: 'banco', size: B, palette: pal, blocks: [
+    { id: 'piedra', voxels: cube(0) }, { id: 'hierba', voxels: cube(1), props: { covered: 'tierra' } }, { id: 'tierra', voxels: cube(2) },
+    { id: 'carbon', voxels: cube(3) },
+    { id: 'tronco', voxels: cube(4, (x, y) => Math.hypot(x - 3.5, y - 3.5) < 3.2) },                  // redondeado
+    { id: 'hojas', voxels: cube(5, (x, y, z) => ((x * 7 + y * 13 + z * 5) % 11) > 1) },              // ~18 % de huecos
+  ] });
+  const leaf: Array<[number, number, number, string]> = [];
+  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) leaf.push([dx!, dy!, 4, 'hojas']);
+  generateTerrain({
+    seed: 1, surface: { base: 6, amplitude: 2, scale: 9, octaves: 3 },
+    layers: [{ block: 'hierba', depth: 1 }, { block: 'tierra', depth: 2 }, { block: 'piedra' }],
+    veins: [{ block: 'carbon', in: 'piedra', chance: 0.08, size: [1, 3], bz: [0, 5] }],
+    scatter: [{ on: 'hierba', density: 0.02, spacing: 4, structure: [[0, 0, 1, 'tronco'], [0, 0, 2, 'tronco'], [0, 0, 3, 'tronco'], ...leaf, [0, 0, 5, 'hojas']] }],
+  }, new BlockGrid(new WorldState(s, [], null), set));
+} else for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
   const top = hb(x >> 3, y >> 3) * B;
   for (let z = 0; z < top; z++) {
     if (y >= 184 && y < 200 && x >= 40 && x < 344 && z >= 16 && z < 32) continue;
@@ -24,7 +54,7 @@ const O = { cell: 4, radius: 1, height: 14, step: 8, maxDrop: 64 };
 let t = performance.now();
 const f = new LevelPathField(st, O);
 const build = performance.now() - t;
-const top = (x: number, y: number) => hb(x >> 3, y >> 3) * B;
+const top = (x: number, y: number) => blockWorld ? s.height[Math.floor(y) * W + Math.floor(x)]! : hb(x >> 3, y >> 3) * B;
 const goals: Array<{ x: number; y: number; z: number }> = [];
 for (let k = 0; k < 40; k++) { const x = 100 + ((k * 37) % 180), y = 100 + ((k * 53) % 180); goals.push({ x, y, z: top(x, y) }); }
 const search: number[] = [], dir: number[] = [], dug: number[] = [];
