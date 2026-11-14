@@ -409,7 +409,7 @@ aside.dragging :deep(header) { cursor: grabbing; }
 .more { min-height: 44px; border-radius: 14px; color: var(--muted); }
 .animwin { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-50%); padding: 8px 12px; max-width: calc(100vw - 32px); }
 .rigpanel { z-index: 5; top: 80px; left: 50%; transform: translateX(-50%); width: 620px; padding: 14px; max-height: calc(100vh - 260px); overflow: auto; }
-.blockspanel { z-index: 5; top: 80px; right: 16px; padding: 12px; max-height: calc(100vh - 200px); overflow: auto; }
+.blockspanel { z-index: 5; top: 80px; right: 400px; padding: 12px; max-height: calc(100vh - 200px); overflow: auto; }
 .palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 460px; padding: 16px; max-height: calc(100vh - 250px); overflow-y: auto; }
 .status { left: 16px; bottom: 16px; display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .backend { min-height: 22px; padding: 0 8px; font-size: 11px; color: var(--muted); border-radius: 8px; }

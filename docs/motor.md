@@ -237,6 +237,36 @@ const { heights } = generateTerrain({
 - El ruido es de `src/worldgen/noise.ts` (`valueNoise`, `fbm`, `fbmN`, `lattice`), exportado para quien quiera más.
 - En un portátil, sin freno: un terreno de 48 x 48 x 12 bloques de 8 se genera en ~0,25 s y se hornea en ~0,3 s.
 
+## Caminos
+
+Para que algo que anda (un enemigo, un animal) vaya hacia un sitio rodeando lo que no se puede pasar, sobre el suelo
+de las columnas del mundo, con escalones y caídas.
+
+```ts
+import { PathField, findPath } from '@voxpix/world/paths';
+
+const field = new PathField(state, { cell: 4, radius: 2, step: 8, maxDrop: 16 });
+// Cada tick, por cada uno que persigue a (px, py): hacia dónde moverse (unitario), o null si ya llegó o no hay camino
+const d = field.dir({ x: e.x, y: e.y }, { x: px, y: py }, 6);
+const ruta = field.path(desde, hasta);                 // los centros de las celdas, con su suelo en z
+findPath(state, desde, hasta, { step: 8 });           // un camino suelto, sin guardar el campo
+field.close();                                        // al tirarlo: deja de oír los cambios del mundo
+```
+
+- La rejilla es de celdas de `cell` vóxeles. El suelo de una celda es el de su centro (`state.footing`: lo más alto
+  que se pisa, con los objetos despiertos); cabe un cuerpo de radio `radius` si todas las columnas a esa distancia se
+  pisan y ninguna sobresale más de `step`.
+- De una celda se pasa a sus 8 vecinas (en diagonal, solo si también se puede por las dos de lado) subiendo como mucho
+  `step` y bajando como mucho `maxDrop` (sin límite por defecto).
+- Las distancias a la meta salen de un BFS hacia atrás desde la celda de la meta (y las que tengan el centro a `near`
+  o menos). Se guardan: muchos cuerpos hacia la misma meta comparten una búsqueda, que se rehace al cambiar la meta o
+  el mundo. Los cambios del mundo llegan por `watchChanges` y rehacen solo las celdas tocadas.
+- `dir` lleva a un cuerpo encajado en una celda sin camino hacia la vecina con camino más cercana (a 2 o menos).
+- Solo superficie: una celda tiene un suelo, el de arriba; no ve túneles ni cuevas.
+- En un terreno de 384 x 384 con celdas de 4: construir el campo ~6 ms, una búsqueda ~2 ms, ponerse al día tras picar
+  un bloque ~1 ms (sin freno).
+- Lo que decide cuándo perseguir, cuándo rendirse o a quién es del juego.
+
 ## Entidades
 
 ```ts
