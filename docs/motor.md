@@ -474,6 +474,17 @@ compositor.frame(rs, baked, { ...opciones, ambient: day.ambient(tick), cave: [0.
   caja como las luces fijas (un trabajo `sky:` en la cola, que se publica de una vez). Igual, byte a byte, que hornear
   de cero (hay pruebas, también con el corte de vista en los 4 giros).
 - Sin `sky` en el horneado o sin `cave` al componer, todo es como antes (las huellas de siempre).
+- Tolerancia conocida en el oráculo (`medieval bajo tejado (cielo y cueva)`, RTX 4090 con ANGLE): 49 píxeles de
+  82.944 en el giro 0 y 7 en el giro 1 difieren en ±1 en un canal. No es el cielo ni la luz: multiply y add son
+  idénticos en la CPU y en la GPU. Es el color del agua de `WaterLayer.draw`, el mismo valor en las dos rutas,
+  redondeado distinto al pasarlo a byte:
+  - en la superficie (tono 3 que refleja el suelo al 38 %) el verde vale 99,54: la CPU da 100 y la GPU 99;
+  - en el fondo visto a través del agua, 110 × 0,85 = 93,5 justo: la CPU da 94 y la GPU 93.
+
+  La causa es la mezcla con pesos del agua y una conversión de float a byte en la GPU con menos precisión que la de
+  la CPU. Es una inferencia: una conversión con unos 12 bits cuadra con los tres canales y los dos casos, pero no
+  está leída en documentación del fabricante. El oráculo la tolera por diseño (`scripts/oracle/README.md`): ±1 suelto
+  en un byte, muy por debajo del 0,5 % de píxeles.
 - Coste: en un terreno de 384 x 384 x 96, el horneado entero pasa de ~0,51 a ~0,58 s y cada bloque picado añade un
   trabajo de ~0,2-0,5 ms (sin freno).
 
