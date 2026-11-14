@@ -34,8 +34,22 @@ describe('presupuesto de la vista por cuadro', () => {
   it('en orden de llegada, y si uno acaba a medio cuadro, sigue el siguiente', () => {
     const { clock, log, job } = harness();
     const b = new FrameBudget(3, clock.now);
+    // De la misma clase (la cola sabe lo que cuesta después del primero) y de 1 ms: caben los tres en un cuadro de 3
+    b.push(job('x:a', 1)); b.push(job('x:b', 1)); b.push(job('x:c', 1)); b.push(job('x:d', 1));
+    expect(b.run()).toBe(3);
+    expect(log).toEqual(['x:a', 'x:b', 'x:c']);
+    b.run();
+    expect(log).toEqual(['x:a', 'x:b', 'x:c', 'x:d']);
+    expect(b.pending).toBe(0);
+  });
+
+  it('una clase que no ha corrido nunca solo empieza como primera llamada de su fase', () => {
+    const { clock, log, job } = harness();
+    const b = new FrameBudget(3, clock.now);
     b.push(job('a', 2)); b.push(job('b', 2)); b.push(job('c', 2));
-    b.run(); b.run();
+    expect(b.run()).toBe(2);                   // b no se sabe lo que cuesta: no empieza con 1 ms libre
+    expect(b.run()).toBe(2);
+    expect(b.run()).toBe(2);
     expect(log).toEqual(['a', 'a', 'b', 'b', 'c', 'c']);
     expect(b.pending).toBe(0);
   });
@@ -121,7 +135,7 @@ describe('presupuesto de la vista por cuadro', () => {
     const near = (j: ViewJob, p: number): ViewJob => ({ key: j.key, priority: p, run: (d) => j.run(d) });
     // Una llamada de recuadro de 5 ms y otra de cielo de 1 ms, para que la cola las conozca
     b.push(near(job('rect:a', 1, 5), 0)); b.push(near(job('sky:a', 1, 1), 1));
-    b.run();
+    while (b.pending) b.run();
     log.length = 0;
     // Ahora: un recuadro de 5 (va el primero: siempre hace una llamada), otro de 5 (no cabe en los 3 que quedan) y un
     // cielo de 1 (cabe)
@@ -154,10 +168,10 @@ describe('presupuesto de la vista por cuadro', () => {
     b.run();
     expect(b.expected('light:9#9')).toBe(2);
   });
-  it('contrato: con franjas de 4 ms y plazo cercano de 8, ningún run() pasa de near.ms + ms, y acaba igual que sin plazo', () => {
-    // Trabajos como los de verdad: hacen unidades mientras quepa la siguiente según lo que tardó la anterior (la primera
-    // siempre), y cada unidad escribe su parte del resultado. Recuadros cercanos de franjas de 4 ms, luces y cielo de
-    // lo demás de 1 y 2 ms, que llegan a tandas mientras la cola trabaja
+  // Trabajos como los de verdad: hacen unidades mientras quepa la siguiente según lo que tardó la anterior (la primera
+  // siempre), y cada unidad escribe su parte del resultado. Recuadros cercanos de franjas de 4 ms, luces y cielo de lo
+  // demás de 1 y 2 ms, que llegan a tandas (una cada 3 cuadros) mientras la cola trabaja
+  function contract(warm: boolean): { runs: number[]; same: boolean } {
     let t = 0;
     const out = new Map<string, number[]>();
     const make = (key: string, units: number, cost: number, priority: number): ViewJob => {
@@ -175,24 +189,36 @@ describe('presupuesto de la vista por cuadro', () => {
       make(`rect:${k},0`, 5, 4, k), make(`rect:${k},1`, 3, 4, 20 + k),
       make(`light:${k}#${k}`, 6, 1, 10000 + k), make(`sky:${k},0`, 3, 2, 10100 + k),
     ]);
-    // La cola tiene que conocer ya cada clase: la primera llamada de una clase que nunca ha corrido no tiene estimación
-    // (cuenta 0) y puede pasarse de su fase una unidad. Una tanda de calentamiento, aparte
     const q = new FrameBudget(3, () => t, { ms: 8, below: 64 });
-    for (const j of batches(1)[0]!) q.push({ ...j, key: j.key.replace(/^(\w+)[:#]/, '$1:calentar,'), run: (d) => j.run(d) });
-    while (q.pending) q.run();
-    out.clear();
-    // Con plazo: una tanda cada 3 cuadros
+    if (warm) {
+      // Una tanda aparte para que la cola ya conozca cada clase
+      for (const j of batches(1)[0]!) q.push({ ...j, key: j.key.replace(/^(\w+)[:#]/, '$1:calentar,'), run: (d) => j.run(d) });
+      while (q.pending) q.run();
+      out.clear();
+    }
     const plan = batches(8), runs: number[] = [];
     for (let f = 0; f < 400 && (q.pending || plan.length); f++) {
       if (f % 3 === 0 && plan.length) for (const j of plan.shift()!) q.push(j);
       runs.push(q.run());
     }
-    expect(q.pending).toBe(0);
-    expect(Math.max(...runs)).toBeLessThanOrEqual(8 + 3);
+    if (q.pending) return { runs, same: false };
     const withBudget = new Map(out);
     // Sin plazo: los mismos trabajos de una vez
     out.clear();
     for (const j of batches(8).flat()) while (!j.run(Infinity));
-    expect(withBudget).toEqual(out);
+    return { runs, same: JSON.stringify([...withBudget].sort()) === JSON.stringify([...out].sort()) };
+  }
+
+  it('contrato, desde el primer cuadro (la cola no conoce ninguna clase): ningún run() pasa de near.ms + ms, y acaba igual que sin plazo', () => {
+    const { runs, same } = contract(false);
+    expect(Math.max(...runs)).toBeLessThanOrEqual(8 + 3);
+    expect(runs[0]).toBeLessThanOrEqual(8 + 3);
+    expect(same).toBe(true);
+  });
+
+  it('contrato, con la cola caliente: lo mismo', () => {
+    const { runs, same } = contract(true);
+    expect(Math.max(...runs)).toBeLessThanOrEqual(8 + 3);
+    expect(same).toBe(true);
   });
 });

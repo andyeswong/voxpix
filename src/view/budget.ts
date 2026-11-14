@@ -74,17 +74,25 @@ export class FrameBudget {
   }
   // Corre los trabajos de [i, hasta) de la cola (hasta: el primero que no es de la fase) hasta el plazo. La primera
   // llamada de la fase va siempre (si no, nada avanzaría); las demás, solo si cabe lo que suele costar esa clase de
-  // llamada: si no, se prueba con el siguiente (otra clase puede caber), y el resto se queda para el cuadro siguiente
+  // llamada (y si la clase no ha corrido nunca, no: no se sabe lo que cuesta): si no, se prueba con el siguiente (otra
+  // clase puede caber), y el resto se queda para el cuadro siguiente
   private phase(deadline: number, inPhase: (j: ViewJob) => boolean, from = 0): void {
     let i = from, ran = 0;
     while (i < this.queue.length) {
       const job = this.queue[i]!;
       if (!inPhase(job)) break;
       const t = this.now();
-      if (ran > 0 && (t >= deadline || t + this.expected(job.key) > deadline)) { if (t >= deadline) break; i++; continue; }
-      const done = job.run(deadline);
-      this.record(job.key, this.now() - t);
-      ran++;
+      if (ran > 0 && t >= deadline) break;
+      // Una clase que todavía no ha corrido nunca no tiene estimación: solo empieza como primera llamada de la fase
+      // (si no, empezaría sin sitio y se pasaría una unidad entera)
+      const cost = this.costs.get(FrameBudget.kind(job.key));
+      if (ran > 0 && (!cost || t + cost.p95 > deadline)) { i++; continue; }
+      const done = job.run(deadline), ms = this.now() - t;
+      this.record(job.key, ms);
+      // Una llamada que no gasta nada medible (una espera, o un trabajo que ya no tenía nada que hacer) no cuenta como la
+      // llamada de la fase: lo de detrás, aunque sea de una clase sin estimación, todavía puede empezar (si no, una luz
+      // que espera a su recuadro dejaría el recuadro sin correr)
+      if (ms >= MIN_SAMPLE_MS) ran++;
       if (done) this.queue.splice(i, 1);
       else i++;
     }

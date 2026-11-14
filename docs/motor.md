@@ -203,9 +203,14 @@ budget.run();
 - La cola aprende lo que cuesta cada clase de llamada (la key hasta `:` o `#`: `rect`, `light`, `sky`, `view-cut`...):
   el p95 de sus últimas 32 llamadas, en `budget.expected(key)`. En cada fase (la cercana y la de lo demás), la primera
   llamada va siempre (si no, nada avanzaría); las demás solo empiezan si cabe lo que suele costar su clase, y si no,
-  la cola prueba con el siguiente trabajo (otra clase puede caber). Las llamadas que esperan a otro trabajo (no gastan
-  nada medible) no cuentan. Lo cercano que no acabó no vuelve a correr en la fase de lo demás del mismo cuadro: antes
-  se llevaba otra unidad entera de ese presupuesto.
+  la cola prueba con el siguiente trabajo (otra clase puede caber). Una clase que no ha corrido nunca no tiene
+  estimación: solo empieza como primera llamada de su fase (la primera de cada clase puede esperar un cuadro; a cambio,
+  ninguna empieza sin sitio). Las llamadas que no gastan nada medible (esperar a otro trabajo) no cuentan ni para la
+  estimación ni como la primera llamada de la fase. Lo cercano que no acabó no vuelve a correr en la fase de lo demás
+  del mismo cuadro: antes se llevaba otra unidad entera de ese presupuesto.
+- El contrato, probado con un reloj de mentira desde el primer cuadro (`test/view/budget.test.ts`): si ninguna unidad
+  de trabajo es más larga que el presupuesto de su fase, ningún `run()` pasa de `near.ms + ms`, y cada trabajo acaba
+  igual que sin plazo.
 - `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
   en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
   trabajos sin prioridad van detrás, en su orden.

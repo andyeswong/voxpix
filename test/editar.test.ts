@@ -70,7 +70,9 @@ describe('lo cercano primero', () => {
   it('FrameBudget: los de prioridad más baja van antes; los que no la llevan, detrás y en su orden', () => {
     const order: string[] = [];
     const job = (key: string, priority?: number): ViewJob => ({ key, priority, run: () => { order.push(key); return true; } });
-    const q = new FrameBudget(1000);
+    // Con un reloj quieto (trabajos instantáneos): esto prueba el orden, no lo que cuesta cada clase (con el reloj de
+    // verdad, una clase que no ha corrido nunca no empieza detrás de una llamada que gastó algo)
+    const q = new FrameBudget(1000, () => 0);
     q.push(job('a')); q.push(job('b')); q.push(job('c', 5)); q.push(job('d', 1)); q.push(job('e', 5));
     q.push(job('a', 3));                                          // la misma key: sustituye y se recoloca
     q.run();
