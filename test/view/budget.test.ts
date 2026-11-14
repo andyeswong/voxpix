@@ -252,4 +252,21 @@ describe('presupuesto de la vista por cuadro', () => {
     expect(b.run()).toBe(8);
     expect(log).toEqual(['rect:b cara', 'rect:a']);
   });
+  it('lo que no cabe no se queda sin correr para siempre: tras unos cuadros saltado va el primero de su fase', () => {
+    let t = 0;
+    const b = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    // Un recuadro cuya primera llamada ya se sabe que cuesta 10 (más que el cercano entero)
+    let left = 3;
+    const rect: ViewJob = { key: 'rect:a', priority: 5, run: () => { t += 10; return --left === 0; } };
+    b.push({ key: 'rect:calentar', priority: 5, run: () => { t += 10; return true; } });
+    b.run();
+    expect(b.expected('rect:x', true)).toBe(10);
+    // Delante, una luz que espera (vuelve sin acabar) y que el reloj mide como 0,02 ms: corre la primera en cada cuadro
+    b.push({ key: 'light:1#1', priority: 1, run: () => { t += 0.02; return false; } });
+    b.push(rect);
+    let frames = 0;
+    while (left > 0 && frames < 50) { b.run(); frames++; }
+    expect(left).toBe(0);                    // el recuadro acabó: antes, nunca (siempre detrás de la espera)
+    expect(frames).toBeLessThan(20);
+  });
 });

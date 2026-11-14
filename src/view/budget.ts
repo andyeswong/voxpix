@@ -67,6 +67,10 @@ export class FrameBudget {
   }
   // Los trabajos que ya hicieron una llamada que gastó algo (las siguientes van con la estimación del resto)
   private started = new WeakSet<ViewJob>();
+  // Cuántos cuadros seguidos se ha saltado cada trabajo por no caber (y en qué cuadro, para contar uno por cuadro)
+  private skipped = new WeakMap<ViewJob, number>();
+  private skippedFrame = new WeakMap<ViewJob, number>();
+  private frameNo = 0;
   private record(k: string, ms: number): void {
     if (!(ms >= MIN_SAMPLE_MS)) return;
     let c = this.costs.get(k);
@@ -81,32 +85,63 @@ export class FrameBudget {
   // llamada (y si la clase no ha corrido nunca, no: no se sabe lo que cuesta): si no, se prueba con el siguiente (otra
   // clase puede caber), y el resto se queda para el cuadro siguiente
   private phase(deadline: number, inPhase: (j: ViewJob) => boolean, from = 0): void {
-    let i = from, ran = 0;
+    let ran = 0;
+    // Uno que lleva STARVE_FRAMES cuadros seguidos saltado por no caber va el primero de la fase (la primera llamada
+    // es la que puede no caber). Si no, cuando delante siempre corre algo antes (una espera que el reloj del navegador,
+    // de 0,1 ms, mide como trabajo), una clase que no cabe nunca sería la primera y no correría nunca
+    let end = from;
+    while (end < this.queue.length && inPhase(this.queue[end]!)) end++;
+    for (let k = from; k < end; k++) {
+      const job = this.queue[k]!;
+      if ((this.skipped.get(job) ?? 0) < STARVE_FRAMES || this.skippedFrame.get(job) !== this.frameNo - 1) continue;
+      const t = this.now(), r = this.call(job, deadline, t);
+      if (r.done) this.queue.splice(k, 1);
+      if (r.ms >= MIN_SAMPLE_MS) ran++;
+      break;
+    }
+    let i = from;
     while (i < this.queue.length) {
       const job = this.queue[i]!;
       if (!inPhase(job)) break;
       const t = this.now();
       if (ran > 0 && t >= deadline) break;
       // Una clase que todavía no ha corrido nunca no tiene estimación: solo empieza como primera llamada de la fase
-      // (si no, empezaría sin sitio y se pasaría una unidad entera)
-      const first = !this.started.has(job), k = FrameBudget.kind(job.key) + (first ? FIRST : '');
-      const cost = this.costs.get(k);
-      if (ran > 0 && (!cost || t + cost.p95 > deadline)) { i++; continue; }
-      const done = job.run(deadline), ms = this.now() - t;
-      this.record(k, ms);
-      if (ms >= MIN_SAMPLE_MS) this.started.add(job);
+      // (si no, empezaría sin sitio y se pasaría una unidad entera). Si no cabe se salta, y se cuentan los cuadros
+      // seguidos que lleva saltado
+      const cost = this.costs.get(this.costKey(job));
+      if (ran > 0 && (!cost || t + cost.p95 > deadline)) {
+        const last = this.skippedFrame.get(job);
+        if (last !== this.frameNo) {
+          this.skipped.set(job, (last === this.frameNo - 1 ? this.skipped.get(job) ?? 0 : 0) + 1);
+          this.skippedFrame.set(job, this.frameNo);
+        }
+        i++;
+        continue;
+      }
+      const r = this.call(job, deadline, t);
       // Una llamada que no gasta nada medible (una espera, o un trabajo que ya no tenía nada que hacer) no cuenta como la
       // llamada de la fase: lo de detrás, aunque sea de una clase sin estimación, todavía puede empezar (si no, una luz
       // que espera a su recuadro dejaría el recuadro sin correr)
-      if (ms >= MIN_SAMPLE_MS) ran++;
-      if (done) this.queue.splice(i, 1);
+      if (r.ms >= MIN_SAMPLE_MS) ran++;
+      if (r.done) this.queue.splice(i, 1);
       else i++;
     }
+  }
+  private costKey(job: ViewJob): string { return FrameBudget.kind(job.key) + (this.started.has(job) ? '' : FIRST); }
+  // Una llamada: corre, apunta lo que costó (en su clase y posición) y deja de contarla como saltada
+  private call(job: ViewJob, deadline: number, t: number): { done: boolean; ms: number } {
+    const k = this.costKey(job);
+    this.skipped.delete(job); this.skippedFrame.delete(job);
+    const done = job.run(deadline), ms = this.now() - t;
+    this.record(k, ms);
+    if (ms >= MIN_SAMPLE_MS) this.started.add(job);
+    return { done, ms };
   }
   // Una vez por cuadro. spentMs: lo que ya se llevó la vista en este cuadro de lo que cuenta contra el mismo
   // presupuesto. Devuelve los ms gastados aquí.
   run(spentMs = 0): number {
     if (!this.queue.length) return 0;
+    this.frameNo++;
     const start = this.now();
     // 1) lo cercano, con su presupuesto (va delante en la cola: está ordenada por prioridad)
     const nr = this.near;

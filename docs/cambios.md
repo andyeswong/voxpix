@@ -33,9 +33,13 @@ medida que vale para un juego es la suya.
   trabajo aparte, y no empieza una llamada que no cabe.
 - Recorrer lo que se ve: `forEachExposed` ya no da los vóxeles enterrados de las losas a medio llenar, y guarda por
   losa qué vóxeles tienen cara al aire. En el corte de casa de muñecas con contorno, la llamada de recuadro baja de
-  p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x. El máximo sigue por encima de 8.
+  p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x. El máximo sigue por encima de 8. No es el recolector de basura
+  (traza de V8 en Edge: 7 de 312 llamadas lentas tienen una pausa dentro, y ninguna bajaría de 8 sin ella): es
+  cálculo. Tolerancia conocida.
 - Las luces cerca del jugador también van con el presupuesto cercano (una antorcha recién puesta alumbra en menos de
   la mitad de cuadros), sin adelantarse a sus recuadros.
+- Un trabajo que no cabe y lleva 4 cuadros seguidos saltado va el primero de su fase: antes podía quedarse sin correr
+  nunca si delante siempre corría algo antes.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es
   el mismo que sin plazo.
 - Las luces respetan su plazo: sombras por caja, un reloj cada 4 píxeles y tablas de tamaño fijo, sin `Map` ni `Set`

@@ -245,6 +245,12 @@ budget.run();
   ninguna empieza sin sitio). Las llamadas que no gastan nada medible (esperar a otro trabajo) no cuentan ni para la
   estimación ni como la primera llamada de la fase. Lo cercano que no acabó no vuelve a correr en la fase de lo demás
   del mismo cuadro: antes se llevaba otra unidad entera de ese presupuesto.
+- Lo que no cabe se salta, pero no para siempre. Un trabajo que lleva 4 cuadros seguidos saltado por no caber va el
+  primero de su fase en el siguiente (la primera llamada es la que puede no caber). Sin eso podía quedarse bloqueado:
+  una clase cuya llamada cuesta más que el cercano entero (la primera franja de un recuadro de corte) solo corre como
+  primera de su fase, y si delante corre siempre algo antes, no corre nunca. Ese algo puede ser una luz cercana que
+  espera a su recuadro y que el reloj del navegador, redondeado a 0,1 ms, mide como trabajo. Hay prueba con esa espera
+  delante.
 - El contrato, probado con un reloj de mentira desde el primer cuadro (`test/view/budget.test.ts`): si ninguna unidad
   de trabajo es más larga que el presupuesto de su fase, ningún `run()` pasa de `near.ms + ms`, y cada trabajo acaba
   igual que sin plazo.
@@ -684,7 +690,11 @@ view.setCut(null);                                          // al salir
   Con la caja de los pies de un juego (24 de ancho y 64 hacia la cámara: `DOS=2`), contorno interior (`CONTORNO=both`),
   el mundo de bloques (`MUNDO=bloques`) y 2 antorchas en el túnel, a 6x, la llamada de recuadro queda en p50 ~6, p95
   ~12 y máximo ~20-22 ms (antes de guardar lo expuesto por losa: 8,6, 15,5 y 29). La llamada más larga sigue por
-  encima de lo que cabe en el cercano (8): su coste no baja al estrechar la franja (ver "Probado y descartado").
+  encima de lo que cabe en el cercano (8): su coste no baja al estrechar la franja (ver "Probado y descartado"). No es
+  el recolector de basura. En Edge, con una traza de V8, de 1.803 llamadas de recuadro 312 pasan de 8 ms (a 6x), solo
+  7 tienen una pausa del recolector dentro y ninguna bajaría de 8 sin ella. Es cálculo: pintar todo lo expuesto de una
+  franja alta (las caras que se ven y las que quedan tapadas) y, tras un cambio grande, las filas de lo expuesto que
+  hay que rehacer. Queda como tolerancia conocida: con este corte, p95 ~11-12 y máximo ~20-30 ms a 6x.
 - `view.setCut(corte)` lo aplica de una vez (y devuelve cuántas columnas reescribió; `view.currentCut` es el corte pedido). Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
   (`FrameBudget`, prioridad 0: va con el presupuesto cercano) que reescribe columnas hasta el plazo; lo que va
   cambiando lo recoge `rebakeChangedJobs` cada cuadro. Si llega otro corte antes de acabar, sigue desde donde está y

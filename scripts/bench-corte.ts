@@ -94,6 +94,8 @@ function event(cut: ViewCut | ViewCut[] | null, measure: boolean): void {
     if (!q.pending) break;
     f++;
     calls.length = 0;
+    // GC=1: recolectar entero entre cuadros, FUERA de lo medido (para ver si el pico de una llamada es el recolector)
+    if (process.env.GC === '1') (globalThis as unknown as { Bun: { gc(full: boolean): void } }).Bun.gc(true);
     const t = performance.now();
     q.run();
     const ms = (performance.now() - t) * K;
