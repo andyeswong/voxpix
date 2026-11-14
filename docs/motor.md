@@ -130,6 +130,22 @@ de arriba junto a una):
 Los pasos los reparte la cola (`FrameBudget`) entre cuadros. Con el navegador y la CPU frenada, todo sube varias veces:
 la medida que vale para un juego es la suya.
 
+### Probado y descartado
+
+Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin freno):
+
+- **Cortar la franja del recuadro donde el rayo de cada fila entra en losas macizas** (lo de detrás no se ve): recorta
+  de ~184 a ~100 filas de y por franja, pero las losas llenas empiezan muy por debajo de la superficie y el banco sale
+  peor (p95 8,9 contra 7,4 ms; paso 1,6 contra 1,1).
+- **Estrechar la franja según el plazo** (de 1 a 4 columnas, con lo que cuesta una columna, global o por recuadro):
+  cada franja tiene un coste casi todo fijo (recorrer su región), así que más franjas cuestan más en total (de ~4,5 a
+  ~5,5-6,5 ms por golpe) y la llamada más larga no baja; en un corte hondo una franja de 1 columna cuesta casi lo
+  mismo que una de 4 (~1,7 ms).
+- **Rayo por píxel en vez de pintar caras** en el recuadro: más rápido en teoría, pero tiene que dar los mismos píxeles
+  que el render, empates de aristas incluidos. Días de trabajo y riesgo; no hecho.
+- **Descartar una antorcha porque hay una columna llena entre ella y lo cambiado**: no encontré una forma barata y
+  exacta de saber que nada de su sombra pasa por otro lado.
+
 ## Editar el mundo en partida
 
 Picar, poner, construir: cambiar el escenario mientras se juega, y que se vea en uno o dos cuadros.
