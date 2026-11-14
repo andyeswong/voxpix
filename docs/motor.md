@@ -303,8 +303,29 @@ field.floorsAt({ x, y });                                        // los suelos d
   llega. Lo demás, como `PathField`: BFS hacia atrás compartido por todos los que van a la misma meta, rehecho por
   `watchChanges` solo en las celdas tocadas.
 - Va con `moveBodyLevels` (mismos `step` y alto).
-- Coste (terreno de bloques de 384 x 384 con un túnel, celdas de 4, sin freno): construir ~17 ms, una búsqueda
-  ~3,4 ms, ponerse al día tras picar ~1,4 ms (el de superficie: ~5, ~1,7 y ~0,8).
+- Guarda lo que da cada paso entre dos nodos vecinos (si se pasa o no) y solo lo borra donde cambia el mundo (las
+  celdas tocadas y sus vecinas: un paso mira las dos celdas y, en diagonal, las dos de lado). Una búsqueda nueva con el
+  mundo igual no vuelve a mirar columnas; el resultado es el mismo que con un campo nuevo (hay prueba, también con un
+  cambio que solo toca el paso que llega a una celda desde su vecina).
+- Búsqueda repartida, para no buscar entera en el tick en que cambia la meta:
+
+  ```ts
+  const field = new LevelPathField(state, { ...opciones, budget: 2000 });   // nodos por advance()
+  // En cada tick de la simulación
+  field.advance();                                // sigue la búsqueda pendiente, 2000 nodos como mucho
+  const d = field.dir(desde, meta);               // pide la meta y contesta con la última búsqueda acabada
+  ```
+
+  Va por nodos, no por reloj: la simulación tiene que dar lo mismo en cualquier máquina. Mientras busca, `dir` y
+  `path` contestan con la última acabada (la primera vez, `null`). Si piden otra meta a media búsqueda, se acaba la que
+  está en marcha y después se busca la última pedida (si se empezara de cero cada vez, una meta que se mueve deprisa no
+  se acabaría nunca). Un cambio del mundo a media búsqueda la tira y se rehace. Con cualquier tanda, las distancias son
+  las mismas que buscando de una vez (hay prueba con tandas de 1, 7 y 100 nodos). Sin `budget`, como siempre.
+- Coste (`bun scripts/bench-caminos.ts`: terreno de bloques de 384 x 384 x 96 con un túnel; celdas de 4, radio 1, alto
+  14, step 8, maxDrop 64; 96 x 96 x 4 nodos; sin freno): construir ~10 ms; una búsqueda entera ~0,4 ms (p95 ~0,5; antes
+  de guardar los pasos y saltar los niveles vacíos, ~1,0-1,2 y p95 ~1,7); tras picar, lo mismo. Repartida en tandas
+  de 2000 nodos: cada `advance()` p95 ~0,1 ms, máximo ~0,2. En un mundo con más relieve, más suelos por celda y
+  más diagonales que mirar, cuesta varias veces eso; la proporción se mantiene.
 
 ## Moverse por niveles
 

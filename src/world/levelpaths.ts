@@ -3,8 +3,8 @@
 // suelos. Se pasa a una celda vecina subiendo como mucho `step` y bajando como mucho `maxDrop`, y solo si el tramo de
 // columna que recorre el cuerpo está libre (cae por un pozo, no atraviesa el techo de un túnel). Las distancias a una
 // meta salen de un BFS hacia atrás, se guardan mientras no cambien la meta ni el mundo, y los cambios del mundo llegan
-// por watchChanges y rehacen solo las celdas tocadas. Para cuerpos que se mueven con moveBodyLevels
-// (src/runtime/levels.ts). docs/motor.md, "Caminos por niveles".
+// por watchChanges y rehacen solo las celdas tocadas. Con `budget`, la búsqueda se reparte entre ticks (advance). Para
+// cuerpos que se mueven con moveBodyLevels (src/runtime/levels.ts). docs/motor.md, "Caminos por niveles".
 import { NO_FOOT, type WorldState } from './state';
 import { materialsOf } from '../core';
 import type { ChangeWatch } from './changes';
@@ -17,9 +17,13 @@ export interface LevelPathOptions {
   step?: number;        // lo más que sube de una celda a otra (2)
   maxDrop?: number;     // lo más que baja (Infinity)
   levels?: number;      // suelos por celda como mucho, de arriba abajo (4)
+  // Búsqueda repartida: nodos por advance() (sin él, cada meta nueva se busca entera al pedirla). Ver advance()
+  budget?: number;
 }
 
 const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
+// La dirección contraria de cada una de N8 (su índice)
+const BACK = N8.map(([dx, dy]) => N8.findIndex(([ex, ey]) => ex === -dx && ey === -dy));
 
 export class LevelPathField {
   readonly cols: number;
@@ -30,9 +34,15 @@ export class LevelPathField {
   readonly step: number;
   readonly maxDrop: number;
   readonly L: number;
+  readonly budget: number | undefined;
   private floor: Float64Array;          // por celda y nivel: el suelo (NO_FOOT: ninguno)
   private ceil: Float64Array;           // y su techo: la cara de abajo del primer vóxel que bloquea encima (Infinity: cielo)
   private dist: Int32Array;             // pasos hasta la meta (-1: sin camino)
+  // Lo que da canMove de cada nodo a cada nodo de cada celda vecina: por nodo, dirección (N8) y nivel. 0: sin mirar,
+  // 1: se pasa, 2: no. Se rellena al buscar y se borra donde cambia el mundo: una búsqueda nueva con el mundo igual
+  // no vuelve a mirar columnas
+  private moves: Uint8Array;
+  private floors: Uint8Array;           // por celda: cuántos suelos tiene (van seguidos desde el nivel 0)
   private goal = '';
   private watch: ChangeWatch;
   private around: number[] = [];
@@ -40,10 +50,13 @@ export class LevelPathField {
   constructor(readonly state: WorldState, o: LevelPathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
     this.maxDrop = o.maxDrop ?? Infinity; this.L = o.levels ?? 4;
+    this.budget = o.budget;
     this.cols = Math.ceil(state.width / this.cell); this.rows = Math.ceil(state.depth / this.cell);
     this.floor = new Float64Array(this.cols * this.rows * this.L).fill(NO_FOOT);
     this.ceil = new Float64Array(this.cols * this.rows * this.L);
     this.dist = new Int32Array(this.cols * this.rows * this.L).fill(-1);
+    this.floors = new Uint8Array(this.cols * this.rows);
+    this.moves = new Uint8Array(this.cols * this.rows * this.L * 8 * this.L);
     const r = this.radius, span = Math.ceil(r);
     for (let dy = -span; dy <= span; dy++) for (let dx = -span; dx <= span; dx++) if (Math.hypot(dx, dy) <= r) this.around.push(dx, dy);
     this.fill(0, 0, this.cols - 1, this.rows - 1);
@@ -86,6 +99,7 @@ export class LevelPathField {
         }
         air = 0; roof = z;
       }
+      this.floors[j * this.cols + i] = n;
     }
   }
 
@@ -93,9 +107,22 @@ export class LevelPathField {
     const { boxes } = this.watch.take();
     if (!boxes.length) return;
     const c = this.cell, m = Math.ceil(this.radius) + 1;
-    for (const b of boxes) this.fill(Math.max(0, Math.floor((b.x0 - m) / c)), Math.max(0, Math.floor((b.y0 - m) / c)),
-      Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), Math.min(this.rows - 1, Math.floor((b.y1 + m) / c)));
+    for (const b of boxes) {
+      const i0 = Math.max(0, Math.floor((b.x0 - m) / c)), j0 = Math.max(0, Math.floor((b.y0 - m) / c));
+      const i1 = Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), j1 = Math.min(this.rows - 1, Math.floor((b.y1 + m) / c));
+      this.fill(i0, j0, i1, j1);
+      // Un paso entre dos celdas mira sus suelos, sus techos y las dos de lado (en diagonal): todas a una celda como
+      // mucho de las que cambiaron. Se borra lo guardado de los pasos que salen de ellas y de sus vecinas
+      const per = 8 * this.L * this.L;
+      for (let j = Math.max(0, j0 - 1); j <= Math.min(this.rows - 1, j1 + 1); j++) {
+        const a = (j * this.cols + Math.max(0, i0 - 1)) * per, z = (j * this.cols + Math.min(this.cols - 1, i1 + 1) + 1) * per;
+        this.moves.fill(0, a, z);
+      }
+    }
     this.goal = '';
+    // Lo que se estaba buscando era con el mundo de antes: se tira, y la meta se vuelve a pedir en el siguiente dir() o
+    // path() (la respuesta que hay se queda hasta que acabe la siguiente)
+    if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
   }
 
   private cellOf(p: { x: number; y: number }): number {
@@ -135,40 +162,98 @@ export class LevelPathField {
     return true;
   }
 
-  private toward(to: LevelPoint, near: number): void {
-    this.sync();
-    const g = this.nodeOf(to), key = `${g}:${near}`;
-    if (key === this.goal) return;
-    this.goal = key;
-    const { cols, rows, L, dist } = this;
+  // canMove guardado: de a a b, que está en la celda vecina d (índice en N8), nivel kb
+  private move(a: number, d: number, b: number): boolean {
+    const L = this.L, i = ((a * 8) + d) * L + (b % L);
+    let v = this.moves[i]!;
+    if (!v) this.moves[i] = v = this.canMove(a, b) ? 1 : 2;
+    return v === 1;
+  }
+
+  // La búsqueda: un BFS hacia atrás desde la meta (y las celdas a `near` de ella) sobre `work`, por tandas de nodos.
+  // Sin `budget`, de una vez al pedir otra meta; con `budget`, la sigue advance() y, mientras, se contesta con la
+  // última acabada. Las dos dan las mismas distancias: el mismo orden de cola, partido o no
+  private work: { key: string; dist: Int32Array; q: Int32Array; head: number; tail: number } | null = null;
+  private spare: { dist: Int32Array; q: Int32Array } | null = null;      // búferes para la siguiente búsqueda
+  private want: { key: string; to: LevelPoint; near: number } | null = null;
+
+  private start(key: string, to: LevelPoint, near: number): void {
+    const { cols, rows, L } = this, g = this.nodeOf(to);
+    const buf = this.work ?? this.spare ?? { dist: new Int32Array(cols * rows * L), q: new Int32Array(cols * rows * L) };
+    const w = { key, dist: buf.dist, q: buf.q, head: 0, tail: 0 };
+    this.spare = null;
+    const dist = w.dist, q = w.q;
     dist.fill(-1);
+    this.work = w;
     if (g < 0) return;
-    const q = new Int32Array(cols * rows * L);
-    let head = 0, tail = 0;
-    dist[g] = 0; q[tail++] = g;
+    dist[g] = 0; q[w.tail++] = g;
     // Además, los de las celdas a `near` (en el mismo suelo, más o menos step)
     if (near > 0) {
       const span = Math.ceil(near / this.cell), gc = Math.floor(g / L), gx = gc % cols, gy = Math.floor(gc / cols), fg = this.floor[g]!;
       for (let y = gy - span; y <= gy + span; y++) for (let x = gx - span; x <= gx + span; x++) {
         if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
         if (Math.hypot((x - gx) * this.cell, (y - gy) * this.cell) > near) continue;
-        for (let k = 0; k < L; k++) { const n = (y * cols + x) * L + k, f = this.floor[n]!; if (f !== NO_FOOT && Math.abs(f - fg) <= this.step && dist[n]! < 0) { dist[n] = 0; q[tail++] = n; } }
+        for (let k = 0; k < L; k++) { const n = (y * cols + x) * L + k, f = this.floor[n]!; if (f !== NO_FOOT && Math.abs(f - fg) <= this.step && dist[n]! < 0) { dist[n] = 0; q[w.tail++] = n; } }
       }
     }
-    while (head < tail) {
+  }
+
+  // Saca hasta `nodes` nodos de la cola de la búsqueda en curso; true si acabó (y entonces pasa a ser la respuesta)
+  private expand(nodes: number): boolean {
+    const w = this.work;
+    if (!w) return true;
+    const { cols, rows, L } = this, dist = w.dist, q = w.q;
+    let head = w.head, tail = w.tail;
+    for (let left = nodes; head < tail && left > 0; left--) {
       const n = q[head++]!, cell = Math.floor(n / L), x = cell % cols, y = Math.floor(cell / cols);
-      for (const [dx, dy] of N8) {
-        const nx = x + dx, ny = y + dy;
+      for (let d = 0; d < 8; d++) {
+        const nx = x + N8[d]![0], ny = y + N8[d]![1];
         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-        const nb = (ny * cols + nx) * L;
-        for (let k = 0; k < L; k++) {
+        const nc = ny * cols + nx, nb = nc * L, nf = this.floors[nc]!;
+        for (let k = 0; k < nf; k++) {
           const m = nb + k;
-          if (dist[m]! >= 0 || this.floor[m] === NO_FOOT || !this.canMove(m, n)) continue;
+          if (dist[m]! >= 0 || !this.move(m, BACK[d]!, n)) continue;
           dist[m] = dist[n]! + 1;
           q[tail++] = m;
         }
       }
     }
+    w.head = head; w.tail = tail;
+    if (head < tail) return false;
+    // Acabada: sus distancias son la respuesta (y el búfer viejo queda para la siguiente)
+    this.spare = { dist: this.dist, q: w.q };
+    this.dist = w.dist; this.goal = w.key;
+    this.work = null;
+    return true;
+  }
+
+  private toward(to: LevelPoint, near: number): void {
+    this.sync();
+    const key = `${this.nodeOf(to)}:${near}`;
+    if (this.budget === undefined) {
+      if (key === this.goal) return;
+      this.start(key, to, near);
+      this.expand(Infinity);
+      return;
+    }
+    // Repartida: se apunta lo que se quiere; advance() lo busca
+    this.want = key === this.goal && !this.work ? null : { key, to, near };
+  }
+
+  // Con `budget`: sigue la búsqueda pendiente, hasta `budget` nodos (o `nodes`). Una vez por tick, desde la
+  // simulación: va por nodos, no por reloj, así que la misma partida da lo mismo en cualquier máquina. Si mientras se
+  // busca piden otra meta, se acaba la que está en marcha y luego se empieza la nueva (si se empezara de cero cada vez,
+  // una meta que se mueve deprisa no se acabaría nunca). Devuelve true si no queda nada pendiente
+  advance(nodes = this.budget ?? Infinity): boolean {
+    this.sync();
+    if (!this.work) {
+      const w = this.want;
+      if (!w || w.key === this.goal) { this.want = null; return true; }
+      this.start(w.key, w.to, w.near);
+      this.want = null;
+    }
+    const done = this.expand(nodes);
+    return done && (!this.want || this.want.key === this.goal);
   }
 
   private next(n: number): number {
@@ -176,10 +261,10 @@ export class LevelPathField {
     if (here <= 0) return here === 0 ? -1 : -2;
     const cell = Math.floor(n / L), x = cell % cols, y = Math.floor(cell / cols);
     let best = -2, bd = here;
-    for (const [dx, dy] of N8) {
-      const nx = x + dx, ny = y + dy;
+    for (let e = 0; e < 8; e++) {
+      const nx = x + N8[e]![0], ny = y + N8[e]![1];
       if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-      for (let k = 0; k < L; k++) { const m = (ny * cols + nx) * L + k, d = dist[m]!; if (d >= 0 && d < bd && this.canMove(n, m)) { bd = d; best = m; } }
+      for (let k = 0; k < L; k++) { const m = (ny * cols + nx) * L + k, d = dist[m]!; if (d >= 0 && d < bd && this.move(n, e, m)) { bd = d; best = m; } }
     }
     return best;
   }
