@@ -269,4 +269,28 @@ describe('presupuesto de la vista por cuadro', () => {
     expect(left).toBe(0);                    // el recuadro acabó: antes, nunca (siempre detrás de la espera)
     expect(frames).toBeLessThan(20);
   });
+  it('lo que sobra del cercano, si no queda nada cercano, se lo lleva lo demás; si queda algo cercano, no', () => {
+    let t = 0;
+    const unit = (key: string, units: number, p?: number): ViewJob & { left: number } => {
+      const j = { key, priority: p, left: units, run(d: number) { do { t += 1; j.left--; } while (j.left > 0 && t + 1 <= d); return j.left === 0; } };
+      return j;
+    };
+    // Cercano vacío: lo de detrás tiene 3 + 8
+    const a = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    const far = unit('sky:a', 100);
+    a.push(far);
+    t = 0; expect(a.run()).toBe(11);
+    // Cercano que acaba a los 2: lo de detrás tiene 3 + 6
+    const b = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    const far2 = unit('sky:b', 100);
+    b.push(unit('rect:a', 2, 0)); b.push(far2);
+    t = 0; expect(b.run()).toBe(11);
+    expect(100 - far2.left).toBe(9);
+    // Cercano que no acaba (le quedan unidades): lo de detrás, solo sus 3
+    const c = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    const far3 = unit('sky:c', 100);
+    c.push(unit('rect:b', 50, 0)); c.push(far3);
+    t = 0; c.run();
+    expect(100 - far3.left).toBe(3);
+  });
 });

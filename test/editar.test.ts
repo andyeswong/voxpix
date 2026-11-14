@@ -94,7 +94,7 @@ describe('lo cercano primero', () => {
     near.push(work('golpe', 7, 0)); near.push(work('luz', 6, LIGHT_PRIORITY + 40));
     const t0 = clock;
     expect(frames(near, 'golpe')).toBe(1);
-    expect(clock - t0).toBe(10);                                  // 7 del golpe y 3 de la luz (su presupuesto de siempre)
+    expect(clock - t0).toBe(11);                                  // 7 del golpe y 3 + 1 de la luz (el suyo y lo que sobró del cercano)
     expect(frames(near, 'luz')).toBe(1);                          // los 3 que le faltan, el cuadro siguiente
   });
 

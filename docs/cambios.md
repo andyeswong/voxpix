@@ -43,6 +43,9 @@ medida que vale para un juego es la suya.
   puesta alumbra en menos de la mitad de cuadros), sin adelantarse a sus recuadros. Las que solo toca un corte de
   vista, no: si no, en una noche con antorchas cada corte les cedía el cercano (en el juego, 8-34 cuadros de más de
   25 ms por tirada contra 6-7).
+- Lo que sobra del presupuesto cercano, si no queda nada cercano, se lo lleva lo demás: lo de detrás acaba antes
+  cuando no hay nada urgente. Preparar lo expuesto tras el horneado acababa a los 20-25 s en un juego (830-890
+  llamadas, después de los primeros cortes); en el banco, de 146 a 42 cuadros.
 - Un trabajo que no cabe y lleva 4 cuadros seguidos saltado va el primero de su fase: antes podía quedarse sin correr
   nunca si delante siempre corría algo antes.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es

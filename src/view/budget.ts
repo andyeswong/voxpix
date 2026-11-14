@@ -156,7 +156,11 @@ export class FrameBudget {
     while (from < this.queue.length && isNear(this.queue[from]!)) from++;
     if (from >= this.queue.length) return this.now() - start;
     const start2 = this.now();
-    let deadline = start2 + this.ms - spentMs;
+    // Lo que sobra del cercano, si no queda nada cercano en la cola (se acabó, o no había): se lo lleva lo demás. Así lo
+    // de detrás (el cielo, las luces lejanas, preparar lo expuesto) avanza cuando no hay nada urgente, sin pasar del
+    // presupuesto que el juego ya da al cuadro (near.ms + ms). Si queda algo cercano (no cupo), no: es suyo
+    const spare = nr && from === 0 ? Math.max(0, start + nr.ms - start2) : 0;
+    let deadline = start2 + this.ms - spentMs + spare;
     if (deadline <= start2) {
       if (++this.starved < STARVE_FRAMES) return this.now() - start;
       deadline = start2;         // una porción mínima: el primer trabajo hace una unidad y para
