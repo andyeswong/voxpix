@@ -594,9 +594,11 @@ function chunkGroups(b: Baked, chunks: readonly number[]): number[][] {
 // Renderiza las columnas de píxeles c0..c1 del recuadro en sus búferes
 function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number): void {
   const s = b.source, a = b.options.oblique?.y ?? 1, O = b.options.originY;
-  // Se renderiza con 1 píxel más por cada lado y se recorta: el contorno de un píxel mira a sus 4 vecinos, y los del
-  // borde del recuadro tienen que verlos como en el horneado entero
-  const R0 = r.y0 - 1, R1 = r.y1 + 1, C0 = c0 - 1, C1 = c1 + 1;
+  // Con contorno, se renderiza con 1 píxel más por cada lado y se recorta: el contorno de un píxel mira a sus 4 vecinos,
+  // y los del borde del recuadro tienen que verlos como en el horneado entero. Sin contorno ningún píxel depende de sus
+  // vecinos y el margen solo costaría (casi duplica las columnas de un recuadro pequeño)
+  const halo = RECT_TUNING.halo === 'always' || (b.options.outline ?? 'none') !== 'none' ? 1 : 0;
+  const R0 = r.y0 - halo, R1 = r.y1 + halo, C0 = c0 - halo, C1 = c1 + halo;
   // Solo los vóxeles de esas columnas (el borde de una columna de píxeles es la columna de vóxeles de su x) y de las y
   // que pueden caer en esas filas. Por arriba manda lo más alto que haya en esas columnas (la rejilla de alturas), no
   // zMax: en un mundo alto y medio vacío, eso es la mitad de las filas
@@ -617,7 +619,7 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
   const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });
   for (let j = 0; j < buf.h; j++) for (let i = 0; i < w; i++) {
-    const src = (j + 1) * W + i + (c0 - C0), dst = j * buf.w + (c0 - r.x0) + i;
+    const src = (j + halo) * W + i + (c0 - C0), dst = j * buf.w + (c0 - r.x0) + i;
     buf.depth[dst] = img.depth[src]!; buf.face[dst] = img.pickFace![src]!; buf.pick[dst] = img.pickKey![src]!;
     for (let ch = 0; ch < 4; ch++) buf.rgba[dst * 4 + ch] = img.rgba[src * 4 + ch]!;
   }
@@ -643,6 +645,9 @@ const PUBLISHED_KEEP = 32;
 // al viejo (lo hace la cola).
 export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number }
 
+// Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
+// contorno no cambia nada); 'auto', solo con contorno
+export const RECT_TUNING: { halo: 'auto' | 'always' } = { halo: 'auto' };
 const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
 let lightSerial = 0;      // para que cada trabajo parcial de luz tenga su key (la cola no los sustituye entre sí)
 const LIGHT_CELLS = 32;   // píxeles de una zona de luz por paso

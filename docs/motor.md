@@ -130,6 +130,21 @@ de arriba junto a una):
 Los pasos los reparte la cola (`FrameBudget`) entre cuadros. Con el navegador y la CPU frenada, todo sube varias veces:
 la medida que vale para un juego es la suya.
 
+### El margen de las franjas, solo con contorno
+
+Cada franja de un recuadro se renderiza con 1 píxel de margen por cada lado (y se recorta) solo si el horneado lleva
+contorno (`outline`), que es lo único que mira a los píxeles vecinos; sin contorno, sin margen (hay prueba de que da lo
+mismo byte a byte que con el margen forzado, `RECT_TUNING.halo = 'always'`). Ayuda al PASO, no al total. Medido sin
+freno (`bun scripts/bench-picar.ts 384 96 30`, cada llamada con plazo de 0,45 ms, dos tiradas de cada):
+
+| | Llamada más larga (p95) | Recuadro (p95 por llamada) | Total por golpe (p95) |
+|---|---|---|---|
+| Margen siempre | 1,9-2,0 ms | 1,1-1,2 ms | 7,9-8,0 ms |
+| Margen solo con contorno | 1,3-1,5 ms | 1,0 ms | 7,5-7,6 ms |
+
+El total es trabajo real: unas 26 tareas por golpe (recuadro ~2,7 ms y luces ~1,9 ms sin freno; 30-50 ms con la CPU
+frenada a 6x en los peores golpes).
+
 ### Probado y descartado
 
 Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin freno):

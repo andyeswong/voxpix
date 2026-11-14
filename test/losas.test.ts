@@ -238,3 +238,28 @@ describe('luces fijas puestas y quitadas en partida', () => {
     expect(weights(b)).toEqual(weights(bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts)));
   });
 });
+
+describe('margen de las franjas', () => {
+  it('sin contorno, rehornear sin margen da lo mismo, byte a byte, que con el margen forzado (y que hornear de cero)', async () => {
+    const { RECT_TUNING } = await import('../src/world/bake');
+    const run = (halo: 'auto' | 'always') => {
+      RECT_TUNING.halo = halo;
+      try {
+        const s = new StaticVoxels(PAL, 96, 96, 0, 95);
+        for (let y = 0; y < 96; y++) for (let x = 0; x < 96; x++) { const h = 40 + 8 * (((x >> 3) + (y >> 3)) % 3); for (let z = 0; z < h; z++) s.set(x, y, z, material(z < h - 8 ? 0 : 1, 1 + ((x + y + z) % 3))); }
+        const lights: WorldLight[] = [{ id: 'a', kind: 'torch', x: 48, y: 48, z: 70, baked: true }];
+        const b = bakeWorld({ model: s, lights, width: 96, depth: 96 }, { topZ: 95, incline: 0.5 });
+        for (const [bx, by, bz] of [[40, 40, 40], [16, 64, 40], [41, 9, 48]] as const) for (let z = bz; z < bz + 8; z++) for (let y = by; y < by + 8; y++) for (let x = bx; x < bx + 8; x++) s.set(x, y, z, 0);
+        rebakeChanged(b, lights);
+        return { b, fresh: bakeWorld({ model: s, lights, width: 96, depth: 96 }, { topZ: 95, incline: 0.5 }) };
+      } finally { RECT_TUNING.halo = 'auto'; }
+    };
+    const plain = run('auto'), forced = run('always');
+    expect(Buffer.from(plain.b.rgba.buffer).equals(Buffer.from(forced.b.rgba.buffer))).toBe(true);
+    expect(plain.b.depth).toEqual(forced.b.depth);
+    expect(plain.b.face).toEqual(forced.b.face);
+    expect(Buffer.from(plain.b.pick.buffer).equals(Buffer.from(forced.b.pick.buffer))).toBe(true);
+    expect(Buffer.from(plain.b.rgba.buffer).equals(Buffer.from(plain.fresh.rgba.buffer))).toBe(true);
+    expect(plain.b.lights[0]!.weight).toEqual(plain.fresh.lights[0]!.weight);
+  });
+});
