@@ -70,6 +70,14 @@ export class StaticVoxels implements VoxelSource {
   // Sello (valor del reloj) del último cambio de VÓXELES de cada trozo. El reloj lo comparten los cambios de agua y
   // entidades (WorldState.changedSince), así una versión dice "todo lo anterior a este momento"
   readonly versions: Uint32Array;
+  // Por trozo, la versión del último cambio que vino del mundo (no de una escritura de vista: ver viewWrites)
+  private worldVersions: Uint32Array;
+  // Mientras está a true, set escribe como VISTA: cuenta para el rehorneado como cualquier cambio, pero no como cambio
+  // del mundo (worldChangedSince). Lo pone la vista al cortar (WorldView.setCut/cutJob): esconder lo de encima de la
+  // cabeza no es picar, y el rehorneado lo trata distinto (las luces que toca de rebote no van con prioridad cercana)
+  viewWrites = false;
+  // ¿Cambió el trozo c por el mundo (no solo por escrituras de vista) después de la versión v?
+  worldChangedSince(c: number, v: number): boolean { return this.worldVersions[c]! > v; }
   clock = 0;
   // Si está puesto, oye cada cambio de vóxel (antes de hacerse): buildWorld lo usa para saber qué pinta cada mueble
   onSet: ((x: number, y: number, z: number, old: number, value: number) => void) | null = null;
@@ -93,6 +101,7 @@ export class StaticVoxels implements VoxelSource {
     this.seg = new Int32Array(this.cols * this.rows * SEGS * 7);
     this.segN = new Uint8Array(this.cols * this.rows);
     this.versions = new Uint32Array(this.cols * this.rows);
+    this.worldVersions = new Uint32Array(this.cols * this.rows);
     this.height = new Int16Array(width * depth).fill(zMin);
     this.expo = new Array(this.cols * this.rows * this.nz).fill(null);
     this.expoOk = new Array(this.cols * this.rows * this.nz).fill(null);
@@ -134,6 +143,7 @@ export class StaticVoxels implements VoxelSource {
     if (this.count[si] === 0) { this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; }
     else if (this.count[si] === this.cap(s)) this.tryUniform(si, s);
     this.versions[c] = ++this.clock;
+    if (!this.viewWrites) this.worldVersions[c] = this.clock;
     this.note(c, x, y, z);
     const watchers = this.feed?.list;
     if (watchers) for (const w of watchers) w.voxel(c, x, y, z);
@@ -271,6 +281,7 @@ export class StaticVoxels implements VoxelSource {
     this.epoch++;                                    // las máscaras de lo expuesto ya no valen
     cs.forEach((ch, c) => {
       this.versions[c] = ch.version;
+      this.worldVersions[c] = ch.version;
       this.alloc[c] = ch.data ? 1 : 0;
       // Lo cambiado en el trozo pasa a ser el trozo entero (no se sabe qué vóxeles eran)
       const cx = c % this.cols, cy = Math.floor(c / this.cols), o = c * SEGS * 7;

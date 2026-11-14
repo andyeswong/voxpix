@@ -36,8 +36,10 @@ medida que vale para un juego es la suya.
   p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x. El máximo sigue por encima de 8. No es el recolector de basura
   (traza de V8 en Edge: 7 de 312 llamadas lentas tienen una pausa dentro, y ninguna bajaría de 8 sin ella): es
   cálculo. Tolerancia conocida.
-- Las luces cerca del jugador también van con el presupuesto cercano (una antorcha recién puesta alumbra en menos de
-  la mitad de cuadros), sin adelantarse a sus recuadros.
+- Las luces cerca del jugador que cambian por el mundo también van con el presupuesto cercano (una antorcha recién
+  puesta alumbra en menos de la mitad de cuadros), sin adelantarse a sus recuadros. Las que solo toca un corte de
+  vista, no: si no, en una noche con antorchas cada corte les cedía el cercano (en el juego, 8-34 cuadros de más de
+  25 ms por tirada contra 6-7).
 - Un trabajo que no cabe y lleva 4 cuadros seguidos saltado va el primero de su fase: antes podía quedarse sin correr
   nunca si delante siempre corría algo antes.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es

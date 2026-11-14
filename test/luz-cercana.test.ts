@@ -3,7 +3,8 @@
 // iguales que hornear de cero. Con nearLights: false, como antes (detrás de todo)
 import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
-import { StaticVoxels, LightList } from '../src/world/state';
+import { StaticVoxels, LightList, WorldState } from '../src/world/state';
+import { WorldView } from '../src/world/view';
 import { bakeWorld, rebakeChangedJobs, LIGHT_PRIORITY, type Baked } from '../src/world/bake';
 import { FrameBudget, type ViewJob } from '../src/view/budget';
 
@@ -56,5 +57,25 @@ describe('luz cercana', () => {
     ls.addFixed({ id: 'cerca', kind: 'torch', x: 22.5, y: 21.5, z: 24 });
     const jobs = rebakeChangedJobs(b, ls, { near: player, nearLights: false });
     expect(jobs.find((j) => j.key.startsWith('light:cerca'))!.priority!).toBeGreaterThanOrEqual(LIGHT_PRIORITY);
+  });
+  it('una luz que solo toca un corte de vista va detrás; la misma, con un bloque picado a su alcance, va cercana; y acaban como hornear de cero', () => {
+    const s = ground();
+    const st = new WorldState(s, [{ id: 't', kind: 'torch', x: 22.5, y: 21.5, z: 30, baked: true }], null);
+    const view = new WorldView(st, 0, { cut: true });
+    const b = bakeWorld(view.bakeable(), OPTS);
+    const drain = (jobs: ViewJob[]) => { for (const j of jobs) while (!j.run(Infinity)); };
+    const lightPr = (jobs: ViewJob[]) => jobs.find((j) => j.key.startsWith('light:t'))?.priority;
+    // Un corte junto a la antorcha: escrituras de vista
+    view.setCut({ x0: 14, y0: 14, x1: 29, y1: 29, zTop: 18 });
+    const cut = rebakeChangedJobs(b, view.frame().lights, { near: player });
+    expect(cut.some((j) => j.key.startsWith('rect:'))).toBe(true);
+    expect(lightPr(cut)).toBeGreaterThanOrEqual(LIGHT_PRIORITY);
+    drain(cut);
+    // Picar en el mundo a su alcance (fuera de la caja del corte): cambio del mundo
+    for (let z = 10; z < 22; z++) for (let y = 30; y < 34; y++) for (let x = 30; x < 34; x++) s.set(x, y, z, 0);
+    const dig = rebakeChangedJobs(b, view.frame().lights, { near: player });
+    expect(lightPr(dig)).toBeLessThan(64);
+    drain(dig);
+    expect(weights(b)).toEqual(weights(bakeWorld(view.bakeable(), OPTS)));
   });
 });

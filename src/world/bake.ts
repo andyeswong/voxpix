@@ -982,11 +982,16 @@ export const LIGHT_PRIORITY = 10000;
 
 // near (opcional): dónde está el jugador (x, y del mundo). Los trabajos llevan entonces prioridad (ViewJob.priority, la
 // distancia en píxeles de pantalla): FrameBudget hace antes lo más cercano, aunque haya trabajo viejo en la cola.
-// Las luces, con el mismo criterio que los recuadros (la distancia de la luz en pantalla): una antorcha puesta junto al
-// jugador va con el presupuesto cercano y se ve encendida en pocos cuadros. No se adelantan a sus recuadros: esperan a
-// que se publiquen sin gastar nada. nearLights: false, detrás de todo como antes (LIGHT_PRIORITY + distancia)
+// Las luces que cambian por el MUNDO (una nueva, o un trozo picado o puesto a su alcance), con el mismo criterio que los
+// recuadros (la distancia de la luz en pantalla): una antorcha puesta junto al jugador va con el presupuesto cercano y
+// se ve encendida en pocos cuadros. No se adelantan a sus recuadros: esperan a que se publiquen sin gastar nada. Las que
+// solo toca de rebote un corte de vista (escrituras de vista: StaticVoxels.viewWrites) van detrás, como el cielo: un
+// corte bajo unas antorchas no tiene que quitarle el cercano a sus recuadros. nearLights: false, todas detrás
 export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean } = {}): ViewJob[] {
+  const since = b.version;
   const { chunks, boxes } = changedBoxes(b);
+  // Los trozos que cambiaron por el mundo (no solo por un corte de vista)
+  const worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
   const jobs = rebakeJobs(b, chunks, lights, boxes);
   const n = opts.near;
   if (!n) return jobs;
@@ -1001,7 +1006,17 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
     else if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
     else {
       const l = byId.get(j.key.split('#')[0]!);
-      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = (opts.nearLights === false ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py); }
+      if (l) {
+        const [lx, ly] = b.cam.project(l.x, l.y, l.z);
+        // Cercana si es nueva (su trabajo es el de hornearla entera: key sin #) o si un trozo cambiado por el mundo cae a
+        // su alcance
+        const fresh = !j.key.includes('#'), r = resolveLight(l, 0).radius, C = CHUNK;
+        const byWorld = fresh || worldChunks.some((c) => {
+          const x0 = (c % s.cols) * C, y0 = Math.floor(c / s.cols) * C;
+          return !(l.x + r < x0 || l.x - r > x0 + C || l.y + r < y0 || l.y - r > y0 + C);
+        });
+        p = (opts.nearLights === false || !byWorld ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py);
+      }
     }
     return { key: j.key, priority: p, run: (d: number) => j.run(d) };
   });

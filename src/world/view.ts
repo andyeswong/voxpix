@@ -366,6 +366,9 @@ export class WorldView implements RenderState {
     const src = this.state.solid, cam = this.camera;
     let cols = 0, out = false;
     const touched = new Set<number>();
+    // Escrituras de vista: esconder y destapar no es cambiar el mundo (StaticVoxels.viewWrites)
+    this.static.viewWrites = true;
+    try {
     while (this.pendingAt < this.pending.length && !out) {
       const p = this.pending[this.pendingAt]!, w = p.x1 - p.x0 + 1, n = w * (p.y1 - p.y0 + 1);
       while (this.cursor < n) {
@@ -382,6 +385,7 @@ export class WorldView implements RenderState {
       }
       if (this.cursor >= n) { this.pendingAt++; this.cursor = 0; }
     }
+    } finally { this.static.viewWrites = false; }
     if (touched.size && this.dress) this.dress(this, [...touched]);
     if (this.pendingAt >= this.pending.length) { this.pending = []; this.pendingAt = 0; this.cursor = 0; return { done: true, columns: cols }; }
     return { done: false, columns: cols };

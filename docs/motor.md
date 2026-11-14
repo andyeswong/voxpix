@@ -113,6 +113,8 @@ ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un 
     768 bytes por losa recorrida (~2,6 MB en un mundo de 384 x 384 x 96 entero).
   - `warmExposed(región, filas)` deja hechas hasta tantas filas, para preparar con plazo lo que se va a recorrer: el
     rehorneado lo hace antes de cada franja y, si no le da tiempo, sigue en el cuadro siguiente.
+- `viewWrites`: mientras está a `true`, `set` escribe como vista (lo hace el corte de vista): cuenta como cambio para el
+  rehorneado, pero no como cambio del mundo (`worldChangedSince(trozo, versión)`).
 - `changedBox(trozo, versión)`: la caja (x, y, z, extremos incluidos) de lo que cambió en ese trozo después de la
   versión, o `null`. Puede ser más grande que lo cambiado, nunca más pequeña. `cut()` cierra los tramos abiertos:
   quien acaba de leer las cajas (el horneado lo hace solo) corta, y lo que cambie después tiene su caja aparte.
@@ -226,8 +228,11 @@ budget.run();
   da `null` y no rehornea nada.
 - Presupuesto aparte para lo cercano: `new FrameBudget(3, undefined, { ms: 8, below: 64 })`. Los trabajos con
   `priority` menor que `below` (con `near`, los recuadros a menos de 64 px del jugador en pantalla) se hacen antes y
-  pueden llevarse hasta 8 ms del cuadro; los demás siguen con sus 3. Las luces llevan la misma prioridad que los
-  recuadros (la distancia de la luz en pantalla): una antorcha puesta junto al jugador va con el presupuesto cercano.
+  pueden llevarse hasta 8 ms del cuadro; los demás siguen con sus 3. Las luces que cambian por el mundo (una nueva, o
+  un bloque picado o puesto a su alcance) llevan la misma prioridad que los recuadros (la distancia de la luz en
+  pantalla): una antorcha puesta junto al jugador va con el presupuesto cercano. Las que solo toca de rebote un corte
+  de vista van detrás: un corte bajo unas antorchas no le quita el cercano a sus propios recuadros (en un juego de
+  noche con 10 antorchas y cortes bajo las copas, de 8-34 a 6-7 cuadros de más de 25 ms por tirada a 6x).
   No se adelantan a lo que tiene que aparecer: un trabajo de luz espera, sin gastar nada, a que se publiquen sus
   recuadros. El cielo va detrás de todo (desde `LIGHT_PRIORITY`, 10000), y las luces también con
   `rebakeChangedJobs(..., { near, nearLights: false })`, como antes.
