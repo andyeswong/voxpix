@@ -130,6 +130,40 @@ de arriba junto a una):
 Los pasos los reparte la cola (`FrameBudget`) entre cuadros. Con el navegador y la CPU frenada, todo sube varias veces:
 la medida que vale para un juego es la suya.
 
+## Editar el mundo en partida
+
+Picar, poner, construir: cambiar el escenario mientras se juega, y que se vea en uno o dos cuadros.
+
+```ts
+import { stampModel, clearBox } from '@voxpix/world/edit';
+import { rebakeChangedJobs } from '@voxpix/world/bake';
+import { FrameBudget } from '@voxpix/view/budget';
+
+const budget = new FrameBudget(3);                     // ms por cuadro para el trabajo de la vista
+// Quitar lo que haya en una caja y poner un modelo (de 8 x 8 x 8, una pieza, lo que sea) con su origen en (x, y, z)
+const quitado = clearBox(state, { x0, y0, z0, x1, y1, z1 });   // la caja de lo que estaba lleno, o null
+const puesto = stampModel(state, modelo, x, y, z, 90);         // girado; la caja de lo que cambió, o null
+// Una antorcha que se queda: luz fija (se hornea), no dinámica
+const luz = state.lights.addFixed({ kind: 'torch', x: x + 4, y: y + 4, z: z + 10 });
+// Cada cuadro: lo que haya cambiado, con lo más cercano al jugador primero
+for (const j of rebakeChangedJobs(baked, state.lights, { near: { x: px, y: py } })) budget.push(j);
+budget.run();
+```
+
+- `stampModel(state, modelo, x, y, z, giro?)` pone los vóxeles llenos del modelo (lo vacío no toca nada: para
+  sustituir, `clearBox` antes). El giro es 0, 90, 180 o 270 alrededor del origen del modelo (90 lleva lo que miraba al
+  sur a mirar al este). Las rampas del modelo tienen que estar en la paleta del mundo (la misma rampa: nombre y
+  colores), en cualquier posición: se traducen solas, y si falta una, el error dice cuál. Por eso los modelos que se
+  van a poner en partida comparten rampas con el mundo desde que se construye.
+- `clearBox(state, caja)` vacía la caja (extremos incluidos).
+- Las dos escriben por `StaticVoxels.set`: `watchChanges` da sus cajas `'voxels'`, y `rebakeChangedJobs` rehace solo
+  lo que cambió (ver "Rehornear lo que cambió"). Devuelven la caja de lo que cambió de verdad: poner lo que ya hay
+  da `null` y no rehornea nada.
+- `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
+  en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
+  trabajos sin prioridad van detrás, en su orden.
+- El agua no se entera de estos cambios (como de `crushAt`): para un mundo con agua que se pica, hay que contarlo.
+
 ## Entidades
 
 ```ts

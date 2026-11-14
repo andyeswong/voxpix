@@ -500,7 +500,7 @@ const PUBLISHED_KEEP = 32;
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
 // al viejo (lo hace la cola).
-export interface ViewJob { readonly key: string; run(deadline: number): boolean }
+export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number }
 
 const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
 const LIGHT_BAND = 4;     // filas de pesos por paso de una luz
@@ -643,9 +643,26 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
 }
 
 // Los trabajos de lo que haya cambiado (solo vóxeles) desde el último horneado
-export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[]): ViewJob[] {
+// near (opcional): dónde está el jugador (x, y del mundo). Los trabajos llevan entonces prioridad (ViewJob.priority, la
+// distancia en píxeles de pantalla): FrameBudget hace antes lo más cercano, aunque haya trabajo viejo en la cola
+export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number } } = {}): ViewJob[] {
   const { chunks, boxes } = changedBoxes(b);
-  return rebakeJobs(b, chunks, lights, boxes);
+  const jobs = rebakeJobs(b, chunks, lights, boxes);
+  const n = opts.near;
+  if (!n) return jobs;
+  const s = b.source, h = s.height[Math.max(0, Math.min(s.depth - 1, Math.floor(n.y))) * s.width + Math.max(0, Math.min(s.width - 1, Math.floor(n.x)))]!;
+  const [px, py] = b.cam.project(n.x, n.y, h);
+  const byId = new Map<string, WorldLight>(lights.map((l) => [`light:${l.id}`, l]));
+  return jobs.map((j) => {
+    let p = 0;
+    const m = j.key.match(/^rect:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/);
+    if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
+    else {
+      const l = byId.get(j.key);
+      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = Math.hypot(lx - px, ly - py) + 0.5; }
+    }
+    return { key: j.key, priority: p, run: (d: number) => j.run(d) };
+  });
 }
 
 // Los trozos cambiados desde el último horneado y la caja de lo cambiado en cada uno; pone b.version al día

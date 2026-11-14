@@ -10,6 +10,8 @@
 export interface ViewJob {
   readonly key: string;     // lo que rehace ("light:12", "rect:3,4"): un trabajo nuevo con la misma key sustituye al viejo
   run(deadline: number): boolean;
+  // Opcional: cuanto más bajo, antes (lo que está cerca del jugador). Los que no la llevan van detrás, en su orden
+  readonly priority?: number;
 }
 
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
@@ -31,6 +33,14 @@ export class FrameBudget {
     const i = this.queue.findIndex((j) => j.key === job.key);
     if (i >= 0) this.queue[i] = job;
     else this.queue.push(job);
+    if (job.priority === undefined) return;
+    // Con prioridad: delante de los que tienen más (o ninguna), detrás de los de igual o menos
+    const at = i >= 0 ? i : this.queue.length - 1;
+    this.queue.splice(at, 1);
+    const p = job.priority;
+    let k = this.queue.findIndex((j) => j.priority === undefined || j.priority > p);
+    if (k < 0) k = this.queue.length;
+    this.queue.splice(k, 0, job);
   }
 
   // Una vez por cuadro. spentMs: lo que ya se llevó la vista en este cuadro de lo que cuenta contra el mismo
