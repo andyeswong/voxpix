@@ -1,0 +1,68 @@
+// LevelPathField: varios suelos por celda (la superficie y un túnel debajo), bajar por un pozo si maxDrop deja, no
+// atravesar el techo del túnel, no subir por el pozo con un step pequeño, y un pozo nuevo (picado en partida, por
+// watchChanges) que acorta el camino
+import { describe, it, expect } from 'vitest';
+import { material } from '../src/core';
+import { StaticVoxels, WorldState } from '../src/world/state';
+import { LevelPathField } from '../src/world/levelpaths';
+
+const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#606060', '#a0a0a0'] }] };
+// Roca hasta z = 40; un túnel este-oeste (y 20..27, z 16..31, x 4..59) y un pozo a él en x 52..59 (z 32..39)
+function world(): WorldState {
+  const s = new StaticVoxels(PAL, 64, 48, 0, 63);
+  for (let y = 0; y < 48; y++) for (let x = 0; x < 64; x++) for (let z = 0; z < 40; z++) {
+    const tunnel = y >= 20 && y < 28 && x >= 4 && x < 60 && z >= 16 && z < 32;
+    const shaft = y >= 20 && y < 28 && x >= 52 && x < 60 && z >= 32;
+    if (!tunnel && !shaft) s.set(x, y, z, material(0, 1));
+  }
+  return new WorldState(s, [], null);
+}
+const O = { cell: 4, radius: 1, height: 12, step: 2 };
+
+describe('caminos por niveles', () => {
+  it('los suelos de cada celda: encima del túnel, dos; fuera, uno', () => {
+    const f = new LevelPathField(world(), O);
+    expect(f.floorsAt({ x: 22, y: 22 })).toEqual([40, 16]);
+    expect(f.floorsAt({ x: 22, y: 10 })).toEqual([40]);
+    expect(f.floorsAt({ x: 54, y: 22 })).toEqual([16]);          // el pozo: abajo
+    f.close();
+  });
+
+  it('de la superficie al túnel: por el pozo si se puede caer 24; sin atravesar el techo; con maxDrop 8, no', () => {
+    const st = world();
+    const f = new LevelPathField(st, O);
+    const p = f.path({ x: 10, y: 10, z: 40 }, { x: 10, y: 22, z: 16 })!;
+    expect(p).not.toBeNull();
+    const firstDown = p.findIndex((q) => q.z === 16);
+    expect(p[firstDown]!.x).toBeGreaterThanOrEqual(52);           // entra por el pozo, no por encima del túnel
+    expect(p.at(-1)).toMatchObject({ z: 16 });
+    f.close();
+    const g = new LevelPathField(st, { ...O, maxDrop: 8 });
+    expect(g.path({ x: 10, y: 10, z: 40 }, { x: 10, y: 22, z: 16 })).toBeNull();
+    g.close();
+  });
+
+  it('del túnel a la superficie: por el pozo no se sube con step 2; con step 24, sí', () => {
+    const st = world();
+    const f = new LevelPathField(st, O);
+    expect(f.path({ x: 10, y: 22, z: 16 }, { x: 10, y: 10, z: 40 })).toBeNull();
+    expect(f.dir({ x: 10, y: 22, z: 16 }, { x: 10, y: 10, z: 40 })).toBeNull();
+    f.close();
+    const g = new LevelPathField(st, { ...O, step: 24 });
+    expect(g.path({ x: 10, y: 22, z: 16 }, { x: 10, y: 10, z: 40 })).not.toBeNull();
+    g.close();
+  });
+
+  it('un pozo nuevo, picado en partida, acorta el camino sin rehacer el campo', () => {
+    const st = world();
+    const f = new LevelPathField(st, O);
+    const long = f.path({ x: 10, y: 10, z: 40 }, { x: 10, y: 22, z: 16 })!.length;
+    for (let z = 32; z < 40; z++) for (let y = 20; y < 28; y++) for (let x = 8; x < 16; x++) st.solid.set(x, y, z, 0);
+    const short = f.path({ x: 10, y: 10, z: 40 }, { x: 10, y: 22, z: 16 })!;
+    expect(short.length).toBeLessThan(long);
+    expect(short.find((q) => q.z === 16)!.x).toBeLessThan(20);
+    const d = f.dir({ x: 10, y: 10, z: 40 }, { x: 10, y: 22, z: 16 })!;
+    expect(d.y).toBeGreaterThan(0.7);
+    f.close();
+  });
+});

@@ -253,6 +253,29 @@ const { heights } = generateTerrain({
 - El ruido es de `src/worldgen/noise.ts` (`valueNoise`, `fbm`, `fbmN`, `lattice`), exportado para quien quiera más.
 - En un portátil, sin freno: un terreno de 48 x 48 x 12 bloques de 8 se genera en ~0,25 s y se hornea en ~0,3 s.
 
+## Caminos por niveles
+
+`PathField` tiene un suelo por celda (el de arriba). Para bichos que entren en túneles, cuevas o pisos,
+`LevelPathField` (`src/world/levelpaths.ts`) guarda varios por celda (los que tienen hueco para el cuerpo, de arriba
+abajo, hasta `levels`) y busca entre ellos:
+
+```ts
+import { LevelPathField } from '@voxpix/world/levelpaths';
+
+const field = new LevelPathField(state, { cell: 4, radius: 2, height: 16, step: 8, maxDrop: 24 });
+const d = field.dir({ x, y, z }, { x: px, y: py, z: pz }, 6);   // con la z: elige el suelo más cercano a ella
+const ruta = field.path(desde, hasta);                           // los centros de las celdas, con su suelo
+field.floorsAt({ x, y });                                        // los suelos de una celda, para depurar
+```
+
+- Se pasa a una celda vecina subiendo como mucho `step` y bajando como mucho `maxDrop`, y el cuerpo pasa a la altura
+  mayor de los dos suelos: cae por un pozo, no atraviesa el techo de un túnel, y no sube por un pozo si `step` no
+  llega. Lo demás, como `PathField`: BFS hacia atrás compartido por todos los que van a la misma meta, rehecho por
+  `watchChanges` solo en las celdas tocadas.
+- Va con `moveBodyLevels` (mismos `step` y alto).
+- Coste (terreno de bloques de 384 x 384 con un túnel, celdas de 4, sin freno): construir ~17 ms, una búsqueda
+  ~3,4 ms, ponerse al día tras picar ~1,4 ms (el de superficie: ~5, ~1,7 y ~0,8).
+
 ## Moverse por niveles
 
 `moveBody` apoya los pies en lo más alto de cada columna: no puede estar debajo de nada. Para túneles, cuevas e
