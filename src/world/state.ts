@@ -1026,7 +1026,16 @@ export class WorldState {
       lights: [...this.lights].sort((a, b) => byId(a.id, b.id)).map((l) => ({ ...l })),
       next: { entity: this.entities.next, light: this.lights.next },
       clock: this.solid.clock, dynamicVersions: this.dynamicVersions.slice(),
+      ...(this.parts.size ? { parts: Object.fromEntries([...this.parts].map(([k, p]) => [k, p.exportState()])) } : {}),
     };
+  }
+
+  // PARTES del estado que añade quien construye (una rejilla de bloques, lo que sea): entran en la instantánea, en
+  // restore y en la huella, en el orden de su nombre. Un mundo sin partes da la huella de siempre
+  readonly parts = new Map<string, StatePart>();
+  addPart(name: string, part: StatePart): void {
+    if (this.parts.has(name)) throw new Error(`ya hay una parte "${name}" en el mundo`);
+    this.parts.set(name, part);
   }
 
   // Suscribirse a las zonas del mundo que cambian (changes.ts): take() da las cajas desde la vez anterior
@@ -1053,6 +1062,7 @@ export class WorldState {
     this.entities.next = s.next.entity; this.lights.next = s.next.light;
     this.entities.reindex();
     this.solid.clock = s.clock; this.dynamicVersions.set(s.dynamicVersions);
+    for (const [k, p] of this.parts) if (s.parts && k in s.parts) p.importState(s.parts[k]);
   }
 
   // Huella (FNV-1a de 32 bits) de todo el estado, en un orden fijo
@@ -1079,11 +1089,20 @@ export class WorldState {
     for (const l of s.lights) { h.str(String(l.id)); h.str(l.kind); h.f64(l.x); h.f64(l.y); h.f64(l.z); h.num(l.baked ? 1 : 0); h.f64(l.intensity ?? -1); h.f64(l.radius ?? -1); h.f64(l.dir?.[0] ?? 9); h.f64(l.dir?.[1] ?? 9); h.f64(l.dir?.[2] ?? 9); h.f64(l.cone ?? -1); h.str(String(l.owner ?? '')); h.str(l.follow ? JSON.stringify(l.follow) : ''); }
     h.num(s.next.entity); h.num(s.next.light);
     h.num(s.clock); h.bytes(s.dynamicVersions);
+    for (const k of [...this.parts.keys()].sort()) { h.str(k); this.parts.get(k)!.hashInto(h); }
     return h.hex();
   }
 }
 
 export const TICK = 1 / 60;
+
+// Una parte del estado añadida al mundo (WorldState.addPart). exportState da una copia que no cambia después
+export interface StatePart {
+  exportState(): unknown;
+  importState(s: unknown): void;
+  hashInto(h: StateHasher): void;
+}
+export interface StateHasher { num(n: number): void; bytes(a: ArrayBufferView): void; str(s: string): void }
 
 export interface WorldSnapshot {
   tick: number;
@@ -1099,6 +1118,7 @@ export interface WorldSnapshot {
   next: { entity: number; light: number };
   clock: number;
   dynamicVersions: Uint32Array;
+  parts?: Record<string, unknown>;              // las partes añadidas (addPart), si hay
 }
 
 // FNV-1a de 32 bits sobre los bytes, en orden

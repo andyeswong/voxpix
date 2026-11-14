@@ -164,6 +164,42 @@ budget.run();
   trabajos sin prioridad van detrás, en su orden.
 - El agua no se entera de estos cambios (como de `crushAt`): para un mundo con agua que se pica, hay que contarlo.
 
+## Bloques
+
+Para un mundo de construir y picar: el escenario hecho de bloques de N x N x N vóxeles, cada uno un modelo pequeño.
+
+```ts
+import { BlockSet, BlockGrid, pickBlock } from '@voxpix/world/blocks';
+import setFile from './bloques.voxset.json';            // hecho con el editor (docs/api-agentes.md, Sets de bloques)
+
+const set = BlockSet.fromJSON(setFile);
+// El mundo con las rampas del set en su paleta (en cualquier orden, con otras más si se quiere)
+const solid = new StaticVoxels({ ramps: [...set.palette.ramps] }, 48 * set.size, 48 * set.size, 0, 12 * set.size - 1);
+const state = new WorldState(solid, [], null);
+const grid = new BlockGrid(state, set);                 // 48 x 48 x 12 bloques desde el vóxel (0, 0, 0)
+grid.fill([0, 0, 0], [47, 47, 4], set.index('piedra')); // para generar, antes de hornear
+// En partida: devuelven la caja de vóxeles que cambió; el rehorneado es el de siempre
+grid.set(bx, by, bz, set.index('antorcha'));
+grid.set(bx, by, bz, 0);                                // picar
+const hit = pickBlock(grid, view, baked, sx, sy);       // { cell: [bx, by, bz], face: [dx, dy, dz] } bajo el puntero
+```
+
+- `.voxset.json`: `{ format: 'voxpix-set', version: 1, name, size, palette, blocks: [{ id, voxels, props? }] }`. Los
+  vóxeles de cada bloque van de 0 a N-1 en cada eje, con los valores de la paleta del set.
+- Las propiedades (`BlockProps`): `solid` (bloquea el paso), `light` (`'blocks'` o `'passes'`) y `emissive` salen de
+  los materiales de sus rampas (docs/render.md, Materiales), que son los que de verdad usan la colisión, la luz y el
+  render; si se escriben, tienen que coincidir (si no, error). `density` es la media de sus vóxeles, o la que se diga.
+  `emits` es la luz fija que pone al colocarse (`addFixed`; `at` es dónde, en vóxeles del bloque) y quita al
+  quitarse. `covered` es el bloque en que se convierte cuando tiene uno sólido encima (la hierba tapada, tierra).
+  Lo demás (cuánto cuesta picarlo, qué suelta, recetas) es del juego, no del set.
+- `BlockGrid`: la rejilla (`cols`, `rows`, `layers`) es la fuente de verdad y los vóxeles su dibujo. `get`, `set(bx,
+  by, bz, tipo, giro?)` (0 quita; aplica `covered` y `emits`), `fill(b0, b1, tipo)` (para generar), `props`,
+  `cellOf(x, y, z)` (vóxel a bloque), `box(bx, by, bz)` (bloque a vóxeles) y `topAt(bx, by)` (el sólido más alto de la
+  columna, o -1). Las rampas del set tienen que estar en la paleta del mundo (el error dice cuál falta).
+- La rejilla se añade al mundo como una parte del estado (`WorldState.addPart`): entra en `snapshot`, `restore` y
+  `hash`. Un mundo sin partes da la huella de siempre. `addPart` sirve para cualquier otro estado que añada un juego
+  (`exportState`, `importState`, `hashInto`).
+
 ## Entidades
 
 ```ts

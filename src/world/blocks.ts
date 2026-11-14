@@ -1,0 +1,245 @@
+// BLOQUES (NARUTO): un mundo hecho de bloques de N x N x N vóxeles, como un juego de construir y picar. Dos piezas:
+//   - BlockSet: el catálogo de tipos de bloque (un .voxset.json, hecho con el editor): cada uno, un modelo de N^3 con
+//     su id y sus propiedades. Todos comparten una paleta.
+//   - BlockGrid: la rejilla de bloques de un mundo (cols x rows x layers), que es la fuente de verdad; los vóxeles son
+//     su dibujo. Escribe con stampModel/clearBox (edit.ts), así que el rehorneado es el de siempre, y entra en la
+//     instantánea y la huella del mundo (WorldState.addPart).
+// docs/motor.md, "Bloques".
+import { Model, decode, rampMaterial, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
+import { stampModel, clearBox, rampMap, type Yaw } from './edit';
+import type { Box3 } from './changes';
+import type { WorldState, LightId, StatePart, StateHasher } from './state';
+import type { WorldView } from './view';
+import type { Baked } from './bake';
+import type { SourceKind } from '../lighting/lights';
+
+// Lo que es un bloque para quien juega con él. solid, light y emissive salen de los materiales de sus rampas (lo que
+// de verdad hacen la colisión, la luz horneada y el render); si se escriben, tienen que coincidir
+export interface BlockProps {
+  solid: boolean;                     // bloquea el paso (alguna de sus rampas bloquea)
+  light: 'blocks' | 'passes';         // deja pasar la luz (todas sus rampas dejan pasar algo: hojas, vidrio)
+  emissive: boolean;                  // brilla solo (alguna rampa emisiva)
+  density: number;                    // kg/m³, la media de sus vóxeles (sus materiales), o la que se diga
+  // La luz que pone al colocarse (una fija, addFixed) y dónde, en vóxeles del bloque (por defecto, el centro de arriba)
+  emits?: { kind: SourceKind; radius?: number; intensity?: number; color?: readonly [number, number, number]; at?: readonly [number, number, number] };
+  covered?: string;                   // el bloque en que se convierte cuando tiene uno sólido encima (hierba -> tierra)
+}
+
+export interface BlockDef { id: string; model: Model; props: BlockProps }
+
+export interface VoxsetFile {
+  format: 'voxpix-set';
+  version: 1;
+  name: string;
+  size: number;                                           // N: cada bloque es de N x N x N
+  palette: Palette;                                       // la de todos los bloques
+  blocks: Array<{ id: string; voxels: Array<[number, number, number, number]>; props?: Partial<BlockProps> }>;
+}
+
+const AIR: BlockProps = { solid: false, light: 'passes', emissive: false, density: 0 };
+
+export class BlockSet {
+  private defs: BlockDef[] = [];
+  private byId = new Map<string, number>();
+
+  constructor(readonly name: string, readonly size: number, readonly palette: Palette) {}
+
+  static fromJSON(f: VoxsetFile): BlockSet {
+    if (f.format !== 'voxpix-set' || f.version !== 1) throw new Error(`no es un .voxset.json de la versión 1 (format ${f.format}, version ${f.version})`);
+    const set = new BlockSet(f.name, f.size, f.palette);
+    for (const b of f.blocks) set.add(b.id, b.voxels, b.props);
+    for (const d of set.defs) if (d.props.covered !== undefined) set.index(d.props.covered);   // que exista
+    return set;
+  }
+
+  toJSON(): VoxsetFile {
+    return {
+      format: 'voxpix-set', version: 1, name: this.name, size: this.size, palette: this.palette,
+      blocks: this.defs.map((d) => ({ id: d.id, voxels: [...d.model.entries()].map(([x, y, z, v]) => [x, y, z, v] as [number, number, number, number]), props: d.props })),
+    };
+  }
+
+  // Añade un tipo de bloque: sus vóxeles (0..N-1 en cada eje) y lo que se quiera decir de sus propiedades
+  add(id: string, voxels: Iterable<readonly [number, number, number, number]>, props: Partial<BlockProps> = {}): number {
+    if (this.byId.has(id)) throw new Error(`ya hay un bloque "${id}"`);
+    const N = this.size, m = new Model(this.palette, id);
+    const mats: MaterialProps[] = [];
+    let n = 0, mass = 0;
+    for (const [x, y, z, v] of voxels) {
+      if (x < 0 || y < 0 || z < 0 || x >= N || y >= N || z >= N) throw new Error(`el bloque "${id}" tiene un vóxel fuera de 0..${N - 1}: ${x}, ${y}, ${z}`);
+      if (!v) continue;
+      const r = this.palette.ramps[decode(v).ramp];
+      if (!r) throw new Error(`el bloque "${id}" usa la rampa ${decode(v).ramp}, que no está en la paleta del set`);
+      const mp = rampMaterial(r);
+      mats.push(mp); mass += mp.density; n++;
+      m.set(x, y, z, v);
+    }
+    if (!n) throw new Error(`el bloque "${id}" está vacío`);
+    const own: BlockProps = {
+      solid: mats.some((p) => p.blocks), light: mats.every((p) => p.light > 0) ? 'passes' : 'blocks', emissive: mats.some((p) => p.emissive), density: mass / n,
+    };
+    for (const k of ['solid', 'light', 'emissive'] as const) {
+      if (props[k] !== undefined && props[k] !== own[k]) throw new Error(`el bloque "${id}" dice ${k}: ${props[k]}, pero sus rampas dan ${own[k]}: se cambia con el material de sus rampas`);
+    }
+    const full: BlockProps = { ...own, ...(props.density !== undefined ? { density: props.density } : {}), ...(props.emits ? { emits: props.emits } : {}), ...(props.covered !== undefined ? { covered: props.covered } : {}) };
+    this.defs.push({ id, model: m, props: full });
+    this.byId.set(id, this.defs.length);
+    return this.defs.length;
+  }
+
+  // Cuántos tipos hay (los índices van de 1 a N; 0 es el aire)
+  get count(): number { return this.defs.length; }
+  index(id: string): number {
+    const i = this.byId.get(id);
+    if (i === undefined) throw new Error(`no hay bloque "${id}"; los bloques son: ${this.ids().join(', ')}`);
+    return i;
+  }
+  get(index: number): BlockDef {
+    const d = this.defs[index - 1];
+    if (!d) throw new Error(`no hay bloque ${index} (hay ${this.defs.length}; 0 es el aire)`);
+    return d;
+  }
+  ids(): string[] { return this.defs.map((d) => d.id); }
+}
+
+export interface BlockGridState { cells: Uint16Array; yaw: Uint8Array; lights: Array<[number, LightId]> }
+
+export class BlockGrid implements StatePart {
+  readonly cols: number;
+  readonly rows: number;
+  readonly layers: number;
+  readonly N: number;
+  private cells: Uint16Array;
+  private yaws: Uint8Array;
+  private lightOf = new Map<number, LightId>();
+  private covered: Int32Array;           // por tipo: el índice de su variante tapada (0 = ninguna)
+
+  // La rejilla cubre el mundo desde origin (en vóxeles) con bloques enteros. Las rampas del set tienen que estar en la
+  // paleta del mundo (las mismas: nombre y colores), en cualquier posición. Se añade al mundo como parte "name"
+  constructor(readonly state: WorldState, readonly blocks: BlockSet, readonly origin: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 }, name = 'blocks') {
+    const s = state.solid, N = (this.N = blocks.size);
+    this.cols = Math.floor((s.width - origin.x) / N);
+    this.rows = Math.floor((s.depth - origin.y) / N);
+    this.layers = Math.floor((s.zMax + 1 - origin.z) / N);
+    if (this.cols < 1 || this.rows < 1 || this.layers < 1) throw new Error(`no cabe ningún bloque de ${N} en el mundo desde ${origin.x}, ${origin.y}, ${origin.z}`);
+    rampMap(blocks.palette, s.palette);
+    this.cells = new Uint16Array(this.cols * this.rows * this.layers);
+    this.yaws = new Uint8Array(this.cells.length);
+    this.covered = new Int32Array(blocks.count + 1);
+    for (let i = 1; i <= blocks.count; i++) { const c = blocks.get(i).props.covered; this.covered[i] = c === undefined ? 0 : blocks.index(c); }
+    state.addPart(name, this);
+  }
+
+  private at(bx: number, by: number, bz: number): number {
+    return bx < 0 || by < 0 || bz < 0 || bx >= this.cols || by >= this.rows || bz >= this.layers ? -1 : (bz * this.rows + by) * this.cols + bx;
+  }
+
+  get(bx: number, by: number, bz: number): number {
+    const i = this.at(bx, by, bz);
+    return i < 0 ? 0 : this.cells[i]!;
+  }
+
+  props(bx: number, by: number, bz: number): BlockProps {
+    const t = this.get(bx, by, bz);
+    return t ? this.blocks.get(t).props : AIR;
+  }
+
+  // La caja de vóxeles de un bloque (extremos incluidos)
+  box(bx: number, by: number, bz: number): Box3 {
+    const N = this.N, o = this.origin;
+    return { x0: o.x + bx * N, y0: o.y + by * N, z0: o.z + bz * N, x1: o.x + bx * N + N - 1, y1: o.y + by * N + N - 1, z1: o.z + bz * N + N - 1 };
+  }
+
+  // El bloque que contiene un vóxel, o null si cae fuera de la rejilla
+  cellOf(x: number, y: number, z: number): [number, number, number] | null {
+    const N = this.N, o = this.origin;
+    const bx = Math.floor((x - o.x) / N), by = Math.floor((y - o.y) / N), bz = Math.floor((z - o.z) / N);
+    return this.at(bx, by, bz) < 0 ? null : [bx, by, bz];
+  }
+
+  // El bz más alto con un bloque sólido en la columna, o -1
+  topAt(bx: number, by: number): number {
+    for (let bz = this.layers - 1; bz >= 0; bz--) { const t = this.get(bx, by, bz); if (t && this.blocks.get(t).props.solid) return bz; }
+    return -1;
+  }
+
+  // Pone un bloque (0 lo quita), girado. Si tiene variante tapada y hay un sólido encima, pone la variante; si es
+  // sólido, tapa el de debajo. Pone y quita la luz que emite. Da la caja de los vóxeles que cambiaron, o null
+  set(bx: number, by: number, bz: number, type: number, yaw: Yaw = 0): Box3 | null {
+    const i = this.at(bx, by, bz);
+    if (i < 0) throw new Error(`el bloque ${bx}, ${by}, ${bz} está fuera de la rejilla (${this.cols} x ${this.rows} x ${this.layers})`);
+    if (type && this.covered[type] && this.props(bx, by, bz + 1).solid) type = this.covered[type]!;
+    let box = this.write(i, bx, by, bz, type, yaw);
+    if (type && this.blocks.get(type).props.solid) {
+      const below = this.get(bx, by, bz - 1);
+      if (below && this.covered[below]) box = union(box, this.write(this.at(bx, by, bz - 1), bx, by, bz - 1, this.covered[below]!, this.yaws[this.at(bx, by, bz - 1)]! * 90 as Yaw));
+    }
+    return box;
+  }
+
+  // Rellena una caja de bloques (extremos incluidos) de un tipo, sin variantes tapadas: para generar
+  fill(b0: readonly [number, number, number], b1: readonly [number, number, number], type: number): void {
+    for (let bz = Math.min(b0[2], b1[2]); bz <= Math.max(b0[2], b1[2]); bz++)
+      for (let by = Math.min(b0[1], b1[1]); by <= Math.max(b0[1], b1[1]); by++)
+        for (let bx = Math.min(b0[0], b1[0]); bx <= Math.max(b0[0], b1[0]); bx++) {
+          const i = this.at(bx, by, bz);
+          if (i >= 0) this.write(i, bx, by, bz, type, 0);
+        }
+  }
+
+  private write(i: number, bx: number, by: number, bz: number, type: number, yaw: Yaw): Box3 | null {
+    const q = (yaw / 90) & 3;
+    if (this.cells[i] === type && (this.yaws[i] === q || !type)) return null;
+    const old = this.cells[i]!;
+    if (old && this.blocks.get(old).props.emits) {
+      const id = this.lightOf.get(i);
+      if (id !== undefined && this.state.lights.get(id)) this.state.lights.removeFixed(id);
+      this.lightOf.delete(i);
+    }
+    this.cells[i] = type; this.yaws[i] = type ? q : 0;
+    const b = this.box(bx, by, bz), N = this.N;
+    let box = clearBox(this.state, b);
+    if (type) {
+      const def = this.blocks.get(type);
+      const ox = q === 1 || q === 2 ? N : 0, oy = q === 2 || q === 3 ? N : 0;
+      box = union(box, stampModel(this.state, def.model, b.x0 + ox, b.y0 + oy, b.z0, yaw));
+      const e = def.props.emits;
+      if (e) {
+        const at = e.at ?? [N / 2, N / 2, N];
+        this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + at[0], y: b.y0 + at[1], z: b.z0 + at[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
+      }
+    }
+    return box;
+  }
+
+  // ---- parte del estado del mundo (WorldState.addPart)
+  exportState(): BlockGridState {
+    return { cells: this.cells.slice(), yaw: this.yaws.slice(), lights: [...this.lightOf].sort((a, b) => a[0] - b[0]) };
+  }
+  importState(s: unknown): void {
+    const g = s as BlockGridState;
+    this.cells.set(g.cells); this.yaws.set(g.yaw);
+    this.lightOf = new Map(g.lights);
+  }
+  hashInto(h: StateHasher): void {
+    h.bytes(this.cells); h.bytes(this.yaws);
+    for (const [i, id] of [...this.lightOf].sort((a, b) => a[0] - b[0])) { h.num(i); h.str(String(id)); }
+  }
+}
+
+const union = (a: Box3 | null, b: Box3 | null): Box3 | null =>
+  !a ? b : !b ? a : { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), z0: Math.min(a.z0, b.z0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z1: Math.max(a.z1, b.z1) };
+
+// El bloque y la cara que se ven en un píxel de la imagen horneada de una vista (en los 4 giros): la cara es la
+// dirección, en ejes del mundo, hacia la que mira (donde iría un bloque puesto contra ella). null si no hay nada o si
+// lo que se ve no es de la rejilla
+export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: number, sy: number): { cell: [number, number, number]; face: [number, number, number] } | null {
+  const v = view.voxelAt(baked, sx, sy);
+  if (!v) return null;
+  const f = baked.face[sy * baked.width + sx]!;
+  if (f < 0) return null;
+  const n = DIR_VECTORS[f]!;
+  const [dx, dy] = view.camera.dirToWorld(n[0], n[1]);
+  const cell = grid.cellOf(v[0], v[1], v[2]);
+  return cell ? { cell, face: [dx + 0, dy + 0, n[2] + 0] } : null;   // + 0: sin -0
+}
