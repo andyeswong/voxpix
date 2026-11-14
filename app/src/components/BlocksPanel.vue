@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { blockSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, closeSet, setIcons } from '../blockSet';
+import { blockSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, closeSet, setIcons, sheetToPng } from '../blockSet';
 import { version, editor } from '../store';
 import type { BlockProps } from '../../../src/world/blocks';
 import { SOURCE_PRESETS } from '../../../src/lighting';
@@ -38,9 +38,9 @@ function download(data: BlobPart, type: string, name: string): void {
 // La hoja de iconos (un icono por bloque, en el ángulo de la vista previa) y su índice
 function exportIcons(): void {
   run(() => {
-    const r = setIcons({ yaw: editor.view.yaw, elevation: editor.view.elevation, outline: editor.view.outline, scale: 2 });
-    download(r.png as BlobPart, 'image/png', `${blockSet.name}_iconos.png`);
-    download(JSON.stringify(r.index), 'application/json', `${blockSet.name}_iconos.json`);
+    const s = setIcons({ yaw: editor.view.yaw, elevation: editor.view.elevation, outline: editor.view.outline, scale: 2 });
+    void sheetToPng(s).then((png) => download(png, 'image/png', `${blockSet.name}_iconos.png`));
+    download(JSON.stringify({ cell: s.cell, icons: s.icons }), 'application/json', `${blockSet.name}_iconos.json`);
   });
 }
 function exportSet(): void {

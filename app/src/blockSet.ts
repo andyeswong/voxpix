@@ -3,8 +3,7 @@
 // siempre; el set guarda los bloques y exporta un .voxset.json. Lo usan la API (window.voxpix: newSet, addBlock,
 // block, saveBlock, removeBlock, blocks, saveSet, loadSet) y el panel "Bloques".
 import { reactive } from 'vue';
-import { Model, material, decode, iconSheet, type Palette, type IconOptions } from '@core/index';
-import { encodePNG } from '../../src/core/png';
+import { Model, material, decode, iconSheet, type Palette, type IconOptions, type IconSheet } from '@core/index';
 import { BlockSet, type BlockProps, type VoxsetFile } from '../../src/world/blocks';
 import { model, editor, replaceModel, newModelSized, touch } from './store';
 
@@ -148,13 +147,20 @@ export function saveSet(): VoxsetFile {
   return file();
 }
 
-// La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala en su celda (iconSheet, en el núcleo), como
-// PNG, y su índice id -> recuadro
-export function setIcons(o: IconOptions = {}): { png: Uint8Array; index: { cell: number; icons: Record<string, { x: number; y: number; w: number; h: number }> }; width: number; height: number } {
+// La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala en su celda (iconSheet, en el núcleo), con
+// su índice id -> recuadro
+export function setIcons(o: IconOptions = {}): IconSheet {
   need();
   const set = BlockSet.fromJSON(saveSet());
-  const sheet = iconSheet(set.ids().map((id) => ({ id, model: set.get(set.index(id)).model })), o);
-  return { png: encodePNG(sheet.width, sheet.height, sheet.rgba), index: { cell: sheet.cell, icons: sheet.icons }, width: sheet.width, height: sheet.height };
+  return iconSheet(set.ids().map((id) => ({ id, model: set.get(set.index(id)).model })), o);
+}
+
+// La hoja a PNG (en el navegador, por un lienzo)
+export function sheetToPng(s: IconSheet): Promise<Blob> {
+  const c = document.createElement('canvas');
+  c.width = s.width; c.height = s.height;
+  c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(s.rgba), s.width, s.height), 0, 0);
+  return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('sin PNG'))), 'image/png'));
 }
 
 export function loadSet(json: string | VoxsetFile): { name: string; size: number; blocks: string[] } {

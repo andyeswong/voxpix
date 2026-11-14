@@ -39,7 +39,7 @@ describe('hoja de iconos', () => {
     const paint = (ramp: number) => { const h = history.value; h.begin(); for (let z = 0; z < 4; z++) for (let y = -2; y < 2; y++) for (let x = -2; x < 2; x++) h.set(x, y, z, material(ramp, 1)); h.commit(); };
     paint(0); addBlock('piedra'); block(null); paint(1); addBlock('madera');
     const r = setIcons({ scale: 2 });
-    expect(Object.keys(r.index.icons)).toEqual(['piedra', 'madera']);
-    expect(Array.from(r.png.subarray(1, 4)).map((c) => String.fromCharCode(c)).join('')).toBe('PNG');
+    expect(Object.keys(r.icons)).toEqual(['piedra', 'madera']);
+    expect(r.width).toBe(2 * r.cell);
   });
 });
