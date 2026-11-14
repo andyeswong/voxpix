@@ -1,7 +1,7 @@
 // La hoja de iconos: cada modelo pintado en su celda (centrado, recortado a lo que tiene), con el índice id -> recuadro,
 // la escala, la celda que no basta (error claro) y la del set de bloques del editor
 import { describe, it, expect } from 'vitest';
-import { Model, material, box, iconSheet } from '../src/core';
+import { Model, material, box, iconSheet, modelIcon } from '../src/core';
 import { replaceModel, history } from '../app/src/store';
 import { newSet, addBlock, block, setIcons } from '../app/src/blockSet';
 
@@ -27,6 +27,17 @@ describe('hoja de iconos', () => {
     expect(s2.cell).toBe(s.cell * 2);
     expect(filled(s2, s2.icons.chico!)).toBe(filled(s, s.icons.chico!) * 4);
     expect(iconSheet(items).rgba).toEqual(s.rgba);              // siempre lo mismo
+  });
+
+  it('huellas: el mismo modelo da el mismo icono (también suelto, con modelIcon, a la misma celda); otro modelo, otra', () => {
+    const a = iconSheet([{ id: 'x', model: cube(6, 0) }, { id: 'y', model: cube(6, 1) }], { cell: 16 });
+    const b = iconSheet([{ id: 'x', model: cube(6, 0) }, { id: 'y', model: cube(6, 1) }], { cell: 16 });
+    expect(a.hash).toBe(b.hash);
+    expect(a.icons.x!.hash).not.toBe(a.icons.y!.hash);
+    const solo = modelIcon(cube(6, 0), { cell: 16 });
+    expect(solo.size).toBe(16);
+    expect(solo.hash).toBe(a.icons.x!.hash);
+    expect(modelIcon(cube(6, 0), { cell: 16, yaw: 30 }).hash).not.toBe(solo.hash);   // otro giro, otro icono
   });
 
   it('una celda más pequeña que un icono es un error que dice cuánto hace falta', () => {

@@ -17,7 +17,19 @@ export interface IconSheet {
   height: number;
   rgba: Uint8ClampedArray;      // fondo transparente
   cell: number;                 // lado de la celda en la hoja (ya escalado)
-  icons: Record<string, { x: number; y: number; w: number; h: number }>;   // la celda de cada id en la hoja
+  icons: Record<string, { x: number; y: number; w: number; h: number; hash: string }>;   // la celda de cada id y la huella de su icono
+  hash: string;                 // la huella de la hoja entera (FNV-1a de 32 bits de sus píxeles): el mismo set, la misma hoja
+}
+
+// Un icono suelto (un objeto, una criatura): el modelo pintado y centrado en una imagen de cell x cell (escalada),
+// fondo transparente, con su huella
+export interface Icon { size: number; rgba: Uint8ClampedArray; hash: string }
+
+// FNV-1a de 32 bits de unos bytes, en hexadecimal
+export function fnv32(bytes: ArrayLike<number>): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < bytes.length; i++) h = Math.imul(h ^ bytes[i]!, 16777619);
+  return (h >>> 0).toString(16).padStart(8, '0');
 }
 
 // Un modelo pintado y recortado a lo que tiene (con su contorno). Se centra en x e y antes de pintar: los bloques de un
@@ -50,7 +62,7 @@ export function iconSheet(items: ReadonlyArray<{ id: string; model: Model }>, o:
   const out: IconSheet['icons'] = {};
   icons.forEach((ic, k) => {
     const cx = (k % cols) * cell, cy = Math.floor(k / cols) * cell;
-    out[ic.id] = { x: cx, y: cy, w: cell, h: cell };
+    out[ic.id] = { x: cx, y: cy, w: cell, h: cell, hash: '' };
     // Centrado en su celda, a la escala de la hoja (sin suavizar)
     const ox = cx + Math.floor((cell0 - ic.w) / 2) * s, oy = cy + Math.floor((cell0 - ic.h) / 2) * s;
     for (let y = 0; y < ic.h * s; y++) for (let x = 0; x < ic.w * s; x++) {
@@ -58,5 +70,17 @@ export function iconSheet(items: ReadonlyArray<{ id: string; model: Model }>, o:
       for (let c = 0; c < 4; c++) rgba[dst + c] = ic.rgba[src + c]!;
     }
   });
-  return { width, height, rgba, cell, icons: out };
+  // La huella de cada icono: los píxeles de su celda
+  for (const id of Object.keys(out)) {
+    const r = out[id]!, px = new Uint8ClampedArray(cell * cell * 4);
+    for (let y = 0; y < cell; y++) px.set(rgba.subarray(((r.y + y) * width + r.x) * 4, ((r.y + y) * width + r.x + cell) * 4), y * cell * 4);
+    r.hash = fnv32(px);
+  }
+  return { width, height, rgba, cell, icons: out, hash: fnv32(rgba) };
+}
+
+// Un icono suelto: lo mismo que una celda de iconSheet, para un modelo solo
+export function modelIcon(model: Model, o: Omit<IconOptions, 'columns'> = {}): Icon {
+  const s = iconSheet([{ id: 'icono', model }], { ...o, columns: 1 });
+  return { size: s.cell, rgba: s.rgba, hash: s.icons.icono!.hash };
 }

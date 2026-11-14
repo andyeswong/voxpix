@@ -19,7 +19,7 @@ import { PRESET_PALETTES } from '../../src/samples/palettes';
 import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps } from './paletteOps';
 import { newSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, loadSet, setIcons, sheetToPng, blockSet } from './blockSet';
 import type { BlockProps, VoxsetFile } from '../../src/world/blocks';
-import type { IconOptions } from '@core/index';
+import { modelIcon, type IconOptions } from '@core/index';
 
 export type Material = number | string | [number, number] | null;
 
@@ -100,7 +100,8 @@ SETS DE BLOQUES (varios modelos de N x N x N con nombre y la paleta compartida, 
   saveSet()                                el .voxset.json (objeto), comprobado por el motor
   loadSet(json)                            abre un .voxset.json
   iconSheet({yaw?, elevation?, outline?, cell?, scale?, columns?})   la hoja de iconos del set (un icono por bloque,
-                                           mismo ángulo y escala; promesa): {name, base64 (PNG), index: {cell, icons: {id: {x,y,w,h}}}}
+                                           mismo ángulo y escala; promesa): {name, base64 (PNG), index: {cell, icons: {id: {x,y,w,h,hash}}}, hash}
+  icon({yaw?, elevation?, outline?, cell?, scale?})   un icono suelto del modelo abierto (promesa): {name, base64, size, hash}
   importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo (promesa: se ejecuta aparte)
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
   png({sheet?, scale?})                    PNG de la vista (o la hoja de ángulos), en base64; con luz si lit
@@ -319,9 +320,14 @@ export const api = {
   blocks() { return listBlocks(); },
   saveSet() { return saveSet(); },
   loadSet(json: string | VoxsetFile) { return loadSet(json); },
+  // Un icono suelto del modelo abierto (un objeto, una criatura): el mismo render que una celda de iconSheet
+  async icon(o: Omit<IconOptions, 'columns'> = {}) {
+    const ic = modelIcon(model.value, o);
+    return { name: `${model.value.name}_icono.png`, base64: await b64(await sheetToPng({ width: ic.size, height: ic.size, rgba: ic.rgba })), size: ic.size, hash: ic.hash };
+  },
   async iconSheet(o: IconOptions = {}) {
     const s = setIcons(o);
-    return { name: `${blockSet.name}_iconos.png`, base64: await b64(await sheetToPng(s)), index: { cell: s.cell, icons: s.icons }, width: s.width, height: s.height };
+    return { name: `${blockSet.name}_iconos.png`, base64: await b64(await sheetToPng(s)), index: { cell: s.cell, icons: s.icons }, width: s.width, height: s.height, hash: s.hash };
   },
 
   // El .px.js se ejecuta en un worker aparte, no en la página: por eso es una promesa

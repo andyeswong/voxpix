@@ -155,8 +155,8 @@ export function setIcons(o: IconOptions = {}): IconSheet {
   return iconSheet(set.ids().map((id) => ({ id, model: set.get(set.index(id)).model })), o);
 }
 
-// La hoja a PNG (en el navegador, por un lienzo)
-export function sheetToPng(s: IconSheet): Promise<Blob> {
+// La hoja (o un icono suelto: { width, height, rgba }) a PNG (en el navegador, por un lienzo)
+export function sheetToPng(s: Pick<IconSheet, 'width' | 'height' | 'rgba'>): Promise<Blob> {
   const c = document.createElement('canvas');
   c.width = s.width; c.height = s.height;
   c.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(s.rgba), s.width, s.height), 0, 0);

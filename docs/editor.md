@@ -139,7 +139,8 @@ el lienzo pasa a ser de N x N x N y cada bloque se pinta en él con las herramie
 - *Exportar .voxset.json*, que el motor lee con `BlockSet` (docs/motor.md, Bloques);
 - *Hoja de iconos*: un icono por bloque en el ángulo de la vista previa, a x2, en una PNG con su índice en JSON (`id`
   -> recuadro): para la barra de un juego, sacada de los mismos modelos. En el motor, `iconSheet(modelos, opciones)`
-  (`src/core/icons.ts`) hace lo mismo con cualquier lista de modelos.
+  (`src/core/icons.ts`) hace lo mismo con cualquier lista de modelos, y `modelIcon(modelo, opciones)` un icono suelto;
+  los dos dan la huella (FNV-1a) de cada icono: el mismo modelo con las mismas opciones, el mismo icono.
 
 *Archivo > Abrir set de bloques…* abre uno. Lo mismo por la API: docs/api-agentes.md, Sets de bloques.
 
