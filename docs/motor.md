@@ -548,6 +548,32 @@ Pendiente si Explorar llega a un juego: quitar las dos esperas de leer de la GPU
 readPixels, que espera a que termine; habría que componer en la GPU y pintar directamente), y que salgan las
 entidades en primera persona.
 
+## Guardar y cargar
+
+Una instantánea del mundo (`state.snapshot()`: vóxeles, agua, gotas, entidades, luces, el azar, las partes como una
+rejilla de bloques...) a bytes y de vuelta, para guardar una partida.
+
+```ts
+import { encodeSnapshot, decodeSnapshot } from '@voxpix/world/save';
+
+// Al empezar una partida en un mundo generado por semilla, la instantánea de partida (no hace falta guardarla:
+// se rehace con la semilla)
+const base = state.snapshot();
+// Guardar: solo lo que cambió respecto a la base
+const bytes = encodeSnapshot(state.snapshot(), base);
+// Cargar: rehacer el mundo con la misma semilla y ponerle la partida encima
+state.restore(decodeSnapshot(bytes, state.snapshot()));
+```
+
+- El archivo: una cabecera con versión, el esqueleto de la instantánea en JSON y sus arrays en binario
+  (little-endian). La ida y vuelta es exacta: la huella (`state.hash()`) es la misma, y los mismos datos dan siempre
+  los mismos bytes.
+- Los vóxeles van por losas de 16 x 16 x 16, cada losa distinta una sola vez (un mundo de bloques repite mucho: toda
+  piedra, todo aire) y comprimidas por tramos. Un terreno de bloques de 384 x 384 x 96 (unos 6 MB en memoria) ocupa
+  ~600 KB entero.
+- Con base: lo igual que en la base no se guarda y lo parecido va como diferencia (unos 3 KB por bloque picado). Si
+  así ocupara más que entero, va entero. Para cargar hace falta la misma base (si no, error).
+
 ## Determinismo
 
 `state.step()` avanza 1/60 s fijos, sin reloj ni `Math.random`: el azar es un generador con semilla dentro del
