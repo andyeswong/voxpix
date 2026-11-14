@@ -699,6 +699,10 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
 }
 
 // Los trabajos de lo que haya cambiado (solo vóxeles) desde el último horneado
+// Las luces de un rehorneado con near van detrás de todos los recuadros y nunca cuentan como "cercanas" para el
+// presupuesto aparte de FrameBudget (near.below), salvo un umbral de más de esto: su prioridad empieza aquí
+export const LIGHT_PRIORITY = 10000;
+
 // near (opcional): dónde está el jugador (x, y del mundo). Los trabajos llevan entonces prioridad (ViewJob.priority, la
 // distancia en píxeles de pantalla): FrameBudget hace antes lo más cercano, aunque haya trabajo viejo en la cola
 export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number } } = {}): ViewJob[] {
@@ -715,7 +719,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
     if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
     else {
       const l = byId.get(j.key);
-      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = Math.hypot(lx - px, ly - py) + 0.5; }
+      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = LIGHT_PRIORITY + Math.hypot(lx - px, ly - py); }
     }
     return { key: j.key, priority: p, run: (d: number) => j.run(d) };
   });

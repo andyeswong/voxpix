@@ -159,8 +159,12 @@ budget.run();
 - Las dos escriben por `StaticVoxels.set`: `watchChanges` da sus cajas `'voxels'`, y `rebakeChangedJobs` rehace solo
   lo que cambió (ver "Rehornear lo que cambió"). Devuelven la caja de lo que cambió de verdad: poner lo que ya hay
   da `null` y no rehornea nada.
-- `FrameBudget.ms` se puede cambiar entre cuadros: una ráfaga de presupuesto los cuadros que siguen a algo que el
-  jugador tiene que ver ya (un golpe), y el de siempre después.
+- Presupuesto aparte para lo cercano: `new FrameBudget(3, undefined, { ms: 8, below: 64 })`. Los trabajos con
+  `priority` menor que `below` (con `near`, los recuadros a menos de 64 px del jugador en pantalla) se hacen antes y
+  pueden llevarse hasta 8 ms del cuadro; los demás siguen con sus 3. Las luces de un rehorneado con `near` llevan
+  prioridad desde `LIGHT_PRIORITY` (10000): van detrás de los recuadros y nunca cuentan como cercanas. Así el bloque
+  picado se ve en el cuadro siguiente y las luces se asientan en los de después, sin subir el presupuesto de todo.
+  `budget.ms` y `budget.near` se pueden cambiar entre cuadros.
 - `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
   en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
   trabajos sin prioridad van detrás, en su orden.

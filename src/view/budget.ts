@@ -21,8 +21,11 @@ export class FrameBudget {
   private queue: ViewJob[] = [];
   private starved = 0;
 
-  // ms se puede cambiar entre cuadros (una ráfaga de presupuesto tras algo que el jugador tiene que ver ya)
-  constructor(public ms = 3, private readonly now: () => number = () => performance.now()) {}
+  // ms se puede cambiar entre cuadros. near (opcional): un presupuesto APARTE para lo cercano, los trabajos con
+  // priority < near.below, que se hacen antes y pueden llevarse hasta near.ms del cuadro; los demás siguen con ms.
+  // Así lo que el jugador tiene que ver ya (el recuadro de un golpe, con rebakeChangedJobs y near) cabe en un cuadro
+  // sin dar más tiempo a todo lo demás
+  constructor(public ms = 3, private readonly now: () => number = () => performance.now(), public near: { ms: number; below: number } | null = null) {}
 
   get pending(): number {
     return this.queue.length;
@@ -49,10 +52,26 @@ export class FrameBudget {
   run(spentMs = 0): number {
     if (!this.queue.length) return 0;
     const start = this.now();
-    let deadline = start + this.ms - spentMs;
-    if (deadline <= start) {
-      if (++this.starved < STARVE_FRAMES) return 0;
-      deadline = start;          // una porción mínima: el primer trabajo hace una unidad y para
+    // 1) lo cercano, con su presupuesto (va delante en la cola: está ordenada por prioridad)
+    const nr = this.near;
+    if (nr) {
+      const nd = start + nr.ms;
+      let i = 0;
+      while (i < this.queue.length && this.now() < nd) {
+        const job = this.queue[i]!;
+        if (job.priority === undefined || !(job.priority < nr.below)) break;
+        const t = this.now();
+        if (job.run(nd)) this.queue.splice(i, 1);
+        else if (this.now() === t) i++;
+      }
+      if (!this.queue.length) return this.now() - start;
+    }
+    // 2) lo demás, con el presupuesto de siempre
+    const start2 = this.now();
+    let deadline = start2 + this.ms - spentMs;
+    if (deadline <= start2) {
+      if (++this.starved < STARVE_FRAMES) return this.now() - start;
+      deadline = start2;         // una porción mínima: el primer trabajo hace una unidad y para
     }
     this.starved = 0;
     // En orden; un trabajo que no puede avanzar todavía (no acaba ni gasta tiempo: p. ej. una luz que espera a que

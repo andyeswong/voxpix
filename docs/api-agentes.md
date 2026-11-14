@@ -159,13 +159,15 @@ N x N x N (x e y de -N/2 a N/2-1, z de 0 a N-1), con las funciones de pintar de 
 - `props` dice lo que no sale de las rampas: `emits` (la luz fija que pone el bloque al colocarse: `{kind, radius?,
   intensity?, color?, at?}`), `covered` (el bloque en que se convierte con uno sólido encima) y `density`. `solid`,
   `light` y `emissive` salen de los materiales de sus rampas (`palette`, `materials()`): una antorcha que se cruza
-  lleva rampas `atravesable` y emisivas; unas hojas que dejan pasar la luz, `follaje`. Si se escriben y no coinciden,
+  lleva rampas `atravesable` y emisivas; unas hojas sólidas que dejan pasar la luz, `arbusto` (`follaje` deja pasar
+  la luz y también al jugador). Si se escriben y no coinciden,
   es un error que dice cuál.
 - Cada bloque se guarda con la paleta que había; al exportar se traduce a la de ahora por el nombre de la rampa (el
   tono se queda). Así cambiar o reordenar la paleta después no rompe los bloques; quitar una rampa que un bloque usa,
   sí (el error dice cuál).
 
 ```js
+vp.newModel('vacío', 8, 8, 8);              // palette() no deja quitar rampas que el modelo abierto usa (la escena de muestra)
 vp.palette([{ name: 'piedra', colors: [...] }, { name: 'llama', colors: [...], emissive: true, material: 'atravesable' }]);
 vp.newSet('bloques', 8);
 vp.box(-4, -4, 0, 3, 3, 7, 'piedra');

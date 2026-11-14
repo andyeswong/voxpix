@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest';
 import { material, Model } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { stampModel, clearBox, turnCell, type Yaw } from '../src/world/edit';
-import { bakeWorld, rebakeChangedJobs } from '../src/world/bake';
+import { bakeWorld, rebakeChangedJobs, LIGHT_PRIORITY } from '../src/world/bake';
 import { FrameBudget, type ViewJob } from '../src/view/budget';
 
 const STONE = { name: 'piedra', colors: ['#202020', '#404040', '#606060', '#808080'] };
@@ -75,6 +75,25 @@ describe('lo cercano primero', () => {
     q.push(job('a', 3));                                          // la misma key: sustituye y se recoloca
     q.run();
     expect(order).toEqual(['d', 'a', 'c', 'e', 'b']);
+  });
+
+  it('presupuesto aparte para lo cercano: un trabajo de 7 ms cabe en un cuadro con near 8, en vez de tres con 3; lo demás sigue con 3', () => {
+    let clock = 0;
+    const work = (key: string, ms: number, priority?: number) => {
+      let left = ms;
+      return { key, priority, run: (deadline: number) => { do { clock += 1; left -= 1; } while (left > 0 && clock < deadline); return left <= 0; } } as ViewJob;
+    };
+    const frames = (q: FrameBudget, key: string) => { let f = 0; while (q.pending && f < 20) { f++; q.run(); if (!(q as unknown as { queue: ViewJob[] }).queue.some((j) => j.key === key)) return f; } return f; };
+    const plain = new FrameBudget(3, () => clock);
+    plain.push(work('golpe', 7, 0)); plain.push(work('luz', 6, LIGHT_PRIORITY + 40));
+    expect(frames(plain, 'golpe')).toBe(3);
+    clock = 0;
+    const near = new FrameBudget(3, () => clock, { ms: 8, below: 100 });
+    near.push(work('golpe', 7, 0)); near.push(work('luz', 6, LIGHT_PRIORITY + 40));
+    const t0 = clock;
+    expect(frames(near, 'golpe')).toBe(1);
+    expect(clock - t0).toBe(10);                                  // 7 del golpe y 3 de la luz (su presupuesto de siempre)
+    expect(frames(near, 'luz')).toBe(1);                          // los 3 que le faltan, el cuadro siguiente
   });
 
   it('rebakeChangedJobs con near: el recuadro del cambio cercano antes que el lejano', () => {
