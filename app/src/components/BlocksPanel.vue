@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
-import { blockSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, closeSet } from '../blockSet';
-import { version } from '../store';
+import { blockSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, closeSet, setIcons } from '../blockSet';
+import { version, editor } from '../store';
 import type { BlockProps } from '../../../src/world/blocks';
 import { SOURCE_PRESETS } from '../../../src/lighting';
 
@@ -28,6 +28,21 @@ function open(id: string | null): void { run(() => { block(id); pull(); }); }
 function add(): void { run(() => { addBlock(newId.value.trim(), props()); newId.value = ''; }); }
 function save(): void { run(() => { saveBlock(props()); }); }
 function remove(id: string): void { run(() => removeBlock(id)); }
+function download(data: BlobPart, type: string, name: string): void {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([data], { type }));
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+// La hoja de iconos (un icono por bloque, en el ángulo de la vista previa) y su índice
+function exportIcons(): void {
+  run(() => {
+    const r = setIcons({ yaw: editor.view.yaw, elevation: editor.view.elevation, outline: editor.view.outline, scale: 2 });
+    download(r.png as BlobPart, 'image/png', `${blockSet.name}_iconos.png`);
+    download(JSON.stringify(r.index), 'application/json', `${blockSet.name}_iconos.json`);
+  });
+}
 function exportSet(): void {
   run(() => {
     const f = saveSet();
@@ -73,6 +88,7 @@ function exportSet(): void {
     </div>
     <div class="row">
       <button :disabled="!list.length" @click="exportSet">Exportar .voxset.json</button>
+      <button :disabled="!list.length" title="Un icono por bloque, en el ángulo de la vista previa, a x2, con su índice" @click="exportIcons">Hoja de iconos</button>
       <button class="ghost" @click="closeSet()">Cerrar set</button>
     </div>
     <p v-if="err" class="err">{{ err }}</p>

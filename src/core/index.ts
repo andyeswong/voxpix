@@ -12,3 +12,4 @@ export * from './explore';
 export * from './anim';
 export * from './gif';
 export * from './effects';
+export * from './icons';

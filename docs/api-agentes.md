@@ -170,6 +170,7 @@ N x N x N (x e y de -N/2 a N/2-1, z de 0 a N-1), con las funciones de pintar de 
 | `blocks()` | lista | Los bloques: `{index, id, voxels, props, current}`. |
 | `saveSet()` | objeto | El `.voxset.json`, comprobado por el motor (`BlockSet.fromJSON`). |
 | `loadSet(json)` | `{name, size, blocks}` | Abre un `.voxset.json`. |
+| `iconSheet({ yaw?, elevation?, outline?, cell?, scale?, columns? })` | `{name, base64, index, width, height}` | La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala, centrado en su celda (de lado `cell`, por defecto la del icono más grande), en PNG; `index` es `{cell, icons: {id: {x, y, w, h}}}`. |
 
 - `props` dice lo que no sale de las rampas: `emits` (la luz fija que pone el bloque al colocarse: `{kind, radius?,
   intensity?, color?, at?}`), `covered` (el bloque en que se convierte con uno sólido encima) y `density`. `solid`,

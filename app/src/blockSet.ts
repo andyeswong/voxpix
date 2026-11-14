@@ -3,7 +3,8 @@
 // siempre; el set guarda los bloques y exporta un .voxset.json. Lo usan la API (window.voxpix: newSet, addBlock,
 // block, saveBlock, removeBlock, blocks, saveSet, loadSet) y el panel "Bloques".
 import { reactive } from 'vue';
-import { Model, material, decode, type Palette } from '@core/index';
+import { Model, material, decode, iconSheet, type Palette, type IconOptions } from '@core/index';
+import { encodePNG } from '../../src/core/png';
 import { BlockSet, type BlockProps, type VoxsetFile } from '../../src/world/blocks';
 import { model, editor, replaceModel, newModelSized, touch } from './store';
 
@@ -145,6 +146,15 @@ export function saveSet(): VoxsetFile {
   need();
   if (!blockSet.blocks.length) throw new Error('el set no tiene bloques');
   return file();
+}
+
+// La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala en su celda (iconSheet, en el núcleo), como
+// PNG, y su índice id -> recuadro
+export function setIcons(o: IconOptions = {}): { png: Uint8Array; index: { cell: number; icons: Record<string, { x: number; y: number; w: number; h: number }> }; width: number; height: number } {
+  need();
+  const set = BlockSet.fromJSON(saveSet());
+  const sheet = iconSheet(set.ids().map((id) => ({ id, model: set.get(set.index(id)).model })), o);
+  return { png: encodePNG(sheet.width, sheet.height, sheet.rgba), index: { cell: sheet.cell, icons: sheet.icons }, width: sheet.width, height: sheet.height };
 }
 
 export function loadSet(json: string | VoxsetFile): { name: string; size: number; blocks: string[] } {
