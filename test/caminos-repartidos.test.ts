@@ -133,4 +133,28 @@ describe('caminos por niveles, búsqueda repartida', () => {
     expect(dist(f)).toEqual(dist(ref));
     f.close(); ref.close();
   });
+  it('lag: una meta que cambia en cada tick con tanda corta acumula retraso; con tanda de sobra vuelve a 0', () => {
+    const st = world();
+    const from = at(st, 2, 2);
+    const run = (budget: number) => {
+      const f = new LevelPathField(st, { ...O, budget });
+      const lags: number[] = [];
+      for (let t = 0; t < 30; t++) {
+        f.dir(from, at(st, 6 + (t % 50), 30 - (t % 20)));
+        f.advance();
+        lags.push(f.lag);
+      }
+      // Y la meta quieta: se pone al día y lag vuelve a 0
+      let still = 0;
+      while (f.lag > 0 && still < 1000) { f.dir(from, at(st, 6 + (29 % 50), 30 - (29 % 20))); f.advance(); still++; }
+      f.close();
+      return { lags, still };
+    };
+    const short = run(5), big = run(100000);
+    expect(Math.max(...short.lags)).toBeGreaterThan(10);           // no da abasto: el retraso crece
+    expect(short.lags.at(-1)).toBeGreaterThan(short.lags[3]!);
+    expect(short.still).toBeGreaterThan(0);
+    expect(big.lags.every((l) => l === 0)).toBe(true);              // cada búsqueda acaba en su tick
+    expect(big.still).toBe(0);
+  });
 });

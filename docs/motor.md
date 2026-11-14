@@ -162,6 +162,9 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
   de 4 x 19 píxeles recorre ~5.800 vóxeles expuestos, ~5.200 caen en la imagen y se rasterizan (lo tapado también se
   pinta), y solo ~600 caras necesitan su tono. Con TODOS los tonos ya guardados, la franja sigue costando ~0,9 ms
   (contra ~1,0-1,15): el coste es pintar lo tapado, no el tono. Bajarlo es el rayo por píxel (abajo).
+- **Caminos por niveles incrementales desde la meta anterior** (cuando la meta se mueve una celda): el BFS es hacia
+  atrás desde la meta, así que moverla cambia distancias en todo el campo; hacerlo exacto no sale barato. En su lugar,
+  la búsqueda repartida por tandas (`budget`, `advance`).
 - **Descartar una antorcha porque hay una columna llena entre ella y lo cambiado**: no encontré una forma barata y
   exacta de saber que nada de su sombra pasa por otro lado.
 
@@ -321,6 +324,8 @@ field.floorsAt({ x, y });                                        // los suelos d
   está en marcha y después se busca la última pedida (si se empezara de cero cada vez, una meta que se mueve deprisa no
   se acabaría nunca). Un cambio del mundo a media búsqueda la tira y se rehace. Con cualquier tanda, las distancias son
   las mismas que buscando de una vez (hay prueba con tandas de 1, 7 y 100 nodos). Sin `budget`, como siempre.
+  `field.lag` dice cuántos `advance()` seguidos lleva la respuesta sin ser la de la última meta pedida (0: al día): si
+  la meta cambia más deprisa de lo que da la tanda, crece; es el número para elegir la tanda.
 - Coste (`bun scripts/bench-caminos.ts`: terreno de bloques de 384 x 384 x 96 con un túnel; celdas de 4, radio 1, alto
   14, step 8, maxDrop 64; 96 x 96 x 4 nodos; sin freno): construir ~10 ms; una búsqueda entera ~0,4 ms (p95 ~0,5; antes
   de guardar los pasos y saltar los niveles vacíos, ~1,0-1,2 y p95 ~1,7); tras picar, lo mismo. Repartida en tandas

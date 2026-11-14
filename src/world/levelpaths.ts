@@ -238,13 +238,26 @@ export class LevelPathField {
     }
     // Repartida: se apunta lo que se quiere; advance() lo busca
     this.want = key === this.goal && !this.work ? null : { key, to, near };
+    this.asked = key;
   }
+
+  // Con `budget`: cuántos advance() seguidos lleva la respuesta sin ser la de la última meta pedida (0: al día). Una meta
+  // que cambia más deprisa de lo que da la tanda lo hace crecer; con tanda de sobra, vuelve a 0. Para elegir la tanda
+  // con un número
+  get lag(): number { return this.behind; }
+  private asked = '';
+  private behind = 0;
 
   // Con `budget`: sigue la búsqueda pendiente, hasta `budget` nodos (o `nodes`). Una vez por tick, desde la
   // simulación: va por nodos, no por reloj, así que la misma partida da lo mismo en cualquier máquina. Si mientras se
   // busca piden otra meta, se acaba la que está en marcha y luego se empieza la nueva (si se empezara de cero cada vez,
   // una meta que se mueve deprisa no se acabaría nunca). Devuelve true si no queda nada pendiente
   advance(nodes = this.budget ?? Infinity): boolean {
+    const idle = this.advanceSearch(nodes);
+    this.behind = this.asked && this.asked !== this.goal ? this.behind + 1 : 0;
+    return idle;
+  }
+  private advanceSearch(nodes: number): boolean {
     this.sync();
     if (!this.work) {
       const w = this.want;
