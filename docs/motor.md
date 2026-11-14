@@ -204,7 +204,9 @@ budget.run();
   picado se ve en el cuadro siguiente y las luces se asientan en los de después, sin subir el presupuesto de todo.
   `budget.ms` y `budget.near` se pueden cambiar entre cuadros.
 - La cola aprende lo que cuesta cada clase de llamada (la key hasta `:` o `#`: `rect`, `light`, `sky`, `view-cut`...):
-  el p95 de sus últimas 32 llamadas, en `budget.expected(key)`. En cada fase (la cercana y la de lo demás), la primera
+  el p95 de sus últimas 32 llamadas, en `budget.expected(key)`. La primera llamada de cada trabajo (la que lo prepara:
+  la cara de un recuadro nuevo) lleva su propia estimación, aparte de la de las siguientes (`expected(key, true)`):
+  si no, la de las primeras, más cara, no dejaría meter franjas de las siguientes que sí caben. En cada fase (la cercana y la de lo demás), la primera
   llamada va siempre (si no, nada avanzaría); las demás solo empiezan si cabe lo que suele costar su clase, y si no,
   la cola prueba con el siguiente trabajo (otra clase puede caber). Una clase que no ha corrido nunca no tiene
   estimación: solo empieza como primera llamada de su fase (la primera de cada clase puede esperar un cuadro; a cambio,
@@ -643,11 +645,22 @@ view.setCut(null);                                          // al salir
   ("Aparece": el corte y sus recuadros hechos; "acaba": también las luces y el cielo.) La unidad que no se puede
   partir es una franja del recuadro, y en un corte hondo cuesta ~1,7-2,5 ms sin freno. Para un juego: caja pequeña,
   movida a saltos, y `zTop` lo más alto que se pueda (justo por encima de la cabeza del jugador).
-- `bun scripts/bench-corte.ts` mide el corte de un túnel (caja de 32 x 32 a saltos de 16, `zTop` de bloque) con esa
-  cola: la llamada a `budget.run` más larga de cada evento (como a 6x) y los cuadros hasta aparecer y acabar. Con la
-  cola que no empieza lo que no cabe, el p95 de esa llamada baja de ~13,5 a ~7,5-9 ms (a 6x) y aparecer sigue en 1-6
-  cuadros. Lo que queda por encima (picos de 12-18 ms en algunas tiradas) es UNA franja: la primera llamada del
-  cuadro, que va siempre.
+- `bun scripts/bench-corte.ts` mide el corte de un túnel (caja de 32 x 32 a saltos de 16, `zTop` en el techo del
+  túnel, quitando hasta ~50 vóxeles por columna) con esa cola: la llamada a `budget.run` más larga de cada evento (como
+  a 6x; incluye los 3 ms de lo demás, así que el techo es 11) y los cuadros hasta aparecer (nada cercano en la cola
+  después de recoger los cambios) y acabar. `NEAR=12` cambia el presupuesto cercano; `VER=1` saca cada evento y las
+  estimaciones de la cola. Con 24 eventos, a 6x:
+
+  | Cola | Aparece p50 / máx | `budget.run` máx |
+  |---|---|---|
+  | Cercano 8, una estimación por clase | 15-19 / 21-22 cuadros | 15,7-19,2 ms |
+  | Cercano 8, primera llamada aparte | 13 / 21-22 | 14,5-15,7 |
+  | Cercano 12 | 7 / 10-12 | 15,7-16,4 |
+
+  Con cercano 8, "aparece" no baja de ~13: una franja de recuadro cuesta ~4,5-5 ms a 6x y en 8 ms cabe una (sobran
+  ~3, que no dan para otra); ~18 franjas por evento son ~18 cuadros, se estime como se estime. A 1x una franja son
+  ~0,75 ms y caben de sobra. Lo que queda por encima de 11 ms es UNA franja: la primera llamada del cuadro, que va
+  siempre.
 
 ## La silueta de lo que queda detrás
 

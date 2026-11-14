@@ -163,10 +163,11 @@ describe('presupuesto de la vista por cuadro', () => {
     b.push({ key: 'light:1#1', priority: 0, run: () => ready });
     for (let k = 0; k < 40; k++) b.run();
     expect(b.expected('light:1#2')).toBe(0);
+    expect(b.expected('light:1#2', true)).toBe(0);
     ready = true;
     b.push({ key: 'light:2#3', priority: 0, run: () => { clock.advance(2); return true; } });
     b.run();
-    expect(b.expected('light:9#9')).toBe(2);
+    expect(b.expected('light:9#9', true)).toBe(2);             // fue la primera llamada (que gastó) de su trabajo
   });
   // Trabajos como los de verdad: hacen unidades mientras quepa la siguiente según lo que tardó la anterior (la primera
   // siempre), y cada unidad escribe su parte del resultado. Recuadros cercanos de franjas de 4 ms, luces y cielo de lo
@@ -220,5 +221,35 @@ describe('presupuesto de la vista por cuadro', () => {
     const { runs, same } = contract(true);
     expect(Math.max(...runs)).toBeLessThanOrEqual(8 + 3);
     expect(same).toBe(true);
+  });
+  it('la primera llamada de un trabajo y las siguientes llevan cada una su estimación: tras una primera cara, cabe una franja de otro', () => {
+    const { clock, log } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    // Recuadros cercanos: la primera llamada (la cara) cuesta 6; las siguientes, franjas de 2 (hace las que caben)
+    const rect = (key: string, bands: number, p: number): ViewJob => {
+      let first = true, left = bands;
+      return {
+        key, priority: p,
+        run(deadline) {
+          if (first) { first = false; clock.advance(6); log.push(key + ' cara'); return false; }
+          do { clock.advance(2); left--; log.push(key); } while (left > 0 && clock.now() + 2 < deadline);
+          return left === 0;
+        },
+      };
+    };
+    // Calentar: la cola aprende las dos (cara 6, franja 2)
+    b.push(rect('rect:0', 1, 0));
+    while (b.pending) b.run();
+    expect([b.expected('rect:x', true), b.expected('rect:x')]).toEqual([6, 2]);
+    log.length = 0;
+    // Uno a medias (le quedan franjas) y uno nuevo: el nuevo hace su cara (6) y, en los 2 que quedan, cabe una franja
+    // del otro. Con una sola estimación para las dos (la de la cara, 6), no cabría
+    const a = rect('rect:a', 4, 1);
+    b.push(a);
+    b.run();                                                   // cara de a
+    b.push(rect('rect:b', 2, 0));                              // nuevo, delante
+    log.length = 0;
+    expect(b.run()).toBe(8);
+    expect(log).toEqual(['rect:b cara', 'rect:a']);
   });
 });

@@ -20,6 +20,7 @@ const STARVE_FRAMES = 4;
 // una llamada para contar (las que esperan a otro trabajo no gastan nada)
 const COST_SAMPLES = 32;
 const MIN_SAMPLE_MS = 0.01;
+const FIRST = '|primera';
 
 export class FrameBudget {
   private queue: ViewJob[] = [];
@@ -59,12 +60,15 @@ export class FrameBudget {
     const m = /[:#]/.exec(key);
     return m ? key.slice(0, m.index) : key;
   }
-  expected(key: string): number {
-    return this.costs.get(FrameBudget.kind(key))?.p95 ?? 0;
+  // La primera llamada de un trabajo (la que lo prepara, la cara de un recuadro nuevo) cuesta distinto que las siguientes:
+  // cada clase lleva dos estimaciones, la de las primeras y la del resto. `first`: la de las primeras
+  expected(key: string, first = false): number {
+    return this.costs.get(FrameBudget.kind(key) + (first ? FIRST : ''))?.p95 ?? 0;
   }
-  private record(key: string, ms: number): void {
+  // Los trabajos que ya hicieron una llamada que gastó algo (las siguientes van con la estimación del resto)
+  private started = new WeakSet<ViewJob>();
+  private record(k: string, ms: number): void {
     if (!(ms >= MIN_SAMPLE_MS)) return;
-    const k = FrameBudget.kind(key);
     let c = this.costs.get(k);
     if (!c) this.costs.set(k, (c = { ms: [], at: 0, p95: 0 }));
     if (c.ms.length < COST_SAMPLES) c.ms.push(ms);
@@ -85,10 +89,12 @@ export class FrameBudget {
       if (ran > 0 && t >= deadline) break;
       // Una clase que todavía no ha corrido nunca no tiene estimación: solo empieza como primera llamada de la fase
       // (si no, empezaría sin sitio y se pasaría una unidad entera)
-      const cost = this.costs.get(FrameBudget.kind(job.key));
+      const first = !this.started.has(job), k = FrameBudget.kind(job.key) + (first ? FIRST : '');
+      const cost = this.costs.get(k);
       if (ran > 0 && (!cost || t + cost.p95 > deadline)) { i++; continue; }
       const done = job.run(deadline), ms = this.now() - t;
-      this.record(job.key, ms);
+      this.record(k, ms);
+      if (ms >= MIN_SAMPLE_MS) this.started.add(job);
       // Una llamada que no gasta nada medible (una espera, o un trabajo que ya no tenía nada que hacer) no cuenta como la
       // llamada de la fase: lo de detrás, aunque sea de una clase sin estimación, todavía puede empezar (si no, una luz
       // que espera a su recuadro dejaría el recuadro sin correr)
