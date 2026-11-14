@@ -158,6 +158,10 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
   mismo que una de 4 (~1,7 ms).
 - **Rayo por píxel en vez de pintar caras** en el recuadro: más rápido en teoría, pero tiene que dar los mismos píxeles
   que el render, empates de aristas incluidos. Días de trabajo y riesgo; no hecho.
+- **Partir la franja (o que la tonalidad de las caras se guarde entre franjas)**: en el corte de un túnel, una franja
+  de 4 x 19 píxeles recorre ~5.800 vóxeles expuestos, ~5.200 caen en la imagen y se rasterizan (lo tapado también se
+  pinta), y solo ~600 caras necesitan su tono. Con TODOS los tonos ya guardados, la franja sigue costando ~0,9 ms
+  (contra ~1,0-1,15): el coste es pintar lo tapado, no el tono. Bajarlo es el rayo por píxel (abajo).
 - **Descartar una antorcha porque hay una columna llena entre ella y lo cambiado**: no encontré una forma barata y
   exacta de saber que nada de su sombra pasa por otro lado.
 
@@ -196,6 +200,12 @@ budget.run();
   prioridad desde `LIGHT_PRIORITY` (10000): van detrás de los recuadros y nunca cuentan como cercanas. Así el bloque
   picado se ve en el cuadro siguiente y las luces se asientan en los de después, sin subir el presupuesto de todo.
   `budget.ms` y `budget.near` se pueden cambiar entre cuadros.
+- La cola aprende lo que cuesta cada clase de llamada (la key hasta `:` o `#`: `rect`, `light`, `sky`, `view-cut`...):
+  el p95 de sus últimas 32 llamadas, en `budget.expected(key)`. En cada fase (la cercana y la de lo demás), la primera
+  llamada va siempre (si no, nada avanzaría); las demás solo empiezan si cabe lo que suele costar su clase, y si no,
+  la cola prueba con el siguiente trabajo (otra clase puede caber). Las llamadas que esperan a otro trabajo (no gastan
+  nada medible) no cuentan. Lo cercano que no acabó no vuelve a correr en la fase de lo demás del mismo cuadro: antes
+  se llevaba otra unidad entera de ese presupuesto.
 - `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
   en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
   trabajos sin prioridad van detrás, en su orden.
@@ -602,6 +612,11 @@ view.setCut(null);                                          // al salir
   ("Aparece": el corte y sus recuadros hechos; "acaba": también las luces y el cielo.) La unidad que no se puede
   partir es una franja del recuadro, y en un corte hondo cuesta ~1,7-2,5 ms sin freno. Para un juego: caja pequeña,
   movida a saltos, y `zTop` lo más alto que se pueda (justo por encima de la cabeza del jugador).
+- `bun scripts/bench-corte.ts` mide el corte de un túnel (caja de 32 x 32 a saltos de 16, `zTop` de bloque) con esa
+  cola: la llamada a `budget.run` más larga de cada evento (como a 6x) y los cuadros hasta aparecer y acabar. Con la
+  cola que no empieza lo que no cabe, el p95 de esa llamada baja de ~13,5 a ~7,5-9 ms (a 6x) y aparecer sigue en 1-6
+  cuadros. Lo que queda por encima (picos de 12-18 ms en algunas tiradas) es UNA franja: la primera llamada del
+  cuadro, que va siempre.
 
 ## La silueta de lo que queda detrás
 

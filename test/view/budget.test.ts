@@ -100,4 +100,58 @@ describe('presupuesto de la vista por cuadro', () => {
     expect(b.run()).toBe(0);
     expect(calls).toBe(0);
   });
+  it('lo cercano no empieza una llamada que no cabe: lo que cuesta cada clase sale de sus últimas llamadas', () => {
+    const { clock, log, job } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    // Recuadros cercanos de franjas de 4 ms: en un cuadro de 8 caben dos franjas, no tres
+    const r1 = job('rect:0,0,8,8', 3, 4), r2 = job('rect:9,0,16,8', 3, 4);
+    b.push({ ...r1, key: r1.key, priority: 0, run: (d) => r1.run(d) });
+    b.push({ ...r2, key: r2.key, priority: 1, run: (d) => r2.run(d) });
+    const spent: number[] = [];
+    while (b.pending) spent.push(b.run());
+    // El primer cuadro todavía no sabe lo que cuesta un recuadro: hace r1 hasta el plazo (8) y no empieza r2
+    // (empezaría con 0 ms libres). Después, con 3 franjas que quedan de 4 ms y 8 por cuadro: nunca más de 8
+    expect(spent.every((ms) => ms <= 8)).toBe(true);
+    expect(log.filter((k) => k.startsWith('rect')).length).toBe(6);
+  });
+
+  it('con lo que cuesta conocido, la cola salta lo que no cabe y prueba con otra clase más barata', () => {
+    const { clock, log, job } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    const near = (j: ViewJob, p: number): ViewJob => ({ key: j.key, priority: p, run: (d) => j.run(d) });
+    // Una llamada de recuadro de 5 ms y otra de cielo de 1 ms, para que la cola las conozca
+    b.push(near(job('rect:a', 1, 5), 0)); b.push(near(job('sky:a', 1, 1), 1));
+    b.run();
+    log.length = 0;
+    // Ahora: un recuadro de 5 (va el primero: siempre hace una llamada), otro de 5 (no cabe en los 3 que quedan) y un
+    // cielo de 1 (cabe)
+    b.push(near(job('rect:b', 1, 5), 0)); b.push(near(job('rect:c', 1, 5), 1)); b.push(near(job('sky:b', 1, 1), 2));
+    expect(b.run()).toBe(6);
+    expect(log).toEqual(['rect:b', 'sky:b']);
+    b.run();
+    expect(log).toEqual(['rect:b', 'sky:b', 'rect:c']);
+  });
+
+  it('lo cercano que no acabó no vuelve a correr con el presupuesto de lo demás en el mismo cuadro', () => {
+    const { clock, log, job } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    const r = job('rect:0,0', 20, 4), l = job('light:1', 2, 1);
+    b.push({ key: r.key, priority: 0, run: (d) => r.run(d) });
+    b.push({ key: l.key, priority: 10000, run: (d) => l.run(d) });
+    expect(b.run()).toBe(8 + 2);                       // 8 del recuadro (2 franjas) y la luz, que es de lo demás
+    expect(log).toEqual(['rect:0,0', 'rect:0,0', 'light:1', 'light:1']);
+  });
+
+  it('las llamadas que esperan (no gastan nada) no cuentan para lo que cuesta su clase', () => {
+    const { clock } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    let ready = false;
+    b.push({ key: 'light:1#1', priority: 0, run: () => ready });
+    for (let k = 0; k < 40; k++) b.run();
+    expect(b.expected('light:1#2')).toBe(0);
+    ready = true;
+    b.push({ key: 'light:2#3', priority: 0, run: () => { clock.advance(2); return true; } });
+    b.run();
+    expect(b.expected('light:9#9')).toBe(2);
+  });
 });
