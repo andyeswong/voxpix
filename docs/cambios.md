@@ -58,7 +58,8 @@ medida que vale para un juego es la suya.
   El set se guarda como `.voxset.json`, y el mundo se escribe por bloques. Ver [Bloques](motor.md#bloques).
 - En el editor, el panel "Bloques" pinta y guarda cada bloque del set, y `window.voxpix` lo hace sin ratón (`newSet`,
   `addBlock`, `saveSet`...).
-- `iconSheet` / `modelIcon`: la hoja de iconos del set con su índice y la huella de cada icono. Ver
+- `iconSheet` / `modelIcon`: la hoja de iconos del set con su índice y la huella de cada icono. Con `outlineColor`, el contorno de un
+  color fijo, como el del mundo (`bakeWorld`), para que iconos y mundo casen; sin él, la misma hoja de antes. Ver
   [Sets de bloques](editor.md#sets-de-bloques).
 
 ### Terreno por semilla

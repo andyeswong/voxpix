@@ -99,9 +99,9 @@ SETS DE BLOQUES (varios modelos de N x N x N con nombre y la paleta compartida, 
   removeBlock(id), blocks()                lo quita / los bloques con sus propiedades
   saveSet()                                el .voxset.json (objeto), comprobado por el motor
   loadSet(json)                            abre un .voxset.json
-  iconSheet({yaw?, elevation?, outline?, cell?, scale?, columns?})   la hoja de iconos del set (un icono por bloque,
+  iconSheet({yaw?, elevation?, outline?, outlineColor?, cell?, scale?, columns?})   la hoja de iconos del set (un icono por bloque,
                                            mismo ángulo y escala; promesa): {name, base64 (PNG), index: {cell, icons: {id: {x,y,w,h,hash}}}, width, height, hash}
-  icon({yaw?, elevation?, outline?, cell?, scale?})   un icono suelto del modelo abierto (promesa): {name, base64, size, hash}
+  icon({yaw?, elevation?, outline?, outlineColor?, cell?, scale?})   un icono suelto del modelo abierto (promesa): {name, base64, size, hash}
   importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo (promesa: se ejecuta aparte)
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
   png({sheet?, scale?})                    PNG de la vista (o la hoja de ángulos), en base64; con luz si lit

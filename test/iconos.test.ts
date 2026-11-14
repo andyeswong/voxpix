@@ -53,4 +53,30 @@ describe('hoja de iconos', () => {
     expect(Object.keys(r.icons)).toEqual(['piedra', 'madera']);
     expect(r.width).toBe(2 * r.cell);
   });
+  it('outlineColor: sin él, la hoja de siempre (la misma huella); con él, el contorno de ese color', () => {
+    const m1 = new Model(PAL, 'x'); box(m1, 0, 0, 0, 5, 5, 5, material(0, 1)); box(m1, 1, 1, 6, 4, 4, 9, material(1, 2));
+    const m2 = new Model(PAL, 'y'); box(m2, 0, 0, 0, 7, 3, 3, material(1, 1)); box(m2, 0, 4, 0, 3, 7, 6, material(0, 2));
+    const items = [{ id: 'torre', model: m1 }, { id: 'escalon', model: m2 }];
+    // Las huellas de antes de que existiera la opción
+    expect(iconSheet(items, { outline: 'outer' }).hash).toBe('dab10245');
+    expect(iconSheet(items, { outline: 'both' }).hash).toBe('de6b9405');
+    const plain = iconSheet(items, { outline: 'both' }), pink = iconSheet(items, { outline: 'both', outlineColor: '#ff00ff' });
+    expect(pink.hash).not.toBe(plain.hash);
+    expect([pink.width, pink.height]).toEqual([plain.width, plain.height]);
+    // Donde cambia un píxel, el nuevo es el color pedido; y hay borde de ese color en las dos celdas
+    let changed = 0;
+    for (let i = 0; i < plain.rgba.length; i += 4) {
+      if (plain.rgba[i] === pink.rgba[i] && plain.rgba[i + 1] === pink.rgba[i + 1] && plain.rgba[i + 2] === pink.rgba[i + 2]) continue;
+      changed++;
+      expect([pink.rgba[i], pink.rgba[i + 1], pink.rgba[i + 2]]).toEqual([255, 0, 255]);
+    }
+    expect(changed).toBeGreaterThan(0);
+    for (const id of ['torre', 'escalon']) {
+      const r = pink.icons[id]!;
+      let n = 0;
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) { const o = (y * pink.width + x) * 4; if (pink.rgba[o + 3] && pink.rgba[o] === 255 && pink.rgba[o + 1] === 0 && pink.rgba[o + 2] === 255) n++; }
+      expect(n).toBeGreaterThan(0);
+    }
+    expect(modelIcon(m1, { outline: 'both', outlineColor: '#ff00ff' }).hash).not.toBe(modelIcon(m1, { outline: 'both' }).hash);
+  });
 });

@@ -8,6 +8,8 @@ export interface IconOptions {
   yaw?: number;                 // giro (grados; por defecto -30, la vista del editor)
   elevation?: number;           // elevación (grados; 35)
   outline?: 'none' | 'outer' | 'both';   // contorno ('outer')
+  outlineColor?: string;        // color fijo del contorno (#rrggbb), como en el render; si no, el de la paleta o el tono
+                                // más oscuro de la rampa vecina
   cell?: number;                // lado de la celda en píxeles antes de escalar (por defecto, el del icono más grande)
   scale?: number;               // escala entera de la hoja (1)
   columns?: number;             // celdas por fila (por defecto, la raíz del número de iconos, hacia arriba)
@@ -40,7 +42,7 @@ function iconOf(m: Model, o: IconOptions): { w: number; h: number; rgba: Uint8Cl
   const dx = b ? -Math.floor((b.minX + b.maxX + 1) / 2) : 0, dy = b ? -Math.floor((b.minY + b.maxY + 1) / 2) : 0;
   for (const [x, y, z, v] of m.entries()) c.set(x + dx, y + dy, z, v);
   const f = fitFrame(c.bounds(), o.elevation ?? 35);
-  const img = render(c, { width: f.W, height: f.H, originX: f.originX, originY: f.originY, yaw: o.yaw ?? -30, elevation: o.elevation ?? 35, outline: o.outline ?? 'outer' });
+  const img = render(c, { width: f.W, height: f.H, originX: f.originX, originY: f.originY, yaw: o.yaw ?? -30, elevation: o.elevation ?? 35, outline: o.outline ?? 'outer', ...(o.outlineColor ? { outlineColor: o.outlineColor } : {}) });
   let x0 = f.W, y0 = f.H, x1 = -1, y1 = -1;
   for (let y = 0; y < f.H; y++) for (let x = 0; x < f.W; x++) if (img.rgba[(y * f.W + x) * 4 + 3]) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   if (x1 < 0) return { w: 0, h: 0, rgba: new Uint8ClampedArray(0) };
