@@ -139,6 +139,43 @@ vp.generateFromRig();
 `save()` da la versión 2 del archivo si hay más de un cuadro o un rig (`animation: { frames: [{ ms, voxels? }], rig? }`,
 con el cuadro 0 en `voxels`, así quien lea la versión 1 ve el primer cuadro). Sin animación, la versión 1 de siempre.
 
+## Sets de bloques
+
+Un set son varios bloques de N x N x N vóxeles con nombre que comparten la paleta, para un mundo de bloques (el
+motor los lee con `BlockSet`; docs/motor.md, Bloques). Cada bloque se pinta en el lienzo de siempre, que pasa a ser de
+N x N x N (x e y de -N/2 a N/2-1, z de 0 a N-1), con las funciones de pintar de siempre.
+
+| Función | Devuelve | Qué hace |
+|---|---|---|
+| `newSet(name, size?)` | `info()` | Un set nuevo (N = 8 por defecto) con la paleta actual; el lienzo, vacío y de N x N x N. |
+| `addBlock(id, props?)` | su número (desde 1) | Guarda lo que hay en el lienzo como un bloque nuevo y se queda en él. |
+| `block(id \| número \| null)` | el id | Pone ese bloque en el lienzo para verlo o cambiarlo; `null`, el lienzo vacío para uno nuevo. |
+| `saveBlock(props?)` | el id | Guarda el lienzo en el bloque abierto (y sus props, si se dan). |
+| `removeBlock(id)` | - | Lo quita del set. |
+| `blocks()` | lista | Los bloques: `{index, id, voxels, props, current}`. |
+| `saveSet()` | objeto | El `.voxset.json`, comprobado por el motor (`BlockSet.fromJSON`). |
+| `loadSet(json)` | `{name, size, blocks}` | Abre un `.voxset.json`. |
+
+- `props` dice lo que no sale de las rampas: `emits` (la luz fija que pone el bloque al colocarse: `{kind, radius?,
+  intensity?, color?, at?}`), `covered` (el bloque en que se convierte con uno sólido encima) y `density`. `solid`,
+  `light` y `emissive` salen de los materiales de sus rampas (`palette`, `materials()`): una antorcha que se cruza
+  lleva rampas `atravesable` y emisivas; unas hojas que dejan pasar la luz, `follaje`. Si se escriben y no coinciden,
+  es un error que dice cuál.
+- Cada bloque se guarda con la paleta que había; al exportar se traduce a la de ahora por el nombre de la rampa (el
+  tono se queda). Así cambiar o reordenar la paleta después no rompe los bloques; quitar una rampa que un bloque usa,
+  sí (el error dice cuál).
+
+```js
+vp.palette([{ name: 'piedra', colors: [...] }, { name: 'llama', colors: [...], emissive: true, material: 'atravesable' }]);
+vp.newSet('bloques', 8);
+vp.box(-4, -4, 0, 3, 3, 7, 'piedra');
+vp.addBlock('piedra');
+vp.block(null);
+vp.box(0, 0, 0, 0, 0, 5, 'llama');
+vp.addBlock('antorcha', { emits: { kind: 'torch' } });
+const set = vp.saveSet();                    // el .voxset.json
+```
+
 ## Materiales
 
 Cada rampa es un material: un juego de propiedades que el motor lee por separado (la luz, el agua, el paso). Sin

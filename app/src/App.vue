@@ -8,6 +8,8 @@ import { toFile, loadAnimated, anim } from './anim';
 import { fx, FX_KINDS } from './effects';
 import Timeline from './components/Timeline.vue';
 import RigPanel from './components/RigPanel.vue';
+import BlocksPanel from './components/BlocksPanel.vue';
+import { blockSet, newSet, loadSet } from './blockSet';
 import PalettePanel from './components/PalettePanel.vue';
 import LayersPanel from './components/LayersPanel.vue';
 import CanvasSizeDialog from './components/CanvasSizeDialog.vue';
@@ -51,6 +53,17 @@ function download(name: string, text: string, type: string): void {
   a.download = name;
   a.click();
   URL.revokeObjectURL(a.href);
+}
+
+// Sets de bloques (app/src/blockSet.ts)
+function newBlockSet(): void {
+  const name = prompt('Nombre del set de bloques', 'bloques');
+  if (name === null) return;
+  const size = Number(prompt('Lado de cada bloque, en vóxeles', '8'));
+  try { newSet(name, size || 8); } catch (e) { alert((e as Error).message); }
+}
+function openBlockSet(e: Event): void {
+  readFile(e, (text) => { try { loadSet(text); } catch (err) { alert((err as Error).message); } });
 }
 
 function save(): void {
@@ -209,6 +222,9 @@ void version;
       <button class="ghost" @click="save(); closeMenus()"><PxIcon name="save" />Guardar</button>
       <hr />
       <label class="btn ghost" title="Arte de pxl (.px.js): paleta con rampas, sprites y capas"><input type="file" accept=".js,.ts" @change="importPxl($event); closeMenus()" /><PxIcon name="import" />Importar de pxl…</label>
+      <hr />
+      <button class="ghost" title="Varios bloques de N x N x N con la paleta compartida, para un mundo de bloques" @click="newBlockSet(); closeMenus()"><PxIcon name="new" />Nuevo set de bloques…</button>
+      <label class="btn ghost"><input type="file" accept=".json" @change="openBlockSet($event); closeMenus()" /><PxIcon name="open" />Abrir set de bloques…</label>
     </div>
   </div>
 
@@ -302,6 +318,7 @@ void version;
   <!-- Solo en el modo Animación: la barra de animación, una ventana flotante como las demás -->
   <aside v-if="editor.mode === 'animacion'" v-draggable="'animacion'" class="float animwin card" @click.stop><Timeline /></aside>
   <aside v-if="editor.mode === 'animacion' && anim.panel" v-draggable="'rig'" class="float rigpanel card" @click.stop><RigPanel /></aside>
+  <aside v-if="blockSet.active" v-draggable="'bloques'" class="float blockspanel card" @click.stop><BlocksPanel /></aside>
 
   <!-- Abajo a la izquierda: dónde estás -->
   <div class="float status">
@@ -392,6 +409,7 @@ aside.dragging :deep(header) { cursor: grabbing; }
 .more { min-height: 44px; border-radius: 14px; color: var(--muted); }
 .animwin { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-50%); padding: 8px 12px; max-width: calc(100vw - 32px); }
 .rigpanel { z-index: 5; top: 80px; left: 50%; transform: translateX(-50%); width: 620px; padding: 14px; max-height: calc(100vh - 260px); overflow: auto; }
+.blockspanel { z-index: 5; top: 80px; right: 16px; padding: 12px; max-height: calc(100vh - 200px); overflow: auto; }
 .palette { z-index: 4; bottom: 150px; left: 50%; transform: translateX(-10%); width: 460px; padding: 16px; max-height: calc(100vh - 250px); overflow-y: auto; }
 .status { left: 16px; bottom: 16px; display: flex; align-items: center; gap: 14px; color: var(--faint); font-size: 12px; font-variant-numeric: tabular-nums; }
 .backend { min-height: 22px; padding: 0 8px; font-size: 11px; color: var(--muted); border-radius: 8px; }

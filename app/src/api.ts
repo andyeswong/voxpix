@@ -17,6 +17,8 @@ import { inspectPxl, pxlStackModel } from './pxl/sandbox';
 import { SOURCE_PRESETS } from '../../src/lighting';
 import { PRESET_PALETTES } from '../../src/samples/palettes';
 import { addRampFromColor, setTone as setToneOp, loadColors, removeUnusedRamps } from './paletteOps';
+import { newSet, addBlock, block, saveBlock, removeBlock, listBlocks, saveSet, loadSet } from './blockSet';
+import type { BlockProps, VoxsetFile } from '../../src/world/blocks';
 
 export type Material = number | string | [number, number] | null;
 
@@ -85,6 +87,17 @@ Material: número, "rampa", "rampa:tono", [rampa, tono] o null (vacío).
   newModel(name, w, d, h)                  modelo vacío con la paleta actual
   load(json)                               abre un .voxpix.json (objeto o texto)
   save()                                   el .voxpix.json (objeto)
+SETS DE BLOQUES (varios modelos de N x N x N con nombre y la paleta compartida, para un mundo de bloques):
+  newSet(name, size?)                      un set nuevo (N = 8 por defecto): el lienzo pasa a ser de N x N x N,
+                                           con la paleta actual
+  addBlock(id, props?)                     guarda lo que hay en el lienzo como un bloque nuevo (y se queda en él).
+                                           props: {emits: {kind, radius?, intensity?, color?, at?}, covered, density};
+                                           solid, light y emissive salen de los materiales de sus rampas
+  block(id | número | null)                pone ese bloque en el lienzo para verlo o cambiarlo (null: lienzo vacío)
+  saveBlock(props?)                        guarda el lienzo en el bloque abierto
+  removeBlock(id), blocks()                lo quita / los bloques con sus propiedades
+  saveSet()                                el .voxset.json (objeto), comprobado por el motor
+  loadSet(json)                            abre un .voxset.json
   importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo (promesa: se ejecuta aparte)
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
   png({sheet?, scale?})                    PNG de la vista (o la hoja de ángulos), en base64; con luz si lit
@@ -288,6 +301,15 @@ export const api = {
   },
 
   save() { return toFile(api.lights()); },
+
+  newSet(name: string, size = 8) { newSet(name, size); return api.info(); },
+  addBlock(id: string, props?: Partial<BlockProps>) { return addBlock(id, props); },
+  block(which: string | number | null) { return block(which); },
+  saveBlock(props?: Partial<BlockProps>) { return saveBlock(props); },
+  removeBlock(id: string) { removeBlock(id); },
+  blocks() { return listBlocks(); },
+  saveSet() { return saveSet(); },
+  loadSet(json: string | VoxsetFile) { return loadSet(json); },
 
   // El .px.js se ejecuta en un worker aparte, no en la página: por eso es una promesa
   async importPxl(source: string, stackPrefix?: string) {

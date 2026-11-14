@@ -123,6 +123,19 @@ invisible: caminas por tu escena, tu edificio o tu personaje como en un juego.
 - Con **Iluminación** encendida, las fuentes de luz del modelo alumbran en Explorar igual que en la vista previa (la
   misma luz por cara y las mismas capas MULTIPLY/ADD), y el cielo y el suelo se oscurecen con el ambiente.
 
+## Sets de bloques
+
+*Archivo > Nuevo set de bloques…* pide un nombre y el lado de cada bloque (8 por defecto) y abre el panel **Bloques**:
+el lienzo pasa a ser de N x N x N y cada bloque se pinta en él con las herramientas de siempre. En el panel:
+
+- la lista de bloques (un clic lo pone en el lienzo), con lo que hacen (se cruza, deja pasar la luz, brilla, la luz que
+  pone, en qué se convierte tapado); ✕ lo quita;
+- *Luz que pone* y *Tapado pasa a*: lo que no sale de los materiales de sus rampas;
+- *Guardar como nuevo* (con un id), *Guardar en* el bloque abierto y *Vacío* para empezar otro;
+- *Exportar .voxset.json*, que el motor lee con `BlockSet` (docs/motor.md, Bloques).
+
+*Archivo > Abrir set de bloques…* abre uno. Lo mismo por la API: docs/api-agentes.md, Sets de bloques.
+
 ## Exportar
 
 - **pxl: N ángulos:** un `.px.js` con un sprite por ángulo y una hoja. Se construye con
