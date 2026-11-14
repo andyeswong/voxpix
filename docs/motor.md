@@ -164,7 +164,17 @@ state.lights.add({ kind: 'torch', x: 0, y: 0, z: 0, follow: { entity: id, offset
 
 - Los tipos y sus valores por defecto (radio, color, intensidad, parpadeo) están en `src/lighting/lights.ts`. Se
   pueden ajustar con `intensity`, `radius` y `color`.
-- Las luces del escenario son fijas y se hornean; las que se añaden en partida son dinámicas.
+- Las luces del escenario son fijas y se hornean; las que se añaden con `add` en partida son dinámicas (se calculan
+  en cada cuadro, pueden moverse y seguir a una entidad).
+- Una luz fija puesta en partida (una antorcha que se coloca y se queda): `state.lights.addFixed({ kind, x, y, z })`
+  da su id, y `state.lights.removeFixed(id)` la quita. `rebakeChangedJobs(baked, luces)` compara las fijas de la lista
+  con las horneadas: hornea entera la que falta (un trabajo, aunque no haya cambiado ningún vóxel; si se pide cada
+  cuadro, no se repite) y deshornea al momento la que ya no está. Por eso hay que pasarle siempre TODAS las luces (las
+  de la vista, si la cámara gira). Una fija cuesta al ponerse y nada después; una dinámica, cada cuadro.
+- La GPU suma como mucho 32 luces por cuadro y 32 fijas horneadas: las que alcanzan la vista y, si son más, las más
+  cercanas a su centro (las demás no se ven). La CPU las suma todas; las dos dan lo mismo mientras en la vista haya
+  32 o menos. Cada fija guarda su capa en la GPU mientras siga en la vista, y de una luz rehecha en parte solo se sube
+  el recuadro que cambió.
 - `owner` es la entidad que lleva la luz: su cuerpo no le hace sombra.
 - `Frame2DOptions.entityLightCap` limita cuántas luces alumbran a cada entidad, para máquinas modestas.
 

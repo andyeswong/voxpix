@@ -581,6 +581,21 @@ export class LightList extends Array<WorldLight> {
     if (o.follow) this.owner?.placeFollowers();
     return id;
   }
+  // Una luz FIJA puesta en partida (una antorcha que se coloca): no se mueve y se hornea como las del escenario. El
+  // rehorneado (rebakeChangedJobs con estas luces) la hornea en su zona aunque no cambie ningún vóxel
+  addFixed(o: Omit<WorldLight, 'id' | 'baked' | 'follow' | 'owner'> & { id?: LightId }): LightId {
+    const id = o.id ?? this.next++;
+    if (this.get(id)) throw new Error(`ya hay una luz ${id}`);
+    this.push({ ...o, id, baked: true });
+    return id;
+  }
+  // Quita una luz fija: el rehorneado siguiente la deshornea (sus pesos dejan de sumar)
+  removeFixed(id: LightId): void {
+    const l = this.get(id);
+    if (!l) throw new Error(`no hay luz ${id}`);
+    if (l.baked === false) throw new Error(`la luz ${id} es dinámica: se quita con remove`);
+    this.remove(id);
+  }
   owner?: WorldState;
   get(id: LightId): WorldLight | undefined { return this.find((l) => l.id === id); }
   move(id: LightId, x: number, y: number, z: number): void {

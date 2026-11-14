@@ -2,7 +2,7 @@
 // esa caja. Juez de todo: un modelo de referencia (un Map) y hornear de cero, byte a byte.
 import { describe, it, expect } from 'vitest';
 import { material, render, type VoxelSource } from '../src/core';
-import { StaticVoxels, CHUNK } from '../src/world/state';
+import { StaticVoxels, CHUNK, LightList } from '../src/world/state';
 import { bakeWorld, rebakeChanged, rebakeChangedJobs, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 
@@ -179,5 +179,62 @@ describe('la caja de lo cambiado y el rehorneado por caja', () => {
     rebakeChanged(a, lights); rebakeChanged(b, lights);
     const fresh = bakeWorld({ model: s, lights, width: 96, depth: 96 }, opts);
     same(a, fresh); same(b, fresh);
+  });
+});
+
+describe('luces fijas puestas y quitadas en partida', () => {
+  function ground(): StaticVoxels {
+    const s = new StaticVoxels(PAL, 64, 64, 0, 47);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) for (let z = 0; z < 16 + ((x >> 3) % 2) * 8; z++) s.set(x, y, z, material(0, 2));
+    return s;
+  }
+  const weights = (b: Baked) => b.lights.map((l) => [l.light.id, l.rect, Array.from(l.weight)]);
+
+  it('addFixed se hornea sin cambiar vóxeles, una sola vez aunque se pida cada cuadro; removeFixed la deshornea', () => {
+    const s = ground();
+    const ls = new LightList();
+    ls.addFixed({ id: 'a', kind: 'torch', x: 20, y: 20, z: 30 });
+    const opts = { topZ: 47, incline: 0.5 };
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    expect(rebakeChangedJobs(b, ls)).toEqual([]);
+    const id = ls.addFixed({ kind: 'lamp', x: 44, y: 40, z: 28 });
+    const jobs = rebakeChangedJobs(b, ls);
+    expect(jobs.map((j) => j.key)).toEqual([`light:${id}`]);
+    expect(rebakeChangedJobs(b, ls)).toEqual([]);              // el cuadro siguiente: ya se está horneando
+    for (const j of jobs) while (!j.run(Infinity)) { /* */ }
+    expect(weights(b)).toEqual(weights(bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts)));
+    ls.removeFixed('a');
+    expect(rebakeChangedJobs(b, ls)).toEqual([]);
+    expect(weights(b)).toEqual(weights(bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts)));
+  });
+
+  it('una fija quitada antes de acabar de hornearse no se publica', () => {
+    const s = ground();
+    const ls = new LightList();
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, { topZ: 47, incline: 0.5 });
+    const id = ls.addFixed({ kind: 'torch', x: 30, y: 30, z: 30 });
+    const jobs = rebakeChangedJobs(b, ls);
+    ls.removeFixed(id);
+    expect(rebakeChangedJobs(b, ls)).toEqual([]);
+    for (const j of jobs) while (!j.run(Infinity)) { /* */ }
+    expect(b.lights).toEqual([]);
+  });
+
+  it('poner una antorcha (vóxeles y luz fija a la vez) y quitarla da lo mismo que hornear de cero', () => {
+    const s = ground();
+    const ls = new LightList();
+    ls.addFixed({ id: 'a', kind: 'torch', x: 20, y: 20, z: 30 });
+    const opts = { topZ: 47, incline: 0.5 };
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    for (let z = 24; z < 28; z++) s.set(40, 40, z, material(1, 3));
+    const id = ls.addFixed({ kind: 'torch', x: 40.5, y: 40.5, z: 30 });
+    rebakeChanged(b, ls);
+    const fresh = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    expect(Buffer.from(b.rgba.buffer).equals(Buffer.from(fresh.rgba.buffer))).toBe(true);
+    expect(weights(b).sort()).toEqual(weights(fresh).sort());
+    for (let z = 24; z < 28; z++) s.set(40, 40, z, 0);
+    ls.removeFixed(id);
+    rebakeChanged(b, ls);
+    expect(weights(b)).toEqual(weights(bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts)));
   });
 });

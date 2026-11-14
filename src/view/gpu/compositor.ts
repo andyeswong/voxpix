@@ -17,7 +17,7 @@ import { backlitAt, highlightMask, entitySprite, warmEntity, HEADINGS, entityDep
 import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
-import type { RenderState } from '../../world/state';
+import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
 import { FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
@@ -80,7 +80,11 @@ export class GpuCompositor {
   private tHl: WebGLTexture | null = null;
   private hlMask: Uint8Array | null = null;
   private tWeights: WebGLTexture | null = null;
-  private weightZones: BakedLight[] = [];
+  // Las capas de la textura de pesos: la zona que tiene subida cada una (null, libre). Una luz conserva su capa mientras
+  // siga elegida, así que al moverse la vista o rehacerse una luz solo se sube lo suyo
+  private weightZones: Array<BakedLight | null> = [];
+  private weightW = 0;
+  private weightH = 0;
   // Los otros horneados ya subidos (los giros guardados de una vista girada, el nivel anterior...): volver a uno solo
   // cambia lo que se enlaza y lo pone al día por su número de serie. Como mucho bakedKeep, se sueltan los más viejos.
   private bakedCache = new Map<Baked, BakedGpu>();
@@ -231,7 +235,7 @@ export class GpuCompositor {
     const gl = this.gl;
     let up = performance.now();
     this.syncBaked(b);
-    this.syncWeights(b);
+    this.syncWeights(b, o);
     let upMs = performance.now() - up;
     this.parts.baked = upMs;
     const [A, B] = this.ensureTargets(o.vw, o.vh);
@@ -239,13 +243,15 @@ export class GpuCompositor {
     gl.disable(gl.BLEND);
     gl.bindVertexArray(this.vao);
 
-    // Las luces del mundo de este cuadro (las mismas para la escena, las sombras y el agua)
-    const lights = state.lights.slice(0, MAX_LIGHTS).map((l) => ({ l, p: resolveLight(l, o.time) }));
-    if (state.lights.length > MAX_LIGHTS) warnOnce(`más de ${MAX_LIGHTS} luces: la GPU usa las primeras`);
-    const layerOf = new Map(b.lights.map((bl, i) => [bl.light.id, i] as const));
+    // Las luces del mundo de este cuadro (las mismas para la escena, las sombras y el agua): las que alcanzan la vista
+    // y, si son más de MAX_LIGHTS, las más cercanas a su centro, en el orden de la lista
+    const lights = viewLights(state.lights, b, o).map((l) => ({ l, p: resolveLight(l, o.time) }));
+    const zones = this.weightZones;
+    const layerOf = new Map<LightId, number>();
+    zones.forEach((z, i) => { if (z) layerOf.set(z.light.id, i); });
 
     // Las luces del mundo: la tabla (posición y radio; color e intensidad; capa horneada, k, dinámica)
-    const nb = Math.min(MAX_BAKED, b.lights.length);
+    const nb = zones.length;
     const tab = this.lightTab;
     tab.fill(0);
     lights.forEach(({ l, p }, i) => {
@@ -253,7 +259,7 @@ export class GpuCompositor {
       const baked = layer !== undefined && layer < nb;
       tab.set([l.x, l.y, l.z, p.radius], (i * 4) * 4);
       tab.set([p.color[0], p.color[1], p.color[2], p.intensity], (i * 4 + 1) * 4);
-      tab.set([baked ? layer : -1, baked ? p.intensity / b.lights[layer]!.intensity : 0, l.baked === false ? 1 : 0, p.spot?.cosInner ?? 1], (i * 4 + 2) * 4);
+      tab.set([baked ? layer : -1, baked ? p.intensity / zones[layer]!.intensity : 0, l.baked === false ? 1 : 0, p.spot?.cosInner ?? 1], (i * 4 + 2) * 4);
       tab.set(p.spot ? [...p.spot.dir, p.spot.cosOuter] : [0, 0, 0, -2], (i * 4 + 3) * 4);
     });
     uploadTo(gl, gl.TEXTURE_2D, this.tLights);
@@ -316,7 +322,8 @@ export class GpuCompositor {
     // Luces horneadas (lightView)
     const rect = new Int32Array(MAX_BAKED * 4), ck = new Float32Array(MAX_BAKED * 3);
     for (let i = 0; i < nb; i++) {
-      const bl = b.lights[i]!;
+      const bl = zones[i];
+      if (!bl) continue;                                   // capa libre: recuadro vacío, no suma
       const k = resolveLight(bl.light, o.time).intensity / bl.intensity;
       rect.set([bl.rect.x, bl.rect.y, bl.rect.w, bl.rect.h], i * 4);
       ck.set([bl.color[0] * k, bl.color[1] * k, bl.color[2] * k], i * 3);
@@ -450,7 +457,7 @@ export class GpuCompositor {
     const pub = b.published;
     if (this.baked !== b || !this.tColor) {
       // El que estaba se guarda (con sus pesos); si el nuevo ya se subió antes, se recupera y se pone al día abajo
-      if (this.baked && this.tColor) this.bakedCache.set(this.baked, { serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth!, tFace: this.tFace!, tWorldY: this.tWorldY!, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones });
+      if (this.baked && this.tColor) this.bakedCache.set(this.baked, { serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth!, tFace: this.tFace!, tWorldY: this.tWorldY!, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH });
       this.baked = b;
       const hit = this.bakedCache.get(b);
       this.bakedCache.delete(b);
@@ -459,7 +466,7 @@ export class GpuCompositor {
         for (const t of [e.tColor, e.tDepth, e.tFace, e.tWorldY, e.tWeights]) if (t) gl.deleteTexture(t);
         this.bakedCache.delete(old);
       }
-      if (hit) ({ serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth, tFace: this.tFace, tWorldY: this.tWorldY, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones } = hit);
+      if (hit) ({ serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth, tFace: this.tFace, tWorldY: this.tWorldY, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH } = hit);
       else {
         this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
         this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
@@ -473,6 +480,7 @@ export class GpuCompositor {
         this.bakedSerial = pub.serial;
         this.tWeights = null;              // los pesos del que se fue se quedaron guardados con él
         this.weightZones = [];
+        this.weightW = 0; this.weightH = 0;
         return;
       }
     }
@@ -500,17 +508,55 @@ export class GpuCompositor {
     this.bakedSerial = pub.serial;
   }
 
-  // Los pesos de las luces fijas: una capa por luz (en el orden de b.lights). Se rehacen cuando cambia alguna zona
-  private syncWeights(b: Baked): void {
+  // Los pesos de las luces fijas: una capa por luz elegida. Se eligen las que tocan la vista (todas, si no se dice) y,
+  // si son más de MAX_BAKED, las más cercanas a su centro. Cada luz conserva su capa; se sube solo la capa cuya zona
+  // cambió, y de una zona rehecha en parte sobre la que ya estaba subida, solo su recuadro sucio
+  private syncWeights(b: Baked, view?: { vx: number; vy: number; vw: number; vh: number }): void {
     const gl = this.gl;
-    const zones = b.lights.slice(0, MAX_BAKED);
-    if (b.lights.length > MAX_BAKED) warnOnce(`más de ${MAX_BAKED} luces horneadas: la GPU usa las primeras`);
-    if (zones.length === this.weightZones.length && zones.every((z, i) => z === this.weightZones[i])) return;
-    const W = Math.max(1, ...zones.map((z) => z.rect.w)), H = Math.max(1, ...zones.map((z) => z.rect.h));
-    if (this.tWeights) gl.deleteTexture(this.tWeights);
-    this.tWeights = texArray(gl, gl.R32F, W, H, Math.max(1, zones.length));
-    zones.forEach((z, i) => gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, z.rect.w, z.rect.h, 1, gl.RED, gl.FLOAT, z.weight));
-    this.weightZones = zones;
+    let cand = view ? b.lights.filter((z) => z.rect.x < view.vx + view.vw && z.rect.x + z.rect.w > view.vx && z.rect.y < view.vy + view.vh && z.rect.y + z.rect.h > view.vy) : b.lights;
+    if (cand.length > MAX_BAKED) {
+      if (view) {
+        const cx = view.vx + view.vw / 2, cy = view.vy + view.vh / 2;
+        const d = (z: BakedLight) => (z.rect.x + z.rect.w / 2 - cx) ** 2 + (z.rect.y + z.rect.h / 2 - cy) ** 2;
+        const keep = new Set([...cand].sort((p, q) => d(p) - d(q)).slice(0, MAX_BAKED));
+        cand = cand.filter((z) => keep.has(z));
+      } else cand = cand.slice(0, MAX_BAKED);
+      warnOnce(`más de ${MAX_BAKED} luces horneadas en la vista: la GPU usa las más cercanas al centro`);
+    }
+    const old = this.weightZones;
+    const byId = new Map(cand.map((z) => [z.light.id, z] as const));
+    const next: Array<BakedLight | null> = old.map((z) => (z && byId.has(z.light.id) ? byId.get(z.light.id)! : null));
+    const placed = new Set(next.filter((z) => z).map((z) => z!.light.id));
+    for (const z of cand) {
+      if (placed.has(z.light.id)) continue;
+      const free = next.indexOf(null);
+      if (free >= 0) next[free] = z; else next.push(z);
+    }
+    while (next.length && !next[next.length - 1]) next.pop();
+    // La textura: del tamaño de la zona más grande del horneado y MAX_BAKED capas (así moverse no la rehace)
+    const W = Math.max(1, ...b.lights.map((z) => z.rect.w)), H = Math.max(1, ...b.lights.map((z) => z.rect.h));
+    const fresh = !this.tWeights || W > this.weightW || H > this.weightH;
+    if (fresh) {
+      if (this.tWeights) gl.deleteTexture(this.tWeights);
+      this.tWeights = texArray(gl, gl.R32F, W, H, MAX_BAKED);
+      this.weightW = W; this.weightH = H;
+    }
+    uploadTo(gl, gl.TEXTURE_2D_ARRAY, this.tWeights!);
+    next.forEach((z, i) => {
+      if (!z || (!fresh && old[i] === z)) return;
+      const r = z.rect, d = z.dirty;
+      if (!fresh && d && z.base && old[i] === z.base) {
+        if (d.w <= 0 || d.h <= 0) return;
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, r.w);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, d.x);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, d.y);
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, d.x, d.y, i, d.w, d.h, 1, gl.RED, gl.FLOAT, z.weight);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
+      } else gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, r.w, r.h, 1, gl.RED, gl.FLOAT, z.weight);
+    });
+    this.weightZones = next;
   }
 
   // Las sombras de verdad: las MAX_CASTERS entidades de shadowCasters, con su cuerpo girado (cuartos de vuelta)
@@ -947,7 +993,7 @@ function backlitCodes(b: Baked): Float32Array<ArrayBuffer> {
 // Lo subido de un horneado que no es el de este cuadro (GpuCompositor.bakedCache)
 interface BakedGpu {
   serial: number; tColor: WebGLTexture; tDepth: WebGLTexture; tFace: WebGLTexture; tWorldY: WebGLTexture;
-  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: BakedLight[];
+  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: Array<BakedLight | null>; weightW: number; weightH: number;
 }
 
 // La cara con el código de su luz por detrás (+8 * código)
@@ -1055,4 +1101,28 @@ function bindTex(gl: WebGL2RenderingContext, unit: number, target: number, t: We
 function checkFbo(gl: WebGL2RenderingContext): void {
   const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
   if (st !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`framebuffer incompleto: 0x${st.toString(16)}`);
+}
+
+// Las luces que alcanzan la vista (su caja de alcance proyectada la toca) y, si son más de MAX_LIGHTS, las más
+// cercanas a su centro; en el orden de la lista, que es el de la suma en la CPU
+function viewLights(all: readonly WorldLight[], b: Baked, o: Frame2DOptions): WorldLight[] {
+  const cx = o.vx + o.vw / 2, cy = o.vy + o.vh / 2;
+  const near: Array<{ l: WorldLight; d: number; i: number }> = [];
+  all.forEach((l, i) => {
+    const r = resolveLight(l, 0).radius;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const dx of [-r, r]) for (const dy of [-r, r]) for (const dz of [-r, r]) {
+      const [sx, sy] = b.cam.project(l.x + dx, l.y + dy, l.z + dz);
+      x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+    }
+    if (x1 < o.vx || x0 > o.vx + o.vw || y1 < o.vy || y0 > o.vy + o.vh) return;
+    const [px, py] = b.cam.project(l.x, l.y, l.z);
+    near.push({ l, d: (px - cx) ** 2 + (py - cy) ** 2, i });
+  });
+  if (near.length > MAX_LIGHTS) {
+    warnOnce(`más de ${MAX_LIGHTS} luces en la vista: la GPU usa las más cercanas al centro`);
+    near.sort((p, q) => p.d - q.d).length = MAX_LIGHTS;
+    near.sort((p, q) => p.i - q.i);
+  }
+  return near.map((n) => n.l);
 }

@@ -10,6 +10,7 @@ import { resolveLight } from './lightutil';
 import { CHUNK, type StaticVoxels } from './state';
 import type { Box3 } from './changes';
 import type { WorldLight } from './build';
+import type { LightId } from './state';
 
 export interface BakedLight {
   light: WorldLight;
@@ -17,6 +18,11 @@ export interface BakedLight {
   intensity: number;
   rect: { x: number; y: number; w: number; h: number };   // zona de la imagen donde alumbra
   weight: Float32Array;                                    // peso por píxel de la zona (con la intensidad base)
+  // Si se rehízo solo en parte sobre los pesos de otra (el rehorneado de lo cambiado): esa (base), y el recuadro de la
+  // zona que pudo cambiar (dirty, relativo a rect). Quien guarda una copia de la base solo tiene que poner al día ese
+  // recuadro (la GPU); de cualquier otra, la zona entera
+  base?: BakedLight;
+  dirty?: { x: number; y: number; w: number; h: number };
 }
 
 export interface Baked {
@@ -38,6 +44,9 @@ export interface Baked {
   // Lo que se ha publicado desde el horneado (para quien guarda una copia, p. ej. las texturas de la GPU): cada
   // recuadro rehorneado con su número de serie. Solo se guardan los últimos; quien se quede atrás lo recarga todo.
   published: { serial: number; rects: Array<{ serial: number; x0: number; y0: number; x1: number; y1: number }> };
+  // Las fijas nuevas que se están horneando (rebakeJobs): no se vuelven a pedir, y si se quitan antes de acabar, su
+  // trabajo no las publica
+  pendingLights?: Set<LightId>;
 }
 
 // Lo mínimo que necesita el horneado de un mundo
@@ -497,8 +506,18 @@ const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
 const LIGHT_BAND = 4;     // filas de pesos por paso de una luz
 
 // boxes (opcional): la caja de lo cambiado en cada trozo (StaticVoxels.changedBox); sin ella, el trozo entero
+// lights son TODAS las luces del mundo (o de la vista): las fijas horneadas que ya no están (quitadas, o que pasaron a
+// dinámicas) se deshornean al momento, y las fijas que no estaban horneadas (puestas en partida) se hornean enteras,
+// aunque no haya cambiado ningún vóxel
 export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>): ViewJob[] {
-  if (!chunks.length) return [];
+  const fixed = new Map<LightId, WorldLight>();
+  for (const l of lights) if (l.baked !== false) fixed.set(l.id, l);
+  for (let i = b.lights.length - 1; i >= 0; i--) if (!fixed.has(b.lights[i]!.light.id)) b.lights.splice(i, 1);
+  const pend = (b.pendingLights ??= new Set());
+  for (const id of [...pend]) if (!fixed.has(id)) pend.delete(id);
+  const added = [...fixed.values()].filter((l) => !pend.has(l.id) && !b.lights.some((bl) => bl.light.id === l.id));
+  for (const l of added) pend.add(l.id);
+  if (!chunks.length) return added.map((l) => lightJob(b, l));
   const jobs: ViewJob[] = [];
   // 1) un recuadro por grupo de trozos, por franjas de columnas (los búferes se piden al empezar, no aquí)
   const plans: Plan[] = [], rects: ScreenRect[] = [], masks = new Map<ScreenRect, Uint8Array>();
@@ -569,7 +588,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
               if (sh === 'all') { whole = true; break; }
               if (sh) add(sh.x0, sh.y0, sh.x1, sh.y1);
             }
-            if (!whole) spans = out;
+            if (!whole) {
+              spans = out;
+              let dx0 = Infinity, dy0 = Infinity, dx1 = -Infinity, dy1 = -Infinity;
+              for (const [i0, i1, j0, j1] of out) { dx0 = Math.min(dx0, i0); dx1 = Math.max(dx1, i1); dy0 = Math.min(dy0, j0); dy1 = Math.max(dy1, j1); }
+              zone.base = prev;
+              prev.base = undefined;                   // solo un eslabón: no se encadenan los horneados viejos
+              zone.dirty = out.length ? { x: dx0, y: dy0, w: dx1 - dx0, h: dy1 - dy0 } : { x: 0, y: 0, w: 0, h: 0 };
+            }
           }
         }
         if (zone) while (si < spans.length) {
@@ -582,13 +608,38 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           if (performance.now() >= deadline) break;
         }
         if (zone && si < spans.length) return false;
+        b.pendingLights?.delete(l.id);
         const i = b.lights.findIndex((bl) => bl.light.id === l.id);
         if (i >= 0) { if (zone) b.lights[i] = zone; else b.lights.splice(i, 1); } else if (zone) b.lights.push(zone);
         return true;
       },
     });
   }
+  // Las fijas nuevas que no alcanzan lo cambiado
+  for (const l of added) if (!jobs.some((j) => j.key === `light:${l.id}`)) jobs.push(lightJob(b, l));
   return jobs;
+}
+
+// Hornea una luz fija entera como trabajo (una puesta en partida)
+function lightJob(b: Baked, l: WorldLight): ViewJob {
+  let zone: BakedLight | null | undefined, row = 0;
+  return {
+    key: `light:${l.id}`,
+    run(deadline) {
+      if (zone === undefined) zone = lightZone(b, l);
+      if (zone) do {
+        const r1 = Math.min(zone.rect.h, row + LIGHT_BAND);
+        weightRows(b, zone, row, r1);
+        row = r1;
+      } while (row < zone.rect.h && performance.now() < deadline);
+      if (zone && row < zone.rect.h) return false;
+      if (!b.pendingLights?.delete(l.id)) return true;   // se quitó mientras: no se publica
+      const i = b.lights.findIndex((bl) => bl.light.id === l.id);
+      if (i >= 0) b.lights.splice(i, 1);
+      if (zone) b.lights.push(zone);
+      return true;
+    },
+  };
 }
 
 // Los trabajos de lo que haya cambiado (solo vóxeles) desde el último horneado
