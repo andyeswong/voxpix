@@ -263,3 +263,38 @@ describe('margen de las franjas', () => {
     expect(plain.b.lights[0]!.weight).toEqual(plain.fresh.lights[0]!.weight);
   });
 });
+
+describe('lo expuesto guardado por losa (forEachExposed)', () => {
+  it('tras cambiar vóxeles (también en el borde de un trozo, que toca al vecino) y tras importar, da lo mismo que exposedEntries', () => {
+    const s = new StaticVoxels(PAL, 48, 48, 0, 47);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 30 + ((x + y) % 5); z++) s.set(x, y, z, material((z >> 3) % 3, 1 + ((x + y + z) & 1)));
+    const all = () => { const out: number[][] = []; s.forEachExposed((x, y, z, v) => out.push([x, y, z, v])); return out; };
+    const band = () => { const out: number[][] = []; s.forEachExposed((x, y, z, v) => out.push([x, y, z, v]), { x0: 10, y0: 4, x1: 21, y1: 40, z0: 5, z1: 34 }); return out; };
+    const ref = () => [...s.exposedEntries()].map(([x, y, z, v]) => [x, y, z, v]);
+    const refBand = () => ref().filter(([x, y, z]) => x! >= 10 && x! <= 21 && y! >= 4 && y! <= 40 && z! >= 5 && z! <= 34);
+    expect(all()).toEqual(ref()); expect(band()).toEqual(refBand());          // las máscaras, hechas
+    // Un hoyo dentro de un trozo, y otro justo en el borde x = 15 | 16 (lo de x = 16 cambia lo expuesto del trozo de al lado)
+    for (let z = 12; z < 24; z++) for (let y = 6; y < 10; y++) for (let x = 5; x < 9; x++) s.set(x, y, z, 0);
+    for (let z = 20; z < 26; z++) for (let y = 20; y < 22; y++) s.set(15, y, z, 0);
+    expect(all()).toEqual(ref()); expect(band()).toEqual(refBand());
+    // Volver a llenar un hoyo (vóxeles que dejan de verse)
+    for (let z = 12; z < 24; z++) for (let y = 6; y < 10; y++) for (let x = 5; x < 9; x++) s.set(x, y, z, material(0, 2));
+    expect(all()).toEqual(ref());
+    // Importar otro mundo encima (la partida que se carga): nada de lo guardado vale
+    const t = new StaticVoxels(PAL, 48, 48, 0, 47);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 20 + (x % 7); z++) t.set(x, y, z, material(1, 2));
+    s.importChunks(t.exportChunks());
+    expect(all()).toEqual(ref()); expect(band()).toEqual(refBand());
+  });
+
+  it('importar un trozo con la MISMA versión y otro contenido (dos mundos iguales que cambian lo mismo distinto) tampoco deja nada viejo', () => {
+    const make = () => { const w = new StaticVoxels(PAL, 32, 32, 0, 31); for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) for (let z = 0; z < 20; z++) w.set(x, y, z, material(0, 1)); return w; };
+    const s = make(), t = make();
+    s.set(5, 5, 19, 0);                       // el mismo trozo, el mismo reloj, distinto hoyo
+    t.set(9, 9, 19, 0);
+    const got = () => { const out: number[][] = []; s.forEachExposed((x, y, z, v) => out.push([x, y, z, v])); return out; };
+    got();                                    // las máscaras de s, hechas
+    s.importChunks(t.exportChunks());
+    expect(got()).toEqual([...s.exposedEntries()].map(([x, y, z, v]) => [x, y, z, v]));
+  });
+});

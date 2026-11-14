@@ -31,6 +31,9 @@ medida que vale para un juego es la suya.
 - Hay un presupuesto aparte para lo cercano (`near`): el bloque picado se ve en el cuadro siguiente.
 - La cola aprende lo que cuesta cada clase de llamada (recuadro, luz, cielo, corte), con la primera llamada de cada
   trabajo aparte, y no empieza una llamada que no cabe.
+- Recorrer lo que se ve: `forEachExposed` ya no da los vóxeles enterrados de las losas a medio llenar, y guarda por
+  losa qué vóxeles tienen cara al aire. En el corte de casa de muñecas con contorno, la llamada de recuadro baja de
+  p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x. El máximo sigue por encima de 8.
 - Las luces cerca del jugador también van con el presupuesto cercano (una antorcha recién puesta alumbra en menos de
   la mitad de cuadros), sin adelantarse a sus recuadros.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es

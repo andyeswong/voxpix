@@ -653,7 +653,9 @@ function chunkGroups(b: Baked, chunks: readonly number[]): number[][] {
 }
 
 // Renderiza las columnas de píxeles c0..c1 del recuadro en sus búferes
-function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number): void {
+// Lo que recorre la franja de columnas c0..c1 del recuadro: la región de vóxeles (sus columnas y las y que pueden caer
+// en sus filas) y, por bandas de 16 de y, la franja de alturas que puede caer en esas filas
+function stripRegion(b: Baked, r: ScreenRect, c0: number, c1: number) {
   const s = b.source, a = b.options.oblique?.y ?? 1, O = b.options.originY;
   // Con contorno, se renderiza con 1 píxel más por cada lado y se recorta: el contorno de un píxel mira a sus 4 vecinos,
   // y los del borde del recuadro tienen que verlos como en el horneado entero. Sin contorno ningún píxel depende de sus
@@ -668,14 +670,34 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
   for (let x = Math.max(0, C0 - 1); x <= Math.min(s.width - 1, C1); x++) for (let y = yLo; y <= yHi; y++) top = Math.max(top, s.height[y * s.width + x]!);
   yLo = Math.max(yLo, Math.floor((O - R1 - 1 - top) / a) - 1);
   const region = { x0: C0 - 1, y0: yLo, x1: C1, y1: yHi };
-  const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
   // Por bandas de 16 filas de y (un trozo), con la franja de alturas que puede caer en las filas R0..R1 (la cara de
   // arriba del vóxel (y, z) va de la fila O - a*(y+1) - (z+1) a la O - a*y - z): el mismo orden que de una vez
+  const bands: Array<{ x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }> = [];
+  for (let y0 = region.y0; y0 <= region.y1; y0 = (y0 | 15) + 1) {
+    const y1 = Math.min(region.y1, y0 | 15);
+    bands.push({ x0: region.x0, x1: region.x1, y0, y1, z0: Math.floor(O - R1 - a * (y1 + 1)) - 2, z1: Math.ceil(O - R0 - a * y0) + 1 });
+  }
+  return { halo, R0, R1, C0, C1, region, bands };
+}
+
+// Prepara (hasta el plazo, de WARM_ROWS en WARM_ROWS filas; las primeras siempre) lo que la franja va a recorrer: las
+// filas de la máscara de lo expuesto que haya que recalcular. true si está todo
+const WARM_ROWS = 64;
+function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: number): boolean {
+  const { region, bands } = stripRegion(b, r, c0, c1);
+  const parts = (b.options.yaw ?? 0) !== 0 ? [region] : bands;
+  for (const part of parts) {
+    while (!b.source.warmExposed(part, WARM_ROWS)) if (performance.now() >= deadline) return false;
+  }
+  return true;
+}
+
+function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number): void {
+  const s = b.source, O = b.options.originY;
+  const { halo, R0, R1, C0, C1, region, bands } = stripRegion(b, r, c0, c1);
+  const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
   const banded = (fn: (x: number, y: number, z: number, v: number) => void) => {
-    for (let y0 = region.y0; y0 <= region.y1; y0 = (y0 | 15) + 1) {
-      const y1 = Math.min(region.y1, y0 | 15);
-      s.forEachExposed(fn, { x0: region.x0, x1: region.x1, y0, y1, z0: Math.floor(O - R1 - a * (y1 + 1)) - 2, z1: Math.ceil(O - R0 - a * y0) + 1 });
-    }
+    for (const band of bands) s.forEachExposed(fn, band);
   };
   const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });
@@ -764,6 +786,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         let t = performance.now();
         do {
           const c1 = Math.min(rect.x1, col + RECT_BAND - 1);
+          // Lo que la franja tiene que recalcular de lo expuesto (tras un cambio grande, como un corte), antes y con plazo:
+          // si no da tiempo, se sigue en la llamada siguiente (lo hecho se queda) y la franja no se pasa del plazo por eso
+          if (!warmStrip(b, rect, col, c1, deadline)) return false;
           renderColumns(b, rect, buf, col, c1);
           col = c1 + 1;
           const now = performance.now();

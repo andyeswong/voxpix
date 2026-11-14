@@ -102,10 +102,17 @@ así que la instantánea y la huella no cambian) son los de antes. Un mundo de 7
 ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un solo valor (`byteLength` lo dice).
 
 - `exposedEntries(región)`: como `entries`, pero sin los vóxeles enterrados (los que tienen sus 6 vecinos llenos y
-  no enseñan ninguna cara). Se saltan losas enteras; lo que da es un superconjunto de lo que tiene alguna cara al
-  aire, en el mismo orden. `forEachExposed(fn, región)` es lo mismo sin generador, y la región puede limitar también
-  la altura (`z0..z1`). El render (`render`, y el horneado con él) la usa si la fuente la tiene
+  no enseñan ninguna cara), en el mismo orden. `forEachExposed(fn, región)` es lo mismo sin generador, y la región
+  puede limitar también la altura (`z0..z1`). El render (`render`, y el horneado con él) la usa si la fuente la tiene
   (`VoxelSource.forEachExposed`, opcional): los mismos píxeles, recorriendo mucho menos.
+  - Antes solo se saltaban losas enteras llenas, y de una losa a medio llenar (la superficie, un túnel, el borde de un
+    corte) se daban todos sus vóxeles. En una franja del rehorneado con un corte hondo eran 20.000-30.000 para ~2.000
+    caras.
+  - `forEachExposed` guarda por losa qué vóxeles tienen alguna cara al aire (una máscara por fila de 16), hecha fila a
+    fila al pedirla. Vale mientras no cambien el trozo ni sus 4 vecinos (su versión) ni se importe el mundo. Cuesta
+    768 bytes por losa recorrida (~2,6 MB en un mundo de 384 x 384 x 96 entero).
+  - `warmExposed(región, filas)` deja hechas hasta tantas filas, para preparar con plazo lo que se va a recorrer: el
+    rehorneado lo hace antes de cada franja y, si no le da tiempo, sigue en el cuadro siguiente.
 - `changedBox(trozo, versión)`: la caja (x, y, z, extremos incluidos) de lo que cambió en ese trozo después de la
   versión, o `null`. Puede ser más grande que lo cambiado, nunca más pequeña. `cut()` cierra los tramos abiertos:
   quien acaba de leer las cajas (el horneado lo hace solo) corta, y lo que cambie después tiene su caja aparte.
@@ -165,7 +172,12 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
 - **Estrechar la franja según el plazo** (de 1 a 4 columnas, con lo que cuesta una columna, global o por recuadro):
   cada franja tiene un coste casi todo fijo (recorrer su región), así que más franjas cuestan más en total (de ~4,5 a
   ~5,5-6,5 ms por golpe) y la llamada más larga no baja; en un corte hondo una franja de 1 columna cuesta casi lo
-  mismo que una de 4 (~1,7 ms).
+  mismo que una de 4 (~1,7 ms). Repetido con las máscaras de lo expuesto, en el corte de casa de muñecas con contorno:
+  con franjas de 2 y de 1 columna el p95 de la llamada baja de 11,2 a 9,4 y 8,5 ms (a 6x), pero el máximo sigue en
+  ~19-23 y lo cortado tarda en aparecer el doble y el triple (73 y 110 cuadros contra 49).
+- **Invalidar lo expuesto vóxel a vóxel** (al cambiar uno, borrar solo sus filas y las de sus vecinos), en vez de por
+  la versión del trozo y sus vecinos: menos filas que rehacer, pero `set` cuesta un 30 % más y el corte, que escribe
+  miles de vóxeles, va más lento (aparece en 62-71 cuadros contra 47-49).
 - **Rayo por píxel en vez de pintar caras** en el recuadro: más rápido en teoría, pero tiene que dar los mismos píxeles
   que el render, empates de aristas incluidos. Días de trabajo y riesgo; no hecho.
 - **Luces que se pasaban del plazo en el relevo**: las sombras de las cajas se preparan una por paso, los píxeles de la
@@ -669,6 +681,10 @@ view.setCut(null);                                          // al salir
   byte contra hornear sin esos vóxeles, en los 4 giros, y `cutJob` a trozos acaba igual que `setCut`.
   En `bench-corte.ts` con `DOS=1` (32 x 32 hasta el techo y 16 x 32 hasta los pies), frente a una caja, a 6x: ~18 %
   más llamadas de recuadro, "aparece" p50 de 13 a 17 cuadros (el máximo, igual, ~20) y el cuadro más largo igual.
+  Con la caja de los pies de un juego (24 de ancho y 64 hacia la cámara: `DOS=2`), contorno interior (`CONTORNO=both`),
+  el mundo de bloques (`MUNDO=bloques`) y 2 antorchas en el túnel, a 6x, la llamada de recuadro queda en p50 ~6, p95
+  ~12 y máximo ~20-22 ms (antes de guardar lo expuesto por losa: 8,6, 15,5 y 29). La llamada más larga sigue por
+  encima de lo que cabe en el cercano (8): su coste no baja al estrechar la franja (ver "Probado y descartado").
 - `view.setCut(corte)` lo aplica de una vez (y devuelve cuántas columnas reescribió; `view.currentCut` es el corte pedido). Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
   (`FrameBudget`, prioridad 0: va con el presupuesto cercano) que reescribe columnas hasta el plazo; lo que va
   cambiando lo recoge `rebakeChangedJobs` cada cuadro. Si llega otro corte antes de acabar, sigue desde donde está y

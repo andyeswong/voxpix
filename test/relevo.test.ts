@@ -29,6 +29,9 @@ describe('cambios seguidos con trabajos de luz a medias', () => {
     const q = new FrameBudget(1);
     hole(s, 8, 8);
     for (const j of rebakeChangedJobs(b, ls)) q.push(j);
+    // Los recuadros, acabados (cada llamada hace al menos una unidad; cuántas, según lo que haya que preparar), y la luz,
+    // unas pocas unidades: a medias
+    for (const j of queue(q).filter((x) => x.key.startsWith('rect:'))) { while (!j.run(-1)); queue(q).splice(queue(q).indexOf(j), 1); }
     nudge(q, 4);
     expect(queue(q).map((j) => j.key)).toEqual(['light:a#' + queue(q)[0]!.key.split('#')[1]]);   // la luz, a medias
     hole(s, 54, 54);
