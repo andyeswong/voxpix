@@ -237,6 +237,32 @@ const { heights } = generateTerrain({
 - El ruido es de `src/worldgen/noise.ts` (`valueNoise`, `fbm`, `fbmN`, `lattice`), exportado para quien quiera más.
 - En un portátil, sin freno: un terreno de 48 x 48 x 12 bloques de 8 se genera en ~0,25 s y se hornea en ~0,3 s.
 
+## Moverse por niveles
+
+`moveBody` apoya los pies en lo más alto de cada columna: no puede estar debajo de nada. Para túneles, cuevas e
+interiores con techo, `moveBodyLevels` (`src/runtime/levels.ts`) mueve un cuerpo con alto que anda por debajo de los
+techos, cae por los huecos y salta. Es aparte: `moveBody` no cambia.
+
+```ts
+import { moveBodyLevels, LEVEL_RULES, type LevelBody } from '@voxpix/runtime/levels';
+
+const jugador: LevelBody = { x, y, z, r: 3, height: 24, vz: 0 };
+// Cada tick: lo que anda en x e y, y si salta
+const m = moveBodyLevels(state, jugador, dx, dy, saltar, { ...LEVEL_RULES, step: 2, jump: 1.6 });
+if (m.landed > 40) { /* una caída de más de 40 vóxeles: lo que el juego quiera */ }
+```
+
+- El cuerpo es un cilindro de radio `r` y alto `height` con los pies en `z`. Anda subiendo escalones de hasta `step`;
+  donde el suelo queda más abajo, sigue a su altura y cae con `gravity` (vóxeles por tick²) hasta `maxFall`; con
+  `jump` y en el suelo, salta con esa velocidad. Un techo corta el salto, y no se mete donde no cabe entero.
+- Devuelve `blocked` (algo frenó el paso), `grounded` (está apoyado) y `landed` (lo que cayó, si acaba de aterrizar).
+- `footBelow(state, x, y, z)`: el suelo más alto de la columna con la cara de arriba en `z` o por debajo (la cara de
+  arriba del primer vóxel que bloquea bajando), o `NO_FOOT`.
+- Lo que bloquea es lo de siempre (los materiales: `blocks`), y lo que no se sube (`climb: false`) no es suelo. El borde
+  del mundo es pared. Los objetos despiertos no cuentan todavía.
+- Determinista: sin reloj ni azar. Por cuerpo y tick, ~1 µs al aire libre (sin freno; 200 cuerpos, ~0,2 ms); debajo
+  de techos, algo más.
+
 ## Caminos
 
 Para que algo que anda (un enemigo, un animal) vaya hacia un sitio rodeando lo que no se puede pasar, sobre el suelo
