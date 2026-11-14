@@ -26,7 +26,7 @@ La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo 
   `scripts/oracle/README.md`.
 
 `scripts/oracle/oracle.ps1` las abre en Edge sin ventana (con la GPU de la máquina o con SwiftShader) y guarda el
-resultado. `scripts/oracle/ctxloss.ps1` prueba qué pasa cuando la GPU pierde el contexto.
+resultado. `scripts/oracle/ctxloss.ps1` prueba qué pasa cuando la GPU pierde el contexto. En `app/multitud.html?precalentar=1`, `window.__compositor.atlasStats()` dice cuántos sprites hay en el atlas: tras recuperar el contexto, los mismos que antes de perderlo (64: 8 cuadros de andar x 8 rumbos), no solo los que se van viendo.
 
 ## Rendimiento
 

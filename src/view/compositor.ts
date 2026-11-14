@@ -86,10 +86,35 @@ class CpuPath implements Compositor {
   }
 }
 
+// Lo precalentado, para reponerlo: cada prewarm con su lista (modelos, rumbos, si dan sombra). Al recuperar la GPU un
+// contexto perdido (en un teléfono, al mandar la pestaña atrás) el compositor nuevo empieza vacío; sin esto, el horneado
+// se resubía en el primer cuadro pero los sprites se pintaban uno a uno en mitad de la partida. Se repone con el
+// horneado y las opciones del último cuadro (si cambió el nivel, los del nivel de ahora), o si no hubo cuadro, con los
+// del prewarm
+export class WarmMemory {
+  private calls: Array<{ b: Baked; o: Frame2DOptions; list: WarmItem[] }> = [];
+  private last: { b: Baked; o: Frame2DOptions } | null = null;
+  record(b: Baked, o: Frame2DOptions, list: readonly WarmItem[]): void {
+    // La misma lista otra vez (el mismo array, o los mismos modelos y rumbos) no se guarda dos veces
+    const same = (a: readonly WarmItem[], c: readonly WarmItem[]) => a.length === c.length && a.every((it, i) => it.model === c[i]!.model && it.casts === c[i]!.casts && (it.yaws ?? HEADINGS).join() === (c[i]!.yaws ?? HEADINGS).join());
+    if (this.calls.some((c) => same(c.list, list))) return;
+    this.calls.push({ b, o: { ...o }, list: [...list] });
+  }
+  saw(b: Baked, o: Frame2DOptions): void { this.last = { b, o }; }
+  get size(): number { return this.calls.reduce((n, c) => n + c.list.length, 0); }
+  // Vuelve a precalentar todo en `into` (el compositor nuevo). Devuelve cuántos sprites no cupieron (como prewarm)
+  replay(into: Pick<Compositor, 'prewarm'>): number {
+    let left = 0;
+    for (const c of this.calls) left += into.prewarm(this.last?.b ?? c.b, this.last ? { ...this.last.o } : c.o, c.list);
+    return left;
+  }
+}
+
 class GpuPath implements Compositor {
   private gpu: GpuCompositor | null;
   private cpu: CpuPath | null = null;          // mientras no hay contexto
   private readonly glCanvas: HTMLCanvasElement;
+  private readonly warm = new WarmMemory();
   readonly stats: CompositorStats = { frameMs: 0, uploadMs: 0 };
 
   constructor(canvas: HTMLCanvasElement, gpu: GpuCompositor) {
@@ -110,8 +135,9 @@ class GpuPath implements Compositor {
     canvas.addEventListener('webglcontextrestored', () => {
       const again = GpuCompositor.create(canvas);
       if (!again) { console.warn('[voxpix] el contexto volvió pero la GPU no arranca: sigue la CPU'); return; }
-      console.info('[voxpix] la GPU recuperó el contexto: lo sube todo de nuevo');
+      console.info('[voxpix] la GPU recuperó el contexto: lo sube todo de nuevo (y lo precalentado)');
       this.gpu = again;
+      this.warm.replay(again);
       if (this.cpu) {
         canvas.style.cssText = this.cpu.canvas.style.cssText;
         this.cpu.canvas.replaceWith(canvas);
@@ -127,11 +153,13 @@ class GpuPath implements Compositor {
   atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
 
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number {
+    this.warm.record(b, o, list);
     if (this.gpu) return this.gpu.prewarm(b, o, list, budgetMs);
     return this.cpu ? this.cpu.prewarm(b, o, list, budgetMs) : 0;
   }
 
   frame(s: RenderState, b: Baked, o: Frame2DOptions): void {
+    this.warm.saw(b, o);
     if (this.gpu) {
       const t0 = performance.now();
       this.gpu.frame(s, b, o);

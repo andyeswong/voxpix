@@ -22,6 +22,7 @@ canvas.width = VW; canvas.height = VH;
 const s = Math.max(1, Math.floor(Math.min(innerWidth / VW, innerHeight / VH)));
 canvas.style.width = `${VW * s}px`; canvas.style.height = `${VH * s}px`;
 const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
+(window as unknown as { __compositor?: unknown }).__compositor = compositor;   // para medir desde fuera (CDP): atlasStats, kind
 
 const maia = Model.fromJSON(maiaFile as unknown as ModelFile);
 const walk = walkFrames(maia);

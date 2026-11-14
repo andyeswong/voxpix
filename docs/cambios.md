@@ -124,6 +124,13 @@ Un `.voxpix.json` (versión 3) puede traer varios clips con nombre (quieto, anda
 clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `clipDone`. Ver
 [Animaciones con nombre](motor.md#animaciones-con-nombre).
 
+### Contexto de la GPU perdido y recuperado
+
+En un teléfono, el navegador quita el contexto WebGL al mandar la pestaña atrás. Al recuperarlo, el compositor resubía
+el horneado pero los sprites precalentados se perdían y se volvían a pintar uno a uno en mitad de la partida. Ahora
+recuerda cada `prewarm` y lo repite con el horneado y las opciones del último cuadro. En `app/multitud.html` con 20
+entidades: justo después de recuperar el contexto, 64 sprites en el atlas (antes, 41, y 56 dos segundos después).
+
 ### Tolerancias conocidas
 
 - **Oráculo CPU contra GPU en las escenas de cielo:** 49 y 7 píxeles de 82.944 difieren en ±1 en el color del agua.
