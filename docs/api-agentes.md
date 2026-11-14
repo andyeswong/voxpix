@@ -102,7 +102,7 @@ tiene su propio deshacer.
 
 | Función | Devuelve | Qué hace |
 |---|---|---|
-| `frames()` | `{count, current, ms[], playing, onion, rig}` | El estado de la animación. |
+| `frames()` | `{clip, loop, count, current, ms[], playing, onion, rig}` | El estado de la animación (del clip abierto). |
 | `frame(i)` | ídem | Va al cuadro `i` (desde 0). |
 | `addFrame({ empty? })` | índice | Un cuadro después del actual: copia del actual o vacío. |
 | `deleteFrame(i?)` / `moveFrame(from, to)` | ídem | Quita un cuadro (el actual si no se dice) / lo mueve. |
@@ -164,13 +164,13 @@ N x N x N (x e y de -N/2 a N/2-1, z de 0 a N-1), con las funciones de pintar de 
 |---|---|---|
 | `newSet(name, size?)` | `info()` | Un set nuevo (N = 8 por defecto) con la paleta actual; el lienzo, vacío y de N x N x N. |
 | `addBlock(id, props?)` | su número (desde 1) | Guarda lo que hay en el lienzo como un bloque nuevo y se queda en él. |
-| `block(id \| número \| null)` | el id | Pone ese bloque en el lienzo para verlo o cambiarlo; `null`, el lienzo vacío para uno nuevo. |
+| `block(id \| número \| null)` | el id (`null` con `null`) | Pone ese bloque en el lienzo para verlo o cambiarlo; `null`, el lienzo vacío para uno nuevo. |
 | `saveBlock(props?)` | el id | Guarda el lienzo en el bloque abierto (y sus props, si se dan). |
 | `removeBlock(id)` | - | Lo quita del set. |
 | `blocks()` | lista | Los bloques: `{index, id, voxels, props, current}`. |
 | `saveSet()` | objeto | El `.voxset.json`, comprobado por el motor (`BlockSet.fromJSON`). |
 | `loadSet(json)` | `{name, size, blocks}` | Abre un `.voxset.json`. |
-| `iconSheet({ yaw?, elevation?, outline?, cell?, scale?, columns? })` | promesa de `{name, base64, index, width, height}` | La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala, centrado en su celda (de lado `cell`, por defecto la del icono más grande), en PNG; `index` es `{cell, icons: {id: {x, y, w, h, hash}}}` y `hash` la huella de la hoja (el mismo set y las mismas opciones dan la misma hoja). |
+| `iconSheet({ yaw?, elevation?, outline?, cell?, scale?, columns? })` | promesa de `{name, base64, index, width, height, hash}` | La hoja de iconos del set: cada bloque pintado con el mismo ángulo y escala, centrado en su celda (de lado `cell`, por defecto la del icono más grande), en PNG; `index` es `{cell, icons: {id: {x, y, w, h, hash}}}` y `hash` la huella de la hoja (el mismo set y las mismas opciones dan la misma hoja). |
 | `icon({ yaw?, elevation?, outline?, cell?, scale? })` | promesa de `{name, base64, size, hash}` | Un icono suelto del modelo abierto (un objeto, una criatura): lo mismo que una celda de la hoja, con su huella. |
 
 - `props` dice lo que no sale de las rampas: `emits` (la luz fija que pone el bloque al colocarse: `{kind, radius?,

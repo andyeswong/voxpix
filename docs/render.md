@@ -110,6 +110,9 @@ la vista previa con *Iluminación*, el PNG iluminado y `scripts/gif-rotacion.ts 
 }
 ```
 
-Los vóxeles van ordenados por coordenada: el mismo modelo da siempre el mismo texto. `lights` es opcional. Su
+Los vóxeles van ordenados por coordenada: el mismo modelo da siempre el mismo texto. Un modelo con animación es la
+versión 2 (`animation`: sus cuadros) y uno con varios clips con nombre, la 3 (`clips: [{name, loop, frames, rig?}]`,
+con `clipsToFile` y `clipsFromFile` en `src/core/anim.ts`; ver [Animación](api-agentes.md#animación) y
+[Animaciones con nombre](motor.md#animaciones-con-nombre)). `lights` es opcional. Su
 `kind` es uno de `src/lighting/lights.ts`: `torch`, `lamp`, `brazier`, `neon-pink`, `neon-cyan`, `lantern` o
 `screen`.

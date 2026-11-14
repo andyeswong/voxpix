@@ -100,7 +100,7 @@ SETS DE BLOQUES (varios modelos de N x N x N con nombre y la paleta compartida, 
   saveSet()                                el .voxset.json (objeto), comprobado por el motor
   loadSet(json)                            abre un .voxset.json
   iconSheet({yaw?, elevation?, outline?, cell?, scale?, columns?})   la hoja de iconos del set (un icono por bloque,
-                                           mismo ángulo y escala; promesa): {name, base64 (PNG), index: {cell, icons: {id: {x,y,w,h,hash}}}, hash}
+                                           mismo ángulo y escala; promesa): {name, base64 (PNG), index: {cell, icons: {id: {x,y,w,h,hash}}}, width, height, hash}
   icon({yaw?, elevation?, outline?, cell?, scale?})   un icono suelto del modelo abierto (promesa): {name, base64, size, hash}
   importPxl(source, stackPrefix?)          un .px.js: con prefijo, la pila de capas <prefijo>_zNN como modelo (promesa: se ejecuta aparte)
   view({yaw, elevation, outline, lit, ambient})   la vista previa (y lo que exporta png)
@@ -109,7 +109,7 @@ SETS DE BLOQUES (varios modelos de N x N x N con nombre y la paleta compartida, 
                                            (yaw 0 = norte, 90 = este; pitch + arriba): para previsualizar por dentro
   explore(open?, {height?, fov?})          abre (o cierra) la vista Explorar: caminar por dentro del modelo
 ANIMACIÓN (cada cuadro es el modelo entero; las herramientas pintan el cuadro actual):
-  frames()                                 {count, current, ms[], playing, onion, rig}
+  frames()                                 {clip, loop, count, current, ms[], playing, onion, rig}
   frame(i)                                 va al cuadro i
   addFrame({empty?})                       un cuadro después del actual (copia del actual, o vacío); da su índice
   deleteFrame(i?), moveFrame(from, to)     quita / mueve un cuadro

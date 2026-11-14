@@ -47,7 +47,8 @@ Más en [docs/ia.md](docs/ia.md).
 - [el render](docs/render.md);
 - [el motor del mundo](docs/motor.md);
 - [la línea de comandos](docs/linea-de-comandos.md);
-- [las pruebas](docs/pruebas.md).
+- [las pruebas](docs/pruebas.md);
+- [los cambios](docs/cambios.md): lo último que ha entrado (mundos de bloques que se pican en partida, caminos por niveles, cielo, corte de vista, cola con plazo).
 
 ## Capturas
 
@@ -135,9 +136,9 @@ Un GIF del modelo dando una vuelta (los de arriba salen de aquí; `--luz` lo ilu
 |---|---|
 | `src/core/` | El núcleo, sin dependencias: paleta por rampas, modelo disperso, render por software determinista, luz 3D por cara y deshacer por diferencias. |
 | `src/view/gpu/` | Lo mismo en WebGL2: `voxrender.ts` (el render y la luz del editor) y `compositor.ts` (el cuadro del mundo). |
-| `src/world/`, `src/lighting/`, `src/fluid/`, `src/anim/` | El motor del mundo 2.5D: horneado, luces dinámicas y sombras, agua, entidades, tinte de golpe, precarga de sprites y animación de andar (walk y rigs por partes). |
+| `src/world/`, `src/lighting/`, `src/fluid/`, `src/anim/` | El motor del mundo 2.5D: horneado, luces dinámicas y sombras, agua, entidades, tinte de golpe, precarga de sprites y animación de andar (walk y rigs por partes); mundos de bloques, terreno por semilla, caminos, cielo, ciclo del día y guardar en bytes. |
 | `src/runtime/` | El tick determinista (entrada, cuerpos con colisión, eventos, mundo) y el bucle de pasos fijos. |
-| `src/worldgen/`, `src/terrain/`, `src/content/` | El generador de escenarios por teselas y sus temas (oficina, medieval, cyberpunk). |
+| `src/worldgen/`, `src/terrain/`, `src/samples/` | El generador de escenarios por teselas y sus temas de muestra (oficina, medieval, cyberpunk). |
 | `src/pxl/` | El puente con pxl: importar y exportar `.px.js`. |
 | `app/` | El editor (Vue 3 + Vite), la demo del mundo (`escena.html`: un escenario generado con MAIA, que anda, lleva luz y pisa el agua; modo 2D y modo vóxel) y las páginas de prueba (`multitud.html`, los oráculos). |
 | `scripts/` | El ejemplo de la API, las medidas de rendimiento y el oráculo de CPU contra GPU (en Edge sin ventana, desde PowerShell). |
@@ -171,7 +172,8 @@ En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y
 `node_modules/voxpix/vendor/pxl/src/core/index.ts` si usas el puente con pxl). Las piezas para un juego:
 `world/state` (el mundo y sus entidades), `world/build` y `world/bake` (construir y hornear un escenario),
 `view/compositor` (el cuadro por GPU o CPU, con `prewarm`), `runtime/runtime` (el tick y el bucle fijo) y
-`worldgen` (mapas por semilla). La guía completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
+`worldgen` (mapas por semilla). Para un mundo de bloques que se pica en partida: `world/blocks`, `world/edit`,
+`world/terrain`, `world/paths` y `world/levelpaths`, `runtime/levels`, `world/save` y `lighting/daycycle`. La guía completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
 
 ## Agradecimientos
 

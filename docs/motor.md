@@ -67,7 +67,7 @@ requestAnimationFrame(loop);
 
 | Módulo | Qué hay |
 |---|---|
-| `worldgen`, `terrain` | Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente), con las reglas que le pases (`GeneratorSpec`). `spec.shape` da la forma de la sala: L, T, salas con pasillos, laberinto o un plano en texto. Con `spec.doors`, la sala trae sus huecos de puerta, y `stitchRooms` une varias en un mapa abriendo las puertas entre vecinas (ver `docs/api-mundos.md`). |
+| `worldgen`, `terrain` | (`src/terrain`: el autotile de las teselas; el terreno de bloques por semilla es `world/terrain`.) Mapas por semilla en teselas (salas, paredes, columnas, agua, fuente), con las reglas que le pases (`GeneratorSpec`). `spec.shape` da la forma de la sala: L, T, salas con pasillos, laberinto o un plano en texto. Con `spec.doors`, la sala trae sus huecos de puerta, y `stitchRooms` une varias en un mapa abriendo las puertas entre vecinas (ver `docs/api-mundos.md`). |
 | `world/build` | `buildWorldState(layout, look, { decorate })`: el escenario en vóxeles, con sus luces fijas, el agua y el estado inicial. El aspecto (`WorldLook`) lo da quien construye; ver "El aspecto del mundo". |
 | `samples` | Contenido de MUESTRA para la demo y las pruebas: tres temas (`oficina`, `medieval`, `cyberpunk`, en `samples/themes`), escenas y paletas. El motor no lo importa: cópialo o haz el tuyo. |
 | `world/state` | `WorldState`, la única fuente de verdad: lo estático, el registro de modelos, las entidades, las luces, el agua, las gotas, los efectos y su huella (`hash`, `snapshot`, `restore`). |
@@ -75,7 +75,15 @@ requestAnimationFrame(loop);
 | `view/compositor` | `createCompositor(canvas)`: compone cada cuadro (escenario, entidades con su luz por cara y sus sombras, agua, gotas). GPU con WebGL2 o CPU de reserva con el mismo resultado. Si la GPU pierde el contexto, sigue la CPU. |
 | `world/frame3d` | El modo vóxel: el mismo estado visto en 3D. |
 | `runtime/runtime`, `runtime/body` | El tick determinista (entrada -> cuerpos con colisión -> eventos -> mundo), `FixedLoop` para pasar de tiempo real a ticks fijos y `Runtime`, un personaje controlable con su luz de mano. |
-| `view/budget` | `FrameBudget`: el trabajo de la vista que no cabe en un cuadro (rehornear trozos) se reparte entre cuadros. |
+| `view/budget` | `FrameBudget`: el trabajo de la vista que no cabe en un cuadro (rehornear trozos) se reparte entre cuadros, con un presupuesto aparte para lo cercano (`near`). Ver "Editar el mundo en partida". |
+| `world/edit` | `stampModel` / `clearBox`: poner un modelo o vaciar una caja en partida (y `turnCell`, `rampMap`). Ver "Editar el mundo en partida". |
+| `world/blocks` | `BlockSet`, `BlockGrid`, `pickBlock` y el `.voxset.json`: un mundo de bloques. Ver "Bloques". |
+| `world/terrain` | `generateTerrain`: el terreno de bloques por semilla. Ver "Terreno por semilla". |
+| `world/paths`, `world/levelpaths` | `PathField` y `LevelPathField`: caminos hacia una meta, por la superficie o por niveles. Ver "Caminos" y "Caminos por niveles". |
+| `runtime/levels` | `moveBodyLevels`: cuerpos con alto que andan bajo techos, caen y saltan. Ver "Moverse por niveles". |
+| `world/save` | `encodeSnapshot` / `decodeSnapshot`: la partida en bytes. Ver "Guardar y cargar". |
+| `lighting/daycycle` | `DayCycle`: la luz ambiente a lo largo del día. Ver "El ciclo del día". |
+| `core/icons` | `iconSheet`, `modelIcon` y `fnv32`: hojas de iconos de modelos con su huella. Ver docs/editor.md, "Sets de bloques". |
 | `anim/walk`, `anim/rig` | Los cuadros de andar de un personaje (`walkFrames`) y la animación genérica por partes de cuerpos de varias patas (`rigFrames`). |
 | `fluid` | El fluido en volumen del editor (verter y grifos). |
 
@@ -109,6 +117,8 @@ esa caja (con 1 vóxel de margen, que es lo que cambian la oclusión y las caras
 normal suavizada), no el trozo con toda su altura. Quitar o poner vóxeles solo cambia lo que se ve a través de
 ellos, así que el resultado es el mismo, byte a byte, que hornear el mundo entero (hay pruebas, también con
 contorno). Las sombras de las luces fijas leen los vóxeles directamente: `baked.occ` ya no se usa y va vacío.
+Debajo está `rebakeJobs(baked, trozos, luces, cajas?)`, para quien lleve sus propios trozos cambiados (sin cajas,
+cada trozo entero).
 
 - Las luces fijas que alcanzan lo cambiado no se rehacen enteras: sobre sus mismos pesos (en un objeto nuevo, para que
   la GPU sepa que cambiaron) se recalculan solo los píxeles donde cambió el vóxel o la cara que se ve, los de vóxeles
@@ -318,7 +328,8 @@ field.floorsAt({ x, y });                                        // los suelos d
   sobresale, para que lo que sobra quede de un lado. Sin eso, la celda junto a una pared o a la cara de un escalón no
   tenía nunca suelo con `radius` >= `cell` / 2, y no se subía ni un escalón (hay prueba: escalón de un bloque con radius
   1, 2 y 3). Un cuerpo que cabe centrado (radius 1 con celdas de 4) no se corre: el campo es el de siempre. Con radius
-  3 construir cuesta más (~36 ms en vez de ~27 en el banco de bloques); buscar, lo mismo.
+  3 construir cuesta más (en el banco de bloques, `MUNDO=bloques RADIO=3`: ~36 ms, contra ~27 sin probar el cuerpo
+  corrido; con radius 1, ~11-16, sin cambio); buscar, lo mismo.
 - Guarda lo que da cada paso entre dos nodos vecinos (si se pasa o no) y solo lo borra donde cambia el mundo (las
   celdas tocadas y sus vecinas: un paso mira las dos celdas y, en diagonal, las dos de lado). Una búsqueda nueva con el
   mundo igual no vuelve a mirar columnas; el resultado es el mismo que con un campo nuevo (hay prueba, también con un
@@ -384,7 +395,8 @@ const field = new PathField(state, { cell: 4, radius: 2, step: 8, maxDrop: 16 })
 const d = field.dir({ x: e.x, y: e.y }, { x: px, y: py }, 6);
 const ruta = field.path(desde, hasta);                 // los centros de las celdas, con su suelo en z
 findPath(state, desde, hasta, { step: 8 });           // un camino suelto, sin guardar el campo
-field.close();                                        // al tirarlo: deja de oír los cambios del mundo
+field.at({ x, y });                                    // { floor, dist } de una celda, para dibujar o depurar
+field.close();                                        // al tirarlo: deja de oír los cambios del mundo (LevelPathField, igual)
 ```
 
 - La rejilla es de celdas de `cell` vóxeles. El suelo de una celda es el de su centro (`state.footing`: lo más alto
@@ -640,7 +652,7 @@ view.setCut(null);                                          // al salir
 - El resultado es el mismo, byte a byte, que hornear un mundo al que le faltan esos vóxeles (hay prueba en los 4
   giros, con una luz fija dentro de la zona cortada).
 - Mover la caja solo reescribe las columnas que entran y salen; cambiar `zTop`, todas las de la caja.
-- `view.setCut(corte)` lo aplica de una vez. Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
+- `view.setCut(corte)` lo aplica de una vez (y devuelve cuántas columnas reescribió; `view.currentCut` es el corte pedido). Para no parar el cuadro, `view.cutJob(corte)` da un trabajo de la cola
   (`FrameBudget`, prioridad 0: va con el presupuesto cercano) que reescribe columnas hasta el plazo; lo que va
   cambiando lo recoge `rebakeChangedJobs` cada cuadro. Si llega otro corte antes de acabar, sigue desde donde está y
   acaba igual que `setCut` (hay prueba).
@@ -653,7 +665,9 @@ view.setCut(null);                                          // al salir
   |---|---|---|---|---|
   | 32 x 32 | ~35 / ~135 cuadros | ~25 / ~75 | ~20 / ~70 | ~3-6 ms (~20-38 a 6x) |
 
-  ("Aparece": el corte y sus recuadros hechos; "acaba": también las luces y el cielo.) La unidad que no se puede
+  ("Aparece": el corte y sus recuadros hechos; "acaba": también las luces y el cielo.) Esta tabla es de cuando entró el
+  corte, con la cola de entonces, que dejaba pasarse del plazo: de ahí los cuadros de 20-38 ms. Con la cola de ahora,
+  que no empieza lo que no cabe, ver `bench-corte.ts` abajo. La unidad que no se puede
   partir es una franja del recuadro, y en un corte hondo cuesta ~1,7-2,5 ms sin freno. Para un juego: caja pequeña,
   movida a saltos, y `zTop` lo más alto que se pueda (justo por encima de la cabeza del jugador).
 - `bun scripts/bench-corte.ts` mide el corte de un túnel (caja de 32 x 32 a saltos de 16, `zTop` en el techo del
