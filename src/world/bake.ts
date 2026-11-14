@@ -287,7 +287,8 @@ function sameLight(a: WorldLight, b: WorldLight): boolean {
 function touchedBy(l: WorldLight, plans: readonly Plan[]): CellFilter {
   return (_px, _py, k, f) => {
     if (Number.isNaN(k)) return false;
-    const [vx, vy, vz] = unkey(k);
+    // unkey sin crear nada (es por píxel)
+    const vz = (k % 2048) - 1024, rr = Math.floor(k / 2048), vy = (rr % 2048) - 1024, vx = Math.floor(rr / 2048) - 1024;
     // El vóxel mismo dentro de lo cambiado (pudo cambiar su material: cuánta luz recibe por detrás)
     for (let q = 0; q < plans.length; q++) {
       const p = plans[q]!;
@@ -303,10 +304,50 @@ function touchedBy(l: WorldLight, plans: readonly Plan[]): CellFilter {
   };
 }
 
-// El recuadro de pantalla donde puede caer la sombra de la caja p vista desde la luz l (de radio r): la caja y sus
-// esquinas alargadas desde la luz hasta donde la luz ya no llega. 'all' si la luz está casi dentro de la caja (la sombra
-// abre demasiado); null si la caja queda fuera de su alcance
-function shadowRect(b: Baked, l: WorldLight, r: number, p: Plan): ScreenRect | 'all' | null {
+// Las filas de pantalla de la sombra (su silueta convexa, no su recuadro), con 2 píxeles de margen en x y en y:
+// [x0, x1, y] con x0..x1 incluidos
+function shadowRows(b: Baked, l: WorldLight, r: number, p: Plan): Array<[number, number, number]> | 'all' | null {
+  const pts = shadowHull(b, l, r, p);
+  if (pts === null || pts === 'all') return pts;
+  const hull = convexHull(pts), n = hull.length;
+  let ya = Infinity, yb = -Infinity;
+  for (const [, y] of hull) { ya = Math.min(ya, y); yb = Math.max(yb, y); }
+  const Y0 = Math.floor(ya) - 2, Y1 = Math.ceil(yb) + 2;
+  // El intervalo en x de la silueta en la franja de cada fila entera [y, y+1)
+  const lo = new Float64Array(Y1 - Y0 + 1).fill(Infinity), hi = new Float64Array(Y1 - Y0 + 1).fill(-Infinity);
+  const put = (x: number, y: number) => { const j = Math.floor(y) - Y0; if (j >= 0 && j < lo.length) { if (x < lo[j]!) lo[j] = x; if (x > hi[j]!) hi[j] = x; } };
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = hull[i]!, [bx, by] = hull[(i + 1) % n]!;
+    put(ax, ay);
+    const s0 = Math.min(ay, by), s1 = Math.max(ay, by);
+    for (let y = Math.ceil(s0); y <= s1; y++) {                // donde el lado cruza una fila entera
+      const t = by === ay ? 0 : (y - ay) / (by - ay), x = ax + (bx - ax) * t;
+      put(x, y); put(x, y - 1);
+    }
+  }
+  const rows: Array<[number, number, number]> = [];
+  for (let j = 0; j < lo.length; j++) {
+    let a = Infinity, c = -Infinity;
+    for (let k = Math.max(0, j - 2); k <= Math.min(lo.length - 1, j + 2); k++) { a = Math.min(a, lo[k]!); c = Math.max(c, hi[k]!); }
+    if (a <= c) rows.push([Math.floor(a) - 2, Math.ceil(c) + 2, Y0 + j]);
+  }
+  return rows;
+}
+
+// La envolvente convexa de unos puntos (cadena monótona), en orden
+function convexHull(pts: Array<[number, number]>): Array<[number, number]> {
+  const p = [...pts].sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  if (p.length < 3) return p;
+  const cross = (o: [number, number], a: [number, number], c: [number, number]) => (a[0] - o[0]) * (c[1] - o[1]) - (a[1] - o[1]) * (c[0] - o[0]);
+  const lower: Array<[number, number]> = [], upper: Array<[number, number]> = [];
+  for (const q of p) { while (lower.length >= 2 && cross(lower[lower.length - 2]!, lower[lower.length - 1]!, q) <= 0) lower.pop(); lower.push(q); }
+  for (let i = p.length - 1; i >= 0; i--) { const q = p[i]!; while (upper.length >= 2 && cross(upper[upper.length - 2]!, upper[upper.length - 1]!, q) <= 0) upper.pop(); upper.push(q); }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+// Los puntos de pantalla de la sombra de la caja vista desde la luz: sus 8 esquinas y las mismas alargadas hasta donde
+// la luz ya no llega ('all': la sombra abre demasiado; null: la caja queda fuera de su alcance)
+function shadowHull(b: Baked, l: WorldLight, r: number, p: Plan): Array<[number, number]> | 'all' | null {
   const x0 = p.X0 - 1, y0 = p.Y0 - 1, z0 = p.Z0 - 1, x1 = p.X1 + 2, y1 = p.Y1 + 2, z1 = p.Z1 + 2;
   const cx = (x0 + x1) / 2 - l.x, cy = (y0 + y1) / 2 - l.y, cz = (z0 + z1) / 2 - l.z, cl = Math.hypot(cx, cy, cz);
   const hx = (x1 - x0) / 2, hy = (y1 - y0) / 2, hz = (z1 - z0) / 2;
@@ -323,15 +364,15 @@ function shadowRect(b: Baked, l: WorldLight, r: number, p: Plan): ScreenRect | '
   }
   if (cosMin < 0.35) return 'all';
   const far = r / cosMin;
-  let sx0 = Infinity, sy0 = Infinity, sx1 = -Infinity, sy1 = -Infinity;
+  const out: Array<[number, number]> = [];
   for (const [ex, ey, ez] of corners) {
     const el = Math.hypot(ex, ey, ez), k = Math.max(1, far / el);
     for (const t of [1, k]) {
       const [sx, sy] = b.cam.project(l.x + ex * t, l.y + ey * t, l.z + ez * t);
-      sx0 = Math.min(sx0, sx); sx1 = Math.max(sx1, sx); sy0 = Math.min(sy0, sy); sy1 = Math.max(sy1, sy);
+      out.push([sx, sy]);
     }
   }
-  return { x0: sx0 - 2, y0: sy0 - 2, x1: sx1 + 2, y1: sy1 + 2 };
+  return out;
 }
 
 // ¿Corta el segmento a -> b la caja [x0, x1] x [y0, y1] x [z0, z1]? (por franjas, sin crear nada)
@@ -355,14 +396,14 @@ function segmentHitsBox(ax: number, ay: number, az: number, bx: number, by: numb
   if (u > t0) t0 = u; if (v < t1) t1 = v;
   return t0 <= t1;
 }
-function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number, only?: CellFilter, out?: Staged): BakedLight {
-  const ctx = weightCtx(b, zone, out);
+function weightCells(b: Baked, zone: BakedLight, c0: number, c1: number, only?: CellFilter, out?: Staged, given?: WeightCtx): BakedLight {
+  const ctx = given ?? weightCtx(b, zone, out);
   for (let c = c0; c < c1; c++) cellWeight(b, zone, ctx, c, only);
   return zone;
 }
 // Lo mismo para una lista de píxeles de la zona (en orden de lectura de la zona)
-function weightList(b: Baked, zone: BakedLight, cells: ArrayLike<number>, from: number, to: number, out?: Staged): void {
-  const ctx = weightCtx(b, zone, out);
+function weightList(b: Baked, zone: BakedLight, cells: ArrayLike<number>, from: number, to: number, out?: Staged, given?: WeightCtx): void {
+  const ctx = given ?? weightCtx(b, zone, out);
   for (let q = from; q < to; q++) cellWeight(b, zone, ctx, cells[q]!);
 }
 // Pesos rehechos que esperan a publicarse (la zona publicada no cambia hasta que el trabajo acaba): índice y valor
@@ -532,7 +573,8 @@ const PUBLISHED_KEEP = 32;
 export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number }
 
 const RECT_BAND = 4;      // columnas de píxeles por paso del recuadro
-const LIGHT_BAND = 4;     // filas de pesos por paso de una luz
+const LIGHT_CELLS = 32;   // píxeles de una zona de luz por paso
+const LIGHT_OWN = 16;     // píxeles cambiados por paso (cada uno, su rayo de sombra)
 
 // boxes (opcional): la caja de lo cambiado en cada trozo (StaticVoxels.changedBox); sin ella, el trozo entero
 // lights son TODAS las luces del mundo (o de la vista): las fijas horneadas que ya no están (quitadas, o que pasaron a
@@ -600,7 +642,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     if (!plans.some((p) => !(l.x + r < p.X0 || l.x - r > p.X1 + 1 || l.y + r < p.Y0 || l.y - r > p.Y1 + 1))) continue;
     let zone: BakedLight | null | undefined, only: CellFilter | undefined;
     // Lo que hay que rehacer de la zona, en recuadros de la zona [i0, i1) x [j0, j1), y por dónde va
-    let spans: Array<[number, number, number, number]> = [], si = 0, row = 0, own: number[] = [], oi = 0, staged: Staged | undefined;
+    let spans: Array<[number, number, number, number]> = [], si = 0, row = 0, col = -1, own: number[] = [], oi = 0, staged: Staged | undefined, wctx: WeightCtx | undefined;
     jobs.push({
       key: `light:${l.id}`,
       run(deadline) {
@@ -632,9 +674,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             };
             let whole = false;
             for (const p of plans) {
-              const sh = shadowRect(b, l, r, p);
+              const sh = shadowRows(b, l, r, p);
               if (sh === 'all') { whole = true; break; }
-              if (sh) add(sh.x0, sh.y0, sh.x1, sh.y1);
+              if (sh) for (const [x0, x1, y] of sh) add(x0, y, x1, y);
             }
             if (!whole) {
               spans = out;
@@ -648,17 +690,22 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           }
         }
         if (zone && oi < own.length) {
-          // Los píxeles que cambiaron, de 64 en 64
-          do { const o1 = Math.min(own.length, oi + 64); weightList(b, zone, own, oi, o1, staged); oi = o1; } while (oi < own.length && performance.now() < deadline);
+          // Los píxeles que cambiaron, de LIGHT_OWN en LIGHT_OWN (su rayo de sombra puede ser largo: en un foso cruza
+          // paredes y va vóxel a vóxel)
+          wctx ??= weightCtx(b, zone, staged);
+          do { const o1 = Math.min(own.length, oi + LIGHT_OWN); weightList(b, zone, own, oi, o1, staged, wctx); oi = o1; } while (oi < own.length && performance.now() < deadline);
           if (oi < own.length) return false;
         }
+        // Los recuadros, de LIGHT_CELLS en LIGHT_CELLS píxeles (no de filas enteras: una fila de una zona grande con
+        // sombras largas era un paso de varios ms)
         if (zone) while (si < spans.length) {
           const [i0, i1, j0, j1] = spans[si]!;
-          if (row < j0) row = j0;
-          const r1 = Math.min(j1, row + LIGHT_BAND);
-          for (let j = row; j < r1; j++) weightCells(b, zone, j * zone.rect.w + i0, j * zone.rect.w + i1, only, staged);
-          row = r1;
-          if (row >= j1) { si++; row = 0; }
+          if (row < j0 || col < 0) { row = Math.max(row, j0); col = i0; }
+          const c1 = Math.min(i1, col + LIGHT_CELLS);
+          wctx ??= weightCtx(b, zone, staged);
+          weightCells(b, zone, row * zone.rect.w + col, row * zone.rect.w + c1, only, staged, wctx);
+          col = c1;
+          if (col >= i1) { row++; col = i0; if (row >= j1) { si++; row = 0; col = -1; } }
           if (performance.now() >= deadline) break;
         }
         if (zone && si < spans.length) return false;
@@ -678,17 +725,19 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
 
 // Hornea una luz fija entera como trabajo (una puesta en partida)
 function lightJob(b: Baked, l: WorldLight): ViewJob {
-  let zone: BakedLight | null | undefined, row = 0;
+  let zone: BakedLight | null | undefined, cell = 0, wctx: WeightCtx | undefined;
   return {
     key: `light:${l.id}`,
     run(deadline) {
       if (zone === undefined) zone = lightZone(b, l);
+      const n = zone ? zone.rect.w * zone.rect.h : 0;
       if (zone) do {
-        const r1 = Math.min(zone.rect.h, row + LIGHT_BAND);
-        weightRows(b, zone, row, r1);
-        row = r1;
-      } while (row < zone.rect.h && performance.now() < deadline);
-      if (zone && row < zone.rect.h) return false;
+        const c1 = Math.min(n, cell + LIGHT_CELLS);
+        wctx ??= weightCtx(b, zone);
+        weightCells(b, zone, cell, c1, undefined, undefined, wctx);
+        cell = c1;
+      } while (cell < n && performance.now() < deadline);
+      if (zone && cell < n) return false;
       if (!b.pendingLights?.delete(l.id)) return true;   // se quitó mientras: no se publica
       const i = b.lights.findIndex((bl) => bl.light.id === l.id);
       if (i >= 0) b.lights.splice(i, 1);
