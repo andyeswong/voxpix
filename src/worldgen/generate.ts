@@ -1,6 +1,7 @@
 // Motor de escenario: el generador determinista de mapas por teselas.
 // PARTE PURA (sim/ puede usarla): genera un nivel entero desde una semilla y un GeneratorSpec. La misma
 // semilla y el mismo spec dan siempre el mismo mundo. Todo el azar sale de sim/rng.ts (con semilla).
+import { fbm, lattice } from './noise';
 import type { LightSource } from '../lighting/lights';
 import { createRng } from '../sim/rng';
 import { analyzeMasses, DEFAULT_MASS_OPTIONS, type MassMap } from '../terrain/regions';
@@ -40,23 +41,6 @@ export interface Layout {
   spawn: { x: number; y: number };          // los pies del jugador, en píxeles
   doors?: DoorSlot[];                       // los huecos de puerta (spec.doors), abiertos o cerrados
   blocks?: Array<{ gx: number; gy: number; x0: number; y0: number }>;   // las salas de un mapa unido (stitchRooms), en losetas
-}
-
-// Ruido de valor suave con semilla (enteros, sin azar)
-function lattice(x: number, y: number, seed: number): number {
-  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 2147483647)) >>> 0;
-  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
-}
-function valueNoise(x: number, y: number, seed: number): number {
-  const x0 = Math.floor(x), y0 = Math.floor(y);
-  const fx = x - x0, fy = y - y0;
-  const sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
-  const a = lattice(x0, y0, seed), b = lattice(x0 + 1, y0, seed), c = lattice(x0, y0 + 1, seed), d = lattice(x0 + 1, y0 + 1, seed);
-  return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
-}
-function fbm(x: number, y: number, seed: number): number {
-  return (valueNoise(x, y, seed) * 4 + valueNoise(x * 2, y * 2, seed + 1) * 2 + valueNoise(x * 4, y * 4, seed + 2)) / 7;
 }
 
 // Distancia (en losetas, contando las diagonales como 1) de cada loseta a la pared más cercana

@@ -159,6 +159,8 @@ budget.run();
 - Las dos escriben por `StaticVoxels.set`: `watchChanges` da sus cajas `'voxels'`, y `rebakeChangedJobs` rehace solo
   lo que cambió (ver "Rehornear lo que cambió"). Devuelven la caja de lo que cambió de verdad: poner lo que ya hay
   da `null` y no rehornea nada.
+- `FrameBudget.ms` se puede cambiar entre cuadros: una ráfaga de presupuesto los cuadros que siguen a algo que el
+  jugador tiene que ver ya (un golpe), y el de siempre después.
 - `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
   en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
   trabajos sin prioridad van detrás, en su orden.
@@ -199,6 +201,37 @@ const hit = pickBlock(grid, view, baked, sx, sy);       // { cell: [bx, by, bz],
 - La rejilla se añade al mundo como una parte del estado (`WorldState.addPart`): entra en `snapshot`, `restore` y
   `hash`. Un mundo sin partes da la huella de siempre. `addPart` sirve para cualquier otro estado que añada un juego
   (`exportState`, `importState`, `hashInto`).
+
+## Terreno por semilla
+
+Un terreno de bloques (superficie, capas, vetas y lo que se planta encima) descrito como datos, sobre una `BlockGrid`
+y antes de hornear. Determinista: la misma semilla da el mismo terreno en cualquier máquina. Solo superficie (sin
+cuevas).
+
+```ts
+import { generateTerrain } from '@voxpix/world/terrain';
+
+const { heights } = generateTerrain({
+  seed: 7,
+  surface: { base: 6, amplitude: 3, scale: 9, octaves: 3 },        // altura en bloques: base +- amplitude
+  layers: [{ block: 'hierba', depth: 1 }, { block: 'tierra', depth: 2 }, { block: 'piedra' }],   // la última, hasta abajo
+  veins: [{ block: 'carbon', in: 'piedra', chance: 0.08, size: [1, 3], bz: [0, 5] }],
+  scatter: [{ on: 'hierba', density: 0.02, spacing: 4,              // un árbol: tronco de 3 y copa
+    structure: [[0, 0, 1, 'tronco'], [0, 0, 2, 'tronco'], [0, 0, 3, 'tronco'], [0, 0, 4, 'hojas'], [1, 0, 4, 'hojas'], [-1, 0, 4, 'hojas']] }],
+}, grid);
+```
+
+- `surface`: la altura de cada columna (el bz de su bloque de arriba) con ruido de `scale` bloques y `octaves` octavas,
+  entre 0 y la última capa de la rejilla. `heights` la da por columna (`by * cols + bx`).
+- `layers`: de arriba abajo, cada una con su bloque y su grosor en bloques; la última llega hasta abajo.
+- `veins`: en los bloques `in` dentro de la franja `bz`, cada uno empieza una veta con probabilidad `chance`, que crece
+  por vecinos hasta `size` bloques.
+- `scatter`: estructuras (listas de bloques `[dx, dy, dz, bloque]` relativas al de arriba de la columna) sobre las
+  columnas que acaban en `on`, con probabilidad `density` y separadas `spacing` bloques. Solo se planta si cabe y va
+  sobre aire; se pone con `grid.set`, así que aplica las variantes tapadas (la hierba bajo un tronco, tierra) y la luz
+  que emitan.
+- El ruido es de `src/worldgen/noise.ts` (`valueNoise`, `fbm`, `fbmN`, `lattice`), exportado para quien quiera más.
+- En un portátil, sin freno: un terreno de 48 x 48 x 12 bloques de 8 se genera en ~0,25 s y se hornea en ~0,3 s.
 
 ## Entidades
 

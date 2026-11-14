@@ -5,8 +5,8 @@
 //     su dibujo. Escribe con stampModel/clearBox (edit.ts), así que el rehorneado es el de siempre, y entra en la
 //     instantánea y la huella del mundo (WorldState.addPart).
 // docs/motor.md, "Bloques".
-import { Model, decode, rampMaterial, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
-import { stampModel, clearBox, rampMap, type Yaw } from './edit';
+import { Model, decode, material, rampMaterial, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
+import { clearBox, rampMap, turnCell, type Yaw } from './edit';
 import type { Box3 } from './changes';
 import type { WorldState, LightId, StatePart, StateHasher } from './state';
 import type { WorldView } from './view';
@@ -197,20 +197,48 @@ export class BlockGrid implements StatePart {
       this.lightOf.delete(i);
     }
     this.cells[i] = type; this.yaws[i] = type ? q : 0;
-    const b = this.box(bx, by, bz), N = this.N;
+    const b = this.box(bx, by, bz);
     let box = clearBox(this.state, b);
     if (type) {
       const def = this.blocks.get(type);
-      const ox = q === 1 || q === 2 ? N : 0, oy = q === 2 || q === 3 ? N : 0;
-      box = union(box, stampModel(this.state, def.model, b.x0 + ox, b.y0 + oy, b.z0, yaw));
+      // Tras vaciar la caja, todo lo que se pone cambia: la caja de lo puesto es la de la lista
+      const list = this.stampList(type, q), s = this.state.solid;
+      for (let k = 0; k < list.length; k += 4) s.set(b.x0 + list[k]!, b.y0 + list[k + 1]!, b.z0 + list[k + 2]!, list[k + 3]!);
+      const bd = this.bounds(type, q);
+      if (list.length) box = union(box, { x0: b.x0 + bd[0]!, y0: b.y0 + bd[1]!, z0: b.z0 + bd[2]!, x1: b.x0 + bd[3]!, y1: b.y0 + bd[4]!, z1: b.z0 + bd[5]! });
       const e = def.props.emits;
       if (e) {
-        const at = e.at ?? [N / 2, N / 2, N];
+        const N = this.N, at = e.at ?? [N / 2, N / 2, N];
         this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + at[0], y: b.y0 + at[1], z: b.z0 + at[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
       }
     }
     return box;
   }
+
+  // Los vóxeles de un tipo girado q cuartos, ya en valores del mundo y relativos a la esquina del bloque: x, y, z, valor
+  // (lo mismo que stampModel, preparado una vez por tipo y giro)
+  private stamps = new Map<number, { list: Int32Array; bounds: number[] }>();
+  private stampEntry(type: number, q: number) {
+    const k = type * 4 + q;
+    let e = this.stamps.get(k);
+    if (!e) {
+      const def = this.blocks.get(type), N = this.N, map = rampMap(def.model.palette, this.state.solid.palette);
+      const out: number[] = [], bd = [Infinity, Infinity, Infinity, -Infinity, -Infinity, -Infinity];
+      for (const [mx, my, mz, v] of def.model.entries()) {
+        let [x, y] = turnCell(mx, my, (q * 90) as Yaw);
+        x += q === 1 || q === 2 ? N : 0; y += q === 2 || q === 3 ? N : 0;
+        const { ramp, tone } = decode(v);
+        out.push(x, y, mz, material(map[ramp]!, tone));
+        bd[0] = Math.min(bd[0]!, x); bd[1] = Math.min(bd[1]!, y); bd[2] = Math.min(bd[2]!, mz);
+        bd[3] = Math.max(bd[3]!, x); bd[4] = Math.max(bd[4]!, y); bd[5] = Math.max(bd[5]!, mz);
+      }
+      e = { list: Int32Array.from(out), bounds: bd };
+      this.stamps.set(k, e);
+    }
+    return e;
+  }
+  private stampList(type: number, q: number): Int32Array { return this.stampEntry(type, q).list; }
+  private bounds(type: number, q: number): number[] { return this.stampEntry(type, q).bounds; }
 
   // ---- parte del estado del mundo (WorldState.addPart)
   exportState(): BlockGridState {

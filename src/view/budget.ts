@@ -21,7 +21,8 @@ export class FrameBudget {
   private queue: ViewJob[] = [];
   private starved = 0;
 
-  constructor(readonly ms = 3, private readonly now: () => number = () => performance.now()) {}
+  // ms se puede cambiar entre cuadros (una ráfaga de presupuesto tras algo que el jugador tiene que ver ya)
+  constructor(public ms = 3, private readonly now: () => number = () => performance.now()) {}
 
   get pending(): number {
     return this.queue.length;
