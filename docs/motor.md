@@ -260,12 +260,15 @@ budget.run();
   ninguna empieza sin sitio). Las llamadas que no gastan nada medible (esperar a otro trabajo) no cuentan ni para la
   estimación ni como la primera llamada de la fase. Lo cercano que no acabó no vuelve a correr en la fase de lo demás
   del mismo cuadro: antes se llevaba otra unidad entera de ese presupuesto.
-- Lo que sobra del cercano, si no queda nada cercano en la cola, se lo lleva la fase de lo demás, con las mismas
-  reglas: el cuadro no pasa de `near.ms + ms`. Así lo de detrás (el cielo, las luces lejanas, preparar lo expuesto)
-  avanza cuando no hay nada urgente. Si queda algo cercano (no cupo), lo que sobra es suyo y no se reparte. Preparar lo
-  expuesto de un mundo de bloques de 384 x 384 x 96 sin nada más en la cola pasa de 146 a 42 cuadros
-  (`FrameBudget(3, ..., { ms: 8 })` a 6x). En un juego, antes de esto acababa a los 20-25 s, después de los primeros
-  cortes.
+- Lo que sobra del cercano, si no queda nada cercano en la cola, se lo lleva la fase de lo demás hasta `spare` ms
+  (cuarto argumento de `FrameBudget`; por defecto, `ms`: lo demás como mucho se duplica; 0, nada), con las mismas
+  reglas. Así lo de detrás (el cielo, las luces lejanas, preparar lo expuesto) avanza cuando no hay nada urgente. Si
+  queda algo cercano (no cupo), lo que sobra es suyo. Con tope porque lo que sobra del cercano no es tiempo libre: es el
+  margen que el juego dejó para la varianza del cuadro (un pico de la simulación). En un juego a 6x:
+  - con el sobrante entero, preparar lo expuesto acababa antes del primer corte (cuadro 154-176 en vez de 362), pero
+    los cuadros de más de 25 ms en una noche con cortes pasaban de 8-10 a 28-43 por tirada;
+  - en el banco (mundo de bloques de 384 x 384 x 96, nada más en la cola), preparar lo expuesto tarda 160 cuadros con
+    `spare` 0, 80 con el defecto y 43 con el sobrante entero.
 - Lo que no cabe se salta, pero no para siempre. Un trabajo que lleva 4 cuadros seguidos saltado por no caber va el
   primero de su fase en el siguiente (la primera llamada es la que puede no caber). Sin eso podía quedarse bloqueado:
   una clase cuya llamada cuesta más que el cercano entero (la primera franja de un recuadro de corte) solo corre como

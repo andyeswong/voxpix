@@ -30,7 +30,11 @@ export class FrameBudget {
   // priority < near.below, que se hacen antes y pueden llevarse hasta near.ms del cuadro; los demás siguen con ms.
   // Así lo que el jugador tiene que ver ya (el recuadro de un golpe, con rebakeChangedJobs y near) cabe en un cuadro
   // sin dar más tiempo a todo lo demás
-  constructor(public ms = 3, private readonly now: () => number = () => performance.now(), public near: { ms: number; below: number } | null = null) {}
+  // spare: cuánto de lo que sobra del cercano (si no queda nada cercano) puede llevarse lo demás; por defecto, ms (lo
+  // demás, como mucho, el doble); 0, nada. Lo que sobra del cercano no es tiempo libre: es el margen que el juego dejó
+  // para la varianza del cuadro (un pico de la simulación). Con el sobrante entero, en un juego a 6x, los cuadros de más
+  // de 25 ms pasaban de 8-10 a 28-43 por tirada
+  constructor(public ms = 3, private readonly now: () => number = () => performance.now(), public near: { ms: number; below: number } | null = null, public spare?: number) {}
 
   get pending(): number {
     return this.queue.length;
@@ -156,10 +160,10 @@ export class FrameBudget {
     while (from < this.queue.length && isNear(this.queue[from]!)) from++;
     if (from >= this.queue.length) return this.now() - start;
     const start2 = this.now();
-    // Lo que sobra del cercano, si no queda nada cercano en la cola (se acabó, o no había): se lo lleva lo demás. Así lo
-    // de detrás (el cielo, las luces lejanas, preparar lo expuesto) avanza cuando no hay nada urgente, sin pasar del
-    // presupuesto que el juego ya da al cuadro (near.ms + ms). Si queda algo cercano (no cupo), no: es suyo
-    const spare = nr && from === 0 ? Math.max(0, start + nr.ms - start2) : 0;
+    // Lo que sobra del cercano, si no queda nada cercano en la cola (se acabó, o no había): lo demás se lleva como mucho
+    // `spare` (por defecto, ms). Así lo de detrás (el cielo, las luces lejanas, preparar lo expuesto) avanza cuando no
+    // hay nada urgente, sin comerse el margen del juego. Si queda algo cercano (no cupo), no: es suyo
+    const spare = nr && from === 0 ? Math.min(this.spare ?? this.ms, Math.max(0, start + nr.ms - start2)) : 0;
     let deadline = start2 + this.ms - spentMs + spare;
     if (deadline <= start2) {
       if (++this.starved < STARVE_FRAMES) return this.now() - start;
