@@ -477,6 +477,33 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 - Fuera de alcance: el giro continuo y otras proyecciones. Serían otra `ViewCamera`, sin tocar el render.
 - El oráculo CPU contra GPU (`app/oraculo.html`) prueba los 4 giros y un mundo de lados impares.
 
+## Cortar la vista
+
+Con la cámara oblicua, lo de arriba tapa lo de abajo: un túnel, una cueva o una casa con tejado no se ven. Una vista
+con copia de los vóxeles puede CORTAR: esconder lo que queda por encima de una altura dentro de una caja, sin tocar el
+mundo de la simulación.
+
+```ts
+const view = new WorldView(state, giro, { cut: true });   // la vista lleva su copia también en el giro 0
+const baked = bakeWorld(view.bakeable(), opciones);
+// Al bajar a un túnel: lo de z >= zTop en esa caja (ejes del mundo, columnas incluidas) deja de verse
+view.setCut({ x0, y0, x1, y1, zTop });
+// Como siempre, cada cuadro: rebakeChangedJobs rehace lo que el corte cambió (y las luces que le afectan)
+for (const j of rebakeChangedJobs(baked, view.frame().lights, { near })) budget.push(j);
+view.setCut(null);                                          // al salir
+```
+
+- El corte vive en la copia de la vista: picar o poner en el mundo dentro de la caja se copia a la vista sin deshacerlo.
+  Las luces no se tocan: una antorcha en la zona cortada sigue alumbrando lo que queda (para esconderla,
+  `view.hideLight`).
+- El resultado es el mismo, byte a byte, que hornear un mundo al que le faltan esos vóxeles (hay prueba en los 4
+  giros, con una luz fija dentro de la zona cortada).
+- Mover la caja solo reescribe las columnas que entran y salen; cambiar `zTop`, todas las de la caja.
+- Coste (sin freno, terreno de 384 x 384 x 96 con 30 antorchas, caja de 64 x 64): poner o quitar el corte cuesta
+  ~5 ms de escribir y ~50-80 ms de rehorneado (que reparte la cola); moverlo un vóxel, ~0,5 ms y ~10 ms; bajarlo 8,
+  ~5 ms y ~50 ms. Es caro: lo que cambia es mucho (todo lo que se destapa y la sombra de todo lo que se quita). Para un
+  juego, mejor una caja pequeña que se mueva a saltos (de 16 en 16) que una grande que siga al jugador vóxel a vóxel.
+
 ## La silueta de lo que queda detrás
 
 Todas las paredes miden lo mismo, así que una pared que está entre la cámara y un personaje (la del sur, en la vista de

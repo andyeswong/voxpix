@@ -193,7 +193,11 @@ class FxView implements FxSource {
 // hornear, y después con los trozos de la vista que se acaban de volver a copiar del mundo (lo vestido en ellos se
 // perdió). Puede poner view.hideLight para las luces que cuelgan de lo quitado: no se hornean ni se pintan.
 export type ViewDress = (view: WorldView, changed: readonly number[] | null) => void;
-export interface WorldViewOptions { dress?: ViewDress }
+// cut: la vista lleva su copia de los vóxeles también en el giro 0 para poder CORTAR (setCut): esconder lo que queda por
+// encima de una altura dentro de una caja, para ver un túnel, una cueva o un interior desde arriba
+export interface WorldViewOptions { dress?: ViewDress; cut?: boolean }
+// Un corte en ejes del MUNDO: las columnas x0..x1, y0..y1 (incluidas) pierden sus vóxeles de z >= zTop
+export interface ViewCut { x0: number; y0: number; x1: number; y1: number; zTop: number }
 
 export class WorldView implements RenderState {
   readonly camera: ViewCamera;
@@ -218,7 +222,7 @@ export class WorldView implements RenderState {
     this.dress = opts.dress ?? null;
     // Sin girar y sin vestir, el render ve el estado de verdad, sin copias. Vestida, la vista tiene su copia también
     // en el giro 0: el vestido no toca nunca el mundo de la simulación.
-    this.static = quarter === 0 && !this.dress ? src : pre?.static ?? rotatedStatic(src, this.camera);
+    this.static = quarter === 0 && !this.dress && !opts.cut ? src : pre?.static ?? rotatedStatic(src, this.camera);
     if (quarter === 0) {
       this.water = state.water;
       this.drops = state.drops;
@@ -262,7 +266,8 @@ export class WorldView implements RenderState {
         const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
         for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {
           const [vx, vy] = cam.cellToView(x, y);
-          for (let z = src.zMin; z <= src.zMax; z++) this.static.set(vx, vy, z, src.get(x, y, z));
+          const cz = this.cutTopAt(x, y);
+          for (let z = src.zMin; z <= src.zMax; z++) this.static.set(vx, vy, z, z >= cz ? 0 : src.get(x, y, z));
           touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
         }
       }
@@ -290,6 +295,47 @@ export class WorldView implements RenderState {
       sources: views,
       lights: () => [...(st.effectsOn ? fxWorldLights(st.fx, map) : []), ...fxWorldLights(st.simFx, map, 'fxs')],
     };
+  }
+
+  // ---- el corte
+  private cut: ViewCut | null = null;
+  get currentCut(): ViewCut | null { return this.cut ? { ...this.cut } : null; }
+  // Desde qué z se esconde la columna (x, y) del mundo (Infinity: nada)
+  private cutTopAt(x: number, y: number): number {
+    const c = this.cut;
+    return c && x >= c.x0 && x <= c.x1 && y >= c.y0 && y <= c.y1 ? c.zTop : Infinity;
+  }
+
+  // Pone, mueve o quita (null) el corte: en la copia de la vista, las columnas de la caja pierden lo que tienen de zTop
+  // para arriba, y las que salen de la caja lo recuperan del mundo. Solo se reescriben las columnas que cambian (las
+  // franjas que entran y salen al mover la caja, o todas si cambia zTop), así que rebakeChangedJobs rehace solo eso.
+  // La vista tiene que tener copia (new WorldView(state, q, { cut: true }), o estar girada o vestida). Devuelve cuántas
+  // columnas se reescribieron
+  setCut(cut: ViewCut | null): number {
+    if (!this.copied) throw new Error('para cortar, la vista necesita su copia de los vóxeles: new WorldView(state, giro, { cut: true })');
+    this.refresh();
+    const old = this.cut, src = this.state.solid, cam = this.camera;
+    const norm = cut ? { x0: Math.max(0, Math.min(cut.x0, cut.x1)), y0: Math.max(0, Math.min(cut.y0, cut.y1)), x1: Math.min(src.width - 1, Math.max(cut.x0, cut.x1)), y1: Math.min(src.depth - 1, Math.max(cut.y0, cut.y1)), zTop: cut.zTop } : null;
+    this.cut = norm;
+    let n = 0;
+    const touched = new Set<number>();
+    const redo = (x: number, y: number) => {
+      const was = old && x >= old.x0 && x <= old.x1 && y >= old.y0 && y <= old.y1 ? old.zTop : Infinity;
+      const now = this.cutTopAt(x, y);
+      if (was === now) return;
+      const [vx, vy] = cam.cellToView(x, y);
+      for (let z = Math.max(src.zMin, Math.min(was, now)); z <= src.zMax; z++) this.static.set(vx, vy, z, z >= now ? 0 : src.get(x, y, z));
+      touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
+      n++;
+    };
+    // Las columnas de la caja que envuelve la vieja y la nueva (redo no hace nada donde no cambia)
+    const bs = [old, norm].filter((b): b is ViewCut => !!b);
+    if (bs.length) {
+      const X0 = Math.min(...bs.map((b) => b.x0)), X1 = Math.max(...bs.map((b) => b.x1)), Y0 = Math.min(...bs.map((b) => b.y0)), Y1 = Math.max(...bs.map((b) => b.y1));
+      for (let y = Y0; y <= Y1; y++) for (let x = X0; x <= X1; x++) redo(x, y);
+    }
+    if (touched.size && this.dress) this.dress(this, [...touched]);
+    return n;
   }
 
   // Una caja del mundo (x0, y0, z0, x1, y1, z1, celdas incluidas) en ejes de esta vista: para Frame2DOptions.highlight
