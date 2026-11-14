@@ -291,6 +291,27 @@ state.entities.remove(id);
   (`HEADINGS` de `world/frame2d`) y precalentar con `compositor.prewarm` lo que vaya a salir, para que el primer
   cuadro no pague el render.
 
+## Animaciones con nombre
+
+Un `.voxpix.json` hecho con el editor puede traer varios clips (quieto, andar, atacar, morir). En un juego:
+
+```ts
+import { clipsFromFile, clipFrameAt, clipDone } from '@voxpix/core';
+import bichoFile from './bicho.voxpix.json';
+
+const clips = new Map(clipsFromFile(bichoFile).map((c) => [c.name, c]));
+// Cada cuadro de la entidad: el clip que toque y el tiempo desde que empezó (en ticks de la simulación, si debe ser
+// determinista)
+const c = clips.get(estado)!;
+state.entities.setModel(id, c.frames[clipFrameAt(c, ms)]!.model);
+if (clipDone(c, ms)) { /* un clip que no se repite (atacar, morir) acabó: el siguiente */ }
+```
+
+- `clipFrameAt(clip, ms)`: el cuadro a los `ms` de empezar; si el clip se repite, da la vuelta; si no, se queda en el
+  último. `clipDone(clip, ms)`: si un clip que no se repite ya acabó.
+- Las versiones 1 y 2 del archivo se leen como un clip `anim` que se repite.
+- Conviene precalentar (`compositor.prewarm`) los cuadros de todos los clips que vayan a salir.
+
 ## Luces
 
 ```ts

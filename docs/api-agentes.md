@@ -114,6 +114,21 @@ tiene su propio deshacer.
 | `animPng({ scale? })` | promesa de `{name, base64}` | La hoja: los cuadros en fila, en el ángulo de la vista previa, con el mismo encuadre para todos y luz si `lit`. |
 | `animGif({ scale? })` | promesa de `{name, base64}` | El GIF animado (en bucle), igual; cada cuadro dura la media de las duraciones. |
 
+**Clips con nombre.** Un modelo puede tener varias animaciones (quieto, andar, atacar, morir): cada clip tiene sus
+cuadros, su rig y si se repite. Todo lo de arriba (cuadros, rig, reproducir, exportar) trabaja sobre el clip abierto.
+
+| Función | Devuelve | Qué hace |
+|---|---|---|
+| `clips()` | lista | `{name, frames, loop, current}` de cada clip. |
+| `clip(name)` | `frames()` | Abre ese clip. |
+| `newClip(name, { empty?, loop? })` | `clips()` | Un clip nuevo con un cuadro: copia del cuadro 0 del abierto (la pose de reposo), o vacío; y lo abre. |
+| `renameClip(from, to)` / `deleteClip(name)` | `clips()` | Cambia el nombre / lo quita (queda al menos uno). |
+| `loop(on)` | `clips()` | Si el clip abierto se repite (andar) o se queda en su último cuadro (morir). |
+
+`save()` da la versión 3 del archivo si hay más de un clip, o uno que no se llama `anim` o no se repite:
+`{ ..., voxels: <cuadro 0 del primer clip>, clips: [{ name, loop, frames: [{ ms, voxels }], rig? }] }`. Con un solo
+clip `anim` que se repite, la versión 1 o 2 de siempre. Las versiones 1 y 2 se abren como un clip `anim`.
+
 El rig (`RigSpec`, en `src/anim/rig.ts`):
 
 ```js

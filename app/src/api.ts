@@ -10,7 +10,7 @@ import { Model, material as mat, decode, validatePalette, planFoliage, rampMater
 import { model, history, editor, ui, touch, replaceModel, loadFile, setGridSize, newModelSized, gridSize, toggleLight, lightAtCell, paint, type LightKind, type LightSource3D } from './store';
 import { fillBox, floodLayer, fillWater, step } from './edit';
 import { pngBlob, renderExplore } from './preview';
-import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, setRig, generateFromRig, frameMs as framesMs, toFile, loadAnimated, sheetPng, animGif } from './anim';
+import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, setRig, generateFromRig, frameMs as framesMs, toFile, loadAnimated, sheetPng, animGif, clipInfo, selectClip, newClip, renameClip, deleteClip, setLoop } from './anim';
 import { fx, FX_KINDS, addEffect, removeEffect, burstEffect, type EffectSource } from './effects';
 import type { RigSpec } from '../../src/anim/rig';
 import { inspectPxl, pxlStackModel } from './pxl/sandbox';
@@ -115,6 +115,12 @@ ANIMACIÓN (cada cuadro es el modelo entero; las herramientas pintan el cuadro a
                                            ramps?, pivotZ?, footZ?}], frames: [{moves: {parte: {dx?, dy?, dz?, stride?}}}]}
   generateFromRig(spec?)                   SUSTITUYE los cuadros 1..n por los que salen del rig; el cuadro 0 (la pose de
                                            reposo) se queda. Da {generated, count}: count = 1 + generated
+  clips()                                  los clips del modelo: {name, frames, loop, current}
+  clip(name)                               abre ese clip (los cuadros, el rig y reproducir son los suyos)
+  newClip(name, {empty?, loop?})           un clip nuevo (quieto, andar, atacar, morir...) desde la pose del cuadro 0
+                                           del abierto (o vacío), y lo abre
+  renameClip(from, to), deleteClip(name)   cambia el nombre / lo quita
+  loop(on)                                 si el clip abierto se repite (andar) o se queda en su último cuadro (morir)
   animPng({scale?}), animGif({scale?})     la hoja de cuadros en fila / el GIF animado, en base64
   batch(fn)                                lo que haga fn, en un solo paso de deshacer
   undo(), redo()
@@ -355,7 +361,7 @@ export const api = {
   },
 
   // ---- animación (anim.ts)
-  frames() { return { count: anim.count, current: anim.current, ms: framesMs(), playing: anim.playing, onion: anim.onion, rig: anim.rig }; },
+  frames() { return { clip: anim.clip, loop: anim.loop, count: anim.count, current: anim.current, ms: framesMs(), playing: anim.playing, onion: anim.onion, rig: anim.rig }; },
   frame(i: number) { int(i); if (i < 0 || i >= anim.count) throw new Error(`cuadros 0..${anim.count - 1}`); selectFrame(i); return api.frames(); },
   addFrame(o: { empty?: boolean } = {}): number { return addFrame(!!o.empty); },
   deleteFrame(i?: number) { deleteFrame(i ?? anim.current); return api.frames(); },
@@ -365,6 +371,12 @@ export const api = {
   onion(on?: boolean) { anim.onion = on ?? !anim.onion; touch(); return anim.onion; },
   rig(spec: RigSpec | null) { setRig(spec); return anim.rig; },
   // SUSTITUYE los cuadros 1..n por los del rig; el cuadro 0 (la pose de reposo) se queda: count = 1 + generated
+  clips() { return clipInfo(); },
+  clip(name: string) { selectClip(name); return api.frames(); },
+  newClip(name: string, o: { empty?: boolean; loop?: boolean } = {}) { newClip(name, o); return api.clips(); },
+  renameClip(from: string, to: string) { renameClip(from, to); return api.clips(); },
+  deleteClip(name: string) { deleteClip(name); return api.clips(); },
+  loop(on: boolean) { setLoop(on); return api.clips(); },
   generateFromRig(spec?: RigSpec): { generated: number; count: number } { const generated = generateFromRig(spec ?? anim.rig); return { generated, count: anim.count }; },
   async animPng(o: { scale?: number } = {}): Promise<{ name: string; base64: string }> {
     return { name: `${model.value.name}_${anim.count}cuadros.png`, base64: await b64(await sheetPng(Math.max(1, Math.round(o.scale ?? 1)))) };

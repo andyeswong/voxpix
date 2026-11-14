@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, sheetPng, animGif } from '../anim';
+import { anim, selectFrame, addFrame, deleteFrame, moveFrame, setFrameMs, play, sheetPng, animGif, selectClip, newClip, renameClip, deleteClip, setLoop } from '../anim';
 import { model, touch } from '../store';
 
 // La línea de tiempo (anim.ts): los cuadros de la animación, el actual resaltado. Se edita el actual con las
@@ -17,8 +17,11 @@ function download(blob: Blob, name: string): void {
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
-async function exportSheet(): Promise<void> { download(await sheetPng(scale.value), `${model.value.name}_${anim.count}cuadros.png`); }
-function exportGif(): void { download(animGif(scale.value), `${model.value.name}.gif`); }
+async function exportSheet(): Promise<void> { download(await sheetPng(scale.value), `${model.value.name}_${anim.clip}_${anim.count}cuadros.png`); }
+function exportGif(): void { download(animGif(scale.value), `${model.value.name}_${anim.clip}.gif`); }
+// Los clips con nombre (quieto, andar, atacar, morir): cada uno sus cuadros
+function addClip(): void { const n = prompt('Nombre del clip nuevo (desde la pose del cuadro 0)', 'andar'); if (n) run(() => newClip(n.trim())); }
+function rename(): void { const n = prompt('Nuevo nombre del clip', anim.clip); if (n && n.trim() !== anim.clip) run(() => renameClip(anim.clip, n.trim())); }
 </script>
 
 <template>
@@ -27,6 +30,14 @@ function exportGif(): void { download(animGif(scale.value), `${model.value.name}
     <h2>Animación</h2>
     <span class="hint">cuadro {{ anim.current }} de {{ anim.count }}{{ anim.rig ? ' · con rig (R: reposo)' : '' }}</span>
   </header>
+  <div class="clips">
+    <span class="hint">Clip</span>
+    <button v-for="c in anim.clips" :key="c" class="clip" :class="{ on: anim.clip === c }" @click="run(() => selectClip(c))">{{ c }}</button>
+    <button class="ghost" title="Un clip nuevo desde la pose del cuadro 0 del abierto" @click="addClip">+ Clip</button>
+    <button class="ghost" title="Cambiar el nombre del clip abierto" @click="rename">Renombrar</button>
+    <button class="ghost" title="Quitar el clip abierto" :disabled="anim.clips.length <= 1" @click="run(() => deleteClip(anim.clip))">Quitar</button>
+    <label title="Si se repite (andar) o se queda en su último cuadro (morir)"><input type="checkbox" :checked="anim.loop" @change="run(() => setLoop(($event.target as HTMLInputElement).checked))" /> se repite</label>
+  </div>
   <div class="timeline">
     <button class="ghost" title="Cuadro anterior" @click="selectFrame(anim.current - 1)">◀</button>
     <button :class="{ on: anim.playing }" title="Reproducir en bucle" @click="play()">{{ anim.playing ? '❚❚' : '▶' }}</button>
@@ -63,6 +74,9 @@ header { display: flex; align-items: center; gap: 8px; cursor: move; }
 header h2 { margin: 0; font-size: 13px; }
 .hint { color: var(--faint, #8e8ca6); font-size: 12px; }
 .timeline { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; max-width: calc(100vw - 32px); font-size: 12px; }
+.clips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 12px; }
+.clip { padding: 2px 8px; }
+.clip.on { outline: 2px solid var(--accent, #8c78d8); }
 .frames { display: flex; gap: 3px; max-width: 360px; overflow-x: auto; }
 .frame { min-width: 26px; padding: 2px 6px; font-variant-numeric: tabular-nums; }
 .frame.on { outline: 2px solid var(--accent, #8c78d8); }

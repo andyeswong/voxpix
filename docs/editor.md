@@ -103,7 +103,11 @@ entero; se edita el actual con las herramientas de siempre, y cada cuadro tiene 
   pivote (la cadera) y su pie; cada cuadro del rig dice cuánto se mueve cada parte (dx, dy, dz) y cuánto adelanta el
   pie (paso). **Generar cuadros** rehace los cuadros 1..n desde el cuadro 0, que pasa a ser la pose de reposo (R).
 - **Hoja PNG** y **GIF** exportan la animación en el ángulo de la vista previa, a la escala elegida.
-- **Guardar** guarda los cuadros y el rig en el `.voxpix.json` (versión 2); sin animación, el archivo es el de siempre.
+- **Clips:** encima de los cuadros, los clips del modelo (quieto, andar, atacar, morir...). Un clic abre uno: los
+  cuadros, el rig, reproducir y exportar son los suyos. **+ Clip** crea uno desde la pose del cuadro 0 del abierto,
+  **Renombrar** y **Quitar**, y *se repite* dice si da la vuelta (andar) o se queda en su último cuadro (morir).
+- **Guardar** guarda los cuadros y el rig en el `.voxpix.json` (versión 2; con varios clips, la 3); sin animación, el
+  archivo es el de siempre.
 
 Lo mismo por la API de agentes: `docs/api-agentes.md`, Animación.
 

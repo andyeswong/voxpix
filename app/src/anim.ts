@@ -4,13 +4,18 @@
 // pose de reposo y los demás salen de él (generateFromRig); la reproducción y la exportación usan entonces los
 // cuadros 1..n. Lo mismo por la API de agentes (api.ts, anim*).
 import { reactive, watch } from 'vue';
-import { History, Model, animationToFile, animationFromFile, fitFrame, encodeGIF, DEFAULT_FRAME_MS, type ModelFile, type ModelFileV2 } from '@core/index';
+import { History, Model, clipsToFile, clipsFromFile, fitFrame, encodeGIF, DEFAULT_FRAME_MS, DEFAULT_CLIP, type ModelFile, type ModelFileV2, type ModelFileV3 } from '@core/index';
 import { shot } from './preview';
 import { rigFrames, rigFromSpec, type RigSpec } from '../../src/anim/rig';
 import { model, history, touch, replaceModel, editor, type LightSource3D } from './store';
 import { fx, loadEffects, type EffectSource } from './effects';
 
 interface Frame { model: Model; history: History; ms: number }
+// Los clips con nombre (quieto, andar, atacar...): cada uno sus cuadros, su rig y si se repite. `frames` son los del
+// clip abierto; todo lo demás (cuadros, rig, reproducir, exportar) trabaja sobre él
+interface ClipState { name: string; frames: Frame[]; rig: RigSpec | null; loop: boolean }
+let clips: ClipState[] = [];
+let ci = 0;
 let frames: Frame[] = [];
 
 export const anim = reactive({
@@ -21,6 +26,9 @@ export const anim = reactive({
   ms: DEFAULT_FRAME_MS,          // la duración del cuadro actual
   rig: null as RigSpec | null,
   panel: false,                  // el panel del rig abierto
+  clip: DEFAULT_CLIP,            // el clip abierto
+  clips: [DEFAULT_CLIP] as string[],
+  loop: true,                    // si el clip abierto se repite
 });
 
 // Al salir del modo Animación, la reproducción para
@@ -30,8 +38,78 @@ watch(() => editor.mode, (m) => { if (m !== 'animacion' && anim.playing) play(fa
 function ensure(): void {
   if (frames[anim.current]?.model === model.value) return;
   frames = [{ model: model.value, history: history.value, ms: DEFAULT_FRAME_MS }];
+  clips = [{ name: DEFAULT_CLIP, frames, rig: null, loop: true }];
+  ci = 0;
   anim.current = 0; anim.count = 1; anim.ms = DEFAULT_FRAME_MS; anim.rig = null;
+  anim.clip = DEFAULT_CLIP; anim.clips = [DEFAULT_CLIP]; anim.loop = true;
 }
+
+// ---- clips
+function syncClip(): void {
+  const c = clips[ci]!;
+  c.frames = frames; c.rig = anim.rig; c.loop = anim.loop;
+}
+function openClip(i: number, frame = 0): void {
+  play(false);
+  syncClip();
+  ci = i;
+  const c = clips[i]!;
+  frames = c.frames;
+  anim.rig = c.rig; anim.loop = c.loop; anim.clip = c.name; anim.count = frames.length;
+  select(Math.min(frame, frames.length - 1));
+}
+export function clipNames(): string[] { ensure(); return clips.map((c) => c.name); }
+export function clipInfo(): Array<{ name: string; frames: number; loop: boolean; current: boolean }> {
+  ensure(); syncClip();
+  return clips.map((c, i) => ({ name: c.name, frames: c.frames.length, loop: c.loop, current: i === ci }));
+}
+// Abre un clip por su nombre
+export function selectClip(name: string): void {
+  ensure();
+  const i = clips.findIndex((c) => c.name === name);
+  if (i < 0) throw new Error(`no hay clip "${name}"; hay: ${clips.map((c) => c.name).join(', ')}`);
+  if (i !== ci) openClip(i);
+}
+// Un clip nuevo con un cuadro: copia del cuadro 0 del clip abierto (la pose de reposo), o vacío; y lo abre
+export function newClip(name: string, o: { empty?: boolean; loop?: boolean } = {}): void {
+  ensure();
+  if (!name) throw new Error('el clip necesita un nombre');
+  if (clips.some((c) => c.name === name)) throw new Error(`ya hay un clip "${name}"`);
+  const src = frames[0]!.model;
+  const m = o.empty ? new Model(src.palette, src.name) : src.clone();
+  m.palette = model.value.palette;
+  clips.push({ name, frames: [{ model: m, history: new History(m), ms: frames[0]!.ms }], rig: null, loop: o.loop ?? true });
+  anim.clips = clips.map((c) => c.name);
+  openClip(clips.length - 1);
+}
+export function renameClip(from: string, to: string): void {
+  ensure();
+  const c = clips.find((x) => x.name === from);
+  if (!c) throw new Error(`no hay clip "${from}"`);
+  if (!to || clips.some((x) => x.name === to)) throw new Error(`nombre no válido o repetido: "${to}"`);
+  c.name = to;
+  anim.clips = clips.map((x) => x.name);
+  if (clips[ci] === c) anim.clip = to;
+}
+export function deleteClip(name: string): void {
+  ensure();
+  const i = clips.findIndex((c) => c.name === name);
+  if (i < 0) throw new Error(`no hay clip "${name}"`);
+  if (clips.length <= 1) throw new Error('el modelo necesita al menos un clip');
+  play(false);
+  syncClip();
+  const open = clips[ci]!;
+  clips.splice(i, 1);
+  anim.clips = clips.map((c) => c.name);
+  const k = clips.indexOf(open);
+  if (k >= 0) { ci = k; return; }             // el abierto sigue: solo cambia su posición
+  ci = Math.min(i, clips.length - 1);
+  const c = clips[ci]!;
+  frames = c.frames; anim.rig = c.rig; anim.loop = c.loop; anim.clip = c.name; anim.count = frames.length;
+  select(0);
+}
+// Si el clip abierto se repite (andar) o se queda en su último cuadro (morir)
+export function setLoop(on: boolean): void { ensure(); anim.loop = on; clips[ci]!.loop = on; }
 
 export function frameModels(): Model[] { ensure(); return frames.map((f) => f.model); }
 export function frameMs(): number[] { ensure(); return frames.map((f) => f.ms); }
@@ -116,6 +194,7 @@ export function generateFromRig(spec = anim.rig): number {
   const base = frames[0]!.model;
   const made = rigFrames(base, rigFromSpec(spec)).map((m): Frame => { m.palette = base.palette; m.name = base.name; return { model: m, history: new History(m), ms: spec.frameMs }; });
   frames = [frames[0]!, ...made];
+  clips[ci]!.frames = frames;
   anim.count = frames.length;
   select(1);
   return made.length;
@@ -123,20 +202,25 @@ export function generateFromRig(spec = anim.rig): number {
 
 // ---- archivo
 // Con los emisores de efectos (effects.ts) solo si hay alguno: así un modelo sin ellos se guarda como siempre
-export function toFile(lights: LightSource3D[]): (ModelFile | ModelFileV2) & { lights: LightSource3D[]; effects?: EffectSource[] } {
+export function toFile(lights: LightSource3D[]): (ModelFile | ModelFileV2 | ModelFileV3) & { lights: LightSource3D[]; effects?: EffectSource[] } {
   ensure();
-  frames[anim.current]!.model.palette = model.value.palette;
-  for (const f of frames) f.model.palette = model.value.palette;
-  return { ...animationToFile(frames, anim.rig ?? undefined), lights, ...(fx.sources.length ? { effects: fx.sources.map((s) => ({ ...s })) } : {}) };
+  syncClip();
+  for (const c of clips) for (const f of c.frames) f.model.palette = model.value.palette;
+  const file = clipsToFile(clips.map((c) => ({ name: c.name, loop: c.loop, frames: c.frames.map((f) => ({ model: f.model, ms: f.ms })), ...(c.rig ? { rig: c.rig } : {}) })));
+  return { ...file, lights, ...(fx.sources.length ? { effects: fx.sources.map((s) => ({ ...s })) } : {}) };
 }
 
-export function loadAnimated(f: (ModelFile | ModelFileV2) & { lights?: LightSource3D[]; effects?: EffectSource[] }): void {
+export function loadAnimated(f: (ModelFile | ModelFileV2 | ModelFileV3) & { lights?: LightSource3D[]; effects?: EffectSource[] }): void {
   play(false);
-  const a = animationFromFile(f);
-  replaceModel(a.frames[0]!.model);
-  frames = a.frames.map((fr, i) => ({ model: fr.model, history: i === 0 ? history.value : new History(fr.model), ms: fr.ms }));
+  const cs = clipsFromFile(f);
+  replaceModel(cs[0]!.frames[0]!.model);
+  clips = cs.map((c, k) => ({
+    name: c.name, loop: c.loop, rig: (c.rig as RigSpec | undefined) ?? null,
+    frames: c.frames.map((fr, i) => ({ model: fr.model, history: k === 0 && i === 0 ? history.value : new History(fr.model), ms: fr.ms })),
+  }));
+  ci = 0; frames = clips[0]!.frames;
   anim.count = frames.length; anim.current = 0; anim.ms = frames[0]!.ms;
-  anim.rig = (a.rig as RigSpec | undefined) ?? null;
+  anim.rig = clips[0]!.rig; anim.loop = clips[0]!.loop; anim.clip = clips[0]!.name; anim.clips = clips.map((c) => c.name);
   editor.light.sources.splice(0, editor.light.sources.length, ...(f.lights ?? []));
   if (f.lights?.length) editor.light.enabled = true;
   loadEffects(f.effects);

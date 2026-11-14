@@ -3,6 +3,12 @@
 //   { format: 'voxpix', version: 2, name, palette, voxels: <cuadro 0>, animation: { frames: [{ ms }, { ms, voxels }, ...], rig? } }
 // El cuadro 0 va en `voxels`, así quien lea la versión 1 ve el primer cuadro. Sin animación se guarda en la versión 1,
 // con los mismos bytes que antes de que existiera.
+// CLIPS CON NOMBRE (versión 3): varias animaciones del mismo modelo (quieto, andar, atacar, morir), cada una con sus
+// cuadros, si se repite y su rig:
+//   { format: 'voxpix', version: 3, name, palette, voxels: <cuadro 0 del primer clip>,
+//     clips: [{ name, loop, frames: [{ ms, voxels }, ...], rig? }, ...] }
+// Con un solo clip que se llame "anim" y se repita, se guarda como antes (versión 1 o 2). Las versiones 1 y 2 se leen
+// como un clip "anim" que se repite.
 import { Model, type ModelFile } from './model';
 import type { Palette } from './palette';
 
@@ -40,4 +46,57 @@ export function animationFromFile(f: ModelFile | ModelFileV2): { frames: AnimFra
   });
   if (!frames.length) frames.push({ model: base, ms: DEFAULT_FRAME_MS });
   return { frames, ...(a.rig !== undefined ? { rig: a.rig } : {}) };
+}
+
+// ---- clips con nombre (versión 3)
+export const DEFAULT_CLIP = 'anim';
+export interface Clip { name: string; frames: AnimFrame[]; loop: boolean; rig?: unknown }
+export interface ClipFile { name: string; loop: boolean; frames: Array<{ ms: number; voxels: Array<[number, number, number, number]> }>; rig?: unknown }
+export interface ModelFileV3 extends Omit<ModelFile, 'version'> { version: 3; clips: ClipFile[] }
+
+export function clipsToFile(clips: readonly Clip[]): ModelFile | ModelFileV2 | ModelFileV3 {
+  if (!clips.length || !clips[0]!.frames.length) throw new Error('hace falta al menos un clip con un cuadro');
+  const names = new Set<string>();
+  for (const c of clips) {
+    if (!c.name) throw new Error('un clip sin nombre');
+    if (names.has(c.name)) throw new Error(`dos clips se llaman "${c.name}"`);
+    names.add(c.name);
+    if (!c.frames.length) throw new Error(`el clip "${c.name}" no tiene cuadros`);
+  }
+  const first = clips[0]!;
+  if (clips.length === 1 && first.name === DEFAULT_CLIP && first.loop) return animationToFile(first.frames, first.rig);
+  const base = first.frames[0]!.model;
+  return {
+    format: 'voxpix', version: 3, name: base.name, palette: base.palette, voxels: [...base.entries()],
+    clips: clips.map((c) => ({ name: c.name, loop: c.loop, frames: c.frames.map((f) => ({ ms: f.ms, voxels: [...f.model.entries()] })), ...(c.rig !== undefined ? { rig: c.rig } : {}) })),
+  };
+}
+
+export function clipsFromFile(f: ModelFile | ModelFileV2 | ModelFileV3): Clip[] {
+  if (f.version !== 3) {
+    const a = animationFromFile(f as ModelFile | ModelFileV2);
+    return [{ name: DEFAULT_CLIP, frames: a.frames, loop: true, ...(a.rig !== undefined ? { rig: a.rig } : {}) }];
+  }
+  const base = Model.fromJSON({ ...f, version: 1 } as unknown as ModelFile), pal = base.palette;
+  if (!f.clips.length) return [{ name: DEFAULT_CLIP, frames: [{ model: base, ms: DEFAULT_FRAME_MS }], loop: true }];
+  return f.clips.map((c) => ({
+    name: c.name, loop: c.loop !== false,
+    frames: c.frames.map((fr) => { const m = new Model(pal, base.name); for (const [x, y, z, v] of fr.voxels) m.set(x, y, z, v); return { model: m, ms: fr.ms }; }),
+    ...(c.rig !== undefined ? { rig: c.rig } : {}),
+  }));
+}
+
+// El cuadro de un clip a los `ms` de empezar: si se repite, da la vuelta; si no, se queda en el último
+export function clipFrameAt(c: Pick<Clip, 'frames' | 'loop'>, ms: number): number {
+  const total = c.frames.reduce((a, f) => a + f.ms, 0);
+  if (total <= 0) return 0;
+  let t = Math.max(0, ms);
+  if (c.loop) t %= total;
+  else if (t >= total) return c.frames.length - 1;
+  for (let i = 0; i < c.frames.length; i++) { t -= c.frames[i]!.ms; if (t < 0) return i; }
+  return c.frames.length - 1;
+}
+// ¿Ha acabado un clip que no se repite? (para encadenar: atacar y volver a quieto)
+export function clipDone(c: Pick<Clip, 'frames' | 'loop'>, ms: number): boolean {
+  return !c.loop && ms >= c.frames.reduce((a, f) => a + f.ms, 0);
 }
