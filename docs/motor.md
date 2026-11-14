@@ -111,6 +111,9 @@ ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un 
   - `forEachExposed` guarda por losa qué vóxeles tienen alguna cara al aire (una máscara por fila de 16), hecha fila a
     fila al pedirla. Vale mientras no cambien el trozo ni sus 4 vecinos (su versión) ni se importe el mundo. Cuesta
     768 bytes por losa recorrida (~2,6 MB en un mundo de 384 x 384 x 96 entero).
+  - `forEachExposed(fn, región, false)` recorre sin hacer ni mirar las máscaras (lo de antes: un superconjunto, los
+    mismos píxeles). Lo usa el horneado inicial (`bakeWorld` y `bakeWorldJob`), que recorre todo el mundo una vez: hacer
+    las máscaras de todas las losas le subía el render un ~70 % en un navegador frenado a 6x.
   - `warmExposed(región, filas)` deja hechas hasta tantas filas, para preparar con plazo lo que se va a recorrer: el
     rehorneado lo hace antes de cada franja y, si no le da tiempo, sigue en el cuadro siguiente.
 - `viewWrites`: mientras está a `true`, `set` escribe como vista (lo hace el corte de vista): cuenta como cambio para el

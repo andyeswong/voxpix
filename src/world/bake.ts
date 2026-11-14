@@ -87,7 +87,9 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
     yaw: 0, oblique: { y: incline, z: 1 }, pivot: [0, 0, 0], smooth: 0, shadows: false, ao: true, outline: opts.outline ?? 'none', ...(opts.outlineColor ? { outlineColor: opts.outlineColor } : {}), pick: true,
   };
   const t0 = performance.now();
-  const img = render(world.model, options);
+  // Todo el mundo una vez: sin hacer las máscaras de lo expuesto de todas las losas (ver forEachExposed)
+  const m = world.model;
+  const img = render({ palette: m.palette, get: (x, y, z) => m.get(x, y, z), entries: () => m.entries(), forEachExposed: (fn) => m.forEachExposed(fn, undefined, false) }, options);
   const t1 = performance.now();
   const b: Baked = {
     width: img.width, height: img.height, rgba: img.rgba, depth: img.depth, face: img.pickFace!, pick: img.pickKey!,
@@ -197,7 +199,7 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
           // La primera franja, de una columna (para medir); luego, las columnas que quepan en BAKE_STEP_MS
           let c1 = col, cost = colCost(col);
           if (msPerVox > 0) while (c1 < rect.x1 && c1 - col < 64 && (cost + colCost(c1 + 1)) * msPerVox <= BAKE_STEP_MS) cost += colCost(++c1);
-          renderColumns(b, rect, buf, col, c1);
+          renderColumns(b, rect, buf, col, c1, false);
           col = c1 + 1;
           const ms = performance.now() - t;
           const rate = ms / cost;
@@ -692,14 +694,15 @@ function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: nu
   return true;
 }
 
-function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number): void {
+// remember: false para recorrer una sola vez (el horneado inicial): sin las máscaras de lo expuesto (ver forEachExposed)
+function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number, remember = true): void {
   const s = b.source, O = b.options.originY;
   const { halo, R0, R1, C0, C1, region, bands } = stripRegion(b, r, c0, c1);
   const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
   const banded = (fn: (x: number, y: number, z: number, v: number) => void) => {
-    for (const band of bands) s.forEachExposed(fn, band);
+    for (const band of bands) s.forEachExposed(fn, band, remember);
   };
-  const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region) };
+  const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region, remember) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });
   for (let j = 0; j < buf.h; j++) for (let i = 0; i < w; i++) {
     const src = (j + halo) * W + i + (c0 - C0), dst = j * buf.w + (c0 - r.x0) + i;

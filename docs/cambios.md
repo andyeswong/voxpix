@@ -35,7 +35,8 @@ medida que vale para un juego es la suya.
   losa qué vóxeles tienen cara al aire. En el corte de casa de muñecas con contorno, la llamada de recuadro baja de
   p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x. El máximo sigue por encima de 8. No es el recolector de basura
   (traza de V8 en Edge: 7 de 312 llamadas lentas tienen una pausa dentro, y ninguna bajaría de 8 sin ella): es
-  cálculo. Tolerancia conocida.
+  cálculo. Tolerancia conocida. El horneado inicial recorre sin máscaras: hacerlas para todo el mundo de una vez le
+  subía el render de ~1.530 a ~2.650 ms a 6x en un juego (medido por FERN); sin ellas, en Edge a 6x, ~1.500-2.000.
 - Las luces cerca del jugador que cambian por el mundo también van con el presupuesto cercano (una antorcha recién
   puesta alumbra en menos de la mitad de cuadros), sin adelantarse a sus recuadros. Las que solo toca un corte de
   vista, no: si no, en una noche con antorchas cada corte les cedía el cercano (en el juego, 8-34 cuadros de más de

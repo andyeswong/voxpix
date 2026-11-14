@@ -298,3 +298,23 @@ describe('lo expuesto guardado por losa (forEachExposed)', () => {
     expect(got()).toEqual([...s.exposedEntries()].map(([x, y, z, v]) => [x, y, z, v]));
   });
 });
+
+describe('forEachExposed sin guardar lo expuesto (remember: false, el horneado inicial)', () => {
+  it('da un superconjunto en el mismo orden, sin tocar las máscaras, y el render da los mismos píxeles', () => {
+    const s = new StaticVoxels(PAL, 48, 48, 0, 47);
+    for (let y = 0; y < 48; y++) for (let x = 0; x < 48; x++) for (let z = 0; z < 20 + ((x * 7 + y * 3) % 13); z++) s.set(x, y, z, material((z >> 3) % 3, 1 + ((x + y + z) & 1)));
+    for (let z = 10; z < 30; z++) for (let y = 20; y < 26; y++) for (let x = 5; x < 40; x++) s.set(x, y, z, 0);
+    const plain: number[][] = [], kept: number[][] = [];
+    s.forEachExposed((x, y, z, v) => plain.push([x, y, z, v]), undefined, false);
+    s.forEachExposed((x, y, z, v) => kept.push([x, y, z, v]));
+    expect(plain.length).toBeGreaterThan(kept.length);
+    const at = new Map(plain.map(([x, y, z], i) => [k(x!, y!, z!), i]));
+    let last = -1;
+    for (const [x, y, z] of kept) { const i = at.get(k(x!, y!, z!)); expect(i).toBeGreaterThan(last); last = i!; }
+    const o = { width: 160, height: 140, originX: 40, originY: 110, oblique: { y: 0.5, z: 1 }, pivot: [0, 0, 0] as [number, number, number], ao: true, pick: true, outline: 'both' as const };
+    const noMask: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(), forEachExposed: (fn) => s.forEachExposed(fn, undefined, false) };
+    const a = render(noMask, o), b = render(s, o);
+    expect(Buffer.from(a.rgba.buffer).equals(Buffer.from(b.rgba.buffer))).toBe(true);
+    expect(Array.from(a.pickKey!)).toEqual(Array.from(b.pickKey!));
+  });
+});

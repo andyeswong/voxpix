@@ -415,7 +415,11 @@ export class StaticVoxels implements VoxelSource {
 
   // exposedEntries sin generador: llama a fn con cada uno, en el mismo orden (es lo que usa el render). La región puede
   // limitar también la altura (z0..z1, extremos incluidos)
-  forEachExposed(fn: (x: number, y: number, z: number, v: number) => void, region?: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }): void {
+  // remember: false, sin hacer ni mirar la máscara de lo expuesto: da todo lo de las losas a medio llenar (un
+  // superconjunto: el render da los mismos píxeles). Para recorrer UNA vez todo el mundo (el horneado inicial), donde
+  // hacer las máscaras de todas las losas cuesta más que lo que ahorran (en un navegador frenado, el render del
+  // horneado subía un 70 %)
+  forEachExposed(fn: (x: number, y: number, z: number, v: number) => void, region?: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }, remember = true): void {
     const r = region ?? { x0: 0, y0: 0, x1: this.width - 1, y1: this.depth - 1 };
     const rz0 = Math.max(this.zMin, r.z0 ?? this.zMin), rz1 = Math.min(this.zMax, r.z1 ?? this.zMax);
     if (rz0 > rz1) return;
@@ -444,6 +448,22 @@ export class StaticVoxels implements VoxelSource {
             open = (this.full(cx - 1, cy, s) ? 0 : 1) | (this.full(cx + 1, cy, s) ? 0 : 2) | (this.full(cx, cy - 1, s) ? 0 : 4) |
               (this.full(cx, cy + 1, s) ? 0 : 8) | (this.full(cx, cy, s - 1) ? 0 : 16) | (this.full(cx, cy, s + 1) ? 0 : 32);
             if (!open) continue;
+          }
+          if (!remember) {
+            // Como antes de las máscaras: de una losa llena, sus capas de borde; de una a medio llenar, todo
+            for (let lz = lzA; lz <= lzB; lz++) {
+              const zEdge = open >= 0 && ((lz === 0 && open & 16) || (lz === hs - 1 && open & 32));
+              for (let ly = ly0; ly <= ly1; ly++) {
+                const yEdge = zEdge || (open >= 0 && ((ly === 0 && open & 4) || (ly === CHUNK - 1 && open & 8)));
+                const row = lz * CC + ly * CHUNK;
+                for (let lx = lx0; lx <= lx1; lx++) {
+                  if (open >= 0 && !yEdge && !((lx === 0 && open & 1) || (lx === CHUNK - 1 && open & 2))) continue;
+                  const v = d ? (p ? p[d[row + lx]!]! : d[row + lx]!) : u;
+                  if (v) fn(X + lx, Y + ly, z0 + lz, v);
+                }
+              }
+            }
+            continue;
           }
           // Solo los vóxeles con alguna cara al aire (la máscara de la losa), en el mismo orden: z, y, x
           const { m: mask, ok } = this.exposure(cx, cy, s), range = ((1 << (lx1 + 1)) - 1) & ~((1 << lx0) - 1);
