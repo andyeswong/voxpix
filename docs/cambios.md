@@ -46,7 +46,10 @@ medida que vale para un juego es la suya.
 - Lo que sobra del presupuesto cercano, si no queda nada cercano, se lo lleva lo demás hasta `spare` (por defecto,
   `ms`). Preparar lo expuesto tras el horneado acababa a los 20-25 s en un juego, después de los primeros cortes; con el
   sobrante entero acababa antes del primer corte, pero los cuadros de más de 25 ms en la noche pasaban de 8-10 a 28-43
-  (lo que sobra era el margen del juego para sus picos). Con el tope: en el banco, 80 cuadros en vez de 160.
+  (lo que sobra era el margen del juego para sus picos). Con el tope: en el banco, 80 cuadros en vez de 160. En ese
+  juego el trabajo corría solo en la fase normal, pero con ~1,8 ms por cuadro y no 3: el juego llama a
+  `budget.run(ticksMs)` y los ticks del cuadro se descuentan de esa fase (`spentMs`). El sobrante no se descuenta, así
+  que con el tope lleva ~4,8 ms.
 - Un trabajo que no cabe y lleva 4 cuadros seguidos saltado va el primero de su fase: antes podía quedarse sin correr
   nunca si delante siempre corría algo antes.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es
