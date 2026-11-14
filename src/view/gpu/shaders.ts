@@ -63,6 +63,11 @@ uniform sampler2D uDepth;
 uniform isampler2D uFace;
 uniform float uBack[16];               // la luz por detrás de cada código de la cara (compositor.ts, backlitCodes)
 uniform sampler2D uWorldY;             // la y del mundo de cada píxel (calculada en la CPU en doble precisión)
+// El cielo (bake.ts, Baked.sky): cuánto cielo ve cada píxel (0..5) y la luz ambiente de cada nivel (skyAmbient, la
+// misma tabla que la CPU)
+uniform bool uUseSky;
+uniform highp usampler2D uSky;
+uniform vec3 uSkyAmb[6];
 // El resalte (frame2d.ts, highlightMask): el aro, en su recuadro de la imagen horneada, con su color y luz propia
 uniform bool uHl;
 uniform sampler2D uHlMask;
@@ -144,6 +149,11 @@ void main() {
   float depth = texelFetch(uDepth, s, 0).r;
   vec3 col = c.a == 0.0 ? uBg : c.rgb;
   vec3 total = uAmbient;
+  if (uUseSky) {
+    ivec2 ssz = textureSize(uSky, 0);
+    int k = (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5;
+    total = uSkyAmb[k];
+  }
   if (uLights) {
     for (int i = 0; i < uNBaked; i++) {
       ivec4 r = uBakedRect[i];
@@ -432,6 +442,11 @@ uniform sampler2D uLightTex;
 uniform bool uLights;
 uniform vec3 uAmbient;
 uniform int uMode;                  // 0 cuadro, 1 color sin luz, 2 capa multiply, 3 capa add
+// Con cielo: el ambiente de cada píxel según su cielo (la misma tabla que la CPU), en la imagen horneada en t + uView
+uniform bool uUseSky;
+uniform highp usampler2D uSky;
+uniform vec3 uSkyAmb[6];
+uniform ivec2 uView;
 uniform bool uFlip;
 uniform int uHeight;
 out vec4 oColor;
@@ -455,10 +470,15 @@ void main() {
   float lum = 0.3 * tot.r + 0.6 * tot.g + 0.1 * tot.b;
   float soft = quantize(min(1.0, max(0.0, lum - 1.0) * GLOW), STEPS * 2, 0.5);
   float peak = max(max(tot.r, tot.g), max(tot.b, 1e-6));
+  vec3 amb = uAmbient;
+  if (uUseSky) {
+    ivec2 s = t + uView, ssz = textureSize(uSky, 0);
+    amb = uSkyAmb[(s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
+  }
   vec3 mul, add;
   for (int ch = 0; ch < 3; ch++) {
     float tt = tot[ch];
-    float base = min(1.0, uAmbient[ch]);
+    float base = min(1.0, amb[ch]);
     float room = 1.0 - base;
     float lit = room > 0.0 ? quantize(min(1.0, max(0.0, tt - base) / room), STEPS, threshold) * room : 0.0;
     mul[ch] = floor((base + lit) * 255.0 + 0.5);

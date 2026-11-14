@@ -34,7 +34,8 @@ for (let i = 0; i < NT; i++) {
   lights.push({ id: 't' + i, kind: 'torch', x, y, z: hb(x >> 3, y >> 3) * B + 2 * B, baked: true });
 }
 t = performance.now();
-const b = bakeWorld({ model: s, lights, width: W, depth: D }, { topZ: ZT, incline: 0.5 });
+// CIELO=1: con el cielo horneado (bakeWorld { sky: true }), que también se rehace al picar
+const b = bakeWorld({ model: s, lights, width: W, depth: D }, { topZ: ZT, incline: 0.5, sky: process.env.CIELO === '1' });
 const full = performance.now() - t;
 const total: number[] = [], worst: number[] = [], nJobs: number[] = [];
 // 16 golpes de calentamiento (el juego ya lleva rato corriendo: el compilador ya ha hecho su trabajo) y 16 medidos,

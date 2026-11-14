@@ -14,7 +14,7 @@ import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
 import { backlitAt, highlightMask, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, type Baked, type BakedLight } from '../../world/bake';
+import { worldPointAt, skyAmbient, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
@@ -72,6 +72,7 @@ export class GpuCompositor {
   private tDepth: WebGLTexture | null = null;
   private tFace: WebGLTexture | null = null;
   private tWorldY: WebGLTexture | null = null;
+  private tSky: WebGLTexture | null = null;            // el cielo del horneado (Baked.sky), si lo tiene
   private worldY: Float32Array<ArrayBuffer> = new Float32Array(0);
   // La cara de cada píxel tal como se sube: con materiales que reciben luz por detrás, cara + 8 * código, y el
   // código elige su valor en backVals (0 = nada); si la paleta no tiene, b.face tal cual
@@ -288,6 +289,11 @@ export class GpuCompositor {
     bindTex(gl, 10, gl.TEXTURE_2D, E.contact, s.u.uContact);
     bindTex(gl, 7, gl.TEXTURE_3D, this.tOcc, s.u.uOcc);
     bindTex(gl, 9, gl.TEXTURE_2D, this.tWorldY, s.u.uWorldY);
+    // El cielo: la luz ambiente de cada píxel según cuánto cielo ve (la misma tabla que lightView en la CPU)
+    const useSky = !!(o.lights && o.cave && b.sky && this.tSky);
+    gl.uniform1i(s.u.uUseSky, useSky ? 1 : 0);
+    bindTex(gl, 13, gl.TEXTURE_2D, useSky ? this.tSky : null, s.u.uSky);
+    if (useSky) gl.uniform3fv(s.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     // El resalte de un objeto del escenario: la máscara del aro se sube solo cuando cambia (highlightMask la guarda)
     const hl = o.highlight ? highlightMask(b, o.highlight) : null;
     gl.uniform1i(s.u.uHl, hl ? 1 : 0);
@@ -436,6 +442,11 @@ export class GpuCompositor {
     bindTex(gl, 1, gl.TEXTURE_2D, B.light, p.u.uLightTex);
     gl.uniform1i(p.u.uLights, o.lights ? 1 : 0);
     gl.uniform3f(p.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
+    const useSky = !!(o.lights && o.cave && this.baked?.sky && this.tSky);
+    gl.uniform1i(p.u.uUseSky, useSky ? 1 : 0);
+    bindTex(gl, 13, gl.TEXTURE_2D, useSky ? this.tSky : null, p.u.uSky);
+    if (useSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
+    gl.uniform2i(p.u.uView, o.vx, o.vy);
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
@@ -457,16 +468,16 @@ export class GpuCompositor {
     const pub = b.published;
     if (this.baked !== b || !this.tColor) {
       // El que estaba se guarda (con sus pesos); si el nuevo ya se subió antes, se recupera y se pone al día abajo
-      if (this.baked && this.tColor) this.bakedCache.set(this.baked, { serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth!, tFace: this.tFace!, tWorldY: this.tWorldY!, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH });
+      if (this.baked && this.tColor) this.bakedCache.set(this.baked, { serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth!, tFace: this.tFace!, tWorldY: this.tWorldY!, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH, tSky: this.tSky });
       this.baked = b;
       const hit = this.bakedCache.get(b);
       this.bakedCache.delete(b);
       while (this.bakedCache.size > Math.max(0, this.bakedKeep - 1)) {
         const [old, e] = this.bakedCache.entries().next().value!;
-        for (const t of [e.tColor, e.tDepth, e.tFace, e.tWorldY, e.tWeights]) if (t) gl.deleteTexture(t);
+        for (const t of [e.tColor, e.tDepth, e.tFace, e.tWorldY, e.tWeights, e.tSky]) if (t) gl.deleteTexture(t);
         this.bakedCache.delete(old);
       }
-      if (hit) ({ serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth, tFace: this.tFace, tWorldY: this.tWorldY, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH } = hit);
+      if (hit) ({ serial: this.bakedSerial, tColor: this.tColor, tDepth: this.tDepth, tFace: this.tFace, tWorldY: this.tWorldY, worldY: this.worldY, faceUp: this.faceUp, backVals: this.backVals, tWeights: this.tWeights, weightZones: this.weightZones, weightW: this.weightW, weightH: this.weightH, tSky: this.tSky } = hit);
       else {
         this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
         this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
@@ -477,6 +488,7 @@ export class GpuCompositor {
         this.worldY = new Float32Array(b.width * b.height);
         fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
         this.tWorldY = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, this.worldY);
+        this.tSky = b.sky ? tex2D(gl, gl.R8UI, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky) : null;
         this.bakedSerial = pub.serial;
         this.tWeights = null;              // los pesos del que se fue se quedaron guardados con él
         this.weightZones = [];
@@ -495,6 +507,7 @@ export class GpuCompositor {
       subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tWorldY!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
+      if (this.tSky && b.sky) subImage(gl, this.tSky, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
     } else for (const r of pub.rects) {
       if (r.serial <= this.bakedSerial) continue;
       const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
@@ -504,6 +517,7 @@ export class GpuCompositor {
       subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
       subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
+      if (this.tSky && b.sky) subImage(gl, this.tSky, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
     }
     this.bakedSerial = pub.serial;
   }
@@ -993,7 +1007,7 @@ function backlitCodes(b: Baked): Float32Array<ArrayBuffer> {
 // Lo subido de un horneado que no es el de este cuadro (GpuCompositor.bakedCache)
 interface BakedGpu {
   serial: number; tColor: WebGLTexture; tDepth: WebGLTexture; tFace: WebGLTexture; tWorldY: WebGLTexture;
-  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: Array<BakedLight | null>; weightW: number; weightH: number;
+  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: Array<BakedLight | null>; weightW: number; weightH: number; tSky: WebGLTexture | null;
 }
 
 // La cara con el código de su luz por detrás (+8 * código)

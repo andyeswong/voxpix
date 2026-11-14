@@ -65,6 +65,7 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
+  cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
@@ -153,6 +154,8 @@ const SCENARIOS: Scenario[] = [
   { name: 'laberinto medieval', theme: 'medieval', shape: { kind: 'maze' }, ticks: 60 },
   // MAIA pegada a la pared sur: la pared la tapa y se ve su silueta (Frame2DOptions.xray)
   { name: 'silueta tras la pared sur', theme: 'oficina', pos: [320, 20], xray: true, ticks: 30 },
+  { name: 'medieval bajo tejado (cielo y cueva)', theme: 'medieval', cave: true, ticks: 60 },
+  { name: 'medieval bajo tejado (cielo y cueva), giro 1', theme: 'medieval', cave: true, quarter: 1, ticks: 60 },
   { name: 'silueta tras la pared sur, giro 2', theme: 'oficina', pos: [320, 426], quarter: 2, xray: true, ticks: 30 },
   { name: 'oficina en T, giro 1', theme: 'oficina', shape: { kind: 'T' }, quarter: 1, ticks: 60 },
   { name: 'lago tóxico emisivo, giro 1', theme: 'medieval', look: toxic, quarter: 1, pos: [172, 170], ticks: 120 },
@@ -373,9 +376,14 @@ async function run(): Promise<void> {
       addWorldFloaters(state, world);
       state.warmUp();
     }
-    const view = new WorldView(state, sc.quarter ?? 0);
-    const b = bakeWorld(view.bakeable(), { topZ: TOPZ, incline: INCLINE });
     const spawn = sc.pos ? { x: sc.pos[0], y: sc.pos[1] } : { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };
+    if (sc.cave) {
+      // Un tejado de piedra a z 26..29 sobre la salida (más al norte que al sur, para que se vea debajo)
+      for (let y = Math.max(0, spawn.y - 8); y < Math.min(world.depth, spawn.y + 40); y++) for (let x = Math.max(0, spawn.x - 40); x < Math.min(world.width, spawn.x + 40); x++)
+        for (let z = 26; z < 30; z++) state.solid.set(x, y, z, material(0, 1));
+    }
+    const view = new WorldView(state, sc.quarter ?? 0);
+    const b = bakeWorld(view.bakeable(), { topZ: TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
     const rt = new Runtime(state, spawn, { radius: 4, speed: 70, model: maiaModel });
     sc.setup?.(state, rt);
     for (let t = 1; t <= sc.ticks; t++) rt.step(sc.stompEvery && t % sc.stompEvery === 0 ? { ...NO_INPUT, stomp: true } : NO_INPUT);
@@ -384,7 +392,7 @@ async function run(): Promise<void> {
     const ambient = THEMES[sc.theme].ambient;
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
       ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}),
-      ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}) };
+      ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');
@@ -399,7 +407,7 @@ async function run(): Promise<void> {
     const rs: RenderState = view.frame();
     const c0 = performance.now();
     const parts = frame2DParts(rs, b, o);
-    const layers = parts.total ? shadeLayers(parts.total, o) : null;
+    const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
     const cpuFinal = layers ? applyLayers(parts.view, layers) : parts.view;
     const c1 = performance.now();
     const gFinal = gpu.read(rs, b, o, 'frame');

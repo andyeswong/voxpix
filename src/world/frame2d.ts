@@ -3,7 +3,7 @@
 import { render, camera, lightField3D, rgbOf, spotFactor, facingOf, materialsOf, type MaterialTable, type PointLight3D, type Rendered, type Spot } from '../core';
 import { resolveLight } from './lightutil';
 import { buildLayers, applyLayers, type LightLayers } from '../lighting/shade';
-import { lightView, worldPointAt, unprojector, rowP, worldYAt, type Baked } from './bake';
+import { lightView, worldPointAt, unprojector, rowP, worldYAt, skyAmbient, SKY_RAYS, type Baked } from './bake';
 import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
@@ -14,6 +14,10 @@ export interface Frame2DOptions {
   time: number;
   lights: boolean;
   ambient: readonly [number, number, number];
+  // La luz ambiente donde no se ve el cielo (cuevas, túneles, bajo techo). Con un horneado con cielo (bakeWorld con
+  // { sky: true }), cada píxel del escenario recibe de cave (sin cielo) a ambient (todo el cielo); sin el campo, o sin
+  // cielo horneado, ambient en todas partes, como siempre. Las entidades siguen con ambient
+  cave?: readonly [number, number, number] | null;
   bob?: (e: Entity) => number;                          // saltito al andar (píxeles)
   background?: readonly [number, number, number];
   outline?: 'none' | 'outer' | 'both';                 // contorno de las entidades (por defecto, ninguno)
@@ -115,12 +119,22 @@ export const entityRenderCount = (): number => entityLru.size;
 
 export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
   const { view, total } = frame2DParts(state, b, o);
-  return total ? applyLayers(view, shadeLayers(total, o)) : view;
+  return total ? applyLayers(view, shadeLayers(total, o, b)) : view;
 }
 
-// Las capas de luz (MULTIPLY y ADD) de la luz por píxel de la vista
-export function shadeLayers(total: Float32Array, o: Frame2DOptions): LightLayers {
-  return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
+// Las capas de luz (MULTIPLY y ADD) de la luz por píxel de la vista. Con cielo (b.sky y o.cave), el ambiente de cada
+// píxel es el de su cielo (skyAmbient): lo que queda por debajo no lo levanta el de fuera
+export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked): LightLayers {
+  const base = b && o.cave && b.sky ? skyBase(b, o, skyAmbient(o.ambient, o.cave)) : undefined;
+  return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
+}
+function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array): Float32Array {
+  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!;
+  for (let y = 0; y < o.vh; y++) for (let x = 0; x < o.vw; x++) {
+    const gx = o.vx + x, gy = o.vy + y, k = gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
+    out[i] = t[k * 3]!; out[i + 1] = t[k * 3 + 1]!; out[i + 2] = t[k * 3 + 2]!;
+  }
+  return out;
 }
 
 // El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
@@ -141,7 +155,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
   const bg = o.background ?? BACKGROUND;
   for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
-  const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time) : null;
+  const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
   if (total) {
     // Luces dinámicas (las añadidas en partida): por cuadro, en su radio
     for (const l of state.lights) if (l.baked === false) addDynamicLight(b, l, total, o);

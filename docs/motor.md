@@ -401,6 +401,27 @@ const look: WorldLook = {
 - **Lo demás** (vegetación, cables, adornos) va en `decorate(world)`, antes de crear el agua y el estado. Para algo que
   se cruce y no deje pasar la luz (cables, alfombras), una rampa con `material: 'atravesable'`.
 
+## El cielo: oscuro bajo techo
+
+Con `bakeWorld(mundo, { ..., sky: true })` el horneado guarda, por píxel, cuánto cielo ve la cara que se ve ahí: de 0
+a `SKY_RAYS` (5) rayos que salen hacia arriba y llegan (el vertical, y 4 en diagonal de `SKY_REACH` = 8 vóxeles que,
+si no chocan, miran arriba desde donde acaban). Al componer, `Frame2DOptions.cave` es la luz ambiente sin cielo:
+
+```ts
+const baked = bakeWorld(view.bakeable(), { topZ, incline, sky: true });
+compositor.frame(rs, baked, { ...opciones, ambient: day.ambient(tick), cave: [0.08, 0.07, 0.12] });
+```
+
+- Cada píxel del escenario recibe de `cave` (sin cielo: cuevas, túneles, bajo techo) a `ambient` (todo el cielo), en
+  6 niveles (`skyAmbient`: la tabla, en float32, que usan la CPU y la GPU). Las luces se suman encima: una antorcha
+  en una cueva se nota mucho más. Las entidades siguen con `ambient`.
+- Lo que cambia el cielo de un píxel está a 8 columnas como mucho: al picar, poner o cortar la vista, se rehace por
+  caja como las luces fijas (un trabajo `sky:` en la cola, que se publica de una vez). Igual, byte a byte, que hornear
+  de cero (hay pruebas, también con el corte de vista en los 4 giros).
+- Sin `sky` en el horneado o sin `cave` al componer, todo es como antes (las huellas de siempre).
+- Coste: en un terreno de 384 x 384 x 96, el horneado entero pasa de ~0,51 a ~0,58 s y cada bloque picado añade un
+  trabajo de ~0,2-0,5 ms (sin freno).
+
 ## El ciclo del día
 
 La luz ambiente (y, si se quiere, el fondo) a lo largo del día, por claves. La hora sale del tick de la simulación:

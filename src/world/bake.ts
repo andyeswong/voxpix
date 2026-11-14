@@ -47,6 +47,9 @@ export interface Baked {
   // Las fijas nuevas que se están horneando (rebakeJobs): no se vuelven a pedir, y si se quitan antes de acabar, su
   // trabajo no las publica
   pendingLights?: Set<LightId>;
+  // Con { sky: true }: cuánto cielo ve la cara de cada píxel, de 0 a SKY_RAYS (los rayos que llegan arriba). Al
+  // componer, con Frame2DOptions.cave, la luz ambiente va de la de cueva (0) a la de siempre (todo el cielo)
+  sky?: Uint8Array;
 }
 
 // Lo mínimo que necesita el horneado de un mundo
@@ -63,7 +66,7 @@ const BASIN_DEPTH = 10;   // las cuencas del agua bajan hasta z = -8: la imagen 
 // del juego; 0.5 = losetas de 16x8, que deja ver a los personajes de frente con un poco de cabeza). Personajes y
 // escenario usan la MISMA proyección. La imagen tiene el norte arriba.
 // outline: el contorno del render ('both' marca también los saltos de profundidad: paredes, columnas)
-export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: number; outline?: 'none' | 'outer' | 'both'; outlineColor?: string } = {}): Baked {
+export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: number; outline?: 'none' | 'outer' | 'both'; outlineColor?: string; sky?: boolean } = {}): Baked {
   const topZ = opts.topZ ?? 40;
   const incline = opts.incline ?? 0.5;
   const originY = Math.ceil(world.depth * incline) + topZ;
@@ -86,8 +89,57 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
     if (bl) b.lights.push(bl);
   }
   b.ms.light = Math.round(performance.now() - t1);
+  if (opts.sky) { b.sky = new Uint8Array(b.width * b.height); fillSky(b, 0, 0, b.width - 1, b.height - 1); }
   warmUp(b);
   return b;
+}
+
+// ---- el cielo: por píxel, cuántos de SKY_RAYS rayos que salen de su cara hacia arriba llegan al cielo: el vertical
+// (con la rejilla de alturas: nada encima en la columna) y 4 en diagonal (subiendo 1 por cada vóxel de lado, en x e y)
+// de SKY_REACH vóxeles; si no chocan en ese tramo, miran arriba desde donde acaban (llegan si ahí no hay nada encima:
+// bajo un techo alto siguen a oscuras). Fuera del mundo, cielo. Así lo que cambia el cielo de un píxel está a
+// SKY_REACH de su columna, como mucho, y se puede rehacer por caja
+export const SKY_RAYS = 5;
+export const SKY_REACH = 8;
+const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
+function skyOf(b: Baked, idx: number): number {
+  const k = b.pick[idx]!;
+  if (Number.isNaN(k)) return SKY_RAYS;
+  const s = b.source, f = b.face[idx]!, n = DIR_VECTORS[f]!;
+  const vz = (k % 2048) - 1024, rr = Math.floor(k / 2048), vy = (rr % 2048) - 1024, vx = Math.floor(rr / 2048) - 1024;
+  const cx = vx + n[0], cy = vy + n[1], cz = vz + n[2];
+  let open = 0;
+  if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth || s.height[cy * s.width + cx]! <= cz) open++;
+  for (const [dx, dy] of SKY_DIRS) {
+    let sky = true;
+    for (let t = 1; t <= SKY_REACH; t++) {
+      const x = cx + dx * t, y = cy + dy * t, z = cz + t;
+      if (x < 0 || y < 0 || x >= s.width || y >= s.depth || z > s.zMax) break;
+      if (s.get(x, y, z)) { sky = false; break; }
+      if (t === SKY_REACH && s.height[y * s.width + x]! > z) sky = false;   // al final del tramo, algo encima
+    }
+    if (sky) open++;
+  }
+  return open;
+}
+function fillSky(b: Baked, x0: number, y0: number, x1: number, y1: number): void {
+  const out = b.sky!;
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * b.width + x; out[i] = skyOf(b, i); }
+}
+// Lo que alcanza un cambio en la caja p: las caras de las columnas a SKY_REACH (y la de al lado) por debajo de ella
+function skyRect(b: Baked, p: Plan): ScreenRect {
+  const s = b.source, m = SKY_REACH + 1, a = b.options.oblique?.y ?? 1, O = b.options.originY;
+  const X0 = Math.max(0, p.X0 - m), Y0 = Math.max(0, p.Y0 - m), X1 = Math.min(s.width - 1, p.X1 + m), Y1 = Math.min(s.depth - 1, p.Y1 + m);
+  return {
+    x0: Math.max(0, X0 - 1), x1: Math.min(b.width - 1, X1 + 2),
+    y0: Math.max(0, Math.floor(O - a * (Y1 + 1) - (p.Z1 + 2)) - 1), y1: Math.min(b.height - 1, Math.ceil(O - a * Y0 - s.zMin) + 1 + BASIN_DEPTH),
+  };
+}
+// La luz ambiente por nivel de cielo (0..SKY_RAYS), en float32: la misma tabla en la CPU y en la GPU
+export function skyAmbient(ambient: readonly [number, number, number], cave: readonly [number, number, number]): Float32Array {
+  const t = new Float32Array((SKY_RAYS + 1) * 3);
+  for (let k = 0; k <= SKY_RAYS; k++) for (let c = 0; c < 3; c++) t[k * 3 + c] = cave[c]! + (ambient[c]! - cave[c]!) * (k / SKY_RAYS);
+  return t;
 }
 
 // El horneado entero como un trabajo que se reanuda (ViewJob), para hornear sin congelar la vista: otro giro de la
@@ -108,7 +160,9 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
     options, cam: camera(options), lights: [], version: cutVersion(world.model), ms: { render: 0, light: 0 },
     source: world.model, occ: new Uint8Array(0), topZ,
     published: { serial: 0, rects: [] },
+    ...(opts.sky ? { sky: new Uint8Array(W * H) } : {}),
   };
+  let skyRow = opts.sky ? 0 : H;
   // La imagen se pinta por franjas de columnas directamente en el horneado (nadie lo ve todavía: no hace falta doble búfer)
   const rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: H - 1 };
   const buf: RectBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, w: W, h: H };
@@ -137,6 +191,11 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
           const rate = ms / cost;
           msPerVox = msPerVox < 0 ? rate : msPerVox * 0.7 + rate * 0.3;
           b.ms.render += ms;
+        } else if (skyRow < H) {
+          // El cielo, por filas (lee la cara de cada píxel: después de la imagen)
+          const y1 = Math.min(H - 1, skyRow + 7);
+          fillSky(b, 0, skyRow, W - 1, y1);
+          skyRow = y1 + 1;
         } else if (li < lights.length) {
           if (zone === undefined) { zone = lightZone(b, lights[li]!); cell = 0; msPerCell = -1; }
           const n = zone ? zone.rect.w * zone.rect.h : 0;
@@ -153,7 +212,7 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
           if (!zone || cell >= n) { if (zone) b.lights.push(zone); zone = undefined; li++; }
           b.ms.light += performance.now() - t;
         }
-        if (col > rect.x1 && li >= lights.length) {
+        if (col > rect.x1 && skyRow >= H && li >= lights.length) {
           b.ms.render = Math.round(b.ms.render); b.ms.light = Math.round(b.ms.light);
           return true;
         }
@@ -723,6 +782,25 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       },
     });
   }
+  // 3) el cielo de lo que alcanza el cambio (después de los recuadros: lee qué cara se ve en cada píxel). Se calcula
+  // aparte y se publica de una vez (lo publicado es lo viejo hasta acabar)
+  if (b.sky) for (const p of plans) {
+    const r = skyRect(b, p), w = r.x1 - r.x0 + 1, out = new Uint8Array(w * (r.y1 - r.y0 + 1));
+    let row = r.y0;
+    jobs.push({
+      key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
+      run(deadline) {
+        if (pending > 0) return false;
+        do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
+        if (row <= r.y1) return false;
+        for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
+        const pub = b.published;
+        pub.rects.push({ serial: ++pub.serial, ...r });
+        if (pub.rects.length > PUBLISHED_KEEP) pub.rects.shift();
+        return true;
+      },
+    });
+  }
   // Las fijas nuevas que no alcanzan lo cambiado
   for (const l of added) if (!jobs.some((j) => j.key === `light:${l.id}`)) jobs.push(lightJob(b, l));
   return jobs;
@@ -796,9 +874,16 @@ export function rebakeChanged(b: Baked, lights: readonly WorldLight[]): { chunks
 }
 
 // Luz total (ambiente + fuentes con su parpadeo en `time`) de una ventana de la imagen horneada
-export function lightView(b: Baked, vx: number, vy: number, vw: number, vh: number, ambient: readonly [number, number, number], time: number): Float32Array {
+export function lightView(b: Baked, vx: number, vy: number, vw: number, vh: number, ambient: readonly [number, number, number], time: number, cave?: readonly [number, number, number] | null): Float32Array {
   const total = new Float32Array(vw * vh * 3);
-  for (let i = 0; i < vw * vh; i++) { total[i * 3] = ambient[0]; total[i * 3 + 1] = ambient[1]; total[i * 3 + 2] = ambient[2]; }
+  if (cave && b.sky) {
+    // La luz ambiente de cada píxel según su cielo (skyAmbient: la misma tabla que la GPU)
+    const t = skyAmbient(ambient, cave), sky = b.sky;
+    for (let y = 0; y < vh; y++) for (let x = 0; x < vw; x++) {
+      const gx = vx + x, gy = vy + y, k = gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, o = (y * vw + x) * 3;
+      total[o] = t[k * 3]!; total[o + 1] = t[k * 3 + 1]!; total[o + 2] = t[k * 3 + 2]!;
+    }
+  } else for (let i = 0; i < vw * vh; i++) { total[i * 3] = ambient[0]; total[i * 3 + 1] = ambient[1]; total[i * 3 + 2] = ambient[2]; }
   for (const bl of b.lights) {
     const r = bl.rect;
     const ix0 = Math.max(vx, r.x), iy0 = Math.max(vy, r.y), ix1 = Math.min(vx + vw, r.x + r.w), iy1 = Math.min(vy + vh, r.y + r.h);

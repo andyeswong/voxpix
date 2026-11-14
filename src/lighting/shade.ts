@@ -56,7 +56,7 @@ export function buildLayers(field: LightField, region: Region, options: Partial<
       }
       for (let ch = 0; ch < 3; ch++) {
         const t = field.total[i + ch]!;
-        const base = Math.min(1, field.ambient[ch]!);
+        const base = Math.min(1, field.base ? field.base[i + ch]! : field.ambient[ch]!);
         // Solo lo que aportan las luces se cuantiza y se trama: donde no llega ninguna, el ambiente
         // queda exacto y plano. Si se trama todo, el suelo oscuro se llena de ruido de damero.
         const room = 1 - base;

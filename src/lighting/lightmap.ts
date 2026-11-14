@@ -49,6 +49,8 @@ export interface LightField {
   rows: number;
   ambient: readonly [number, number, number];   // lo que hay donde no llega ninguna luz
   total: Float32Array;                          // cols * rows * 3
+  // Opcional: el ambiente de cada celda (cols * rows * 3), si no es el mismo en todas (bajo techo, con menos cielo)
+  base?: Float32Array;
 }
 
 // ¿Hay un tile opaco entre a y b? Recorre la rejilla de tiles (Amanatides-Woo). El tile de origen
