@@ -453,7 +453,8 @@ compositor.frame(rs, baked, { ...opciones, ambient: day.ambient(tick), cave: [0.
 
 - Cada píxel del escenario recibe de `cave` (sin cielo: cuevas, túneles, bajo techo) a `ambient` (todo el cielo), en
   6 niveles (`skyAmbient`: la tabla, en float32, que usan la CPU y la GPU). Las luces se suman encima: una antorcha
-  en una cueva se nota mucho más. Las entidades siguen con `ambient`.
+  en una cueva se nota mucho más. Las entidades toman el nivel del píxel de sus pies (`entitySky`): un bicho bajo
+  techo se oscurece como el suelo que pisa, con la misma tabla en la CPU y en la GPU; al aire libre, como siempre.
 - Lo que cambia el cielo de un píxel está a 8 columnas como mucho: al picar, poner o cortar la vista, se rehace por
   caja como las luces fijas (un trabajo `sky:` en la cola, que se publica de una vez). Igual, byte a byte, que hornear
   de cero (hay pruebas, también con el corte de vista en los 4 giros).

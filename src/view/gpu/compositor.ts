@@ -13,7 +13,7 @@
 import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
-import { backlitAt, highlightMask, entitySprite, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
+import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, skyAmbient, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
@@ -164,7 +164,7 @@ export class GpuCompositor {
       gl.bindVertexArray(null);
       return [vao, buf];
     };
-    [this.entVao, this.entBuf] = instanced(this.ent.prog, [['aPlace', 4], ['aPos', 4], ['aOcc', 4], ['aOccSize', 4], ['aMask', 2], ['aTint', 4]]);
+    [this.entVao, this.entBuf] = instanced(this.ent.prog, [['aPlace', 4], ['aPos', 4], ['aOcc', 4], ['aOccSize', 4], ['aMask', 2], ['aTint', 4], ['aSky', 1]]);
     [this.contactVao, this.contactBuf] = instanced(this.contact.prog, [['aFeet', 3]]);
     this.vao = gl.createVertexArray()!;
     this.dropsVao = gl.createVertexArray()!;
@@ -270,7 +270,7 @@ export class GpuCompositor {
     up = performance.now();
     const E = this.ensureEntTarget(o.vw, o.vh);
     const sprites = state.entities.map((e) => entitySprite(b, e, o)).filter((d) => onView(d, o));
-    this.drawEntities(state, sprites, E, o, lights.length);
+    this.drawEntities(state, b, sprites, E, o, lights.length);
     this.parts.entities = performance.now() - up;
     upMs += this.parts.entities;
 
@@ -599,7 +599,7 @@ export class GpuCompositor {
   }
 
   // Las entidades a la capa de entidades (color, su luz, profundidad, con z-buffer) y sus sombras de contacto
-  private drawEntities(state: RenderState, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number): void {
+  private drawEntities(state: RenderState, b: Baked, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, E.fbo);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
@@ -638,6 +638,7 @@ export class GpuCompositor {
       ed[q + 16] = mask & 0xffff; ed[q + 17] = mask >>> 16;
       const tint = d.e.tint;
       if (tint) { ed[q + 18] = tint[0]; ed[q + 19] = tint[1]; ed[q + 20] = tint[2]; ed[q + 21] = 1; } else ed[q + 21] = 0;
+      ed[q + 22] = entitySky(b, d, o);
       cd[k * 3] = d.fx - o.vx; cd[k * 3 + 1] = d.fy - o.vy; cd[k * 3 + 2] = d.sry;
     }
     this.syncBodies();
@@ -670,6 +671,9 @@ export class GpuCompositor {
     gl.uniform2f(p.u.uCell, EW, EH);
     gl.uniform1i(p.u.uLights, o.lights ? 1 : 0);
     gl.uniform3f(p.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
+    const entSky = !!(o.lights && o.cave && b.sky);
+    gl.uniform1i(p.u.uUseSky, entSky ? 1 : 0);
+    if (entSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform3fv(p.u.uDirs, DIR_VECTORS.flat());
     gl.uniform1i(p.u.uNLights, nLights);
     gl.uniform2f(p.u.uDepthRange, range[0], range[1]);
@@ -1020,8 +1024,8 @@ function fillFace(b: Baked, out: Int8Array, vals: Float32Array, x0: number, y0: 
   }
 }
 
-// Floats por entidad en el búfer de instancias (aPlace, aPos, aOcc, aOccSize, aMask)
-const REC = 22;
+// Floats por entidad en el búfer de instancias (aPlace, aPos, aOcc, aOccSize, aMask, aTint, aSky)
+const REC = 23;
 
 // ---- utilidades de WebGL
 

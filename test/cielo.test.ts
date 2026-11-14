@@ -74,3 +74,41 @@ describe('cielo horneado', () => {
     expect(Buffer.from(frame2D(st, b, { ...o, cave })).equals(Buffer.from(frame2D(st, plain, o)))).toBe(false);
   });
 });
+
+describe('entidades y cielo', () => {
+  it('una entidad bajo el porche toma el nivel del píxel de sus pies (más oscura); al aire libre, la misma que sin cueva', async () => {
+    const { Model, box: fill } = await import('../src/core');
+    const { entitySprite, entitySky, frame2D: f2 } = await import('../src/world/frame2d');
+    const st = world(), b = bakeWorld({ model: st.solid, lights: [], width: 64, depth: 56 }, OPTS);
+    const m = new Model({ ramps: [{ name: 'p', colors: ['#402020', '#a05050', '#e0a0a0'] }] }, 'bicho');
+    fill(m, -1, -1, 0, 1, 1, 5, material(0, 1));
+    const amb = [0.9, 0.9, 1] as const, cave = [0.1, 0.08, 0.12] as const;
+    const at = (x: number, y: number) => { st.entities.length = 0; const id = st.entities.add({ model: m, x, y, z: 16, facing: 0, castsShadow: false }); return st.entities.find((e) => e.id === id)!; };
+    const [sx, sy] = b.cam.project(31.5, 22, 16);
+    const o = { vx: Math.max(0, Math.floor(sx) - 32), vy: Math.max(0, Math.floor(sy) - 32), vw: 64, vh: 64, time: 0, lights: true, ambient: amb };
+    // Bajo el porche (junto a su borde sur, donde se ve)
+    const e1 = at(31, 21), d1 = entitySprite(b, e1, { ...o, cave });
+    expect(entitySky(b, d1, { ...o, cave })).toBe(b.sky![d1.fy * b.width + d1.fx]);
+    expect(entitySky(b, d1, { ...o, cave })).toBeLessThan(SKY_RAYS);
+    expect(entitySky(b, d1, o)).toBe(SKY_RAYS);                   // sin cave, como siempre
+    const dark = f2(st, b, { ...o, cave }), lit = f2(st, b, o);
+    const [ex, ey] = [d1.fx - o.vx, d1.fy - o.vy - 3];            // un píxel del cuerpo, encima de los pies
+    const lum = (img: Uint8ClampedArray) => img[(ey * 64 + ex) * 4]! + img[(ey * 64 + ex) * 4 + 1]! + img[(ey * 64 + ex) * 4 + 2]!;
+    expect(lum(dark)).toBeLessThan(lum(lit));
+    // Al aire libre: con cave o sin él, los píxeles de la entidad (los que cambian al ponerla) son los mismos
+    const [ox, oy] = b.cam.project(5.5, 5, 16);
+    const o2 = { ...o, vx: Math.max(0, Math.floor(ox) - 32), vy: Math.max(0, Math.floor(oy) - 32) };
+    st.entities.length = 0;
+    const bare = f2(st, b, o2);
+    at(5, 5);
+    const withC = f2(st, b, { ...o2, cave }), without = f2(st, b, o2);
+    let body = 0;
+    for (let i = 0; i < 64 * 64; i++) {
+      const isBody = [0, 1, 2].some((c) => without[i * 4 + c] !== bare[i * 4 + c]);
+      if (!isBody) continue;
+      body++;
+      for (let c = 0; c < 3; c++) expect(withC[i * 4 + c]).toBe(without[i * 4 + c]);
+    }
+    expect(body).toBeGreaterThan(10);
+  });
+});

@@ -16,7 +16,7 @@ export interface Frame2DOptions {
   ambient: readonly [number, number, number];
   // La luz ambiente donde no se ve el cielo (cuevas, túneles, bajo techo). Con un horneado con cielo (bakeWorld con
   // { sky: true }), cada píxel del escenario recibe de cave (sin cielo) a ambient (todo el cielo); sin el campo, o sin
-  // cielo horneado, ambient en todas partes, como siempre. Las entidades siguen con ambient
+  // cielo horneado, ambient en todas partes, como siempre. Las entidades, el de sus pies (entitySky)
   cave?: readonly [number, number, number] | null;
   bob?: (e: Entity) => number;                          // saltito al andar (píxeles)
   background?: readonly [number, number, number];
@@ -203,7 +203,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       if (key < entKey[t]!) { entKey[t] = key; entDepth[t] = dd; entOf[t] = k; entPx[t] = s; }
     }
   });
-  const etotals = total && !low ? sprites.map((d) => entityLight(state, d, o)) : [];
+  const etotals = total && !low ? sprites.map((d) => entityLight(state, d, o, b)) : [];
   const xr = o.xray?.color;
   for (let t = 0; t < vw * vh; t++) {
     const k = entOf[t]!;
@@ -358,13 +358,27 @@ export function entityLightPick(state: RenderState, d: EntitySprite, o: Frame2DO
   return best.sort((a, b) => a - b);
 }
 
-export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptions): Float32Array {
+// El cielo de los pies de una entidad (0..SKY_RAYS): con cielo horneado y cave, el del píxel de sus pies en la imagen
+// horneada; si no, SKY_RAYS (todo el cielo: ambient). Lo usan la CPU (entityLight) y la GPU (aSky)
+export function entitySky(b: Baked, d: EntitySprite, o: Frame2DOptions): number {
+  if (!o.cave || !b.sky) return SKY_RAYS;
+  const x = d.fx, y = d.fy;
+  return x >= 0 && y >= 0 && x < b.width && y < b.height ? b.sky[y * b.width + x]! : SKY_RAYS;
+}
+// Su luz ambiente: la de ese nivel (skyAmbient, la tabla que usa también la GPU), o ambient
+function entityAmbient(b: Baked | undefined, d: EntitySprite, o: Frame2DOptions): readonly [number, number, number] {
+  if (!b || !o.cave || !b.sky) return o.ambient;
+  const t = skyAmbient(o.ambient, o.cave), k = entitySky(b, d, o);
+  return [t[k * 3]!, t[k * 3 + 1]!, t[k * 3 + 2]!];
+}
+
+export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptions, b?: Baked): Float32Array {
   const pick = entityLightPick(state, d, o);
   const lights: PointLight3D[] = entityLocalLights(state, d, o)
     .filter((l) => Math.hypot(l.x, l.y) < l.radius + 20 && (!pick || pick.includes(l.index)));
   const { e } = d;
   // Las entidades se iluminan como sólidas, en la CPU y en la GPU: los materiales (follaje, vidrio) son del escenario
-  const total = lightField3D(e.model, d.img, camera(d.ro), lights, o.ambient, { floor: false, materials: false });
+  const total = lightField3D(e.model, d.img, camera(d.ro), lights, entityAmbient(b, d, o), { floor: false, materials: false });
   // Lo emisivo lleva su propia luz: se ve con su color, sin que la luz del mundo lo oscurezca
   const em = emissiveMask(d);
   if (em) for (let i = 0; i < em.length; i++) if (em[i]) total.fill(EMISSIVE_LIGHT, i * 3, i * 3 + 3);
@@ -397,7 +411,7 @@ export function emissiveMask(d: EntitySprite): Uint8Array | null {
 
 export function entityDraw(state: RenderState, b: Baked, e: Entity, o: Frame2DOptions): EntityDraw {
   const d = entitySprite(b, e, o);
-  return { ...d, etotal: o.lights ? entityLight(state, d, o) : null };
+  return { ...d, etotal: o.lights ? entityLight(state, d, o, b) : null };
 }
 
 // El contorno exterior se pinta en píxeles vacíos, sin profundidad (Infinity): la prueba de profundidad lo
