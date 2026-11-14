@@ -9,6 +9,8 @@ import { StaticVoxels } from '../src/world/state';
 import { bakeWorld, rebakeChangedJobs } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 
+// Cada llamada con un plazo de PLAZO ms (0,45 sin freno son ~3 ms de presupuesto a 6x), como hace FrameBudget
+const PLAZO = Number(process.env.PLAZO ?? 0.45);
 const W = Number(process.argv[2] ?? 384), D = W, ZT = Number(process.argv[3] ?? 96), NT = Number(process.argv[4] ?? 30), B = 8;
 const pal = { ramps: [
   { name: 'piedra', colors: ['#202428', '#3a4048', '#565e68', '#76808c', '#9aa4b0'] },
@@ -46,9 +48,9 @@ for (let k = 0; k < 32; k++) {
   let w = 0;
   const jobs = rebakeChangedJobs(b, lights);
   if (!warm) nJobs.push(jobs.length);
-  for (const j of jobs) { let done = false; while (!done) { const a = performance.now(); done = j.run(0); w = Math.max(w, performance.now() - a); } }
+  for (const j of jobs) { let done = false; while (!done) { const a = performance.now(); done = j.run(a + PLAZO); w = Math.max(w, performance.now() - a); } }
   if (!warm) { total.push(performance.now() - t0); worst.push(w); }
 }
 const p = (a: number[], q: number) => [...a].sort((x, y) => x - y)[Math.floor(q * (a.length - 1))]!.toFixed(1);
 console.log(`${W}x${D}x${ZT}, ${NT} antorchas: llenar ${(fill / 1000).toFixed(1)} s, vóxeles ${(s.byteLength / 1e6).toFixed(0)} MB, horneado entero ${(full / 1000).toFixed(2)} s; ` +
-  `picar un bloque: total p50 ${p(total, 0.5)} p95 ${p(total, 0.95)} ms, paso más largo p95 ${p(worst, 0.95)} ms, trabajos ${p(nJobs, 0.5)}`);
+  `picar un bloque: total p50 ${p(total, 0.5)} p95 ${p(total, 0.95)} ms, llamada más larga p95 ${p(worst, 0.95)} ms, trabajos ${p(nJobs, 0.5)}`);
