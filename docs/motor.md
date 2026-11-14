@@ -113,7 +113,14 @@ ocupa ~57 MB con capas de dos materiales cada 8 de alto, y menos con roca de un 
     768 bytes por losa recorrida (~2,6 MB en un mundo de 384 x 384 x 96 entero).
   - `forEachExposed(fn, región, false)` recorre sin hacer ni mirar las máscaras (lo de antes: un superconjunto, los
     mismos píxeles). Lo usa el horneado inicial (`bakeWorld` y `bakeWorldJob`), que recorre todo el mundo una vez: hacer
-    las máscaras de todas las losas le subía el render un ~70 % en un navegador frenado a 6x.
+    las máscaras de todas las losas le subía el render un ~70 % en un navegador frenado a 6x. A cambio, el horneado
+    deja apuntado que falta preparar lo expuesto (`baked.exposurePending`), y la primera `rebakeChangedJobs` devuelve,
+    una vez, un trabajo `exposure:...` sin prioridad (detrás de todo, como el cielo) que lo prepara trozo a trozo, de
+    dentro hacia fuera desde su `near`. No rehace lo que ya hizo una franja. Quien nunca llama a `rebakeChangedJobs`
+    tampoco corta, así que no le hace falta. Sin él, la primera franja que pasa por cada trozo tras un corte hacía sus
+    máscaras dentro de su plazo (en un juego de noche con cortes, de 6/9/4 a 7/12/13 cuadros de más de 25 ms por tirada
+    a 6x). Cuesta lo que costaban en el horneado (~1 s a 6x en ese juego), a 3 ms por cuadro: unos 300 cuadros a 6x.
+    `bakeWorld(..., { warmExposure: false })` no lo encola.
   - `warmExposed(región, filas)` deja hechas hasta tantas filas, para preparar con plazo lo que se va a recorrer: el
     rehorneado lo hace antes de cada franja y, si no le da tiempo, sigue en el cuadro siguiente.
 - `viewWrites`: mientras está a `true`, `set` escribe como vista (lo hace el corte de vista): cuenta como cambio para el

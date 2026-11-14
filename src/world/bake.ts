@@ -62,6 +62,9 @@ export interface Baked {
   // Con { sky: true }: cuánto cielo ve la cara de cada píxel, de 0 a SKY_RAYS (los rayos que llegan arriba). Al
   // componer, con Frame2DOptions.cave, la luz ambiente va de la de cueva (0) a la de siempre (todo el cielo)
   sky?: Uint8Array;
+  // Falta preparar lo expuesto (las máscaras de StaticVoxels.forEachExposed): el horneado inicial no las hace (le
+  // costaba ~70 %), y la primera rebakeChangedJobs devuelve un trabajo que las hace detrás de todo
+  exposurePending?: boolean;
 }
 
 // Lo mínimo que necesita el horneado de un mundo
@@ -78,7 +81,9 @@ const BASIN_DEPTH = 10;   // las cuencas del agua bajan hasta z = -8: la imagen 
 // del juego; 0.5 = losetas de 16x8, que deja ver a los personajes de frente con un poco de cabeza). Personajes y
 // escenario usan la MISMA proyección. La imagen tiene el norte arriba.
 // outline: el contorno del render ('both' marca también los saltos de profundidad: paredes, columnas)
-export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: number; outline?: 'none' | 'outer' | 'both'; outlineColor?: string; sky?: boolean } = {}): Baked {
+// warmExposure (true por defecto): después, la primera rebakeChangedJobs devuelve un trabajo que prepara lo expuesto de
+// todo el mundo (ver exposureJob). false, sin él (quien no rehornea por cambios no lo necesita)
+export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: number; outline?: 'none' | 'outer' | 'both'; outlineColor?: string; sky?: boolean; warmExposure?: boolean } = {}): Baked {
   const topZ = opts.topZ ?? 40;
   const incline = opts.incline ?? 0.5;
   const originY = Math.ceil(world.depth * incline) + topZ;
@@ -105,6 +110,7 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
   b.ms.light = Math.round(performance.now() - t1);
   if (opts.sky) { b.sky = new Uint8Array(b.width * b.height); fillSky(b, 0, 0, b.width - 1, b.height - 1); }
   warmUp(b);
+  if (opts.warmExposure !== false) b.exposurePending = true;
   return b;
 }
 
@@ -175,6 +181,7 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
     source: world.model, occ: new Uint8Array(0), topZ,
     published: { serial: 0, rects: [] },
     ...(opts.sky ? { sky: new Uint8Array(W * H) } : {}),
+    ...(opts.warmExposure !== false ? { exposurePending: true } : {}),
   };
   let skyRow = opts.sky ? 0 : H;
   // La imagen se pinta por franjas de columnas directamente en el horneado (nadie lo ve todavía: no hace falta doble búfer)
@@ -997,7 +1004,10 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
   const worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
   const jobs = rebakeJobs(b, chunks, lights, boxes);
   const n = opts.near;
-  if (!n) return jobs;
+  // Lo expuesto que el horneado inicial no preparó: una vez, sin prioridad (detrás de todo)
+  const extra: ViewJob[] = [];
+  if (b.exposurePending) { b.exposurePending = false; extra.push(exposureJob(b, n)); }
+  if (!n) return [...jobs, ...extra];
   const s = b.source, h = s.height[Math.max(0, Math.min(s.depth - 1, Math.floor(n.y))) * s.width + Math.max(0, Math.min(s.width - 1, Math.floor(n.x)))]!;
   const [px, py] = b.cam.project(n.x, n.y, h);
   const byId = new Map<string, WorldLight>(lights.map((l) => [`light:${l.id}`, l]));
@@ -1021,8 +1031,36 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
         p = (opts.nearLights === false || !byWorld ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py);
       }
     }
-    return { key: j.key, priority: p, run: (d: number) => j.run(d) };
-  });
+    return { key: j.key, priority: p, run: (d: number) => j.run(d) } as ViewJob;
+  }).concat(extra);
+}
+
+// Prepara lo expuesto de todo el mundo (StaticVoxels.warmExposed), trozo a trozo y de dentro hacia fuera desde `near`
+// (si lo hay), por tandas de filas, mirando el plazo entre tandas. Lo que ya hizo una franja (o este trabajo) no se
+// rehace: warmExposed solo hace las filas que faltan. Así los cortes y los golpes encuentran hechas las máscaras que el
+// horneado inicial no hizo, y su franja no las paga dentro de su plazo
+let exposureSerial = 0;
+function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
+  const s = b.source, n = s.cols * s.rows, order: number[] = [];
+  for (let c = 0; c < n; c++) order.push(c);
+  if (near) {
+    const d = (c: number) => Math.hypot((c % s.cols) * CHUNK + CHUNK / 2 - near.x, Math.floor(c / s.cols) * CHUNK + CHUNK / 2 - near.y);
+    order.sort((p, q) => d(p) - d(q) || p - q);
+  }
+  let k = 0;
+  return {
+    key: `exposure:${++exposureSerial}`,
+    run(deadline) {
+      while (k < order.length) {
+        const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;
+        const region = { x0, y0, x1: Math.min(s.width - 1, x0 + CHUNK - 1), y1: Math.min(s.depth - 1, y0 + CHUNK - 1) };
+        while (!s.warmExposed(region, WARM_ROWS)) if (performance.now() >= deadline) return false;
+        k++;
+        if (performance.now() >= deadline) break;
+      }
+      return k >= order.length;
+    },
+  };
 }
 
 // Los trozos cambiados desde el último horneado y la caja de lo cambiado en cada uno; pone b.version al día

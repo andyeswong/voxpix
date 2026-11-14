@@ -64,6 +64,9 @@ const view = new WorldView(st, 0, { cut: true });
 const outline = (process.env.CONTORNO ?? 'none') as 'none' | 'outer' | 'both';
 const b = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, sky: true, outline });
 const q = new FrameBudget(3 / K, undefined, { ms: Number(process.env.NEAR ?? 8) / K, below: 64 });
+// Lo expuesto que el horneado deja por preparar (el trabajo exposure:...), acabado antes de medir: en un juego corre en
+// los primeros segundos, detrás de todo
+for (const j of rebakeChangedJobs(b, view.frame().lights, { near: { x: 192, y: 192 } })) while (!j.run(Infinity));
 const queue = () => (q as unknown as { queue: ViewJob[] }).queue;
 const player = { x: 192, y: 192 };
 const calls: string[] = [];

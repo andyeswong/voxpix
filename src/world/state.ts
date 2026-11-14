@@ -556,7 +556,10 @@ export class StaticVoxels implements VoxelSource {
   }
 
   // La fila (lz, ly) de la máscara de la losa si: un bit por x con vóxel y alguna cara al aire
+  // Cuántas filas de lo expuesto se han hecho (para medir, y para probar que no se rehace lo hecho)
+  exposureRows = 0;
   private exposureRow(si: number, s: number, cx: number, cy: number, lz: number, ly: number): number {
+    this.exposureRows++;
     const d = this.data[si], p = this.pal[si], u = this.uni[si]!;
     const hs = Math.min(SLAB, this.zh - s * SLAB), z0 = s * SLAB + this.zMin, X = cx * CHUNK, Y = cy * CHUNK, row = (lz << 8) | (ly << 4);
     let bits = 0;

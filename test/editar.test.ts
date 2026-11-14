@@ -111,7 +111,7 @@ describe('lo cercano primero', () => {
 
   it('rebakeChangedJobs con near: el recuadro del cambio cercano antes que el lejano', () => {
     const st = world();
-    const b = bakeWorld({ model: st.solid, lights: [], width: 64, depth: 64 }, { topZ: 31, incline: 0.5 });
+    const b = bakeWorld({ model: st.solid, lights: [], width: 64, depth: 64 }, { topZ: 31, incline: 0.5, warmExposure: false });
     clearBox(st, { x0: 2, y0: 2, z0: 6, x1: 3, y1: 3, z1: 7 });
     clearBox(st, { x0: 58, y0: 58, z0: 6, x1: 59, y1: 59, z1: 7 });
     const jobs = rebakeChangedJobs(b, [], { near: { x: 59, y: 59 } });

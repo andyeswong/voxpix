@@ -20,7 +20,7 @@ const player = { x: 20, y: 20 };
 describe('luz cercana', () => {
   it('la antorcha puesta junto al jugador va con prioridad cercana; la lejana, detrás; y acaban como hornear de cero', () => {
     const s = ground(), ls = new LightList();
-    const b = bakeWorld({ model: s, lights: ls, width: 96, depth: 96 }, OPTS);
+    const b = bakeWorld({ model: s, lights: ls, width: 96, depth: 96 }, { ...OPTS, warmExposure: false });
     ls.addFixed({ id: 'cerca', kind: 'torch', x: 22.5, y: 21.5, z: 24 });
     ls.addFixed({ id: 'lejos', kind: 'torch', x: 84.5, y: 84.5, z: 24 });
     const jobs = rebakeChangedJobs(b, ls, { near: player });

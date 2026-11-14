@@ -25,7 +25,7 @@ describe('cambios seguidos con trabajos de luz a medias', () => {
     const s = ground(), ls = new LightList();
     ls.addFixed({ id: 'a', kind: 'torch', x: 32.5, y: 32.5, z: 30 });
     const opts = { topZ: 40, incline: 0.5 };
-    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, { ...opts, warmExposure: false });
     const q = new FrameBudget(1);
     hole(s, 8, 8);
     for (const j of rebakeChangedJobs(b, ls)) q.push(j);

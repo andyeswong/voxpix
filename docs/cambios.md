@@ -37,6 +37,8 @@ medida que vale para un juego es la suya.
   (traza de V8 en Edge: 7 de 312 llamadas lentas tienen una pausa dentro, y ninguna bajaría de 8 sin ella): es
   cálculo. Tolerancia conocida. El horneado inicial recorre sin máscaras: hacerlas para todo el mundo de una vez le
   subía el render de ~1.530 a ~2.650 ms a 6x en un juego (medido por FERN); sin ellas, en Edge a 6x, ~1.500-2.000.
+  Las máscaras las prepara después un trabajo de la cola, detrás de todo (lo devuelve la primera
+  `rebakeChangedJobs`): sin él, las franjas de los primeros cortes las hacían dentro de su plazo.
 - Las luces cerca del jugador que cambian por el mundo también van con el presupuesto cercano (una antorcha recién
   puesta alumbra en menos de la mitad de cuadros), sin adelantarse a sus recuadros. Las que solo toca un corte de
   vista, no: si no, en una noche con antorchas cada corte les cedía el cercano (en el juego, 8-34 cuadros de más de

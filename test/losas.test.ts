@@ -195,7 +195,7 @@ describe('luces fijas puestas y quitadas en partida', () => {
     const ls = new LightList();
     ls.addFixed({ id: 'a', kind: 'torch', x: 20, y: 20, z: 30 });
     const opts = { topZ: 47, incline: 0.5 };
-    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, opts);
+    const b = bakeWorld({ model: s, lights: ls, width: 64, depth: 64 }, { ...opts, warmExposure: false });
     expect(rebakeChangedJobs(b, ls)).toEqual([]);
     const id = ls.addFixed({ kind: 'lamp', x: 44, y: 40, z: 28 });
     const jobs = rebakeChangedJobs(b, ls);

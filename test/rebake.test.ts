@@ -96,7 +96,7 @@ describe('rehorneado por trozos', () => {
 describe('rehorneado como trabajos (para la cola con presupuesto)', () => {
   function edited() {
     const { s, lights } = yard();
-    const b = bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5 });
+    const b = bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5, warmExposure: false });
     const before = { rgba: b.rgba.slice(), weights: b.lights.map((l) => l.weight.slice()) };
     for (let z = 1; z <= 20; z++) for (let x = 36; x < 44; x++) for (let y = 30; y < 33; y++) s.set(x, y, z, 0);
     return { s, lights, b, before };
