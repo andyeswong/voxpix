@@ -951,13 +951,16 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
 }
 
 // Los trabajos de lo que haya cambiado (solo vóxeles) desde el último horneado
-// Las luces de un rehorneado con near van detrás de todos los recuadros y nunca cuentan como "cercanas" para el
-// presupuesto aparte de FrameBudget (near.below), salvo un umbral de más de esto: su prioridad empieza aquí
+// El cielo (y las luces con nearLights: false) van detrás de todos los recuadros y nunca cuentan como "cercanos" para
+// el presupuesto aparte de FrameBudget (near.below): su prioridad empieza aquí
 export const LIGHT_PRIORITY = 10000;
 
 // near (opcional): dónde está el jugador (x, y del mundo). Los trabajos llevan entonces prioridad (ViewJob.priority, la
-// distancia en píxeles de pantalla): FrameBudget hace antes lo más cercano, aunque haya trabajo viejo en la cola
-export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number } } = {}): ViewJob[] {
+// distancia en píxeles de pantalla): FrameBudget hace antes lo más cercano, aunque haya trabajo viejo en la cola.
+// Las luces, con el mismo criterio que los recuadros (la distancia de la luz en pantalla): una antorcha puesta junto al
+// jugador va con el presupuesto cercano y se ve encendida en pocos cuadros. No se adelantan a sus recuadros: esperan a
+// que se publiquen sin gastar nada. nearLights: false, detrás de todo como antes (LIGHT_PRIORITY + distancia)
+export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean } = {}): ViewJob[] {
   const { chunks, boxes } = changedBoxes(b);
   const jobs = rebakeJobs(b, chunks, lights, boxes);
   const n = opts.near;
@@ -973,7 +976,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
     else if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
     else {
       const l = byId.get(j.key.split('#')[0]!);
-      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = LIGHT_PRIORITY + Math.hypot(lx - px, ly - py); }
+      if (l) { const [lx, ly] = b.cam.project(l.x, l.y, l.z); p = (opts.nearLights === false ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py); }
     }
     return { key: j.key, priority: p, run: (d: number) => j.run(d) };
   });

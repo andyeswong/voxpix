@@ -214,9 +214,14 @@ budget.run();
   da `null` y no rehornea nada.
 - Presupuesto aparte para lo cercano: `new FrameBudget(3, undefined, { ms: 8, below: 64 })`. Los trabajos con
   `priority` menor que `below` (con `near`, los recuadros a menos de 64 px del jugador en pantalla) se hacen antes y
-  pueden llevarse hasta 8 ms del cuadro; los demás siguen con sus 3. Las luces de un rehorneado con `near` llevan
-  prioridad desde `LIGHT_PRIORITY` (10000): van detrás de los recuadros y nunca cuentan como cercanas. Así el bloque
-  picado se ve en el cuadro siguiente y las luces se asientan en los de después, sin subir el presupuesto de todo.
+  pueden llevarse hasta 8 ms del cuadro; los demás siguen con sus 3. Las luces llevan la misma prioridad que los
+  recuadros (la distancia de la luz en pantalla): una antorcha puesta junto al jugador va con el presupuesto cercano.
+  No se adelantan a lo que tiene que aparecer: un trabajo de luz espera, sin gastar nada, a que se publiquen sus
+  recuadros. El cielo va detrás de todo (desde `LIGHT_PRIORITY`, 10000), y las luces también con
+  `rebakeChangedJobs(..., { near, nearLights: false })`, como antes.
+  En `bench-corte.ts`: una antorcha nueva junto al jugador alumbra en 4 cuadros a 6x en vez de 9 (`ANTORCHA=1`); en un
+  corte con dos antorchas en el túnel (`ANT=2`), lo cortado aparece igual (p50 16-17 cuadros a 6x) y las luces acaban
+  en 24-29 cuadros en vez de 39-44.
   `budget.ms` y `budget.near` se pueden cambiar entre cuadros.
 - La cola aprende lo que cuesta cada clase de llamada (la key hasta `:` o `#`: `rect`, `light`, `sky`, `view-cut`...):
   el p95 de sus últimas 32 llamadas, en `budget.expected(key)`. La primera llamada de cada trabajo (la que lo prepara:

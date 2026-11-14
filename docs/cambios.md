@@ -31,6 +31,8 @@ medida que vale para un juego es la suya.
 - Hay un presupuesto aparte para lo cercano (`near`): el bloque picado se ve en el cuadro siguiente.
 - La cola aprende lo que cuesta cada clase de llamada (recuadro, luz, cielo, corte), con la primera llamada de cada
   trabajo aparte, y no empieza una llamada que no cabe.
+- Las luces cerca del jugador también van con el presupuesto cercano (una antorcha recién puesta alumbra en menos de
+  la mitad de cuadros), sin adelantarse a sus recuadros.
 - Lo probado con un reloj de mentira desde el primer cuadro: ningún `run()` pasa de `near.ms + ms`, y el resultado es
   el mismo que sin plazo.
 - Las luces respetan su plazo: sombras por caja, un reloj cada 4 píxeles y tablas de tamaño fijo, sin `Map` ni `Set`

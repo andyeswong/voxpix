@@ -34,7 +34,8 @@ for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
 const lights: WorldLight[] = process.env.ANT === '2'
   ? [{ id: 'a', kind: 'torch', x: 180.5, y: 191.5, z: 12, baked: true }, { id: 'b', kind: 'torch', x: 230.5, y: 191.5, z: 12, baked: true }]
   : [];
-const view = new WorldView(new WorldState(s, lights, null), 0, { cut: true });
+const st = new WorldState(s, lights, null);
+const view = new WorldView(st, 0, { cut: true });
 const b = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, sky: true });
 const q = new FrameBudget(3 / K, undefined, { ms: Number(process.env.NEAR ?? 8) / K, below: 64 });
 const queue = () => (q as unknown as { queue: ViewJob[] }).queue;
@@ -59,10 +60,11 @@ function event(cut: ViewCut | ViewCut[] | null, measure: boolean): void {
   q.push(wrap(view.cutJob(cut)));
   let f = 0, max = 0, appear = -1;
   while (f < 400) {
-    for (const j of rebakeChangedJobs(b, view.frame().lights, { near: player })) q.push(wrap(j));
-    // Aparece: el corte hecho y, después de recoger lo que cambió, nada cercano en la cola (los recuadros del corte
+    for (const j of rebakeChangedJobs(b, view.frame().lights, { near: player, nearLights: process.env.LUZLEJOS !== '1' })) q.push(wrap(j));
+    // Aparece: el corte hecho y, después de recoger lo que cambió, ningún recuadro cercano en la cola (las luces, aunque
+    // sean cercanas, no cuentan: es lo que se ve aparecer; los recuadros del corte
     // entran en la cola el cuadro después de que el corte escribe)
-    if (f > 0 && appear < 0 && !queue().some((j) => j.priority !== undefined && j.priority < 64)) appear = f;
+    if (f > 0 && appear < 0 && !queue().some((j) => j.priority !== undefined && j.priority < 64 && /^(rect|view-cut)/.test(j.key))) appear = f;
     if (!q.pending) break;
     f++;
     calls.length = 0;
@@ -81,6 +83,29 @@ const at = (x0: number): ViewCut | ViewCut[] => {
   const roof = { x0, y0: 176, x1: x0 + 31, y1: 207, zTop: 20 };
   return process.env.DOS === '1' ? [roof, { x0, y0: 176, x1: x0 + 31, y1: 191, zTop: 8 }] : roof;
 };
+// ANTORCHA=1: en vez de cortes, poner una antorcha junto al jugador (en el túnel, sin corte) y contar los cuadros hasta
+// que alumbra (su trabajo de luz acabado). LUZLEJOS=1: las luces sin prioridad cercana, como antes
+if (process.env.ANTORCHA === '1') {
+  const frames: number[] = [], ms: number[] = [];
+  for (let k = 0; k < 4 + RUNS * 4; k++) {
+    const id = `nueva${k}`;
+    st.lights.addFixed({ id, kind: 'torch', x: 186.5 + (k % 4) * 4, y: 189.5, z: 12 });
+    let f = 0, lit = -1, t = 0;
+    while (f < 400) {
+      for (const j of rebakeChangedJobs(b, view.frame().lights, { near: player, nearLights: process.env.LUZLEJOS !== '1' })) q.push(j);
+      if (!q.pending) break;
+      f++;
+      const t0 = performance.now(); q.run(); t += performance.now() - t0;
+      if (lit < 0 && b.lights.some((l) => l.light.id === id)) lit = f;
+    }
+    if (k >= 4) { frames.push(lit); ms.push(t * K); }
+    st.lights.removeFixed(id);
+    for (let g = 0; g < 400 && (q.pending || rebakeChangedJobs(b, view.frame().lights).length); g++) { for (const j of rebakeChangedJobs(b, view.frame().lights, { near: player })) q.push(j); q.run(); }
+  }
+  const pp = (a: number[], x: number) => [...a].sort((u, v) => u - v)[Math.floor(x * (a.length - 1))]!;
+  console.log(`antorcha nueva junto al jugador (${frames.length}): alumbra en p50 ${pp(frames, 0.5)} máx ${pp(frames, 1)} cuadros (a 6x); trabajo de la cola p50 ${pp(ms, 0.5).toFixed(0)} ms (a 6x)`);
+  process.exit(0);
+}
 // Una tirada de calentamiento y RUNS medidas, de 8 eventos cada una
 for (let r = 0; r <= RUNS; r++) {
   const m = r > 0;
