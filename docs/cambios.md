@@ -87,8 +87,10 @@ Es determinista por semilla. Un mundo de 48 x 48 x 12 bloques se genera en ~0,25
 
 ### Moverse por niveles
 
-`moveBodyLevels`: un cuerpo con alto que anda bajo techos, cae por huecos y salta. Ver
-[Moverse por niveles](motor.md#moverse-por-niveles).
+`moveBodyLevels`: un cuerpo con alto que anda bajo techos, cae por huecos y salta. Dentro de una llamada, lo que
+da el suelo de cada columna y el último apoyo se guardan, con los mismos resultados. En `bun scripts/bench-niveles.ts`
+(20 cuerpos de radio 3 persiguiendo, 1800 ticks, mundo de bloques, sin freno) una llamada pasa de ~3,3 a ~2,6 µs de
+media, y el apoyo se calcula 5 veces por llamada en vez de 6. Ver [Moverse por niveles](motor.md#moverse-por-niveles).
 
 ### El ciclo del día
 

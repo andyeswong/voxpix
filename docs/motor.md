@@ -381,6 +381,9 @@ if (m.landed > 40) { /* una caída de más de 40 vóxeles: lo que el juego quier
   del mundo es pared. Los objetos despiertos no cuentan todavía.
 - Determinista: sin reloj ni azar. Por cuerpo y tick, ~1 µs al aire libre (sin freno; 200 cuerpos, ~0,2 ms); debajo
   de techos, algo más.
+- Dentro de una llamada guarda lo que da el suelo de cada columna (los subpasos pisan casi las mismas) y el último
+  apoyo (el del final suele repetir el del vertical): los mismos resultados, ~20 % menos por llamada
+  (`bun scripts/bench-niveles.ts`: 20 cuerpos de radio 3, ~3,3 -> ~2,6 µs en el mundo de bloques).
 
 ## Caminos
 

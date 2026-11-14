@@ -40,15 +40,40 @@ export function footBelow(w: WorldState, xi: number, yi: number, zTop: number, m
   return NO_FOOT;
 }
 
+// Lo que dio footBelow en esta llamada a moveBodyLevels, por columna y altura: los subpasos de un tick pisan casi las
+// mismas columnas a la misma altura (un cuerpo de radio 3 son ~29 columnas, y support se mira ~6 veces por tick). Es
+// el mismo cálculo guardado: los resultados no cambian. Una tabla fija con una marca por llamada (nada que borrar)
+const MEMO = 256;
+const memoKey = new Float64Array(MEMO), memoVal = new Float64Array(MEMO), memoGen = new Uint32Array(MEMO);
+let gen = 0;
+function footMemo(w: WorldState, xi: number, yi: number, zTop: number, mt: Mt): number {
+  const k = (yi * w.solid.width + xi) * 4096 + zTop;
+  let i = (Math.imul(xi, 73856093) ^ Math.imul(yi, 19349663) ^ Math.imul(Math.floor(zTop * 8), 83492791)) & (MEMO - 1);
+  for (let probe = 0; probe < 8; probe++, i = (i + 1) & (MEMO - 1)) {
+    if (memoGen[i] !== gen) { memoGen[i] = gen; memoKey[i] = k; return (memoVal[i] = footBelow(w, xi, yi, zTop, mt)); }
+    if (memoKey[i] === k) return memoVal[i]!;
+  }
+  return footBelow(w, xi, yi, zTop, mt);
+}
+
 // El apoyo del cuerpo en (x, y) con los pies a z: el suelo más alto bajo la huella que no esté por encima de z + step.
 // -Infinity si toda la huella es hueco
+// El último support de esta llamada con sus argumentos: el del final (¿en el suelo?) suele repetir los del vertical
+let lastS = { gen: 0, x: 0, y: 0, z: 0, r: 0, step: 0, top: 0 };
 function support(w: WorldState, x: number, y: number, z: number, r: number, step: number, mt: Mt): number {
+  const L = lastS;
+  if (L.gen === gen && L.x === x && L.y === y && L.z === z && L.r === r && L.step === step) return L.top;
+  const top = supportOf(w, x, y, z, r, step, mt);
+  L.gen = gen; L.x = x; L.y = y; L.z = z; L.r = r; L.step = step; L.top = top;
+  return top;
+}
+function supportOf(w: WorldState, x: number, y: number, z: number, r: number, step: number, mt: Mt): number {
   const rr = r * r;
   let top = -Infinity;
   for (let cy = Math.floor(y - r); cy <= Math.floor(y + r); cy++) for (let cx = Math.floor(x - r); cx <= Math.floor(x + r); cx++) {
     const ex = Math.min(Math.max(x, cx), cx + 1) - x, ey = Math.min(Math.max(y, cy), cy + 1) - y;
     if (ex * ex + ey * ey >= rr) continue;
-    const g = footBelow(w, cx, cy, z + step, mt);
+    const g = footMemo(w, cx, cy, z + step, mt);
     if (g !== NO_FOOT && g > top) top = g;
   }
   return top;
@@ -87,6 +112,7 @@ export interface LevelMove { blocked: boolean; grounded: boolean; landed: number
 export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: number, jump = false, rules: LevelRules = LEVEL_RULES): LevelMove {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
   const ddx = dx / n, ddy = dy / n, mt = materialsOf(w.solid.palette);
+  gen = (gen + 1) >>> 0 || 1;                                      // una marca nueva: lo guardado antes no vale
   let hit = false;
   for (let i = 0; i < n; i++) {
     if (ddx !== 0 && !stepTo(w, b, b.x + ddx, b.y, rules, mt)) hit = true;
