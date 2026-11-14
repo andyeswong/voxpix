@@ -609,17 +609,22 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const { rect, plan } = chunkRect(b, g, boxes);
     plans.push(plan); rects.push(rect);
     pending++;
-    let buf: RectBuffers | null = null, col = rect.x0;
+    let buf: RectBuffers | null = null, col = rect.x0, est = 0;
     jobs.push({
       key: `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`,
       run(deadline) {
         if (col > rect.x1) return true;
         buf ??= rectBuffers(rect);
+        // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
+        // última se pasaba del plazo entera)
+        let t = performance.now();
         do {
           const c1 = Math.min(rect.x1, col + RECT_BAND - 1);
           renderColumns(b, rect, buf, col, c1);
           col = c1 + 1;
-        } while (col <= rect.x1 && performance.now() < deadline);
+          const now = performance.now();
+          est = now - t; t = now;
+        } while (col <= rect.x1 && t + est < deadline);
         if (col <= rect.x1) return false;
         const mask = new Uint8Array(buf.w * buf.h);
         publishRect(b, rect, buf, mask);
