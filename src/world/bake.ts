@@ -692,11 +692,22 @@ function stripRegion(b: Baked, r: ScreenRect, c0: number, c1: number) {
 // Prepara (hasta el plazo, de WARM_ROWS en WARM_ROWS filas; las primeras siempre) lo que la franja va a recorrer: las
 // filas de la máscara de lo expuesto que haya que recalcular. true si está todo
 const WARM_ROWS = 64;
+// Las tandas que puede necesitar una región como mucho: sus filas de máscara (por trozo, una por y y por z) entre
+// WARM_ROWS, y una más. Si se pasan, algo rehace lo hecho: error (si no, se colgaría)
+function warmBatches(s: StaticVoxels, r: { x0: number; y0: number; x1: number; y1: number }): number {
+  const chunksX = Math.floor(Math.min(s.width - 1, r.x1) / CHUNK) - Math.floor(Math.max(0, r.x0) / CHUNK) + 1;
+  const ys = Math.min(s.depth - 1, r.y1) - Math.max(0, r.y0) + 1;
+  return Math.ceil((chunksX * ys * (s.zMax - s.zMin + 1)) / WARM_ROWS) + 1;
+}
 function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: number): boolean {
   const { region, bands } = stripRegion(b, r, c0, c1);
   const parts = (b.options.yaw ?? 0) !== 0 ? [region] : bands;
   for (const part of parts) {
-    while (!b.source.warmExposed(part, WARM_ROWS)) if (performance.now() >= deadline) return false;
+    const most = warmBatches(b.source, part);
+    for (let n = 0; !b.source.warmExposed(part, WARM_ROWS); n++) {
+      if (n > most) throw new Error(`lo expuesto no acaba: ${n} tandas en una región que tiene como mucho ${most}`);
+      if (performance.now() >= deadline) return false;
+    }
   }
   return true;
 }
@@ -1047,15 +1058,19 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
     const d = (c: number) => Math.hypot((c % s.cols) * CHUNK + CHUNK / 2 - near.x, Math.floor(c / s.cols) * CHUNK + CHUNK / 2 - near.y);
     order.sort((p, q) => d(p) - d(q) || p - q);
   }
-  let k = 0;
+  let k = 0, batches = 0;
+  const most = warmBatches(s, { x0: 0, y0: 0, x1: CHUNK - 1, y1: CHUNK - 1 });
   return {
     key: `exposure:${++exposureSerial}`,
     run(deadline) {
       while (k < order.length) {
         const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;
         const region = { x0, y0, x1: Math.min(s.width - 1, x0 + CHUNK - 1), y1: Math.min(s.depth - 1, y0 + CHUNK - 1) };
-        while (!s.warmExposed(region, WARM_ROWS)) if (performance.now() >= deadline) return false;
-        k++;
+        for (; !s.warmExposed(region, WARM_ROWS); batches++) {
+          if (batches > most) throw new Error(`lo expuesto no acaba: ${batches} tandas en un trozo que tiene como mucho ${most}`);
+          if (performance.now() >= deadline) return false;
+        }
+        k++; batches = 0;
         if (performance.now() >= deadline) break;
       }
       return k >= order.length;
