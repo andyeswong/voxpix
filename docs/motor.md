@@ -355,6 +355,61 @@ const { heights } = generateTerrain({
 - El ruido es de `src/worldgen/noise.ts` (`valueNoise`, `fbm`, `fbmN`, `lattice`), exportado para quien quiera más.
 - En un portátil, sin freno: un terreno de 48 x 48 x 12 bloques de 8 se genera en ~0,25 s y se hornea en ~0,3 s.
 
+## Mapa por semilla
+
+`src/world/mapgen.ts` genera un mapa entero por semilla, en celdas (bloques). No toca ningún mundo y no sabe qué es
+cada material: son números que pone quien llama (con un `BlockGrid`, los índices de su set; 0 es aire). Hace:
+- relieve por ruido;
+- estratos por profundidad;
+- lagos bajo el nivel del mar, con orilla;
+- vetas;
+- cuevas;
+- lo que se siembra encima.
+
+```ts
+import { generateMap, applyMap, mapColumn, mapHash } from '@voxpix/world/mapgen';
+const T = (id: string) => set.index(id);
+const map = generateMap({
+  seed: 1, width: 48, depth: 48, height: 12,
+  surface: { base: 6, amplitude: 2.5, scale: 9 },                     // colinas: fbm
+  strata: [{ material: T('hierba'), depth: 1 }, { material: T('tierra'), depth: 2 }, { material: T('piedra') }],
+  seaLevel: 5, water: T('agua'), shore: { material: T('arena'), width: 1, depth: 1 },
+  veins: [{ material: T('mena'), in: [T('piedra')], z: [1, 4], density: 0.03, size: [2, 4] }],
+  caves: { count: 10, z: [1, 5], length: [20, 40], radius: [1, 1.7] },
+  scatter: [{ on: [T('hierba')], density: 0.05, structure: [[0, 0, 1, T('flor')]] }],
+});
+applyMap(map, grid);                                                   // o leer map.cells / mapColumn(map, x, y) / map.sown
+```
+
+- Salida:
+  - `cells`, el material de cada celda;
+  - `heights`, por columna, la celda más alta que no es aire ni agua;
+  - `mapColumn(map, x, y)`, los tramos `[z0, z1, material]` de una columna;
+  - `sown`, la lista de lo sembrado (`{ rule, x, y, z }`, con la estructura en `structures[rule]`), que no está en
+    `cells`: lo escribe quien lo use.
+
+  `applyMap` lo escribe todo en un `BlockGrid`: los tramos con `grid.fill` y lo sembrado con `grid.set`, que aplica
+  las variantes tapadas y la luz que emitan.
+- En orden:
+  1. El relieve, con `fbmN` y la misma fórmula que `generateTerrain`.
+  2. Los estratos, de arriba abajo.
+  3. El agua hasta `seaLevel` en las columnas cuya superficie queda por debajo.
+  4. La orilla: el lecho de los lagos, y la tierra a `width` columnas del agua que no sube más de 1 sobre el nivel.
+  5. Las vetas: manchas de `size` celdas que crecen por vecinos dentro de los materiales `in` y de la franja `z`;
+     `density` es la parte aproximada de esas celdas que acaba siendo veta.
+  6. Las cuevas: gusanos que giran poco a poco y vacían esferas, sin tocar la capa 0 ni las columnas con agua.
+  7. Lo sembrado: sobre su materia, fuera del agua, con su probabilidad y su distancia, solo si cabe sobre aire y no
+     pisa lo ya sembrado.
+- Determinista: la misma semilla y el mismo spec dan las mismas celdas y la misma lista en cualquier máquina (azar
+  propio con semilla, sin reloj). `mapHash(map)` es su huella. `test/mapgen.test.ts` fija la de un spec, comprueba cada
+  regla y que `applyMap` deja la rejilla igual que el mapa.
+- `bun scripts/bench-mapa.ts`, sin freno, en un mundo de 384 x 384 x 96 vóxeles (48 x 48 x 12 bloques de 8):
+  - generar, 1-2,5 ms (10 ms la primera vez, que incluye el arranque);
+  - escribirlo en el mundo, 207-227 ms (~8 M vóxeles);
+  - hornearlo, lo de siempre (ver Girar la cámara).
+- `generateTerrain` sigue igual: trabaja con nombres de bloque y escribe directamente en la rejilla, sin agua ni
+  cuevas.
+
 ## Caminos por niveles
 
 `PathField` tiene un suelo por celda (el de arriba). Para bichos que entren en túneles, cuevas o pisos,

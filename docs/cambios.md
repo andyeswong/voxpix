@@ -174,6 +174,21 @@ con `window.voxpix`. Lleva:
 
 `test/enano.test.ts` lo carga con `clipsFromFile` y comprueba los clips, la caja y que ningún cuadro va vacío.
 
+### Mapa por semilla
+
+`generateMap` (`src/world/mapgen.ts`) genera un mapa entero por semilla, en celdas y con materiales que pone quien
+llama:
+- colinas por ruido;
+- estratos;
+- lagos bajo el nivel del mar con orilla;
+- vetas;
+- cuevas por gusanos;
+- lo sembrado (árboles, flores).
+
+Da las celdas, las columnas por tramos y la lista de lo sembrado. `applyMap` lo escribe en un `BlockGrid`, y
+`mapHash` es su huella. Generar cuesta ~1-2 ms, y escribirlo en un mundo de 384 x 384 x 96, ~0,2 s. Ver
+[Mapa por semilla](motor.md#mapa-por-semilla).
+
 ### Fondo transparente
 
 `Frame2DOptions.background = 'transparent'`: alfa 0 donde no hay nada, en la CPU y en la GPU, para que el juego pinte
