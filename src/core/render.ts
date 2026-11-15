@@ -1,5 +1,5 @@
 import { key, type VoxelSource } from './model';
-import { decode, rampOf, rgbOf, allowedColors, foliageSunDepth, type Palette } from './palette';
+import { decode, rampOf, MAX_TONES, rgbOf, allowedColors, foliageSunDepth, type Palette } from './palette';
 import { materialsOf, SUN_UNIT, SUN_OPAQUE } from './materials';
 
 // Render de vóxeles a pixel art por software. Determinista: mismo modelo y mismas opciones, mismos bytes.
@@ -54,6 +54,8 @@ export const DIR_VECTORS: ReadonlyArray<readonly [number, number, number]> = [[1
 // (z = 0) cae bajo un píxel. La usan el render y el editor 3D, así que siempre coinciden.
 export interface Camera {
   project(x: number, y: number, z: number): [number, number, number];
+  // Lo mismo, escrito en `out` (las mismas cuentas en el mismo orden: los mismos números), sin crear nada
+  projectTo(x: number, y: number, z: number, out: number[]): void;
   groundAt(sx: number, sy: number): [number, number] | null;
   groundPoint(sx: number, sy: number): [number, number] | null;   // punto exacto del suelo (z = 0) bajo un píxel
   yawCos: number;
@@ -89,6 +91,11 @@ export function camera(o: RenderOptions): Camera {
       const px = x - pvx, py = y - pvy, pz = (z - pvz) * zs;
       const wx = px * cos - py * sin, wy = px * sin + py * cos;
       return [wx * ppu + o.originX + 0.5, -(wy * up[1] + pz * up[2]) * ppu + o.originY, wy * fwd[1] + pz * fwd[2]];
+    },
+    projectTo(x, y, z, out) {
+      const px = x - pvx, py = y - pvy, pz = (z - pvz) * zs;
+      const wx = px * cos - py * sin, wy = px * sin + py * cos;
+      out[0] = wx * ppu + o.originX + 0.5; out[1] = -(wy * up[1] + pz * up[2]) * ppu + o.originY; out[2] = wy * fwd[1] + pz * fwd[2];
     },
     groundPoint(sx, sy) {
       if (se < 1e-3) return null;                       // de frente, el suelo no se ve
@@ -168,8 +175,9 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
   const filled = (x: number, y: number, z: number) => model.get(x, y, z) !== 0;
 
   const pal = model.palette;
-  const toneCache = new Map<number, number>();
   const mt = materialsOf(pal);
+  // Las esquinas de la cara que se pinta: los mismos 4 arrays para todas (raster solo los lee)
+  const corners: number[][] = [[0, 0, 0], [0, 0, 0], [0, 0, 0], [0, 0, 0]];
 
   // La proyección es afín: con ella, un vóxel cuyo cubo cae entero fuera de la imagen se salta sin mirar sus caras
   // (una franja estrecha de un mundo grande recorre muchos así; no pintarían nada)
@@ -191,20 +199,20 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
       if (filled(x + d[0], y + d[1], z + d[2])) continue;
 
       const shade = toneFor(x, y, z, f, v);
-      const pts = FACE_CORNERS[f]!.map(([cx, cy, cz]) => project(x + cx, y + cy, z + cz));
+      const fc = FACE_CORNERS[f]!;
+      for (let i = 0; i < 4; i++) { const c = fc[i]!; cam.projectTo(x + c[0], y + c[1], z + c[2], corners[i]!); }
       const k = key(x, y, z);
-      raster(pts[0]!, pts[1]!, pts[2]!, shade, k, f);
-      raster(pts[0]!, pts[2]!, pts[3]!, shade, k, f);
+      raster(corners[0] as [number, number, number], corners[1] as [number, number, number], corners[2] as [number, number, number], shade, k, f);
+      raster(corners[0] as [number, number, number], corners[2] as [number, number, number], corners[3] as [number, number, number], shade, k, f);
     }
   };
   if (model.forEachExposed) model.forEachExposed(visit);
   else for (const [x, y, z, v] of model.entries()) visit(x, y, z, v);
 
+  // El tono de una cara. Sin crear nada por cara: las cuentas de norm y dot en variables, en el mismo orden (los mismos
+  // números). Antes había una caché por cara que no acertaba nunca (cada cara se pinta una vez por render)
   function toneFor(x: number, y: number, z: number, f: number, v: number): number {
     if (o.flat) { const { ramp, tone } = decode(v); return ramp * 16 + tone; }
-    const k = key(x, y, z) * 8 + f;
-    const hit = toneCache.get(k);
-    if (hit !== undefined) return hit;
     const d = DIRS[f]!;
     // Normal suavizada: apunta hacia el aire del entorno (radio 3), mezclada con la de la cara
     let sx = 0, sy = 0, sz = 0;
@@ -216,27 +224,27 @@ export function render(model: VoxelSource, o: RenderOptions): Rendered {
     }
     // Con el aire alrededor simétrico (un vóxel suelto) la suma se anula: lo que quede son restos de coma flotante,
     // sin dirección; se toma como cero (la normal de la cara)
-    const sn: [number, number, number] = Math.hypot(sx, sy, sz) < SMOOTH_EPS ? [0, 0, 0] : norm([sx, sy, sz]);
-    const n = norm([d[0] * (1 - smooth) + sn[0] * smooth, d[1] * (1 - smooth) + sn[1] * smooth, d[2] * (1 - smooth) + sn[2] * smooth]);
-    let I = Math.max(0, dot(n, Lm));
+    let s0 = 0, s1 = 0, s2 = 0;
+    if (!(Math.hypot(sx, sy, sz) < SMOOTH_EPS)) { const l = Math.hypot(sx, sy, sz) || 1; s0 = sx / l; s1 = sy / l; s2 = sz / l; }
+    const m0 = d[0] * (1 - smooth) + s0 * smooth, m1 = d[1] * (1 - smooth) + s1 * smooth, m2 = d[2] * (1 - smooth) + s2 * smooth;
+    const ml = Math.hypot(m0, m1, m2) || 1;
+    let I = Math.max(0, (m0 / ml) * Lm[0] + (m1 / ml) * Lm[1] + (m2 / ml) * Lm[2]);
     if ((o.shadows ?? true) && inShadow(x + d[0], y + d[1], z + d[2])) I = Math.min(I, th.mid - 0.01);
     let level = I >= th.lit ? 1 : I >= th.mid ? 0 : -1;
     if (o.ao ?? true) {
       // Celdas que rodean el hueco frente a la cara, en el plano de la cara
       let occ = 0;
-      const [u, w] = PLANE[f]!;
+      const pl = PLANE[f]!, u = pl[0], w = pl[1];
       for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
         if (!a && !b) continue;
         if (filled(x + d[0] + a * u[0] + b * w[0], y + d[1] + a * u[1] + b * w[1], z + d[2] + a * u[2] + b * w[2])) occ++;
       }
       if (occ >= 5) level -= 1;
     }
-    const { ramp, tone } = decode(v);
+    const v1 = v - 1, ramp = Math.floor(v1 / MAX_TONES), tone = v1 % MAX_TONES;   // decode, sin el objeto
     const r = rampOf(pal, ramp);
     const t = Math.max(0, Math.min(r.colors.length - 1, tone + level));
-    const out = ramp * 16 + t;
-    toneCache.set(k, out);
-    return out;
+    return ramp * 16 + t;
   }
 
   // Rayo por la rejilla hacia la luz (DDA). Empieza en la celda vacía frente a la cara. Lo que deja pasar luz

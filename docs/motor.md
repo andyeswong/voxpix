@@ -729,6 +729,23 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
   | p99 | 0,89-1,30 ms | 0,60-0,82 ms |
   | Máximo | 1,5-5,1 ms | 1,2-2,1 ms |
 
+  La puerta que vale es relativa al ruido, en la misma corrida y con plazo de 0,5 ms: p95 del horneado <= p95 del
+  ruido + 0,1 ms, y p99 <= p99 del ruido + 0,2 ms. `render()` creaba memoria por cada cara: las esquinas con
+  `map(project)`, las normales en arrays y `decode` como objeto. Ahora hace las mismas cuentas en el mismo orden con
+  `camera.projectTo` y variables sueltas, y el resultado es el mismo byte a byte. También quitó una caché de tonos que
+  no acertaba nunca, porque cada cara se pinta una vez por render. Con eso:
+
+  | | Antes | Después |
+  |---|---|---|
+  | Exceso sobre el ruido, p95 | +0,08 a +0,20 ms | 0,00 a +0,21 ms |
+  | Exceso sobre el ruido, p99 | +0,19 a +0,43 ms | -0,21 a +0,42 ms |
+  | Corridas que pasan la puerta | 1 de 6 | 8 de 12 |
+  | Horneado de una vez (giros 1 y 2) | 0,32-0,6 s | 0,2-0,42 s |
+  | Horneado por pasos de 2 ms | 0,41-0,63 s | 0,35-0,56 s |
+
+  Las que no pasan son sobre todo las primeras de cada proceso. El ruido mismo varía entre corridas: su p95 va de 0,33
+  a 0,57 ms.
+
   Una puerta absoluta por debajo del ruido (p. ej. máximo <= 0,6 ms con plazo de 0,5) no la pasa ni el cálculo fijo.
   Lo que es del motor es la diferencia con el ruido: ~0,15 ms en p95 y 0,3-0,5 ms en p99. La misma baldosa repetida
   30 veces da mediana 0,2-0,4 ms y su peor vez 1,3-2,5 ms. Esos picos no salen de la estimación ni del recolector

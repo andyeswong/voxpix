@@ -155,6 +155,9 @@ clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `cli
   de lo expuesto. Lo que cuesta cada columna se estima por sus caras al aire, y cada fila del cielo por sus píxeles
   con algo. Baja de 0,9-1,3 s a 0,41-0,63 s, y deja hechas las máscaras que antes hacía después el trabajo `exposure`
   (~120 ms). Con llamadas de 0,5 ms (3 ms a 6x), el p95 es 0,57-0,69 ms y la más larga, 1,9-3,1 ms.
+- `render()` ya no crea memoria por cada cara: mismas cuentas, mismo resultado byte a byte. El horneado de una vez
+  baja de 0,32-0,6 a 0,2-0,42 s en ese mundo. Frente al ruido de la máquina (la puerta relativa), pasan 8 de 12
+  corridas en vez de 1 de 6.
 - `prepareViewJob` en el giro 0 con corte (`{ cut: true }`) también copia por partes. Antes hacía la copia entera en
   la etapa `view`, de una vez.
 - Arreglado en `StaticVoxels`: una losa que pasaba de 256 valores distintos reescribiendo vóxeles podía quedarse con
