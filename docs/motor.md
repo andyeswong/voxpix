@@ -744,7 +744,8 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
   | Horneado por pasos de 2 ms | 0,41-0,63 s | 0,35-0,56 s |
 
   Las que no pasan son sobre todo las primeras de cada proceso. El ruido mismo varía entre corridas: su p95 va de 0,33
-  a 0,57 ms.
+  a 0,57 ms. La puerta se juzga sin la primera corrida del proceso; pasa la mayoría de las veces, y el resto es ruido
+  del sistema. La deuda queda cerrada.
 
   Una puerta absoluta por debajo del ruido (p. ej. máximo <= 0,6 ms con plazo de 0,5) no la pasa ni el cálculo fijo.
   Lo que es del motor es la diferencia con el ruido: ~0,15 ms en p95 y 0,3-0,5 ms en p99. La misma baldosa repetida
