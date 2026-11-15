@@ -13,7 +13,7 @@
 import type { Palette, VoxelSource } from '../core';
 import { decode, key, unkey, materialsOf, type MaterialTable } from '../core';
 import type { WorldLight, Fountain } from './build';
-import type { WaterLayer } from './water';
+import type { WaterLayer, WaterState } from './water';
 import { Drops } from './particles';
 import { FxSystem, fxRandom, type FxState } from '../core/effects';
 import { fxWorldLights, type EffectsLayer } from './effects';
@@ -1237,7 +1237,7 @@ export class WorldState {
     return {
       tick: this.tick, rng: this.rngState,
       chunks: this.solid.exportChunks(),
-      water: this.water ? this.water.sim.exportState() : null,
+      water: this.water ? this.water.exportState() : null,
       drops: this.drops.exportState(),
       floaters: this.floaters.exportState(),
       simFx: this.simFx.exportState(),
@@ -1266,7 +1266,6 @@ export class WorldState {
     if (watchers) for (const w of watchers) w.everything();
     this.tick = s.tick; this.rngState = s.rng;
     this.solid.importChunks(s.chunks);
-    if (this.water && s.water) this.water.sim.importState(s.water);
     this.drops.importState(s.drops);
     this.floaters.importState(s.floaters);
     this.simFx.importState(s.simFx);
@@ -1283,6 +1282,8 @@ export class WorldState {
     this.entities.reindex();
     this.solid.clock = s.clock; this.dynamicVersions.set(s.dynamicVersions);
     for (const [k, p] of this.parts) if (s.parts && k in s.parts) p.importState(s.parts[k]);
+    // El agua al final, con los vóxeles ya restaurados (rehace su fondo de ellos si sigue al mundo)
+    if (this.water && s.water) this.water.importState(s.water);
   }
 
   // Huella (FNV-1a de 32 bits) de todo el estado, en un orden fijo
@@ -1292,6 +1293,8 @@ export class WorldState {
     h.num(s.tick); h.num(s.rng);
     for (const c of s.chunks) { h.num(c.version); if (c.data) h.bytes(c.data); else h.num(-1); }
     if (s.water) for (const k of ['depth', 'fl', 'fr', 'ft', 'fb', 'awake'] as const) h.bytes(s.water[k]);
+    // Las cuencas, solo si se ganó alguna jugando (así un mundo sin ellas da la huella de siempre)
+    if (s.water?.basin && this.water?.basinChanged()) h.bytes(s.water.basin);
     h.num(s.drops.n); h.bytes(s.drops.data);
     // Los flotantes, solo si alguna vez hubo (así un mundo sin ellos da la huella de siempre)
     if (s.floaters.next > 1) { h.num(s.floaters.next); for (const f of s.floaters.list) { h.str(String(f.id)); h.f64(f.x); h.f64(f.y); h.f64(f.vx); h.f64(f.vy); h.f64(f.yaw); } }
@@ -1328,7 +1331,7 @@ export interface WorldSnapshot {
   tick: number;
   rng: number;
   chunks: Array<{ version: number; data: Uint16Array | null }>;
-  water: ReturnType<import('../fluid/shallow').ShallowWater['exportState']> | null;
+  water: WaterState | null;                     // con basin (las cuencas) desde que se guardan; las de antes no lo traen
   drops: { data: Float32Array; n: number };
   floaters: ReturnType<Floaters['exportState']>;
   simFx: FxState;

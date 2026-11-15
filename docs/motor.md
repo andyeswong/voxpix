@@ -771,6 +771,12 @@ water.follow(state.watchChanges());                                 // picar o p
   - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa.
 
   Sin `follow`, como siempre: el agua no se entera.
+- Guardar y cargar: la instantánea del agua lleva también las cuencas (`basin`, con las ganadas jugando). Al cargar
+  (`restore`), la profundidad, los flujos y las celdas despiertas guardadas son la verdad: no se tocan ni se despierta
+  nada más. Con `follow`, el fondo y las paredes se rehacen de los vóxeles restaurados y lo pendiente de `syncGround`
+  se descarta (si no, en un mundo recién generado con la orilla sin picar, conservar la superficie metería agua de más
+  donde se picó). Una instantánea de antes, sin `basin`, carga con las cuencas del mundo de partida. Ver Guardar y
+  cargar.
 - Con el corte de la vista (`WorldView` con `{ cut: true }`), el agua va por la rejilla de la vista también en el giro 0.
   La de una celda cuya superficie pasa de lo cortado en su columna no se dibuja, en la CPU y en la GPU, igual que lo
   cortado.
@@ -780,6 +786,9 @@ water.follow(state.watchChanges());                                 // picar o p
   - `test/agua-alta.test.ts`: con la pared de siempre no hay agua y con `Infinity` sí, y se dibuja (también en una
     vista que solo coge sus filas); un hoyo se llena y un pilar desplaza el agua; la vista ve el fondo nuevo; el corte
     esconde lo de encima.
+  - `test/agua-guardada.test.ts`: se pica la orilla, corre el agua, se guarda y se carga en un mundo recién
+    generado: la misma huella en cada tick, también picando después. Calentar (`warmUp`) no cambia lo que viene
+    después. Una instantánea sin `basin` carga.
   - El oráculo: 6 escenas de agua en un mundo alto (los 4 giros, con corte y picando la orilla), y las de agua de
     antes, iguales.
 - Coste: `app/agua.html?medir=1`, Edge con una RTX 4090. Mundo de 384 x 384 x 96 hecho con `generateMap`, 6.544 celdas
@@ -1137,6 +1146,10 @@ state.restore(decodeSnapshot(bytes, state.snapshot()));
   ~600 KB entero.
 - Con base: lo igual que en la base no se guarda y lo parecido va como diferencia (unos 3 KB por bloque picado). Si
   así ocupara más que entero, va entero. Para cargar hace falta la misma base (si no, error).
+- El agua: profundidad, flujos, celdas despiertas y cuencas (`basin`). `restore` deja el agua tal como se guardó: con
+  `follow`, rehace su fondo de los vóxeles restaurados sin tocar la profundidad (ver Agua en un mundo alto). Se guarda
+  entre ticks (lo picado dentro de un tick lo recoge el `step` de ese tick). Las cuencas entran en la huella solo si se
+  ganó alguna jugando: un mundo sin ellas da la huella de siempre.
 
 ## Determinismo
 

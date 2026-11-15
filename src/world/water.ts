@@ -25,6 +25,9 @@ const MARCH = 40;                                 // píxeles que sube como much
 // de una sala baja; en un terreno alto, más que lo más alto del mundo (Infinity): el relieve ya contiene el agua
 export interface WaterOptions { wallAbove?: number }
 
+// El estado del agua en la instantánea: el del simulador y las cuencas (opcional: las instantáneas de antes no lo traen)
+export type WaterState = ReturnType<ShallowWater['exportState']> & { basin?: Uint8Array };
+
 export class WaterLayer {
   readonly sim: ShallowWater;
   // Las alturas entre las que puede haber superficie de agua: la de siempre (-16..32) o más, si las cuencas del mundo
@@ -37,6 +40,7 @@ export class WaterLayer {
   readonly tones: Array<[number, number, number]>;
   readonly glow: number;                           // luz mínima de la superficie: 1 si la rampa del agua es emisiva, 0 si no
   readonly basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
+  private readonly basin0: Uint8Array;             // las cuencas del mundo de partida (las ganadas jugando no están)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   private fountainOut: number[] = [];             // desagüe
 
@@ -69,6 +73,7 @@ export class WaterLayer {
       if (hole || g > this.wallAbove) this.sim.solid[i] = 1;
       else if (anyWet) { this.basin[i] = 1; if (top > g) this.sim.depth[i] = top - g; }
     }
+    this.basin0 = this.basin.slice();
     this.sim.wakeAll();
     this.widenRange();
     const f = world.fountain;
@@ -105,19 +110,12 @@ export class WaterLayer {
   // La superficie del agua se queda donde estaba (un hoyo junto al agua se llena, poner un bloque la desplaza), y una
   // celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca (no se empapa)
   syncGround(box: { x0: number; y0: number; x1: number; y1: number }): void {
-    const { sim } = this, W = this.world.width, zMin = this.world.model.zMin;
+    const { sim } = this;
     const gx0 = Math.max(0, Math.floor(box.x0 / CELL)), gx1 = Math.min(this.gw - 1, Math.floor(box.x1 / CELL));
     const gy0 = Math.max(0, Math.floor(box.y0 / CELL)), gy1 = Math.min(this.gh - 1, Math.floor(box.y1 / CELL));
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const i = gy * this.gw + gx;
-      let g = -128, hole = false;
-      for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
-        const x = gx * CELL + dx, y = gy * CELL + dy;
-        if (x >= W || y >= this.world.depth) continue;
-        const hh = this.world.model.floorAt(x, y);
-        if (hh <= zMin) hole = true;
-        g = Math.max(g, hh);
-      }
+      const [g, hole] = this.groundOf(gx, gy);
       const surface = sim.solid[i] ? -Infinity : sim.ground[i]! + sim.depth[i]!;
       sim.ground[i] = g;
       sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
@@ -135,6 +133,49 @@ export class WaterLayer {
       sim.wake(gx, gy, 3);
     }
     this.widenRange();
+  }
+
+  // El fondo de una celda desde los vóxeles del mundo (el más alto de los suyos) y si tiene un agujero sin suelo
+  private groundOf(gx: number, gy: number): [number, boolean] {
+    const W = this.world.width, zMin = this.world.model.zMin;
+    let g = -128, hole = false;
+    for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
+      const x = gx * CELL + dx, y = gy * CELL + dy;
+      if (x >= W || y >= this.world.depth) continue;
+      const hh = this.world.model.floorAt(x, y);
+      if (hh <= zMin) hole = true;
+      g = Math.max(g, hh);
+    }
+    return [g, hole];
+  }
+
+  // El estado del agua para la instantánea del mundo: el del simulador (profundidad, flujos, despiertas) y las cuencas
+  exportState(): WaterState { return { ...this.sim.exportState(), basin: this.basin.slice() }; }
+
+  // Vuelve a una instantánea (WorldState.restore, con los vóxeles ya restaurados). La profundidad, los flujos y las
+  // despiertas guardadas son la verdad: no se tocan ni se despierta nada más. Las cuencas, las guardadas (una
+  // instantánea de antes, sin ellas, deja las del mundo de partida). Si la capa sigue al mundo (follow), el fondo y
+  // las paredes se rehacen de los vóxeles restaurados y lo pendiente de syncGround se descarta: la restauración ya
+  // trae agua y mundo coherentes (un syncGround conservando la superficie metería agua de más donde se picó)
+  importState(s: WaterState): void {
+    this.sim.importState(s);
+    this.basin.set(s.basin ?? this.basin0);
+    if (this.watch) {
+      this.watch.take();
+      const { sim } = this;
+      for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
+        const i = gy * this.gw + gx, [g, hole] = this.groundOf(gx, gy);
+        sim.ground[i] = g;
+        sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
+      }
+    }
+    this.widenRange();
+  }
+
+  // ¿Hay cuencas ganadas jugando (distintas de las del mundo de partida)? Solo entonces entran en la huella
+  basinChanged(): boolean {
+    for (let i = 0; i < this.basin.length; i++) if (this.basin[i] !== this.basin0[i]) return true;
+    return false;
   }
 
   // Escuchar los cambios de vóxeles del mundo (picar, poner) y rehacer el fondo de lo tocado en cada step. Sin esto, el
