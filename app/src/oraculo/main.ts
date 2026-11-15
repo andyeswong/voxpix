@@ -19,6 +19,9 @@ import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
 import { WaterLayer } from '../../../src/world/water';
+import { generateMap, applyMap, mapWater } from '../../../src/world/mapgen';
+import { BlockSet, BlockGrid } from '../../../src/world/blocks';
+import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
@@ -65,6 +68,7 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
+  highWater?: { cut?: boolean; dig?: boolean };   // un mundo alto con lagos (mapgen + WaterLayer con wallAbove), con corte o picando la orilla
   clearBg?: boolean;                         // fondo transparente (Frame2DOptions.background = 'transparent')
   fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
@@ -332,6 +336,45 @@ SCENARIOS.push({ name: 'medieval efectos, fondo transparente', theme: 'medieval'
 SCENARIOS.push({ name: 'silueta tras la pared sur, fondo transparente', theme: 'oficina', pos: [320, 20], xray: true, ticks: 30, clearBg: true });
 SCENARIOS.push({ name: 'oficina multitud de 60 con niebla por altura', theme: 'oficina', ticks: 30, setup: crowd(60), fog: true });
 
+// Un mundo de bloques alto (de 4 vóxeles) con lagos: generateMap, applyMap sin el agua y el agua con mapWater y un
+// WaterLayer que no tiene pared por altura. La superficie del agua queda a z 40-44, por encima del tramo de siempre
+function highWaterWorld(): { world: World; state: WorldState; spawn: { x: number; y: number }; lake: { x: number; y: number } } {
+  const N = 4, pal = { ramps: [
+    { name: 'piedra', colors: ['#2a2b32', '#3e4049', '#565a64', '#727784'] },
+    { name: 'tierra', colors: ['#3a2618', '#553823', '#704b2e', '#8c6040'] },
+    { name: 'hierba', colors: ['#24401f', '#35602a', '#4a8034', '#68a044'] },
+    { name: 'arena', colors: ['#a08a5a', '#c0a872', '#d8c290', '#ece0b0'] },
+    { name: 'agua', colors: ['#0e1a2e', '#16304a', '#1f4a66', '#2f6a86', '#5a9ab4'] },
+  ] };
+  const cube = (r: number): Array<[number, number, number, number]> => { const o: Array<[number, number, number, number]> = []; for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) o.push([x, y, z, material(r, 1 + ((x + y + z) % 3))]); return o; };
+  const set = BlockSet.fromJSON({ format: 'voxpix-set', version: 1, name: 'alto', size: N, palette: pal, blocks: ['piedra', 'tierra', 'hierba', 'arena', 'agua'].map((id, i) => ({ id, voxels: cube(i) })) });
+  const T = (id: string) => set.index(id);
+  const map = generateMap({ seed: 3, width: 100, depth: 100, height: 16, surface: { base: 11, amplitude: 3, scale: 8 },
+    strata: [{ material: T('hierba'), depth: 1 }, { material: T('tierra'), depth: 2 }, { material: T('piedra') }],
+    seaLevel: 10, water: T('agua'), shore: { material: T('arena'), width: 1, depth: 1 } });
+  const s = new StaticVoxels(pal, 100 * N, 100 * N, 0, 16 * N - 1);
+  const pre = new WorldState(s, [], null);
+  applyMap(map, new BlockGrid(pre, set), { skip: [T('agua')] });
+  const world = { model: s, lights: [], width: s.width, depth: s.depth, ...mapWater(map, N, T('agua')) } as unknown as World;
+  const state = new WorldState(s, [], new WaterLayer(world, { wallAbove: Infinity }), { seed: 3 });
+  // La salida: la columna seca más cercana al centro de un lago (el más grande que toque el centro del mapa)
+  let best: { x: number; y: number } | null = null, lake = { x: 200, y: 200 }, bd = Infinity;
+  for (let y = 0; y < 100; y++) for (let x = 0; x < 100; x++) {
+    const wetNear = map.cells[(10 * 100 + y) * 100 + x] === T('agua');
+    if (!wetNear) continue;
+    for (const [dx, dy] of [[3, 0], [-3, 0], [0, 3], [0, -3]] as const) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= 100 || ny >= 100 || map.heights[ny * 100 + nx]! < 10) continue;
+      const d = Math.hypot(nx - 50, ny - 50);
+      if (d < bd) { bd = d; best = { x: nx * N + 2, y: ny * N + 2 }; lake = { x: x * N + 2, y: y * N + 2 }; }
+    }
+  }
+  return { world, state, spawn: best ?? { x: 200, y: 200 }, lake };
+}
+for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, stompEvery: 40, highWater: {} });
+SCENARIOS.push({ name: 'agua en mundo alto con corte', theme: 'medieval', ticks: 60, highWater: { cut: true } });
+SCENARIOS.push({ name: 'agua en mundo alto picando la orilla', theme: 'medieval', ticks: 240, highWater: { dig: true } });
+
 function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
   const feet = b.cam.project(x + 0.5, y, z);
   const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
@@ -341,6 +384,8 @@ function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx:
 }
 
 interface Result {
+  waterPx?: number;        // con agua en un mundo alto: píxeles con un tono del agua en la CPU
+  waterPxNear?: number;    // y en el recuadro de pantalla de la poza de "picando la orilla" (entre la salida y el lago)
   alphaOff: number;        // píxeles con el alfa del cuadro distinto (cualquiera es fallo)
   clear: number;           // píxeles transparentes en la CPU (con fondo transparente)
   glErrors?: number[];     // errores de WebGL de la escena (códigos de getError): cualquiera es fallo
@@ -418,6 +463,8 @@ async function run(): Promise<void> {
     const layout = generateLayout(sc.shape ? { ...THEMES[sc.theme].spec, shape: sc.shape } : THEMES[sc.theme].spec, 7);
     const look = sc.look ? sc.look(THEMES[sc.theme].look) : THEMES[sc.theme].look;
     let { world, state } = buildWorldState(layout, look);
+    let highSpawn: { x: number; y: number } | null = null, lake = { x: 0, y: 0 };
+    if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld());
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
       if (sc.veg) vegetate(world, [204, 184]);
@@ -426,17 +473,29 @@ async function run(): Promise<void> {
       addWorldFloaters(state, world);
       state.warmUp();
     }
-    const spawn = sc.pos ? { x: sc.pos[0], y: sc.pos[1] } : { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y };
+    const spawn = highSpawn ?? (sc.pos ? { x: sc.pos[0], y: sc.pos[1] } : { x: layout.spawn.x, y: world.depth - 1 - layout.spawn.y });
     if (sc.cave) {
       // Un tejado de piedra a z 26..29 sobre la salida (más al norte que al sur, para que se vea debajo)
       for (let y = Math.max(0, spawn.y - 8); y < Math.min(world.depth, spawn.y + 40); y++) for (let x = Math.max(0, spawn.x - 40); x < Math.min(world.width, spawn.x + 40); x++)
         for (let z = 26; z < 30; z++) state.solid.set(x, y, z, material(0, 1));
     }
-    const view = new WorldView(state, sc.quarter ?? 0);
-    const b = bakeWorld(view.bakeable(), { topZ: TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
+    const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
+    const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
+    if (sc.highWater?.dig) (state.water as WaterLayer).follow(state.watchChanges());
     const rt = new Runtime(state, spawn, { radius: 4, speed: 70, model: maiaModel });
     sc.setup?.(state, rt);
     for (let t = 1; t <= sc.ticks; t++) rt.step(sc.stompEvery && t % sc.stompEvery === 0 ? { ...NO_INPUT, stomp: true } : NO_INPUT);
+    if (sc.highWater?.cut) {
+      // Un corte que baja por debajo del agua, de la salida hacia el lago (el agua de dentro no se dibuja)
+      view.setCut({ x0: spawn.x - 40, y0: spawn.y - 40, x1: spawn.x + 40, y1: spawn.y + 40, zTop: 38 });
+      rebakeChanged(b, view.frame().lights);
+    }
+    if (sc.highWater?.dig) {
+      // Una poza ancha de la salida al lago (está a 3 bloques), hasta z 40 (el agua está a 44): el agua entra y se ve
+      clearBox(state, { x0: Math.min(spawn.x, lake.x) - 14, y0: Math.min(spawn.y, lake.y) - 14, z0: 40, x1: Math.max(spawn.x, lake.x) + 14, y1: Math.max(spawn.y, lake.y) + 14, z1: 63 });
+      for (let t = 0; t < 120; t++) rt.step(NO_INPUT);
+      rebakeChanged(b, view.frame().lights);
+    }
     const maia = view.frame().entities.find((e) => e.id === rt.entityId)!;
     const { vx, vy } = viewOf(view.camera.viewDepth, b, maia.x, maia.y, maia.z);
     const ambient = THEMES[sc.theme].ambient;
@@ -476,6 +535,22 @@ async function run(): Promise<void> {
     const r = compare(sc.name, { color: parts.view, mul: layers?.multiply ?? empty, add: layers?.add ?? empty, final: cpuFinal },
       { color: gColor, mul: gMul, add: gAdd, final: gFinal }, ambient, o.lights, [c1 - c0, c2 - c1], parts.total);
     if (glErrors.length) { r.glErrors = glErrors; r.pass = false; }
+    // Con agua en un mundo alto: cuántos píxeles salen con un tono del agua (antes de la luz), para saber que se ve
+    if (sc.highWater) {
+      const tones = (state.water as WaterLayer).toneColors;
+      let n = 0;
+      for (let i = 0; i < VW * VH; i++) if (tones.some((t) => parts.view[i * 4] === t[0] && parts.view[i * 4 + 1] === t[1] && parts.view[i * 4 + 2] === t[2])) n++;
+      r.waterPx = n;
+      // Y en el recuadro de pantalla de la poza de "picando la orilla" (en las demás, el mismo recuadro, para comparar)
+      const [ax, ay] = b.cam.project(Math.min(spawn.x, lake.x) - 14, Math.max(spawn.y, lake.y) + 15, 44), [bx, by] = b.cam.project(Math.max(spawn.x, lake.x) + 15, Math.min(spawn.y, lake.y) - 14, 40);
+      let m = 0;
+      for (let y = 0; y < VH; y++) for (let x = 0; x < VW; x++) {
+        const sx = x + vx, sy = y + vy, i = (y * VW + x) * 4;
+        if (sx < ax || sx > bx || sy < ay || sy > by) continue;
+        if (tones.some((t) => parts.view[i] === t[0] && parts.view[i + 1] === t[1] && parts.view[i + 2] === t[2])) m++;
+      }
+      r.waterPxNear = m;
+    }
     results.push(r);
     shots[sc.name] = { cpu: toPng(cpuFinal), gpu: toPng(gFinal), diff: toPng(diffMask(cpuFinal, gFinal)), colorDiff: toPng(diffMask(parts.view, gColor)) };
     out.textContent += `  ${r.pass ? 'BIEN' : 'MAL '} difieren ${(r.share * 100).toFixed(3)} % (${r.differ}), color>2: ${r.colorOff}, luz a 1 nivel: ${r.mulOff1}, a más: ${r.mulOff2}, add a más: ${r.addOff2}, máx ${r.maxFinal}\n`;

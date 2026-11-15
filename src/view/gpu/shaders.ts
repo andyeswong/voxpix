@@ -4,7 +4,7 @@
 //
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
-import { DEEP_FROM, DEEP_TO, DEEP_R, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
+import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -244,6 +244,7 @@ uniform ivec2 uViewSize;
 uniform ivec2 uGrid;                // gw, gh
 uniform ivec4 uCells;               // gx0, gx1, gy0, gy1
 uniform float uA, uOriginY, uF1, uF2, uVy, uVz, uTPerPx, uDPerT;
+uniform vec2 uWZ;                   // las alturas con agua posible (WaterLayer.zRange): mínima y máxima
 uniform vec3 uAmbient;
 uniform vec3 uTones[5];             // 0..255
 uniform float uGlow;                // luz mínima de la superficie (agua emisiva)
@@ -277,7 +278,7 @@ void main() {
   int gx = px / CELL;
   if (gx < uCells.x || gx > uCells.y) return;
   // La celda que pinta este píxel: la de gy más alto que lo cubre y no queda tapada (en la CPU, la última en escribir)
-  float yLo = (uOriginY - float(sy) - ${WATER_ZMAX.toFixed(1)}) / uA, yHi = (uOriginY - float(sy) - (${WATER_ZMIN.toFixed(1)})) / uA;
+  float yLo = (uOriginY - float(sy) - uWZ.y) / uA, yHi = (uOriginY - float(sy) - uWZ.x) / uA;
   int gyA = max(uCells.z, int(floor(yLo / float(CELL))) - 2), gyB = min(uCells.w, int(ceil(yHi / float(CELL))) + 2);
   int gy = -1;
   float d = 0.0, zs = 0.0, depthHere = 0.0;

@@ -174,10 +174,29 @@ export function mapColumn(map: GeneratedMap, x: number, y: number): Array<[numbe
 // Escribe el mapa en una rejilla de bloques (con los materiales como tipos de su set): los tramos de cada columna de
 // una vez (grid.fill) y lo sembrado con grid.set (aplica las variantes tapadas y la luz que emitan). El mapa tiene que
 // caber en la rejilla
-export function applyMap(map: GeneratedMap, grid: BlockGrid): void {
+// opts.skip: materiales que no se escriben (el agua, si la dibuja un WaterLayer: ver mapWater)
+export function applyMap(map: GeneratedMap, grid: BlockGrid, opts: { skip?: readonly number[] } = {}): void {
   if (map.width > grid.cols || map.depth > grid.rows || map.height > grid.layers) throw new Error(`el mapa (${map.width} x ${map.depth} x ${map.height}) no cabe en la rejilla (${grid.cols} x ${grid.rows} x ${grid.layers})`);
-  for (let y = 0; y < map.depth; y++) for (let x = 0; x < map.width; x++) for (const [z0, z1, t] of mapColumn(map, x, y)) grid.fill([x, y, z0], [x, y, z1], t);
+  const skip = new Set(opts.skip ?? []);
+  for (let y = 0; y < map.depth; y++) for (let x = 0; x < map.width; x++) for (const [z0, z1, t] of mapColumn(map, x, y)) if (!skip.has(t)) grid.fill([x, y, z0], [x, y, z1], t);
   for (const s of map.sown) for (const [dx, dy, dz, t] of map.structures[s.rule]!) grid.set(s.x + dx, s.y + dy, s.z + dz, t);
+}
+
+// El agua del mapa para un WaterLayer (agua por columnas, con ondas): por columna de VÓXELES (bloques de `size`),
+// si empieza con agua (wet) y la altura de su superficie (waterTop: la cara de arriba de la celda de agua más alta).
+// Se escribe el mapa sin el agua (applyMap con skip: [water]) y se crea el agua con { ...esto, model, width, depth }
+export function mapWater(map: GeneratedMap, size: number, water: number): { wet: Uint8Array; waterTop: Int16Array } {
+  const W = map.width * size, D = map.depth * size, wet = new Uint8Array(W * D), waterTop = new Int16Array(W * D);
+  for (let y = 0; y < map.depth; y++) for (let x = 0; x < map.width; x++) {
+    let top = -1;
+    for (let z = map.height - 1; z >= 0 && top < 0; z--) if (map.cells[at(map, x, y, z)] === water) top = z;
+    if (top < 0) continue;
+    for (let dy = 0; dy < size; dy++) for (let dx = 0; dx < size; dx++) {
+      const i = (y * size + dy) * W + x * size + dx;
+      wet[i] = 1; waterTop[i] = (top + 1) * size;
+    }
+  }
+  return { wet, waterTop };
 }
 
 // La huella del mapa (FNV-1a de 32 bits sobre las celdas y lo sembrado): para comprobar que una semilla da lo mismo

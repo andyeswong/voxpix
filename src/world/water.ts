@@ -11,6 +11,7 @@ import { ShallowWater } from '../fluid/shallow';
 import { rgbOf, rampMaterial, spotFactor, type Palette, type FpWater } from '../core';
 import { resolveLight } from './lightutil';
 import type { World, WorldLight } from './build';
+import type { ChangeWatch } from './changes';
 import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 
@@ -20,8 +21,17 @@ const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const REFLECT = 0.38;                             // cuánto del reflejo se ve (de arriba, el agua refleja poco)
 const MARCH = 40;                                 // píxeles que sube como mucho el rayo reflejado (de 2 en 2, y afina al dar con algo)
 
+// Opciones del agua. wallAbove: una celda cuyo fondo pasa de esa altura es pared (el agua no entra). Por defecto 8, lo
+// de una sala baja; en un terreno alto, más que lo más alto del mundo (Infinity): el relieve ya contiene el agua
+export interface WaterOptions { wallAbove?: number }
+
 export class WaterLayer {
   readonly sim: ShallowWater;
+  // Las alturas entre las que puede haber superficie de agua: la de siempre (-16..32) o más, si las cuencas del mundo
+  // están más altas o más hondas (la GPU y drawWater solo buscan agua en ese tramo)
+  zRange: [number, number] = [WATER_ZMIN, WATER_ZMAX];
+  private readonly wallAbove: number;
+  private watch: ChangeWatch | null = null;
   readonly gw: number;
   readonly gh: number;
   readonly tones: Array<[number, number, number]>;
@@ -33,7 +43,8 @@ export class WaterLayer {
   // Rejilla de celdas de CELL x CELL vóxeles en ejes del modelo: la celda (gx, gy) cubre x en [gx*CELL, gx*CELL+CELL)
   // e y en [gy*CELL, gy*CELL+CELL) (gy crece hacia el norte). El fondo de cada celda sale de la rejilla de alturas
   // de los vóxeles del mundo; lo que sube más de WALL_Z (paredes, columnas, el fuste) o no tiene suelo, no deja pasar el agua.
-  constructor(private world: World) {
+  constructor(private world: World, opts: WaterOptions = {}) {
+    this.wallAbove = opts.wallAbove ?? WALL_Z;
     this.gw = Math.ceil(world.width / CELL);
     this.gh = Math.ceil(world.depth / CELL);
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
@@ -41,7 +52,6 @@ export class WaterLayer {
     const { wet, waterTop, width: W } = world;
     const zMin = world.model.zMin;
     const height = (x: number, y: number) => world.model.floorAt(x, y);   // el follaje no es fondo: el agua lo cubre
-    const WALL_Z = 8;
     for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
       const i = gy * this.gw + gx;
       // El fondo de la celda: el más alto de sus vóxeles (así el agua no se cuela por un borde)
@@ -56,10 +66,11 @@ export class WaterLayer {
         if (wet[j]) { anyWet = true; top = Math.max(top, waterTop[j]!); }
       }
       this.sim.ground[i] = g;
-      if (hole || g > WALL_Z) this.sim.solid[i] = 1;
+      if (hole || g > this.wallAbove) this.sim.solid[i] = 1;
       else if (anyWet) { this.basin[i] = 1; if (top > g) this.sim.depth[i] = top - g; }
     }
     this.sim.wakeAll();
+    this.widenRange();
     const f = world.fountain;
     if (f) {
       const cx = f.x / CELL, cy = f.y / CELL;
@@ -78,6 +89,57 @@ export class WaterLayer {
     this.tones = [0, 1, 2, 3, 4].map((k) => rgbOf(colors[Math.round((k * (colors.length - 1)) / 4)]!));
     this.glow = ramp && rampMaterial(ramp).emissive ? 1 : 0;
   }
+
+  // El tramo de alturas con agua posible: el de siempre, ensanchado a las cuencas (su fondo y su superficie) con margen
+  private widenRange(): void {
+    let lo = WATER_ZMIN, hi = WATER_ZMAX;
+    for (let i = 0; i < this.basin.length; i++) {
+      if (!this.basin[i] || this.sim.solid[i]) continue;
+      const g = this.sim.ground[i]!;
+      lo = Math.min(lo, g - 4); hi = Math.max(hi, g + this.sim.depth[i]! + 8);
+    }
+    this.zRange = [Math.floor(lo), Math.ceil(hi)];
+  }
+
+  // El fondo (y si es pared) de las celdas que tocan la caja de vóxeles, otra vez desde el mundo: tras picar o poner.
+  // La superficie del agua se queda donde estaba (un hoyo junto al agua se llena, poner un bloque la desplaza), y una
+  // celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca (no se empapa)
+  syncGround(box: { x0: number; y0: number; x1: number; y1: number }): void {
+    const { sim } = this, W = this.world.width, zMin = this.world.model.zMin;
+    const gx0 = Math.max(0, Math.floor(box.x0 / CELL)), gx1 = Math.min(this.gw - 1, Math.floor(box.x1 / CELL));
+    const gy0 = Math.max(0, Math.floor(box.y0 / CELL)), gy1 = Math.min(this.gh - 1, Math.floor(box.y1 / CELL));
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const i = gy * this.gw + gx;
+      let g = -128, hole = false;
+      for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
+        const x = gx * CELL + dx, y = gy * CELL + dy;
+        if (x >= W || y >= this.world.depth) continue;
+        const hh = this.world.model.floorAt(x, y);
+        if (hh <= zMin) hole = true;
+        g = Math.max(g, hh);
+      }
+      const surface = sim.solid[i] ? -Infinity : sim.ground[i]! + sim.depth[i]!;
+      sim.ground[i] = g;
+      sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
+      sim.depth[i] = sim.solid[i] ? 0 : Math.max(0, surface - g);
+      if (!sim.solid[i] && !this.basin[i]) {
+        let level = -Infinity;
+        for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nx = gx + ox, ny = gy + oy;
+          if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
+          const j = ny * this.gw + nx;
+          if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, sim.ground[j]! + sim.depth[j]!);
+        }
+        if (g < level) this.basin[i] = 1;
+      }
+      sim.wake(gx, gy, 3);
+    }
+    this.widenRange();
+  }
+
+  // Escuchar los cambios de vóxeles del mundo (picar, poner) y rehacer el fondo de lo tocado en cada step. Sin esto, el
+  // agua no se entera (como siempre): quien quiera que siga al mundo lo pide
+  follow(watch: ChangeWatch): void { this.watch = watch; }
 
   private cellOf(x: number, y: number): number {
     const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
@@ -137,6 +199,7 @@ export class WaterLayer {
   // Un paso de simulación de `dt` (el mundo lo llama con 1/60 fijo): exactamente round(dt * 120) subpasos de 1/120,
   // sin acumular tiempo, así la misma partida da siempre el mismo agua
   step(dt: number): void {
+    if (this.watch) for (const b of this.watch.take().boxes) this.syncGround(b);
     const { sim, basin } = this;
     const f = this.world.fountain;
     for (let n = Math.max(1, Math.round(dt * 120)); n > 0; n--) {
@@ -162,9 +225,10 @@ export class WaterLayer {
 // se ve la fila más al sur con la superficie más ALTA, y por arriba la más al norte con la más BAJA (estaban cruzadas:
 // el agua desaparecía en la franja de arriba y en la de abajo)
 export const WATER_ZMIN = -16, WATER_ZMAX = 32;
-export function waterRows(originY: number, a: number, vy: number, vh: number, gh: number): [number, number] {
+const WALL_Z = 8;
+export function waterRows(originY: number, a: number, vy: number, vh: number, gh: number, range: readonly [number, number] = [WATER_ZMIN, WATER_ZMAX]): [number, number] {
   const yOf = (sy: number, z: number) => (originY - sy - z) / a;
-  return [Math.max(0, Math.floor(yOf(vy + vh, WATER_ZMAX) / CELL) - 2), Math.min(gh - 1, Math.ceil(yOf(vy, WATER_ZMIN) / CELL) + 2)];
+  return [Math.max(0, Math.floor(yOf(vy + vh, range[1]) / CELL) - 2), Math.min(gh - 1, Math.ceil(yOf(vy, range[0]) / CELL) + 2)];
 }
 
 // Cuánto de "hondo" tiene una celda para su color: 0 hasta DEEP_FROM de profundidad media (la de las celdas con agua
@@ -190,6 +254,7 @@ export interface WaterGrid {
   readonly basin: Uint8Array;
   readonly tones: ReadonlyArray<readonly [number, number, number]>;
   readonly glow?: number;
+  readonly zRange?: readonly [number, number];     // las alturas con agua posible (por defecto WATER_ZMIN..WATER_ZMAX)
 }
 
 // Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
@@ -216,7 +281,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
   const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);
 
   const gx0 = Math.max(0, Math.floor(vx / CELL) - 1), gx1 = Math.min(gw - 1, Math.ceil((vx + vw) / CELL) + 1);
-  const [gy0, gy1] = waterRows(originY, a, vy, vh, gh);
+  const [gy0, gy1] = waterRows(originY, a, vy, vh, gh, w.zRange);
   for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
     const i = gy * gw + gx;
     const d = sim.depth[i]!;

@@ -894,6 +894,7 @@ export interface WaterSurface {
   readonly sim: { readonly depth: Float32Array; readonly ground: Float32Array; readonly solid: Uint8Array };
   readonly toneColors: ReadonlyArray<readonly [number, number, number]>;
   readonly glow?: number;            // luz mínima de la superficie (1: un líquido que brilla solo)
+  readonly zRange?: readonly [number, number];   // alturas con agua posible (WaterLayer.zRange); sin él, -16..32
   isBasin(i: number): boolean;
   draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean): void;

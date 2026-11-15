@@ -124,7 +124,9 @@ class WaterView implements WaterSurface {
   readonly sim: { depth: Float32Array; ground: Float32Array; solid: Uint8Array };
   readonly basin: Uint8Array;
   private readonly map: Int32Array;
-  constructor(private readonly src: WaterLayer, cam: ViewCamera) {
+  // hideAbove (opcional, con el corte de la vista): por columna del MUNDO, desde qué z está cortada. El agua de una celda
+  // cuya superficie pasa de ahí no se dibuja (como lo cortado)
+  constructor(private readonly src: WaterLayer, cam: ViewCamera, private readonly hideAbove: ((x: number, y: number) => number) | null = null) {
     this.gw = Math.ceil(cam.viewWidth / WATER_CELL);
     this.gh = Math.ceil(cam.viewDepth / WATER_CELL);
     const n = this.gw * this.gh;
@@ -143,10 +145,20 @@ class WaterView implements WaterSurface {
       this.basin[i] = src.isBasin(j) ? 1 : 0;
     }
   }
+  // Cada cuadro: la profundidad, y también el fondo, la pared y la cuenca (cambian si el agua sigue al mundo:
+  // WaterLayer.follow); con corte, sin el agua que queda por encima de lo cortado
   refresh(): void {
-    const d = this.src.sim.depth, out = this.sim.depth, m = this.map;
-    for (let i = 0; i < m.length; i++) out[i] = m[i]! < 0 ? 0 : d[m[i]!]!;
+    const s = this.src.sim, out = this.sim, m = this.map, hide = this.hideAbove, gw = this.src.gw;
+    for (let i = 0; i < m.length; i++) {
+      const j = m[i]!;
+      if (j < 0) { out.depth[i] = 0; continue; }
+      out.ground[i] = s.ground[j]!; out.solid[i] = s.solid[j]!; this.basin[i] = this.src.isBasin(j) ? 1 : 0;
+      let d = s.depth[j]!;
+      if (hide && d > 0 && s.ground[j]! + d > hide((j % gw) * WATER_CELL + 1, Math.floor(j / gw) * WATER_CELL + 1)) d = 0;
+      out.depth[i] = d;
+    }
   }
+  get zRange(): readonly [number, number] { return this.src.zRange; }
   get toneColors(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
   get tones(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
   get glow(): number { return this.src.glow; }
@@ -224,11 +236,18 @@ export class WorldView implements RenderState {
     // Sin girar y sin vestir, el render ve el estado de verdad, sin copias. Vestida, la vista tiene su copia también
     // en el giro 0: el vestido no toca nunca el mundo de la simulación.
     this.static = quarter === 0 && !this.dress && !opts.cut ? src : pre?.static ?? rotatedStatic(src, this.camera);
-    if (quarter === 0) {
+    // Con corte, el agua también va por la rejilla de la vista (en el giro 0, la misma que la del mundo): así lo que queda
+    // por encima de lo cortado no se dibuja
+    const hide = opts.cut ? (x: number, y: number) => this.appliedAt(Math.min(src.width - 1, x), Math.min(src.depth - 1, y)) : null;
+    if (quarter === 0 && !(opts.cut && state.water)) {
       this.water = state.water;
       this.drops = state.drops;
+    } else if (quarter === 0) {
+      this.waterView = new WaterView(state.water!, this.camera, hide);
+      this.water = this.waterView;
+      this.drops = state.drops;
     } else {
-      this.waterView = state.water ? new WaterView(state.water, this.camera) : null;
+      this.waterView = state.water ? new WaterView(state.water, this.camera, hide) : null;
       this.dropsView = new DropsView(state.drops, this.camera);
       this.water = this.waterView;
       this.drops = this.dropsView;
@@ -276,7 +295,7 @@ export class WorldView implements RenderState {
       if (touched.size && this.dress) this.dress(this, [...touched]);
     }
     const hide = this.hideLight;
-    if (this.quarter === 0) { this.entities = st.entities; this.lights = hide ? st.lights.filter((l) => !hide(l)) : st.lights; this.effects = st.effects; return; }
+    if (this.quarter === 0) { this.waterView?.refresh(); this.entities = st.entities; this.lights = hide ? st.lights.filter((l) => !hide(l)) : st.lights; this.effects = st.effects; return; }
     // Entidades: su celda y su giro en la vista (la entidad del mundo no se toca)
     this.entities = st.entities.map((e) => { const [x, y] = cam.cellToView(e.x, e.y); return { ...e, x, y, yaw: cam.yawToView(e.yaw) }; });
     // Luces: su punto y su foco en la vista (el mismo id: el mismo parpadeo)

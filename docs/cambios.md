@@ -174,6 +174,18 @@ con `window.voxpix`. Lleva:
 
 `test/enano.test.ts` lo carga con `clipsFromFile` y comprueba los clips, la caja y que ningún cuadro va vacío.
 
+### Agua en un mundo alto
+
+`WaterLayer` acepta `{ wallAbove }`, ya no tiene pared fija a z 8 y su tramo de alturas (`zRange`) se ensancha a las
+cuencas, en la CPU y en la GPU. `waterTop` puede ser `Int16Array`. Además:
+- `follow(watch)` rehace el fondo de lo picado o puesto;
+- con el corte de la vista, el agua de encima de lo cortado no se dibuja;
+- `mapWater` saca el agua de un mapa por semilla.
+
+Sin las opciones nuevas, el agua es la de siempre (las escenas de antes del oráculo dan lo mismo). A 6x, en 384 x 384
+x 96, el paso del agua cuesta 0,6 ms de p50 y ~4,5 ms de p95 con pisotones, y la GPU, ~0,3-0,5 ms por cuadro. Ver
+[Agua en un mundo alto](motor.md#agua-en-un-mundo-alto).
+
 ### Mapa por semilla
 
 `generateMap` (`src/world/mapgen.ts`) genera un mapa entero por semilla, en celdas y con materiales que pone quien

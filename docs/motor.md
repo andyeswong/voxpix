@@ -731,6 +731,54 @@ state.waterAt(x, y);                        // { depth, surface } o null
 state.groundAt(x, y); state.solidAt(x, y, z);
 ```
 
+### Agua en un mundo alto
+
+El agua de arriba se pensó para salas bajas. En un mundo de bloques alto (suelo a z 40-60) se usa con estas piezas:
+
+```ts
+import { generateMap, applyMap, mapWater } from '@voxpix/world/mapgen';
+applyMap(map, grid, { skip: [T('agua')] });                         // el terreno sin el agua (la dibuja la capa)
+const world = { model: s, lights: [], width: s.width, depth: s.depth, ...mapWater(map, 8, T('agua')) };
+const water = new WaterLayer(world, { wallAbove: Infinity });       // sin pared por altura: el relieve la contiene
+const state = new WorldState(s, lights, water, { seed });
+water.follow(state.watchChanges());                                 // picar o poner junto al agua la cambia
+```
+
+- `wallAbove`: una celda cuyo fondo pasa de esa altura es pared. Por defecto es 8, lo de una sala baja, y todo sigue
+  igual. Con `Infinity`, el agua solo la contiene el relieve.
+- `zRange`: las alturas en que puede haber superficie de agua. Es la de siempre (-16..32), ensanchada a las cuencas del
+  mundo. La usan la CPU (`waterRows`) y la GPU (el uniforme `uWZ`; antes eran constantes del shader).
+- `waterTop` puede ser `Int16Array` (antes `Int8Array`, hasta 127).
+- `follow(watch)`: en cada `step`, el agua rehace el fondo y la pared de las celdas que tocan los vóxeles cambiados
+  (`syncGround`):
+  - la superficie se queda donde estaba, así que un hoyo junto al agua se llena y un bloque puesto la desplaza;
+  - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa.
+
+  Sin `follow`, como siempre: el agua no se entera.
+- Con el corte de la vista (`WorldView` con `{ cut: true }`), el agua va por la rejilla de la vista también en el giro 0.
+  La de una celda cuya superficie pasa de lo cortado en su columna no se dibuja, en la CPU y en la GPU, igual que lo
+  cortado.
+- `mapWater(map, size, agua)` da `wet` y `waterTop` por columna de vóxeles a partir de un mapa por semilla (ver Mapa por
+  semilla).
+- Pruebas:
+  - `test/agua-alta.test.ts`: con la pared de siempre no hay agua y con `Infinity` sí, y se dibuja (también en una
+    vista que solo coge sus filas); un hoyo se llena y un pilar desplaza el agua; la vista ve el fondo nuevo; el corte
+    esconde lo de encima.
+  - El oráculo: 6 escenas de agua en un mundo alto (los 4 giros, con corte y picando la orilla), y las de agua de
+    antes, iguales.
+- Coste: `app/agua.html?medir=1`, Edge con una RTX 4090. Mundo de 384 x 384 x 96 hecho con `generateMap`, 6.544 celdas
+  con agua de 36.864, la vista sobre el lago:
+
+  | | Sin freno | CPU a 6x |
+  |---|---|---|
+  | Paso del agua por tick (`step`), p50 / p95 / máx | 0,1 / 0,5 / 0,6 ms | 0,6 / 4,3-4,6 / 5,1-5,8 ms |
+  | Cuadro de la GPU leído, sin / con agua, p50 | 0,5 / 0,6 ms | 2,2-2,4 / 2,7 ms |
+  | Cuadro de la GPU leído, sin / con agua, p95 | 0,9 / 0,9 ms | 3,6-4,9 / 6,4-7,4 ms |
+  | Cuadro de la CPU (detalle bajo), sin / con agua, p50 | 3,6 / 4,8 ms | 28 / 40-41 ms |
+
+  El paso del agua es barato con el agua quieta y sube tras un pisotón, cuando la rejilla se despierta: un pisotón
+  cada 30 ticks da el p95 de ~4,5 ms a 6x. En la GPU, el agua cuesta ~0,3-0,5 ms por cuadro a 6x (p50).
+
 ## Girar la cámara
 
 La cámara oblicua gira en cuartos de vuelta con `WorldView` (`src/world/view.ts`). La simulación no se entera: la
