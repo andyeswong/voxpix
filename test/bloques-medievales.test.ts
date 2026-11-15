@@ -12,7 +12,7 @@ describe('ejemplo: bloques medievales', () => {
     expect(Object.keys(byId)).toEqual(['mena_hierro', 'mena_oro', 'adoquin', 'tablas', 'arena', 'mesa', 'horno', 'horno_encendido', 'cofre', 'cofre_abierto', 'escalera', 'hueso']);
     for (const id of ['mena_hierro', 'mena_oro', 'adoquin', 'tablas', 'arena', 'mesa', 'horno', 'cofre', 'cofre_abierto']) expect(byId[id]?.props).toMatchObject({ solid: true, emissive: false });
     expect(byId.horno_encendido!.props).toMatchObject({ solid: true, emissive: true });
-    for (const id of ['escalera', 'hueso']) expect(byId[id]?.props.solid).toBe(false);
+    for (const id of ['escalera', 'hueso']) expect(byId[id]?.props?.solid).toBe(false);
     // La escalera, toda en la fila de la cara +y (en el fichero, y de 0 a 7: la 7)
     expect(byId.escalera!.voxels.every((v) => v[1] === 7)).toBe(true);
     for (const b of f.blocks) for (const [x, y, z] of b.voxels) for (const c of [x, y, z]) { expect(c).toBeGreaterThanOrEqual(0); expect(c).toBeLessThanOrEqual(7); }
