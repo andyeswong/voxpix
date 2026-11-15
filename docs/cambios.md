@@ -161,6 +161,16 @@ clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `cli
   valores equivocados. Después de rehacer su paleta, seguía escribiendo en la paleta vieja.
 - Ver [Girar la cámara](motor.md#girar-la-cámara).
 
+### Ejemplo: un minero enano
+
+`models/enano/enano.voxpix.json` está hecho solo con el editor: `scripts/enano.js`, corrido en la página del editor
+con `window.voxpix`. Lleva:
+- barba, casco con faro y un pico a la espalda;
+- los clips `quieto`, `andar` y `atacar`;
+- una caja de 6 x 6 x 14 vóxeles en todos los cuadros: con bloques de 8, baja por un pozo de 1 x 1 bloques.
+
+`test/enano.test.ts` lo carga con `clipsFromFile` y comprueba los clips, la caja y que ningún cuadro va vacío.
+
 ### Arreglos del compositor de la GPU
 
 - Los pesos de una luz rehecha en parte se suben solo por su recuadro sucio (`texSubImage3D` con `UNPACK_SKIP_*`). Sin
