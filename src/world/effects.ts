@@ -47,7 +47,7 @@ export function drawEffects(src: FxSource, b: Baked, view: Uint8ClampedArray, de
       if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
       const t = y * vw + x;
       if (depth >= depthBuf[t]! - 0.3) continue;
-      view[t * 4] = d[q + 3]!; view[t * 4 + 1] = d[q + 4]!; view[t * 4 + 2] = d[q + 5]!;
+      view[t * 4] = d[q + 3]!; view[t * 4 + 1] = d[q + 4]!; view[t * 4 + 2] = d[q + 5]!; view[t * 4 + 3] = 255;
       if (em && total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
     }
   }

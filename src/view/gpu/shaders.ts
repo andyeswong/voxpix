@@ -84,6 +84,7 @@ uniform sampler3D uOcc;
 
 uniform ivec2 uView;
 uniform vec3 uBg;
+uniform bool uBgClear;                 // fondo transparente (Frame2DOptions.background = 'transparent'): alfa 0 donde no hay nada
 uniform vec3 uAmbient;
 uniform bool uLights;
 uniform float uA, uOriginY, uF1, uF2;
@@ -148,6 +149,7 @@ void main() {
   vec4 c = texelFetch(uColor, s, 0);
   float depth = texelFetch(uDepth, s, 0).r;
   vec3 col = c.a == 0.0 ? uBg : c.rgb;
+  float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
   vec3 total = uAmbient;
   if (uUseSky) {
     ivec2 ssz = textureSize(uSky, 0);
@@ -203,19 +205,21 @@ void main() {
   if (uLights) total *= texelFetch(uContact, t, 0).rgb;
   if (uHl) {
     ivec2 h = s - uHlRect.xy;
-    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); }
+    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; }
   }
   float ed = texelFetch(uEntDepth, t, 0).r;
   if (ed < depth - 0.5) {
     depth = ed;
     col = texelFetch(uEntColor, t, 0).rgb;
+    cov = 1.0;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
   } else if (uXray && !isinf(ed) && ed > depth + ${XRAY_MARGIN} && ((s.x + s.y) & 1) == 0) {
     // Tapada por el escenario: su silueta, en damero y con luz propia
     col = uXrayColor;
     total = vec3(${EMISSIVE});
+    cov = 1.0;
   }
-  oColor = vec4(col, 1.0);
+  oColor = vec4(col, uBgClear ? cov : 1.0);
   oLight = vec4(total, 0.0);
   oDepth = vec4(depth, 0.0, 0.0, 0.0);
 }`;
@@ -480,9 +484,12 @@ vec3 fogged(ivec2 t, vec3 c) {
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
   if (uFlip) t.y = uHeight - 1 - t.y;
-  vec3 scene = floor(texelFetch(uColorTex, t, 0).rgb * 255.0 + 0.5);
-  if (uMode == 1) { oColor = vec4(scene / 255.0, 1.0); return; }
-  if (!uLights) { oColor = vec4(fogged(t, scene) / 255.0, 1.0); return; }
+  vec4 sc4 = texelFetch(uColorTex, t, 0);
+  vec3 scene = floor(sc4.rgb * 255.0 + 0.5);
+  // Con fondo transparente lo que no tiene nada encima sale con alfa 0 y color 0 (frame2d.ts: clearTransparent)
+  bool clear = sc4.a == 0.0;
+  if (uMode == 1) { oColor = clear ? vec4(0.0) : vec4(scene / 255.0, 1.0); return; }
+  if (!uLights) { oColor = clear && uMode == 0 ? vec4(0.0) : vec4(fogged(t, scene) / 255.0, 1.0); return; }
   vec3 tot = texelFetch(uLightTex, t, 0).rgb;
   float threshold = (float(BAYER[(t.y & 3) * 4 + (t.x & 3)]) + 0.5) / 16.0;
   float lum = 0.3 * tot.r + 0.6 * tot.g + 0.1 * tot.b;
@@ -505,7 +512,7 @@ void main() {
   mul = clamp(mul, 0.0, 255.0); add = clamp(add, 0.0, 255.0);
   if (uMode == 2) { oColor = vec4(mul / 255.0, 1.0); return; }
   if (uMode == 3) { oColor = vec4(add / 255.0, 1.0); return; }
-  oColor = vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)) / 255.0, 1.0);
+  oColor = clear ? vec4(0.0) : vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)) / 255.0, 1.0);
 }`;
 
 

@@ -278,7 +278,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
         if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alphaFor(tn)) {
           // Se ve el fondo a través del agua: refractado, algo azulado y con las cáusticas
           const t2 = ty * vw + Math.max(0, Math.min(vw - 1, tx + shift));
-          view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05);
+          view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05); view[o + 3] = 255;
           if (total && srcTotal) for (let c = 0; c < 3; c++) total[q + c] = ambient[c]! + (srcTotal[t2 * 3 + c]! - ambient[c]!) * caustic;
           continue;
         }
@@ -302,7 +302,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
           }
         }
         if (spec > 0.35) { cr = white[0]; cg = white[1]; cb = white[2]; }
-        view[o] = cr; view[o + 1] = cg; view[o + 2] = cb;
+        view[o] = cr; view[o + 1] = cg; view[o + 2] = cb; view[o + 3] = 255;
         depthBuf[t] = depthHere;
         if (total) { total[q] = ltr; total[q + 1] = ltg; total[q + 2] = ltb; }
       }

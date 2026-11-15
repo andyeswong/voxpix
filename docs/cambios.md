@@ -174,6 +174,12 @@ con `window.voxpix`. Lleva:
 
 `test/enano.test.ts` lo carga con `clipsFromFile` y comprueba los clips, la caja y que ningún cuadro va vacío.
 
+### Fondo transparente
+
+`Frame2DOptions.background = 'transparent'`: alfa 0 donde no hay nada, en la CPU y en la GPU, para que el juego pinte
+su cielo detrás del lienzo. Lo de encima sale opaco y sin halo, y sin la opción todo queda igual. Ver
+[Fondo transparente](motor.md#fondo-transparente).
+
 ### Arreglos del compositor de la GPU
 
 - Los pesos de una luz rehecha en parte se suben solo por su recuadro sucio (`texSubImage3D` con `UNPACK_SKIP_*`). Sin

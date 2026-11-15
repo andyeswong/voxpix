@@ -14,7 +14,7 @@ import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type M
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
-import { frame2DParts, shadeLayers, applyFog, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2DParts, shadeLayers, applyFog, clearTransparent, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
@@ -65,6 +65,7 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
+  clearBg?: boolean;                         // fondo transparente (Frame2DOptions.background = 'transparent')
   fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
@@ -323,6 +324,12 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
 const fogQ = [0, 1, 2, 3] as Quarter[];
 for (const q of fogQ) SCENARIOS.push({ name: `medieval lago con niebla por altura, giro ${q}`, theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, quarter: q, fog: true });
 SCENARIOS.push({ name: 'medieval lago con niebla por altura, sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false, fog: true });
+// Fondo transparente: donde no hay mundo, alfa 0 en las dos (la sala en T deja vacío alrededor; con efectos, la silueta
+// y entidades encima)
+SCENARIOS.push({ name: 'oficina en T, fondo transparente', theme: 'oficina', shape: { kind: 'T' }, ticks: 60, clearBg: true });
+SCENARIOS.push({ name: 'oficina en T, fondo transparente, giro 1', theme: 'oficina', shape: { kind: 'T' }, quarter: 1, ticks: 60, clearBg: true });
+SCENARIOS.push({ name: 'medieval efectos, fondo transparente', theme: 'medieval', ticks: 50, setup: fxSetup, clearBg: true });
+SCENARIOS.push({ name: 'silueta tras la pared sur, fondo transparente', theme: 'oficina', pos: [320, 20], xray: true, ticks: 30, clearBg: true });
 SCENARIOS.push({ name: 'oficina multitud de 60 con niebla por altura', theme: 'oficina', ticks: 30, setup: crowd(60), fog: true });
 
 function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
@@ -334,6 +341,8 @@ function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx:
 }
 
 interface Result {
+  alphaOff: number;        // píxeles con el alfa del cuadro distinto (cualquiera es fallo)
+  clear: number;           // píxeles transparentes en la CPU (con fondo transparente)
   glErrors?: number[];     // errores de WebGL de la escena (códigos de getError): cualquiera es fallo
   name: string;
   pixels: number;
@@ -358,10 +367,13 @@ function compare(name: string, cpu: { color: Uint8ClampedArray; mul: Uint8Clampe
   const diffs: Result['worst'] = [];
   const px = (a: ArrayLike<number>, i: number) => [a[i * 4]!, a[i * 4 + 1]!, a[i * 4 + 2]!];
   const n = VW * VH;
-  let differ = 0, colorOff = 0, mulOff1 = 0, mulOff2 = 0, addOff2 = 0, maxFinal = 0;
+  let differ = 0, colorOff = 0, mulOff1 = 0, mulOff2 = 0, addOff2 = 0, maxFinal = 0, alphaOff = 0, clear = 0;
   const level = (m: number, ch: number) => { const base = Math.min(1, ambient[ch]!), room = 1 - base; return room > 0 ? Math.round(((m / 255 - base) / room) * 7) : 0; };
   for (let i = 0; i < n; i++) {
     let fd = 0, cd = 0, md = 0, ad = 0;
+    // El alfa del cuadro (con fondo transparente, 0 donde no hay nada): tiene que ser el mismo
+    if (cpu.final[i * 4 + 3] !== gpu.final[i * 4 + 3]) alphaOff++;
+    if (!cpu.final[i * 4 + 3]) clear++;
     for (let ch = 0; ch < 3; ch++) {
       const o = i * 4 + ch;
       fd = Math.max(fd, Math.abs(cpu.final[o]! - gpu.final[o]!));
@@ -385,7 +397,7 @@ function compare(name: string, cpu: { color: Uint8ClampedArray; mul: Uint8Clampe
     if (ad > 1) addOff2++;
   }
   const share = differ / n;
-  return { name, pixels: n, differ, colorOff, mulOff1, mulOff2, addOff2, maxFinal, share, pass: share <= TOL_SHARE && !colorOff && !mulOff2 && !addOff2, worst, diffs, cpuMs: ms[0], gpuMs: ms[1] };
+  return { name, pixels: n, differ, colorOff, mulOff1, mulOff2, addOff2, maxFinal, alphaOff, clear, share, pass: share <= TOL_SHARE && !colorOff && !mulOff2 && !addOff2 && !alphaOff, worst, diffs, cpuMs: ms[0], gpuMs: ms[1] };
 }
 
 async function run(): Promise<void> {
@@ -431,6 +443,7 @@ async function run(): Promise<void> {
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
       ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}),
       ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}),
+      ...(sc.clearBg ? { background: 'transparent' as const } : {}),
       ...(sc.fog ? { fog: { focusZ: maia.z + 8, start: 2, full: 10, color: [40, 44, 70] as const, strength: 0.75 } } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.after) {
@@ -449,6 +462,7 @@ async function run(): Promise<void> {
     const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
     const cpuFinal = layers ? applyLayers(parts.view, layers) : o.fog ? parts.view.slice() : parts.view;
     if (o.fog) applyFog(cpuFinal, parts.depth, b, o);
+    if (o.background === 'transparent') clearTransparent(cpuFinal);
     const c1 = performance.now();
     const gFinal = gpu.read(rs, b, o, 'frame');
     const c2 = performance.now();

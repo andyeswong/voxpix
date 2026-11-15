@@ -78,7 +78,7 @@ export function drawDrops(d: Float32Array, n: number, b: Baked, view: Uint8Clamp
     if (tx < 0 || ty < 0 || tx >= vw || ty >= vh) continue;
     const t = ty * vw + tx;
     if (depth >= depthBuf[t]! - 0.3) continue;
-    view[t * 4] = color[0]; view[t * 4 + 1] = color[1]; view[t * 4 + 2] = color[2];
+    view[t * 4] = color[0]; view[t * 4 + 1] = color[1]; view[t * 4 + 2] = color[2]; view[t * 4 + 3] = 255;
     depthBuf[t] = depth;
     if (total) { total[t * 3] = light[0]; total[t * 3 + 1] = light[1]; total[t * 3 + 2] = light[2]; }
   }

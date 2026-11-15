@@ -315,8 +315,10 @@ export class GpuCompositor {
     if (o.xray) gl.uniform3f(s.u.uXrayColor, o.xray.color[0] / 255, o.xray.color[1] / 255, o.xray.color[2] / 255);
     const a = b.options.oblique?.y ?? 1;
     gl.uniform2i(s.u.uView, o.vx, o.vy);
-    const bg = o.background ?? BACKGROUND;
+    const clearBg = o.background === 'transparent';
+    const bg: readonly [number, number, number] = o.background && o.background !== 'transparent' ? o.background : clearBg ? [0, 0, 0] : BACKGROUND;
     gl.uniform3f(s.u.uBg, bg[0] / 255, bg[1] / 255, bg[2] / 255);
+    gl.uniform1i(s.u.uBgClear, clearBg ? 1 : 0);
     gl.uniform3f(s.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
     gl.uniform1i(s.u.uLights, o.lights ? 1 : 0);
     gl.uniform1f(s.u.uA, a);

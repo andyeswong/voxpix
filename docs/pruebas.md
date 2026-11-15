@@ -20,7 +20,7 @@ La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo 
 - **`app/oraculo-render.html`:** el render y la luz del editor. Compara 6 modelos con 10 juegos de opciones (giros,
   elevaciones, contorno interior, oblicua plana, zoom del editor) y la luz por píxel. Devuelve el resultado en
   `window.__oracle`.
-- **`app/oraculo.html`:** el cuadro del mundo. Compara 69 escenarios, entre ellos:
+- **`app/oraculo.html`:** el cuadro del mundo. Compara 73 escenarios, entre ellos:
   - la salida en los tres temas;
   - el lago con pisotones, también con niebla por altura;
   - una columna rota rehorneada, y un picado junto a cada luz después de un cuadro (los pesos se suben por recuadro);
@@ -30,7 +30,8 @@ La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo 
   - destellos de golpe;
   - giros libres por encima del tope del atlas.
 
-  Con `?solo=texto`, solo los escenarios con ese texto en el nombre. Un error de WebGL que deje un escenario
+  También compara el alfa del cuadro final (cuatro escenarios con fondo transparente). Con `?solo=texto`, solo los
+  escenarios con ese texto en el nombre. Un error de WebGL que deje un escenario
   (`getError`: una subida inválida no sube nada y no salta por sí sola) lo da por fallado (`glErrors`). Las tolerancias, y por qué, están en
   `scripts/oracle/README.md`.
 

@@ -646,6 +646,24 @@ if (day.isNight(state.tick)) { /* lo que el juego haga de noche */ }
   suman encima, así que de noche se ven más.
 - Lo que pasa de noche (qué sale, qué se enciende) es del juego.
 
+### Fondo transparente
+
+`Frame2DOptions.background = 'transparent'` deja el cuadro con alfa 0 (y color 0) donde no hay nada, en la CPU y en
+la GPU. Así el juego puede pintar detrás del lienzo lo que quiera: un degradado, una noche estrellada. El motor no
+pinta cielo.
+
+```ts
+compositor.frame(rs, baked, { ...opciones, background: 'transparent' });   // y detrás del <canvas>, el cielo del juego
+```
+
+- Lo que se pinta encima del vacío sale opaco: entidades, agua, efectos, gotas, el resalte y la silueta. Ningún píxel
+  queda a medias, así que el contorno no hace halo. En la GPU, el contexto ya se crea con `premultipliedAlpha: false`.
+- `null` no es transparente: es el fondo por defecto, porque `DayCycle.background` da `null` en las claves sin fondo.
+- Sin la opción, el cuadro es el de siempre byte a byte.
+- El oráculo compara también el alfa del cuadro final, en 4 escenas con fondo transparente (dos giros, efectos y la
+  silueta tras una pared). `test/fondo-transparente.test.ts` lo prueba en la CPU, también con una entidad y chispas
+  sobre el vacío.
+
 ## Agua y eventos
 
 El agua es un fluido por columnas con ondas, reflejos y gotas. Dentro del tick se le habla con eventos:

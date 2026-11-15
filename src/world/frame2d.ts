@@ -19,7 +19,11 @@ export interface Frame2DOptions {
   // cielo horneado, ambient en todas partes, como siempre. Las entidades, el de sus pies (entitySky)
   cave?: readonly [number, number, number] | null;
   bob?: (e: Entity) => number;                          // saltito al andar (píxeles)
-  background?: readonly [number, number, number];
+  // El color de donde no hay nada (0..255; por defecto BACKGROUND). 'transparent': ahí el cuadro sale con alfa 0 (y
+  // color 0), en la CPU y en la GPU, para que el juego pinte detrás del lienzo lo que quiera (un cielo, estrellas).
+  // Lo que se pinte encima (entidades, agua, efectos, gotas, resalte, silueta) sale opaco. null no es transparente:
+  // es el de por defecto (DayCycle.background da null en las claves sin fondo)
+  background?: readonly [number, number, number] | 'transparent' | null;
   outline?: 'none' | 'outer' | 'both';                 // contorno de las entidades (por defecto, ninguno)
   outlineColor?: string;                                // su color fijo (si no, el tono 0 de la rampa vecina)
   // 'bajo': para la CPU de reserva con muchas entidades. Sin sombras de verdad de las entidades (solo las de
@@ -139,7 +143,13 @@ export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8C
   const { view, total, depth } = frame2DParts(state, b, o);
   const out = total ? applyLayers(view, shadeLayers(total, o, b)) : view;
   if (o.fog) applyFog(out, depth, b, o);
+  if (o.background === 'transparent') clearTransparent(out);
   return out;
+}
+
+// Con fondo transparente: lo que quedó con alfa 0 sale con color 0 (la luz le suma algo; la GPU hace lo mismo)
+export function clearTransparent(px: Uint8ClampedArray): void {
+  for (let i = 3; i < px.length; i += 4) if (!px[i]) { px[i - 3] = 0; px[i - 2] = 0; px[i - 1] = 0; }
 }
 
 // Los parámetros de la niebla listos para el pase por píxel (los mismos en la GPU): z0 = donde empieza, inv = 1 / el
@@ -211,8 +221,10 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     depthBuf.set(b.depth.subarray(sy * b.width + cx0, sy * b.width + cx1), y * vw + cx0 - vx);
     view.set(b.rgba.subarray((sy * b.width + cx0) * 4, (sy * b.width + cx1) * 4), (y * vw + cx0 - vx) * 4);
   }
-  const bg = o.background ?? BACKGROUND;
-  for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
+  if (o.background !== 'transparent') {
+    const bg = o.background ?? BACKGROUND;
+    for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
+  } else for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = 0; view[i - 2] = 0; view[i - 1] = 0; }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
   if (total) {
     // Luces dinámicas (las añadidas en partida): por cuadro, en su radio
@@ -241,7 +253,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       const x = rx + i - vx, y = ry + j - vy;
       if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
       const t = y * vw + x;
-      view[t * 4] = c[0]; view[t * 4 + 1] = c[1]; view[t * 4 + 2] = c[2];
+      view[t * 4] = c[0]; view[t * 4 + 1] = c[1]; view[t * 4 + 2] = c[2]; view[t * 4 + 3] = 255;
       if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
     }
   }
@@ -269,14 +281,14 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     if (entDepth[t]! >= depthBuf[t]! - 0.5) {                         // lo que hay delante la tapa
       // Silueta solo si lo de delante está claramente delante (XRAY_MARGIN): el suelo en el que se hunde un pie no cuenta
       if (xr && entDepth[t]! > depthBuf[t]! + XRAY_MARGIN && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
-        view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2];
+        view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2]; view[t * 4 + 3] = 255;
         if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
       }
       continue;
     }
     const d = sprites[k]!, s = entPx[t]!;
     depthBuf[t] = entDepth[t]!;
-    view[t * 4] = d.img.rgba[s * 4]!; view[t * 4 + 1] = d.img.rgba[s * 4 + 1]!; view[t * 4 + 2] = d.img.rgba[s * 4 + 2]!;
+    view[t * 4] = d.img.rgba[s * 4]!; view[t * 4 + 1] = d.img.rgba[s * 4 + 1]!; view[t * 4 + 2] = d.img.rgba[s * 4 + 2]!; view[t * 4 + 3] = 255;
     const et = etotals[k], fl = feetLight[k];
     const tint = d.e.tint;
     if (tint && !Number.isNaN(d.img.pickKey?.[s] ?? NaN)) {
