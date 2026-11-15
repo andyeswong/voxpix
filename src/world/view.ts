@@ -124,9 +124,16 @@ class WaterView implements WaterSurface {
   readonly sim: { depth: Float32Array; ground: Float32Array; solid: Uint8Array };
   readonly basin: Uint8Array;
   private readonly map: Int32Array;
+  // Lo copiado: hasta qué cambio del agua (WaterLayer.changesSince), si falta la primera copia entera, y las columnas del
+  // mundo cuyo corte cambió desde la última (en celdas del agua; x0 > x1: ninguna)
+  private seq = 0;
+  private full = true;
+  private readonly cutBox = Int32Array.of(0x7fffffff, 0x7fffffff, -1, -1);
+  // Celdas recorridas por la última copia (para medir y probar)
+  visited = 0;
   // hideAbove (opcional, con el corte de la vista): por columna del MUNDO, desde qué z está cortada. El agua de una celda
   // cuya superficie pasa de ahí no se dibuja (como lo cortado)
-  constructor(private readonly src: WaterLayer, cam: ViewCamera, private readonly hideAbove: ((x: number, y: number) => number) | null = null) {
+  constructor(private readonly src: WaterLayer, private readonly cam: ViewCamera, private readonly hideAbove: ((x: number, y: number) => number) | null = null) {
     this.gw = Math.ceil(cam.viewWidth / WATER_CELL);
     this.gh = Math.ceil(cam.viewDepth / WATER_CELL);
     const n = this.gw * this.gh;
@@ -146,11 +153,34 @@ class WaterView implements WaterSurface {
     }
   }
   // Cada cuadro: la profundidad, y también el fondo, la pared y la cuenca (cambian si el agua sigue al mundo:
-  // WaterLayer.follow); con corte, sin el agua que queda por encima de lo cortado
+  // WaterLayer.follow); con corte, sin el agua que queda por encima de lo cortado. Solo las celdas de la vista que caen
+  // en lo que cambió desde la copia anterior (WaterLayer.changesSince, y las columnas cuyo corte cambió): con el agua
+  // quieta, nada. Copiar una celda de más no cambia nada (es la misma copia)
   refresh(): void {
+    const ch = this.src.changesSince(this.seq);
+    this.seq = ch.seq;
+    const c = this.cutBox;
+    let box = ch.box;
+    if (c[0]! <= c[2]!) box = box ? [Math.min(box[0], c[0]!), Math.min(box[1], c[1]!), Math.max(box[2], c[2]!), Math.max(box[3], c[3]!)] : [c[0]!, c[1]!, c[2]!, c[3]!];
+    c[0] = c[1] = 0x7fffffff; c[2] = c[3] = -1;
+    if (this.full || ch.all) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); return; }
+    if (!box) { this.visited = 0; return; }
+    // La caja de celdas del mundo en celdas de la vista (sus esquinas giradas), con una de margen: con lados impares
+    // las celdas giradas no caen justo sobre las del mundo
+    const [ax, ay] = this.cam.pointToView(box[0] * WATER_CELL, box[1] * WATER_CELL), [bx, by] = this.cam.pointToView((box[2] + 1) * WATER_CELL, (box[3] + 1) * WATER_CELL);
+    this.copy(Math.floor(Math.min(ax, bx) / WATER_CELL) - 1, Math.floor(Math.min(ay, by) / WATER_CELL) - 1, Math.ceil(Math.max(ax, bx) / WATER_CELL) + 1, Math.ceil(Math.max(ay, by) / WATER_CELL) + 1);
+  }
+  // Las columnas del mundo (vóxeles, extremos incluidos) cuyo corte cambió: su agua se vuelve a copiar
+  cutChanged(x0: number, y0: number, x1: number, y1: number): void {
+    const c = this.cutBox, g = WATER_CELL;
+    c[0] = Math.min(c[0]!, Math.floor(x0 / g)); c[1] = Math.min(c[1]!, Math.floor(y0 / g)); c[2] = Math.max(c[2]!, Math.floor(x1 / g)); c[3] = Math.max(c[3]!, Math.floor(y1 / g));
+  }
+  private copy(gx0: number, gy0: number, gx1: number, gy1: number): void {
     const s = this.src.sim, out = this.sim, m = this.map, hide = this.hideAbove, gw = this.src.gw;
-    for (let i = 0; i < m.length; i++) {
-      const j = m[i]!;
+    gx0 = Math.max(0, gx0); gy0 = Math.max(0, gy0); gx1 = Math.min(this.gw - 1, gx1); gy1 = Math.min(this.gh - 1, gy1);
+    this.visited = Math.max(0, gx1 - gx0 + 1) * Math.max(0, gy1 - gy0 + 1);
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const i = gy * this.gw + gx, j = m[i]!;
       if (j < 0) { out.depth[i] = 0; continue; }
       out.ground[i] = s.ground[j]!; out.solid[i] = s.solid[j]!; this.basin[i] = this.src.isBasin(j) ? 1 : 0;
       let d = s.depth[j]!;
@@ -386,6 +416,7 @@ export class WorldView implements RenderState {
     if (!this.pending.length) return { done: true, columns: 0 };
     const src = this.state.solid, cam = this.camera;
     let cols = 0, out = false;
+    let wx0 = Infinity, wy0 = Infinity, wx1 = -1, wy1 = -1;           // las columnas reescritas (para el agua)
     const touched = new Set<number>();
     // Escrituras de vista: esconder y destapar no es cambiar el mundo (StaticVoxels.viewWrites)
     this.static.viewWrites = true;
@@ -400,6 +431,7 @@ export class WorldView implements RenderState {
         const [vx, vy] = cam.cellToView(x, y);
         for (let z = Math.max(src.zMin, Math.min(was, now)); z <= src.zMax; z++) this.static.set(vx, vy, z, z >= now ? 0 : src.get(x, y, z));
         if (this.applied) this.applied[y * src.width + x] = now;
+        if (x < wx0) wx0 = x; if (x > wx1) wx1 = x; if (y < wy0) wy0 = y; if (y > wy1) wy1 = y;
         touched.add(Math.floor(vy / CHUNK) * this.static.cols + Math.floor(vx / CHUNK));
         cols++;
         if ((cols & 15) === 0 && performance.now() >= deadline) { out = true; break; }
@@ -407,6 +439,7 @@ export class WorldView implements RenderState {
       if (this.cursor >= n) { this.pendingAt++; this.cursor = 0; }
     }
     } finally { this.static.viewWrites = false; }
+    if (wx1 >= 0) this.waterView?.cutChanged(wx0, wy0, wx1, wy1);
     if (touched.size && this.dress) this.dress(this, [...touched]);
     if (this.pendingAt >= this.pending.length) { this.pending = []; this.pendingAt = 0; this.cursor = 0; return { done: true, columns: cols }; }
     return { done: false, columns: cols };

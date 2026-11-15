@@ -814,6 +814,13 @@ water.follow(state.watchChanges());                                 // picar o p
   ahora, por debajo de 0,1 ms (lo que mide el reloj del navegador frenado). Con todo despierto cuesta lo mismo que
   antes, y la simulación es la misma (`test/agua-reposo.test.ts`, con huellas fijadas con el código de antes).
 
+  La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
+  profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
+  desde la copia anterior (un registro de una caja por tick, de los últimos 256; si se queda atrás, la copia entera),
+  y el corte apunta las columnas que reescribe. Con el agua quieta, nada (`visited` 0). En Bun, `frame()` de una vista
+  girada en reposo pasa de 169 µs a 0,6 µs. Lo copiado es siempre lo mismo que la copia entera
+  (`test/agua-vista.test.ts`). Quien escriba `sim.depth` a mano, que use `pour` o `disturb`: así queda apuntado.
+
   Lo caro son los primeros ticks de una capa recién hecha: nace con todo lo mojado despierto y tarda unos 30 ticks en
   dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
   `first` y `firstFollow`). Con el JIT frío, más. `state.warmUp()` calienta el JIT pero no duerme el agua.

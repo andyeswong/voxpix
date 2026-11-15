@@ -16,6 +16,7 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
+const CHANGE_LOG = 256;                           // ticks que guarda el registro de cambios (changesSince)
 export const WATER_CELL = CELL;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const REFLECT = 0.38;                             // cuánto del reflejo se ve (de arriba, el agua refleja poco)
@@ -50,6 +51,11 @@ export class WaterLayer {
   private inSoak: Uint8Array;
   private nSoak = 0;
   soakVisited = 0;                                 // celdas recorridas por el último empapado (para medir y probar)
+  // Qué celdas cambiaron (profundidad, fondo, pared o cuenca), para quien copia la rejilla (WaterView): una caja por
+  // tick en un registro circular, y la del tick en curso abierta (changesSince)
+  private readonly log = new Int32Array(CHANGE_LOG * 4);
+  private logN = 0;                                // cajas cerradas desde el principio
+  private readonly cur = Int32Array.of(0x7fffffff, 0x7fffffff, -1, -1);
   private fountainOut: number[] = [];             // desagüe
 
   // Rejilla de celdas de CELL x CELL vóxeles en ejes del modelo: la celda (gx, gy) cubre x en [gx*CELL, gx*CELL+CELL)
@@ -145,7 +151,34 @@ export class WaterLayer {
       sim.wake(gx, gy, 3);
     }
     this.groundVersion++;
+    this.changed(gx0, gy0, gx1, gy1);
     this.widenRange();
+  }
+
+  // Apunta que cambiaron las celdas de la caja (en celdas, extremos incluidos)
+  private changed(gx0: number, gy0: number, gx1: number, gy1: number): void {
+    const c = this.cur;
+    if (gx0 < c[0]!) c[0] = Math.max(0, gx0); if (gy0 < c[1]!) c[1] = Math.max(0, gy0);
+    if (gx1 > c[2]!) c[2] = Math.min(this.gw - 1, gx1); if (gy1 > c[3]!) c[3] = Math.min(this.gh - 1, gy1);
+  }
+  private changedCell(i: number): void { const gx = i % this.gw, gy = (i - gx) / this.gw; this.changed(gx, gy, gx, gy); }
+  private closeChanges(): void {
+    const c = this.cur;
+    if (c[0]! > c[2]!) return;
+    this.log.set(c, (this.logN % CHANGE_LOG) * 4);
+    this.logN++;
+    c[0] = c[1] = 0x7fffffff; c[2] = c[3] = -1;
+  }
+  // Lo que cambió desde `seq` (el seq que dio la llamada anterior; 0 al empezar): la caja de celdas que lo cubre (null
+  // si nada), o all si el registro ya no llega tan atrás. Lo del tick en curso sale siempre (también la vez siguiente)
+  changesSince(seq: number): { seq: number; all: boolean; box: [number, number, number, number] | null } {
+    if (this.logN - seq > CHANGE_LOG) return { seq: this.logN, all: true, box: null };
+    let x0 = this.cur[0]!, y0 = this.cur[1]!, x1 = this.cur[2]!, y1 = this.cur[3]!;
+    for (let k = seq; k < this.logN; k++) {
+      const o = (k % CHANGE_LOG) * 4, l = this.log;
+      if (l[o]! < x0) x0 = l[o]!; if (l[o + 1]! < y0) y0 = l[o + 1]!; if (l[o + 2]! > x1) x1 = l[o + 2]!; if (l[o + 3]! > y1) y1 = l[o + 3]!;
+    }
+    return { seq: this.logN, all: false, box: x0 <= x1 ? [x0, y0, x1, y1] : null };
   }
 
   private soakMaybe(i: number): void {
@@ -194,6 +227,7 @@ export class WaterLayer {
       }
     }
     this.groundVersion++;
+    this.changed(0, 0, this.gw - 1, this.gh - 1);
     this.widenRange();
   }
 
@@ -245,6 +279,8 @@ export class WaterLayer {
   // Algo que se mueve dentro del agua la empuja (ondas). Con fuerza, el agua salta el borde y moja el suelo.
   disturb(x: number, y: number, amount: number, radius = 1.5): void {
     this.sim.disturb(x / CELL, y / CELL, radius, amount);
+    const cx = x / CELL, cy = y / CELL;
+    this.changed(Math.floor(cx - radius * 2), Math.floor(cy - radius * 2), Math.ceil(cx + radius * 2), Math.ceil(cy + radius * 2));
   }
 
   // Añade agua en un punto (las gotas que caen)
@@ -253,6 +289,7 @@ export class WaterLayer {
     if (i < 0 || this.sim.solid[i]) return;
     this.sim.depth[i] = this.sim.depth[i]! + amount;
     this.soakMaybe(i);
+    this.changedCell(i);
     this.sim.wake(i % this.gw, Math.floor(i / this.gw), 3);
   }
 
@@ -273,12 +310,19 @@ export class WaterLayer {
       // Fuente: el desagüe saca lo que sobra por encima de su nivel (lo que cae lo añaden las gotas con pour)
       if (f) for (const i of this.fountainOut) {
         const over = sim.surface(i) - f.level;
-        if (over > 0) sim.depth[i] = Math.max(0, sim.depth[i]! - over * 0.3);
+        if (over > 0) { sim.depth[i] = Math.max(0, sim.depth[i]! - over * 0.3); this.changedCell(i); }
       }
       sim.step(1 / 120);
-      // Lo que pudo mojarse fuera de cuenca en este subpaso: solo las celdas que calculó
-      const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList;
-      for (let q = 0; q < act.length; q++) { const i = act[q]!; if (!inSoak[i] && !basin[i] && depth[i]! > 0) { inSoak[i] = 1; list[this.nSoak++] = i; } }
+      // Lo que pudo mojarse fuera de cuenca en este subpaso (solo las celdas que calculó), y su caja
+      const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList, gw = this.gw;
+      let ax0 = gw, ay0 = this.gh, ax1 = -1, ay1 = -1;
+      for (let q = 0; q < act.length; q++) {
+        const i = act[q]!;
+        if (!inSoak[i] && !basin[i] && depth[i]! > 0) { inSoak[i] = 1; list[this.nSoak++] = i; }
+        const x = i % gw, y = (i - x) / gw;
+        if (x < ax0) ax0 = x; if (x > ax1) ax1 = x; if (y < ay0) ay0 = y; if (y > ay1) ay1 = y;
+      }
+      if (ax1 >= 0) this.changed(ax0, ay0, ax1, ay1);
     }
     // El agua que salta al suelo seco se empapa poco a poco (cada celda por su cuenta: el orden no cuenta)
     const soak = Math.min(dt, 0.05) * 0.3, list = this.soakList, depth = sim.depth;
@@ -288,9 +332,11 @@ export class WaterLayer {
       const i = list[k]!;
       if (basin[i] || !(depth[i]! > 0)) { this.inSoak[i] = 0; continue; }
       depth[i] = depth[i]! < 0.03 ? 0 : depth[i]! - soak * Math.max(0.25, depth[i]!);
+      this.changedCell(i);
       if (depth[i]! > 0) list[m++] = i; else this.inSoak[i] = 0;
     }
     this.nSoak = m;
+    this.closeChanges();
   }
 
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
