@@ -24,7 +24,14 @@ const MARCH = 40;                                 // píxeles que sube como much
 
 // Opciones del agua. wallAbove: una celda cuyo fondo pasa de esa altura es pared (el agua no entra). Por defecto 8, lo
 // de una sala baja; en un terreno alto, más que lo más alto del mundo (Infinity): el relieve ya contiene el agua
-export interface WaterOptions { wallAbove?: number }
+export interface WaterOptions {
+  wallAbove?: number;
+  // asleep: la capa nace dormida (sin esto, nace con todo lo mojado despierto y tarda ~30 ticks en dormirse, y esos
+  // ticks son los más caros de la partida). Solo para agua que nace en reposo, con la superficie plana en cada lago
+  // (la de mapWater lo es): si no, se queda como nació hasta que algo la despierte. Cambia la huella (las despiertas
+  // están en ella); por defecto, como siempre
+  asleep?: boolean;
+}
 
 // El estado del agua en la instantánea: el del simulador y las cuencas (opcional: las instantáneas de antes no lo traen)
 export type WaterState = ReturnType<ShallowWater['exportState']> & { basin?: Uint8Array };
@@ -91,7 +98,7 @@ export class WaterLayer {
     this.soakList = new Int32Array(this.gw * this.gh);
     this.inSoak = new Uint8Array(this.gw * this.gh);
     this.soakAll();
-    this.sim.wakeAll();
+    if (!opts.asleep) this.sim.wakeAll();
     this.widenRange();
     const f = world.fountain;
     if (f) {

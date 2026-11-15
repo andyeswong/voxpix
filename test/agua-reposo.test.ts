@@ -9,6 +9,8 @@ import { WaterLayer } from '../src/world/water';
 import { clearBox } from '../src/world/edit';
 import { buildWorldState, type World } from '../src/world/build';
 import { generateLayout } from '../src/worldgen';
+import { BlockSet, BlockGrid, type VoxsetFile } from '../src/world/blocks';
+import { generateMap, applyMap, mapWater } from '../src/world/mapgen';
 import { THEMES } from '../src/samples/themes';
 
 const PAL = { ramps: [
@@ -56,6 +58,38 @@ describe('agua en reposo', () => {
     expect(water.depthAt(50, 50)).toBe(0);
     expect(water.soakVisited).toBe(0);
     expect(water.sim.visited).toBe(0);
+  });
+
+  it('nacer dormida (asleep): con lagos en reposo, la misma agua que naciendo despierta y durmiéndose, sin sus ticks caros', () => {
+    // Un mundo de bloques con lagos (mapgen + mapWater), de 16 x 16 x 12 bloques de 8
+    const B = 8, ids = ['piedra', 'tierra', 'hierba', 'arena', 'agua'];
+    const pal = { ramps: ids.map((name) => ({ name, colors: ['#303030', '#606060', '#909090'] })) };
+    const cube = (r: number): Array<[number, number, number, number]> => { const o: Array<[number, number, number, number]> = []; for (let z = 0; z < B; z++) for (let y = 0; y < B; y++) for (let x = 0; x < B; x++) o.push([x, y, z, material(r, 1)]); return o; };
+    const set = BlockSet.fromJSON({ format: 'voxpix-set', version: 1, name: 'a', size: B, palette: pal, blocks: ids.map((id, i) => ({ id, voxels: cube(i) })) } as VoxsetFile);
+    const T = (id: string) => set.index(id);
+    const map = generateMap({ seed: 1, width: 16, depth: 16, height: 12, surface: { base: 6, amplitude: 2.5, scale: 7 },
+      strata: [{ material: T('hierba'), depth: 1 }, { material: T('tierra'), depth: 2 }, { material: T('piedra') }],
+      seaLevel: 6, water: T('agua'), shore: { material: T('arena'), width: 1, depth: 1 } });
+    const s = new StaticVoxels(pal, 16 * B, 16 * B, 0, 12 * B - 1);
+    applyMap(map, new BlockGrid(new WorldState(s, [], null), set), { skip: [T('agua')] });
+    const world = { model: s, lights: [], width: s.width, depth: s.depth, ...mapWater(map, B, T('agua')) } as unknown as World;
+    const awake = new WaterLayer(world, { wallAbove: Infinity }), asleep = new WaterLayer(world, { wallAbove: Infinity, asleep: true });
+    const a = new WorldState(s, [], awake, { seed: 1 }), b = new WorldState(s, [], asleep, { seed: 1 });
+    let wet = 0;
+    for (let i = 0; i < awake.sim.depth.length; i++) if (awake.sim.depth[i]! > 0.04) wet++;
+    expect(wet).toBeGreaterThan(100);
+    a.step(); b.step();
+    expect(awake.sim.visited).toBeGreaterThan(100);                        // despierta: recorre todo lo mojado
+    expect(asleep.sim.visited).toBe(0);                                    // dormida: nada
+    for (let t = 0; t < 120; t++) { a.step(); b.step(); }
+    const same = () => { const x = awake.exportState(), y = asleep.exportState(); for (const k of ['depth', 'fl', 'fr', 'ft', 'fb', 'awake', 'basin'] as const) expect(Array.from(y[k]!), k).toEqual(Array.from(x[k]!)); };
+    same();                                                                // el agua despierta se durmió donde la otra ya estaba
+    // Y desde ahí, lo mismo: un pisotón la despierta igual
+    let i0 = 0;
+    while (!(awake.sim.depth[i0]! > 1)) i0++;
+    for (const st of [a, b]) st.events.disturb((i0 % awake.gw) * 2, Math.floor(i0 / awake.gw) * 2, 2.8, 3);
+    for (let t = 0; t < 90; t++) { a.step(); b.step(); }
+    same();
   });
 
   it('la misma simulación que recorriendo la rejilla (la huella, fijada con el código de antes)', () => {

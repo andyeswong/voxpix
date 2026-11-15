@@ -762,6 +762,7 @@ water.follow(state.watchChanges());                                 // picar o p
 
 - `wallAbove`: una celda cuyo fondo pasa de esa altura es pared. Por defecto es 8, lo de una sala baja, y todo sigue
   igual. Con `Infinity`, el agua solo la contiene el relieve.
+- `asleep`: la capa nace dormida (sin los ~30 ticks caros del principio). Para agua que nace en reposo; ver Coste.
 - `zRange`: las alturas en que puede haber superficie de agua. Es la de siempre (-16..32), ensanchada a las cuencas del
   mundo. La usan la CPU (`waterRows`) y la GPU (el uniforme `uWZ`; antes eran constantes del shader).
 - `waterTop` puede ser `Int16Array` (antes `Int8Array`, hasta 127).
@@ -824,6 +825,10 @@ water.follow(state.watchChanges());                                 // picar o p
   Lo caro son los primeros ticks de una capa recién hecha: nace con todo lo mojado despierto y tarda unos 30 ticks en
   dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
   `first` y `firstFollow`). Con el JIT frío, más. `state.warmUp()` calienta el JIT pero no duerme el agua.
+  `new WaterLayer(world, { asleep: true })` nace dormida: el primer tick no cuesta nada (máximo 0,3-0,5 ms a 6x en esos
+  ticks, `firstAsleep`). Solo para agua que nace en reposo, con la superficie plana en cada lago, como la de
+  `mapWater`: termina igual que la que nace despierta y se duerme (`test/agua-reposo.test.ts`). Cambia la huella
+  (las despiertas están en ella); por defecto, como siempre.
 
 ## Girar la cámara
 

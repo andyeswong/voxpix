@@ -4,7 +4,7 @@
 //     - el paso del agua por tick (WaterLayer.step) en la simulación, con pisotones y en reposo (sin nada despierto);
 //     - el cuadro del compositor con agua y con el mismo mundo sin agua (read espera a la GPU)
 //     - los primeros ticks de una capa recién hecha (state.step, sin calentar): el más caro y en qué tick, sin seguir
-//       al mundo y siguiéndolo (follow);
+//       al mundo, siguiéndolo (follow) y naciendo dormida (asleep);
 //   ?ruta=cpu   ?semilla=1   ?n=120 (cuadros medidos)
 import { material, type Palette } from '@core/index';
 import { StaticVoxels, WorldState } from '../../../src/world/state';
@@ -69,13 +69,13 @@ function measure(): unknown {
   for (let t = 0; t < 600; t++) { const a = performance.now(); water.step(1 / 60); rest.push(performance.now() - a); }
   out.restP50 = pct(rest, 0.5); out.restP95 = pct(rest, 0.95); out.restMax = Math.max(...rest);
   // Los primeros ticks de una capa nueva (la primera vez que se corre: con el JIT frío y todo lo mojado despierto)
-  for (const follow of [false, true]) {
-    const w2 = new WaterLayer(world, { wallAbove: Infinity }), st2 = new WorldState(s, [], w2, { seed: 1 });
+  for (const [key, follow, asleep] of [['first', false, false], ['firstFollow', true, false], ['firstAsleep', true, true]] as const) {
+    const w2 = new WaterLayer(world, { wallAbove: Infinity, asleep }), st2 = new WorldState(s, [], w2, { seed: 1 });
     if (follow) w2.follow(st2.watchChanges());
     const ticks: number[] = [];
     for (let t = 0; t < 240; t++) { const a = performance.now(); st2.step(); ticks.push(performance.now() - a); }
     const max = Math.max(...ticks);
-    out[follow ? 'firstFollow' : 'first'] = { tick0: ticks[0], max, at: ticks.indexOf(max), over5: ticks.filter((x) => x > 5).length, p50: pct(ticks, 0.5) };
+    out[key] = { tick0: ticks[0], max, at: ticks.indexOf(max), over5: ticks.filter((x) => x > 5).length, p50: pct(ticks, 0.5) };
   }
   // El cuadro: con agua y sin agua (el mismo mundo), en la GPU (read espera) y en la CPU
   const gc = GpuCompositor.create(document.createElement('canvas'));
