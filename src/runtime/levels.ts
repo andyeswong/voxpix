@@ -16,7 +16,8 @@ export interface LevelRules {
   gravity: number;     // lo que gana vz hacia abajo cada tick (vóxeles por tick²)
   jump: number;        // la vz con la que salta (vóxeles por tick)
   maxFall: number;     // la vz más rápida cayendo
-  ladderSpeed?: number;   // vóxeles por tick que sube o baja trepando (materiales con ladder); por defecto LADDER_SPEED
+  ladderSpeed?: number;   // vóxeles por tick que sube o baja trepando (materiales con ladder); por defecto LADDER_SPEED.
+                          // 0: este cuerpo no trepa, y no se busca escala a su alrededor (lo que cuesta mirarla)
 }
 export const LEVEL_RULES: LevelRules = { step: 2, gravity: 0.08, jump: 1.3, maxFall: 4 };
 export const LADDER_SPEED = 0.5;
@@ -127,7 +128,7 @@ export interface LevelMove { blocked: boolean; grounded: boolean; landed: number
 // Trepar: mientras el cuerpo toca un vóxel de un material con ladder, `up` lo mueve en z (1 sube, -1 baja, 0 se queda,
 // ladderSpeed vóxeles por tick) y no cae: sin gravedad, sin caída que contar. Sube lo que deje el techo y baja hasta el
 // suelo. Para salir por arriba se anda hacia donde está el suelo: el escalón lo sube encima. Sin vóxeles que se trepan,
-// todo es como antes
+// todo es como antes. Con ladderSpeed 0 el cuerpo no trepa (las escalas solo se cruzan) y no se miran
 export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: number, jump = false, rules: LevelRules = LEVEL_RULES, up = 0): LevelMove {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
   const ddx = dx / n, ddy = dy / n, mt = materialsOf(w.solid.palette);
@@ -138,8 +139,9 @@ export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: numb
     if (ddy !== 0 && !stepTo(w, b, b.x, b.y + ddy, rules, mt)) hit = true;
   }
   // Trepando: arriba o abajo con up, sin caer
-  if (mt && onLadder(w, b, mt)) {
-    const speed = rules.ladderSpeed ?? LADDER_SPEED, g = support(w, b.x, b.y, b.z, b.r, 0, mt);
+  const speed = rules.ladderSpeed ?? LADDER_SPEED;
+  if (mt && speed > 0 && onLadder(w, b, mt)) {
+    const g = support(w, b.x, b.y, b.z, b.r, 0, mt);
     b.vz = 0; delete b.fallFrom;
     if (up > 0) {
       const nz = b.z + speed * Math.min(1, up);

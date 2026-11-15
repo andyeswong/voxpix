@@ -497,7 +497,10 @@ if (m.landed > 40) { /* una caída de más de 40 vóxeles: lo que el juego quier
   (por defecto `LADDER_SPEED`, 0,5), sin gravedad y sin caída que contar. Sube lo que deje el techo y baja hasta el
   suelo. Para salir por arriba se anda hacia el suelo de arriba: el escalón lo sube encima. El motor no sabe qué es
   una escalera: quien lo usa marca el material. Devuelve `climbing` (trepa en este tick). Sin vóxeles que se trepan,
-  todo es como antes (`test/escalas.test.ts`).
+  todo es como antes (`test/escalas.test.ts`). Mirar si el cuerpo toca escala recorre su huella entre pies y cabeza
+  (radio 3 y 14 de alto: ~500 lecturas del sólido por llamada) aunque no haya ninguna: un cuerpo que no trepa (los que
+  van por un campo de caminos, que no sabe de escalas) lleva `ladderSpeed: 0` y se ahorra la búsqueda; para él las
+  escalas solo se cruzan.
 
 ```ts
 const m = moveBodyLevels(state, jugador, dx, dy, saltar, reglas, arriba ? 1 : abajo ? -1 : 0);

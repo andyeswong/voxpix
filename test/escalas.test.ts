@@ -48,6 +48,12 @@ describe('trepar', () => {
     expect(a.z).toBe(16);
   });
 
+  it('con ladderSpeed 0 el cuerpo no trepa: junto a la escala, lo mismo que sin ladder en el material', () => {
+    const rules = { ...LEVEL_RULES, ladderSpeed: 0 }, wl = wall(true), wn = wall(false), a = body(), c = body();
+    for (let t = 0; t < 60; t++) { expect(moveBodyLevels(wl, a, 0.5, 0, false, rules, 1).climbing).toBe(false); moveBodyLevels(wn, c, 0.5, 0, false, LEVEL_RULES); }
+    expect([a.x, a.y, a.z, a.vz]).toEqual([c.x, c.y, c.z, c.vz]);
+  });
+
   it('determinista: la misma subida da los mismos pasos', () => {
     const trace = () => { const w = wall(true), b = body(), out: number[] = []; for (let t = 0; t < 120; t++) { step(w, b, 0.4, t % 50 < 40 ? 1 : 0); out.push(b.x, b.z); } return out; };
     expect(trace()).toEqual(trace());
