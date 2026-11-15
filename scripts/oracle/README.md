@@ -20,6 +20,13 @@ El resultado queda en `window.__oracle` (`pass`, una fila por escenario y las im
 
 Sin `-Gpu`, Edge usa SwiftShader (WebGL2 por software). Sirve para comprobar que el resultado es correcto, no para medir rendimiento.
 
+**La referencia es con `-Gpu`.** Las pasadas que valen (79/79, y las imágenes con las que se compara byte a byte de una
+versión a otra) son con la GPU de la máquina. Sin la bandera, con SwiftShader, una escena falla de forma estable:
+"medieval fuente resaltada, giro 1", 29 píxeles en `mulOff2`, un grupo de ~25 (x 234-242, y 105-119) donde la GPU da
+solo la luz ambiente y la CPU una luz. Con `-Gpu` esa escena pasa (13 píxeles a 1 nivel). No es un fallo nuevo del
+motor: si sale eso sin `-Gpu`, es el instrumento. Comprobado el 2026-11-15: el mismo código da 79/79 con `-Gpu` y 78/79
+sin ella, con perfil de Edge limpio y la misma versión de Edge.
+
 ## Tolerancia, y por qué
 
 Un escenario pasa si se cumplen las tres:
