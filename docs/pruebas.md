@@ -20,9 +20,16 @@ La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo 
 - **`app/oraculo-render.html`:** el render y la luz del editor. Compara 6 modelos con 10 juegos de opciones (giros,
   elevaciones, contorno interior, oblicua plana, zoom del editor) y la luz por píxel. Devuelve el resultado en
   `window.__oracle`.
-- **`app/oraculo.html`:** el cuadro del mundo. Compara 15 escenarios, entre ellos la salida en los tres temas, el
-  lago con pisotones, una columna rota rehorneada, multitudes de 60 y 200, antorchas con y sin tope de luces, una
-  linterna, destellos de golpe y giros libres por encima del tope del atlas. Las tolerancias, y por qué, están en
+- **`app/oraculo.html`:** el cuadro del mundo. Compara 67 escenarios, entre ellos:
+  - la salida en los tres temas;
+  - el lago con pisotones, también con niebla por altura;
+  - una columna rota rehorneada;
+  - multitudes de 60 y 200;
+  - antorchas con y sin tope de luces, y una linterna;
+  - destellos de golpe;
+  - giros libres por encima del tope del atlas.
+
+  Con `?solo=texto`, solo los escenarios con ese texto en el nombre. Las tolerancias, y por qué, están en
   `scripts/oracle/README.md`.
 
 `scripts/oracle/oracle.ps1` las abre en Edge sin ventana (con la GPU de la máquina o con SwiftShader) y guarda el

@@ -761,6 +761,44 @@ siempre) lo tapa. `Frame2DOptions.xray = { color: [r, g, b] }` (0..255) pinta, d
 escenario, su silueta de ese color en damero y con luz propia. CPU y GPU dan lo mismo; la trama va por píxel de la
 imagen horneada, así que no tiembla al mover la cámara. Sin el campo, nada cambia.
 
+## Niebla por altura
+
+En la vista oblicua, una torre de un bloque y una zanja de un bloque se dibujan igual: no hay pista de la altura.
+`Frame2DOptions.fog` funde hacia un color lo que se ve por debajo de una altura de foco (la de lo que sigue la cámara):
+
+```ts
+compositor.frame(rs, baked, { ...opciones, fog: { focusZ: jugador.z + 14, start: 4, full: 20, color: [28, 32, 56], strength: 0.7 } });
+```
+
+- La z de cada píxel es la del punto que se ve en él (escenario, entidad o agua). Sale de su profundidad y su fila,
+  como `worldPointAt`. No se hornea nada ni se guarda nada por cuadro, así que `focusZ` puede cambiar en cada cuadro y
+  picar un bloque no invalida nada. Las gotas y los efectos toman la z de lo que tienen detrás.
+- Un píxel con z >= `focusZ - start` queda igual. Entre `focusZ - start` y `focusZ - full`, la mezcla sube en línea
+  hasta `strength`; más abajo, `strength`. Lo que está por encima del foco nunca se toca: un `start` negativo cuenta
+  como 0, y un `full` menor que `start`, como `start` (un escalón). El fondo, sin nada, no se toca.
+- La mezcla va en pasos de 1/256. Así el color mezclado es exacto en float32, y la CPU y la GPU dan el mismo byte
+  también en los empates. Sin los pasos, un suelo a z entera con un foco entero caía justo en .5 en miles de píxeles,
+  y el error de la z en float32 lo mandaba a un lado o al otro.
+- Va después de la luz: el color de la niebla no se alumbra. Sin el campo, con `null` o con `strength` 0, el cuadro es
+  el de siempre, byte a byte.
+- El oráculo (`app/oraculo.html`) la prueba en el lago con pisotones en los 4 giros, sin luces, y con una multitud
+  de 60. Los ±1 que quedan son los del agua de siempre (ver [El cielo](#el-cielo-oscuro-bajo-techo)): las mismas
+  escenas sin niebla dan 16-44 píxeles, y con niebla, 14-28.
+- Para verla: `app/niebla.html`, con deslizadores para `focusZ`, `start`, `full`, la fuerza y el color.
+  - "seguir" pone el foco en la cabeza de una entidad que sube y baja por bancales, torres y zanjas.
+  - Con `?medir=1`, mide el pase y deja el resultado en `window.__niebla`.
+- Coste en 384 x 216, en Edge con una RTX 4090 (`app/niebla.html?medir=1`, 120 cuadros):
+
+  | | Sin freno | CPU a 6x |
+  |---|---|---|
+  | Pase de niebla en la CPU (`applyFog` sobre el cuadro ya hecho), p50 / p95 / máx | 0,2 / 0,3-0,4 / 0,5 ms | 1,2 / 1,9-2,2 / 2,8-3,7 ms |
+  | Cuadro entero en la CPU, sin / con niebla (p50) | 4,4 / 4,5-4,6 ms | 34,6-34,8 / 36,0-36,5 ms |
+  | Cuadro de la GPU leído (`read`), sin / con niebla (p50) | 0,6 / 0,6 ms | 2,4-2,6 / 2,4-2,7 ms |
+
+  En la GPU es una lectura de textura y unas cuentas más en el pase final que ya existía: no se distingue del ruido de
+  la medida. En la CPU, el pase cuesta ~1,2 ms a 6x. El cuadro entero en la CPU ya pasa de 16,7 ms a 6x sin
+  niebla (la CPU es la ruta de reserva), y la niebla le suma un 3-5 %. Cabe sin partirlo por filas.
+
 ## Resaltar un objeto del escenario
 
 Para señalar algo que es parte del escenario horneado (la fuente, un adorno) sin rehornear:

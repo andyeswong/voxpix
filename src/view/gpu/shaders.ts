@@ -449,6 +449,12 @@ uniform vec3 uSkyAmb[6];
 uniform ivec2 uView;
 uniform bool uFlip;
 uniform int uHeight;
+// La niebla por altura (frame2d.ts: applyFog): z del punto de cada píxel por su profundidad y su fila
+uniform bool uFog;
+uniform sampler2D uDepthTex;
+uniform vec4 uFogP;                 // z0, inv (1e30 sin tramo), fuerza, 0
+uniform vec3 uFogColor;             // 0..255
+uniform vec4 uUnproj;               // originY, a, f2, den
 out vec4 oColor;
 
 const int BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
@@ -460,11 +466,23 @@ float quantize(float v, int steps, float threshold) {
   return min(top, max(0.0, floor(v * top + threshold))) / top;
 }
 
+vec3 fogged(ivec2 t, vec3 c) {
+  if (!uFog) return c;
+  float d = texelFetch(uDepthTex, t, 0).r;
+  if (isinf(d)) return c;
+  float P = uUnproj.x - (float(t.y + uView.y) + 0.5);
+  float z = (P - uUnproj.y * P * uUnproj.z / uUnproj.w) + uUnproj.y / uUnproj.w * d;
+  if (!(z < uFogP.x)) return c;
+  float k = floor(uFogP.z * min(1.0, (uFogP.x - z) * uFogP.y) * 256.0 + 0.5) / 256.0;
+  return floor(c + (uFogColor - c) * k + 0.5);
+}
+
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
   if (uFlip) t.y = uHeight - 1 - t.y;
   vec3 scene = floor(texelFetch(uColorTex, t, 0).rgb * 255.0 + 0.5);
-  if (uMode == 1 || !uLights) { oColor = vec4(scene / 255.0, 1.0); return; }
+  if (uMode == 1) { oColor = vec4(scene / 255.0, 1.0); return; }
+  if (!uLights) { oColor = vec4(fogged(t, scene) / 255.0, 1.0); return; }
   vec3 tot = texelFetch(uLightTex, t, 0).rgb;
   float threshold = (float(BAYER[(t.y & 3) * 4 + (t.x & 3)]) + 0.5) / 16.0;
   float lum = 0.3 * tot.r + 0.6 * tot.g + 0.1 * tot.b;
@@ -487,7 +505,7 @@ void main() {
   mul = clamp(mul, 0.0, 255.0); add = clamp(add, 0.0, 255.0);
   if (uMode == 2) { oColor = vec4(mul / 255.0, 1.0); return; }
   if (uMode == 3) { oColor = vec4(add / 255.0, 1.0); return; }
-  oColor = vec4(clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0) / 255.0, 1.0);
+  oColor = vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)) / 255.0, 1.0);
 }`;
 
 

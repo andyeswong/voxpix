@@ -37,6 +37,24 @@ export interface Frame2DOptions {
   // silueta de `color` (0..255) en trama de damero y con luz propia. Así no se pierde a nadie detrás de una pared. La
   // trama va por píxel de la imagen horneada (no se mueve con la cámara). null o sin campo: nada
   xray?: { color: readonly [number, number, number] } | null;
+  // Niebla por altura: lo que se ve por debajo de focusZ (la altura de lo que sigue la cámara) se mezcla hacia `color`
+  // (0..255), para que se note la altura en la vista oblicua (una torre y una zanja de un bloque no se dibujan igual).
+  // null, sin campo o strength 0: nada (el cuadro de siempre, byte a byte). Ver HeightFog
+  fog?: HeightFog | null;
+}
+
+// La z de cada píxel es la del punto que se ve en él (escenario, entidad o agua), sacada de su profundidad y su fila
+// (como worldPointAt): sin hornear nada, y sin caché, así que focusZ puede cambiar en cada cuadro. Las gotas y los
+// efectos toman la de lo que tienen detrás. Un píxel con
+// z >= focusZ - start queda igual; de ahí a focusZ - full, la mezcla sube en línea hasta strength; más abajo, strength.
+// El fondo (sin nada) no se toca. start se toma como 0 si es negativo (lo de encima del foco nunca se toca), y full,
+// como start si es menor
+export interface HeightFog {
+  focusZ: number;
+  start: number;
+  full: number;
+  color: readonly [number, number, number];
+  strength: number;                                     // 0..1
 }
 
 export interface Highlight {
@@ -118,8 +136,48 @@ function cacheTouch(model: object, ck: string, id: string): void {
 export const entityRenderCount = (): number => entityLru.size;
 
 export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
-  const { view, total } = frame2DParts(state, b, o);
-  return total ? applyLayers(view, shadeLayers(total, o, b)) : view;
+  const { view, total, depth } = frame2DParts(state, b, o);
+  const out = total ? applyLayers(view, shadeLayers(total, o, b)) : view;
+  if (o.fog) applyFog(out, depth, b, o);
+  return out;
+}
+
+// Los parámetros de la niebla listos para el pase por píxel (los mismos en la GPU): z0 = donde empieza, inv = 1 / el
+// tramo hasta el máximo (Infinity si no hay tramo), y la fuerza. null si no hace nada
+export function fogParams(f: HeightFog | null | undefined): { z0: number; inv: number; strength: number } | null {
+  if (!f || !(f.strength > 0)) return null;
+  const start = Math.max(0, f.start), full = Math.max(start, f.full);
+  return { z0: f.focusZ - start, inv: full > start ? 1 / (full - start) : Infinity, strength: Math.min(1, f.strength) };
+}
+
+// La mezcla de un píxel a z (la misma fórmula en la GPU), en pasos de 1/256: así la mezcla del color es exacta en
+// float32 y la CPU y la GPU dan el mismo byte también en los empates (un suelo a z entera con un foco entero cae justo
+// en .5 muy a menudo, y el error de la z en float32 lo mandaba a un lado o al otro)
+export function fogMix(p: { z0: number; inv: number; strength: number }, z: number): number {
+  if (!(z < p.z0)) return 0;
+  return Math.floor(p.strength * Math.min(1, (p.z0 - z) * p.inv) * 256 + 0.5) / 256;
+}
+
+// La niebla por altura sobre el cuadro ya con luz (rgba de la vista) con la profundidad de cada píxel de la vista
+// (frame2DParts.depth). Un pase por píxel: por fila, z = zr + kd * profundidad
+export function applyFog(px: Uint8ClampedArray, depth: Float32Array, b: Baked, o: Frame2DOptions): void {
+  const p = fogParams(o.fog);
+  if (!p) return;
+  const [fr, fg, fb] = o.fog!.color;
+  const u = unprojector(b), kd = u.a / u.den;
+  for (let y = 0; y < o.vh; y++) {
+    const P = rowP(u, o.vy + y), zr = P - u.a * P * u.f2 / u.den;
+    for (let x = 0, t = y * o.vw; x < o.vw; x++, t++) {
+      const d = depth[t]!;
+      if (d === Infinity) continue;
+      const k = fogMix(p, zr + kd * d);
+      if (k <= 0) continue;
+      const i = t * 4;
+      px[i] = Math.floor(px[i]! + (fr - px[i]!) * k + 0.5);
+      px[i + 1] = Math.floor(px[i + 1]! + (fg - px[i + 1]!) * k + 0.5);
+      px[i + 2] = Math.floor(px[i + 2]! + (fb - px[i + 2]!) * k + 0.5);
+    }
+  }
 }
 
 // Las capas de luz (MULTIPLY y ADD) de la luz por píxel de la vista. Con cielo (b.sky y o.cave), el ambiente de cada
@@ -139,7 +197,7 @@ function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array): Float32Array {
 
 // El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
 // hace lo mismo; la prueba del oráculo compara los dos.
-export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null } {
+export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array } {
   state = withEffectLights(state);
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
@@ -236,8 +294,11 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo');
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
+  // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con
+  // lo que tiene detrás
+  const depth = drop && o.fog ? depthBuf.slice() : depthBuf;
   if (drop) state.drops.draw(b, view, depthBuf, total, vx, vy, vw, vh, drop.color, drop.light);
-  return { view, total };
+  return { view, total, depth };
 }
 
 export const BACKGROUND = [13, 12, 18] as const;

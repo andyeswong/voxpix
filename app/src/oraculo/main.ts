@@ -14,7 +14,7 @@ import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type M
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
-import { frame2DParts, shadeLayers, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2DParts, shadeLayers, applyFog, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
@@ -65,6 +65,7 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
+  fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
@@ -296,6 +297,13 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `medieval impar 151x97 con pisotones, giro ${q}`, theme: 'medieval', crop: [101, 121, 151, 97], pos: [71, 49], ticks: 200, stompEvery: 42, quarter: q });
 }
 
+// La niebla por altura: el foco 8 por encima de los pies (las paredes y las entidades quedan por encima, el suelo
+// dentro del tramo, el agua más abajo), de 2 a 10 por debajo
+const fogQ = [0, 1, 2, 3] as Quarter[];
+for (const q of fogQ) SCENARIOS.push({ name: `medieval lago con niebla por altura, giro ${q}`, theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, quarter: q, fog: true });
+SCENARIOS.push({ name: 'medieval lago con niebla por altura, sin luces', theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, lights: false, fog: true });
+SCENARIOS.push({ name: 'oficina multitud de 60 con niebla por altura', theme: 'oficina', ticks: 30, setup: crowd(60), fog: true });
+
 function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
   const feet = b.cam.project(x + 0.5, y, z);
   const vx = Math.max(0, Math.min(b.width - VW, Math.floor(feet[0]) - VW / 2));
@@ -369,7 +377,8 @@ async function run(): Promise<void> {
   }
   const results: Result[] = [];
   const shots: Record<string, { cpu: string; gpu: string; diff: string; colorDiff: string }> = {};
-  for (const sc of SCENARIOS) {
+  const only = new URLSearchParams(location.search).get('solo');   // ?solo=texto: solo las escenas con ese texto en el nombre
+  for (const sc of SCENARIOS.filter((x) => !only || x.name.includes(only))) {
     out.textContent += `${sc.name}…\n`;
     await new Promise((r) => setTimeout(r, 0));
     const layout = generateLayout(sc.shape ? { ...THEMES[sc.theme].spec, shape: sc.shape } : THEMES[sc.theme].spec, 7);
@@ -399,7 +408,8 @@ async function run(): Promise<void> {
     const ambient = THEMES[sc.theme].ambient;
     const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
       ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}),
-      ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}) };
+      ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}),
+      ...(sc.fog ? { fog: { focusZ: maia.z + 8, start: 2, full: 10, color: [40, 44, 70] as const, strength: 0.75 } } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');
@@ -415,7 +425,8 @@ async function run(): Promise<void> {
     const c0 = performance.now();
     const parts = frame2DParts(rs, b, o);
     const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
-    const cpuFinal = layers ? applyLayers(parts.view, layers) : parts.view;
+    const cpuFinal = layers ? applyLayers(parts.view, layers) : o.fog ? parts.view.slice() : parts.view;
+    if (o.fog) applyFog(cpuFinal, parts.depth, b, o);
     const c1 = performance.now();
     const gFinal = gpu.read(rs, b, o, 'frame');
     const c2 = performance.now();

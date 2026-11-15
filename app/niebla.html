@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VoxPix · niebla por altura</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0d0c12; color: #d9d7e8; font: 13px system-ui, sans-serif; overflow: hidden; }
+    canvas { image-rendering: pixelated; display: block; margin: 0 auto; }
+    #hud { position: fixed; left: 10px; top: 8px; text-shadow: 0 1px 0 #000; white-space: pre; pointer-events: none; }
+    #panel { position: fixed; right: 10px; top: 8px; background: rgba(13, 12, 18, .8); padding: 8px 10px; border-radius: 6px; display: grid; grid-template-columns: auto 140px 36px; gap: 4px 8px; align-items: center; }
+    #panel label { text-align: right; }
+    #panel output { font-variant-numeric: tabular-nums; }
+  </style>
+</head>
+<body>
+  <canvas id="view"></canvas>
+  <div id="hud">Horneando…</div>
+  <div id="panel">
+    <label for="focus">focusZ</label><input id="focus" type="range" min="0" max="64" step="1" /><output id="focus-v"></output>
+    <label for="start">start</label><input id="start" type="range" min="0" max="32" step="1" /><output id="start-v"></output>
+    <label for="full">full</label><input id="full" type="range" min="0" max="48" step="1" /><output id="full-v"></output>
+    <label for="strength">fuerza</label><input id="strength" type="range" min="0" max="1" step="0.05" /><output id="strength-v"></output>
+    <label for="color">color</label><input id="color" type="color" /><span></span>
+    <label for="follow">seguir</label><input id="follow" type="checkbox" /><span></span>
+  </div>
+  <script type="module" src="./src/niebla/main.ts"></script>
+</body>
+</html>

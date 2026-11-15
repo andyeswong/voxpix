@@ -13,8 +13,8 @@
 import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
-import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, skyAmbient, type Baked, type BakedLight } from '../../world/bake';
+import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
+import { worldPointAt, skyAmbient, unprojector, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
@@ -450,6 +450,16 @@ export class GpuCompositor {
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
+    // La niebla por altura, solo en el cuadro (mode 0): las capas sueltas son las de antes
+    const fog = mode === 0 && this.baked ? fogParams(o.fog) : null;
+    gl.uniform1i(p.u.uFog, fog ? 1 : 0);
+    bindTex(gl, 2, gl.TEXTURE_2D, fog ? B.depth : null, p.u.uDepthTex);
+    if (fog) {
+      const u = unprojector(this.baked!), c = o.fog!.color;
+      gl.uniform4f(p.u.uFogP, fog.z0, Number.isFinite(fog.inv) ? fog.inv : 1e30, fog.strength, 0);
+      gl.uniform3f(p.u.uFogColor, c[0], c[1], c[2]);
+      gl.uniform4f(p.u.uUnproj, u.O, u.a, u.f2, u.den);
+    }
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

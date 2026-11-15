@@ -147,6 +147,13 @@ Un `.voxpix.json` (versión 3) puede traer varios clips con nombre (quieto, anda
 clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `clipDone`. Ver
 [Animaciones con nombre](motor.md#animaciones-con-nombre).
 
+### Niebla por altura
+
+`Frame2DOptions.fog` funde hacia un color lo que se ve por debajo de una altura de foco: así se nota la altura en la
+vista oblicua. Va en la CPU y en la GPU, sin hornear nada, con el foco cambiando en cada cuadro. Cuesta ~1,2 ms a 6x
+en la CPU y no se nota en la GPU. Sin la opción, el cuadro es el de siempre, byte a byte. Ver
+[Niebla por altura](motor.md#niebla-por-altura) y `app/niebla.html`.
+
 ### Contexto de la GPU perdido y recuperado
 
 En un teléfono, el navegador quita el contexto WebGL al mandar la pestaña atrás. Al recuperarlo, el compositor resubía
