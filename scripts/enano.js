@@ -3,8 +3,12 @@
 // Caja en TODOS los cuadros de todos los clips: x -3..2, y -3..2, z 0..13 (6 x 6 x 14). Frente hacia -y, pies en z = 0.
 // La paleta es la de la minera de un juego de bloques (8 rampas, el faro emisivo): el mismo formato para cambiar un
 // fichero por otro.
+// Variante (window.__enanoVariante): 'A' (por defecto) el casco dorado de dos capas; 'B' un casco de hierro de una
+// capa (1 vóxel más bajo: z 0..12) con una banda dorada estrecha delante, y una rampa más al final de la paleta
+// (hierro), así las 8 de antes conservan su índice
 (() => {
   const vp = window.voxpix;
+  const B = window.__enanoVariante === 'B';
   vp.newModel('enano', 12, 12, 16);
   vp.palette([
     { name: 'piel', colors: ['#7a4a34', '#a8684a', '#d08e68', '#ecb48c'] },
@@ -15,6 +19,7 @@
     { name: 'casco', colors: ['#7a5a10', '#b88a18', '#e8b830', '#f8d868'] },
     { name: 'faro', colors: ['#c8a040', '#ffe890', '#fffad0'], emissive: true },
     { name: 'ojos', colors: ['#101018', '#20202c'] },
+    ...(B ? [{ name: 'hierro', colors: ['#3a4048', '#565e68', '#76808c', '#9aa4b0'] }] : []),
   ]);
   const V = new Map();
   const put = (x, y, z, m) => V.set(`${x},${y},${z}`, [x, y, z, m]);
@@ -42,9 +47,16 @@
   put(-2, -1, 10, 'pelo:1'); put(1, -1, 10, 'pelo:1'); put(-2, -1, 9, 'pelo:1'); put(1, -1, 9, 'pelo:1');
   put(-1, -2, 5, 'pelo:1'); put(0, -2, 5, 'pelo:1');
   // El casco: el ala (z 12, una vuelta más ancha que la cabeza) y la cúpula (z 13), con el faro delante
-  box(-3, -2, 12, 2, 2, 12, (x, y) => (x === -3 || x === 2 || y === -2 || y === 2 ? 'casco:1' : 'casco:2'));
-  box(-2, -1, 13, 1, 1, 13, 'casco:3');
-  put(-1, -2, 13, 'faro:1'); put(0, -2, 13, 'faro:2');
+  if (!B) {
+    box(-3, -2, 12, 2, 2, 12, (x, y) => (x === -3 || x === 2 || y === -2 || y === 2 ? 'casco:1' : 'casco:2'));
+    box(-2, -1, 13, 1, 1, 13, 'casco:3');
+    put(-1, -2, 13, 'faro:1'); put(0, -2, 13, 'faro:2');
+  } else {
+    // Una sola capa: el ala de hierro oscuro, la cúpula de hierro con la cresta clara, la banda dorada en su fila de
+    // delante, y el faro en el ala
+    box(-3, -2, 12, 2, 2, 12, (x, y) => (x === -3 || x === 2 || y === -2 || y === 2 ? 'hierro:1' : y === -1 ? 'casco:2' : x === -1 || x === 0 ? 'hierro:3' : 'hierro:2'));
+    put(-1, -2, 12, 'faro:1'); put(0, -2, 12, 'faro:2');
+  }
   // El pico a la espalda (y 2): el mango en diagonal y la cabeza de hierro arriba
   for (let k = 0; k <= 8; k++) put(-2 + Math.round((k * 3) / 8), 2, 3 + k, 'pantalon:2');
   for (const [x, z] of [[-2, 10], [-1, 11], [0, 11], [2, 11], [2, 10]]) put(x, 2, z, 'botas:2');
