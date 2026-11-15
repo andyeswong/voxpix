@@ -190,32 +190,31 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
   // cabían 1-2 columnas, y cada franja renderizaba además una columna de margen a cada lado (el contorno), así que
   // costaba 2-3 veces el horneado de una vez; y una columna entera no se podía partir (a 6x no cabía en 3 ms)
   const lights = world.lights.filter((l) => l.baked !== false);
-  // Lo que cuesta cada columna de una banda: los vóxeles de su columna x (y la de al lado, que también se mira) en las
-  // y que pueden caer en las filas de la banda (stripRegion), de la rejilla de alturas por prefijos. Con eso y lo que
-  // se va midiendo en la banda (ms por vóxel), cada baldosa se corta para que quepa en lo que queda del plazo de la
-  // llamada (entre BAKE_MIN_MS y BAKE_STEP_MS): la unidad es la baldosa, su tamaño sale de la estimación
-  const D = world.depth, wW = world.width, hgt = world.model.height, zMin = world.model.zMin, zMax = world.model.zMax;
-  const a = incline;
-  const pre = new Float64Array((wW + 1) * (D + 1));               // pre[x * (D + 1) + y]: vóxeles de la columna x con y' < y
-  for (let x = 0; x < wW; x++) for (let y = 0; y < D; y++) pre[x * (D + 1) + y + 1] = pre[x * (D + 1) + y]! + Math.max(0, hgt[y * wW + x]! - zMin);
-  let band = -1, R0 = 0, R1 = -1, yLo = 0, yHi = -1;
-  const colVox = (x: number) => (x < 0 || x >= wW ? 0 : pre[x * (D + 1) + yHi + 1]! - pre[x * (D + 1) + yLo]!);
-  const colCost = (c: number) => 1 + colVox(c) + colVox(c - 1);
+  // Lo que cuesta cada columna de una banda: las caras al aire de su columna x de vóxeles (y la de al lado, que también
+  // se mira) que pueden caer en las filas de la banda, contadas con las máscaras de lo expuesto. Se preparan por grupos
+  // de BAKE_GROUP columnas (otra unidad: las máscaras hasta el plazo, y contar), y con lo medido en la banda (ms por
+  // cara) cada baldosa se corta para que quepa en lo que queda del plazo de la llamada (entre BAKE_MIN_MS y
+  // BAKE_STEP_MS). Antes se estimaba por el volumen de la columna, y donde hay mucha cara al aire en poco volumen (las
+  // copas de los árboles) 1 de cada 20 baldosas costaba el doble de lo previsto
+  const exposed = new Float64Array(W);
+  let band = -1, R0 = 0, R1 = -1, ready = 0;
+  const colCost = (c: number) => 1 + exposed[c]! + (c > 0 ? exposed[c - 1]! : 0);
   let rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: -1 };
   let buf: RectBuffers | null = null;
   const nextBand = (): boolean => {
     band++;
     R0 = band * BAKE_BAND; R1 = Math.min(H - 1, R0 + BAKE_BAND - 1);
     if (R0 >= H) return false;
-    yHi = Math.min(D - 1, Math.max(-1, Math.ceil((originY - R0 - zMin) / a) + 1));
-    yLo = Math.max(0, Math.floor((originY - R1 - 1 - zMax - 1) / a) - 1);
     rect = { x0: 0, x1: W - 1, y0: R0, y1: R1 };
     const o = R0 * W, n = (R1 - R0 + 1) * W;
     buf = { rgba: b.rgba.subarray(o * 4, (o + n) * 4), depth: b.depth.subarray(o, o + n), face: b.face.subarray(o, o + n), pick: b.pick.subarray(o, o + n), w: W, h: R1 - R0 + 1 };
-    col = 0; msPerVox = -1;
+    col = 0; ready = 0; msPerFace = -1;
+    exposed.fill(0);
     return true;
   };
-  let col = W, li = 0, cell = 0, msPerVox = -1, msPerCell = -1, msPerSkyRow = -1, imageDone = !nextBand();
+  // Lo que cuesta cada fila del cielo: sus píxeles con algo (los de fondo no lanzan rayos)
+  const rowCost = (y: number) => { let n = 1; for (let i = y * W, e = i + W; i < e; i++) if (!Number.isNaN(b.pick[i]!)) n++; return n; };
+  let col = W, li = 0, cell = 0, msPerFace = -1, msPerCell = -1, msPerSkyPx = -1, imageDone = !nextBand();
   let zone: BakedLight | null | undefined;
   const job: ViewJob = {
     key,
@@ -225,28 +224,34 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
         // Cada unidad (una baldosa, unas filas de cielo, unos píxeles de luz) se corta, según lo medido de su clase, para
         // que quepa en lo que queda del plazo (entre BAKE_MIN_MS y BAKE_STEP_MS)
         const want = Math.min(BAKE_STEP_MS, Math.max(BAKE_MIN_MS, deadline - t));
-        if (!imageDone) {
+        if (!imageDone && col >= ready) {
+          // Preparar el grupo de columnas siguiente: sus máscaras (hasta el plazo; si no acaban, sigue en la llamada
+          // siguiente; son las que haría después el trabajo exposure) y sus caras al aire por columna
+          const g1 = Math.min(rect.x1, ready + BAKE_GROUP - 1);
+          if (!warmStrip(b, rect, ready, g1, deadline)) continue;
+          const { bands } = stripRegion(b, rect, ready, g1);
+          for (const part of bands) b.source.forEachExposed((x) => { if (x >= ready && x <= g1) exposed[x]!++; }, { ...part, x0: Math.max(part.x0, ready), x1: Math.min(part.x1, g1) });
+          ready = g1 + 1;
+          b.ms.render += performance.now() - t;
+        } else if (!imageDone) {
           // Una columna (la primera de cada banda, para medir), y las que quepan según lo medido en la banda
           let c1 = col, cost = colCost(col);
-          if (msPerVox > 0) while (c1 < rect.x1 && c1 - col < 255 && (cost + colCost(c1 + 1)) * msPerVox <= want) cost += colCost(++c1);
-          // Antes, las máscaras de lo expuesto de lo que va a recorrer (hasta el plazo; si no acaban, sigue en la llamada
-          // siguiente): con ellas solo se recorre lo que tiene alguna cara al aire, y son las que haría después el
-          // trabajo exposure
-          if (!warmStrip(b, rect, col, c1, deadline)) continue;
-          const t2 = performance.now();
+          if (msPerFace > 0) while (c1 < ready - 1 && (cost + colCost(c1 + 1)) * msPerFace <= want) cost += colCost(++c1);
           renderColumns(b, rect, buf!, col, c1);
           col = c1 + 1;
-          const ms = performance.now() - t2, rate = ms / cost;
-          msPerVox = msPerVox < 0 ? rate : msPerVox * 0.7 + rate * 0.3;
-          b.ms.render += performance.now() - t;
+          const ms = performance.now() - t, rate = ms / cost;
+          msPerFace = msPerFace < 0 ? rate : msPerFace * 0.7 + rate * 0.3;
+          b.ms.render += ms;
           if (col > rect.x1) imageDone = !nextBand();
         } else if (skyRow < H) {
-          // El cielo, por filas (lee la cara de cada píxel: después de la imagen); la primera tanda, de una fila
-          const rows = msPerSkyRow > 0 ? Math.max(1, Math.floor(want / msPerSkyRow)) : 1;
-          const y1 = Math.min(H - 1, skyRow + rows - 1);
+          // El cielo, por filas (lee la cara de cada píxel: después de la imagen): una fila (la primera, para medir), y las
+          // que quepan según sus píxeles con algo. Por filas a secas, las de arriba (casi vacías) daban una medida que en
+          // las de abajo se quedaba diez veces corta: tandas de 20-46 ms
+          let y1 = skyRow, cost = rowCost(skyRow);
+          if (msPerSkyPx > 0) for (let c = 0; y1 < H - 1 && (cost + (c = rowCost(y1 + 1))) * msPerSkyPx <= want; y1++) cost += c;
           fillSky(b, 0, skyRow, W - 1, y1);
-          const rate = (performance.now() - t) / (y1 - skyRow + 1);
-          msPerSkyRow = msPerSkyRow < 0 ? rate : msPerSkyRow * 0.7 + rate * 0.3;
+          const rate = (performance.now() - t) / cost;
+          msPerSkyPx = msPerSkyPx < 0 ? rate : msPerSkyPx * 0.7 + rate * 0.3;
           skyRow = y1 + 1;
         } else if (li < lights.length) {
           if (zone === undefined) { zone = lightZone(b, lights[li]!); cell = 0; msPerCell = -1; }
@@ -277,6 +282,7 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
 const BAKE_STEP_MS = 2;   // lo más que se busca que tarde cada unidad del horneado entero (menos si el plazo es menor)
 const BAKE_MIN_MS = 0.25; // y lo menos (aunque el plazo ya haya pasado)
 const BAKE_BAND = 16;     // filas de cada banda de baldosas
+const BAKE_GROUP = 16;    // columnas que se preparan de una vez (máscaras y caras al aire)
 
 // Calienta el camino del rehorneado (el JIT compila renderColumns al usarlo): si no, la primera vez que algo se
 // rompe en la partida, sus primeras franjas cuestan 4-7 ms en vez de ~1. Se renderizan unas franjas de prueba en

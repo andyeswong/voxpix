@@ -1,7 +1,7 @@
 // Lo que cuesta preparar un giro de la cámara (prepareViewJob) en un mundo de bloques grande: la copia girada y el
 // horneado por separado, con llamadas de 2 ms como las da una cola (PLAZO=0.5: de 0,5 ms, lo que son 3 ms a 6x), lo que
 // deja por hacer después (el trabajo exposure) y el mismo horneado de una vez.
-//   bun scripts/bench-giro.ts [giros=1,2] [tiradas=2]
+//   bun scripts/bench-giro.ts [giros=1,2] [tiradas=2]     GC=1: el recolector entero entre llamadas (fuera de la medida)
 // El mundo: 384 x 384 x 96 vóxeles (48 x 48 x 12 bloques de 8) de generateTerrain, con el subsuelo lleno de piedra y
 // vetas de dos menas (las losas no son de un solo valor), árboles con hojas y un túnel. Sin freno de CPU.
 import { material, type Palette } from '../src/core';
@@ -62,11 +62,15 @@ if (import.meta.main) {
   for (let run = 0; run < RUNS; run++) for (const q of quarters) {
     const p = prepareViewJob(st, q, OPTS, { cut: true });
     const bakeCalls: number[] = [];
+    const spikes: string[] = [];
     const per: Partial<Record<PrepStage, { ms: number; calls: number; max: number }>> = {};
     while (p.stage() !== 'done') {
-      const stage = p.stage(), a = performance.now();
+      // GC=1: el recolector entero entre llamadas (fuera de la medida): si los picos son suyos, desaparecen
+      if (process.env.GC === '1') Bun.gc(true);
+      const stage = p.stage(), h0 = process.memoryUsage().heapUsed, a = performance.now();
       p.job.run(a + STEP);
       const ms = performance.now() - a, r = (per[stage] ??= { ms: 0, calls: 0, max: 0 });
+      if (ms > 5) spikes.push(`${stage} ${ms.toFixed(1)} ms (montón ${((process.memoryUsage().heapUsed - h0) / 1048576).toFixed(1)} MB)`);
       r.ms += ms; r.calls++; r.max = Math.max(r.max, ms);
       if (stage === 'bake') bakeCalls.push(ms);
     }
@@ -83,6 +87,7 @@ if (import.meta.main) {
     bakeWorld(v.bakeable(), OPTS);
     const once = performance.now() - b, copyOnce = b - a;
     const line = Object.entries(per).map(([k, r]) => `${k} ${r!.ms.toFixed(0)} ms / ${r!.calls} llamadas (máx ${r!.max.toFixed(1)})`).join(' · ');
+    if (spikes.length) console.log(`  llamadas de más de 5 ms: ${spikes.join('; ')}`);
     console.log(`giro ${q}, tirada ${run + 1}: ${line} ${stageMs} · de una vez: copia ${copyOnce.toFixed(0)} ms, horneado ${once.toFixed(0)} ms`);
   }
 }

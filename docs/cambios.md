@@ -152,8 +152,9 @@ clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `cli
 - La copia girada de los vóxeles va por losas (`StaticVoxels.copyRotatedSlabs`), sin pasar por `set`. En un mundo de
   384 x 384 x 96 con 9,6 M de vóxeles llenos baja de 0,7-1,1 s a 14-27 ms, y en `prepareViewJob` su unidad es una losa.
 - El horneado por pasos (`bakeWorldJob`) va por baldosas que se cortan por el plazo de cada llamada, con las máscaras
-  de lo expuesto. Baja de 0,9-1,3 s a 0,41-0,64 s, y deja hechas las máscaras que antes hacía después el trabajo
-  `exposure` (~120 ms).
+  de lo expuesto. Lo que cuesta cada columna se estima por sus caras al aire, y cada fila del cielo por sus píxeles
+  con algo. Baja de 0,9-1,3 s a 0,41-0,63 s, y deja hechas las máscaras que antes hacía después el trabajo `exposure`
+  (~120 ms). Con llamadas de 0,5 ms (3 ms a 6x), el p95 es 0,57-0,69 ms y la más larga, 1,9-3,1 ms.
 - `prepareViewJob` en el giro 0 con corte (`{ cut: true }`) también copia por partes. Antes hacía la copia entera en
   la etapa `view`, de una vez.
 - Arreglado en `StaticVoxels`: una losa que pasaba de 256 valores distintos reescribiendo vóxeles podía quedarse con

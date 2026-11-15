@@ -686,30 +686,36 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
   Hace falta que ancho y fondo sean múltiplos de 16 (`StaticVoxels.slabCopyable`); si no, se copia vóxel a vóxel como
   antes. En `prepareViewJob`, la unidad de la etapa `copy` es una losa.
 - El horneado por pasos va por baldosas de 16 filas de pantalla. Cada baldosa lleva las columnas que caben en lo que
-  queda del plazo de la llamada, según lo medido en su banda (una columna como mínimo). Antes de cada baldosa se
-  preparan las máscaras de lo expuesto de lo que va a recorrer (hasta el plazo). El cielo y la luz también cortan su
-  unidad por el plazo. Antes eran franjas de toda la altura sin mirar el plazo:
+  queda del plazo de la llamada (una como mínimo). Lo que cuesta cada columna son sus caras al aire en la banda.
+  - Se cuentan con las máscaras de lo expuesto, por grupos de 16 columnas. Preparar un grupo es una unidad aparte: sus
+    máscaras, hasta el plazo, y contar.
+  - Con eso y lo medido en la banda (ms por cara) se corta cada baldosa.
+  - El cielo se corta igual, por los píxeles con algo de cada fila; la luz, por lo medido de esa luz.
+  - No empieza otra unidad en la misma llamada si quedan menos de 0,25 ms.
+
+  Antes eran franjas de toda la altura sin mirar el plazo:
   - con pasos de 2 ms cabían 1-2 columnas;
   - cada franja renderizaba además una columna de margen a cada lado (el contorno);
   - costaba 2-3 veces el horneado de una vez;
   - una columna no se podía partir.
 - Medido con `bun scripts/bench-giro.ts`, sin freno: un mundo de bloques de 384 x 384 x 96 con 9,6 M de vóxeles
-  llenos (subsuelo de piedra con vetas, árboles y un túnel), con corte de vista, cielo y contorno, giros 1 y 2. Con
-  `PLAZO=0.5` se dan llamadas de 0,5 ms (lo que son 3 ms a 6x):
+  llenos (subsuelo de piedra con vetas, árboles y un túnel), con corte de vista, cielo y contorno, giros 1 y 2, 2-3
+  tiradas. Con `PLAZO=0.5` se dan llamadas de 0,5 ms (lo que son 3 ms a 6x):
 
-  | | Antes | Ahora |
-  |---|---|---|
-  | Copia girada, por partes | 0,7-1,1 s en ~300-360 llamadas (máx 4-6 ms) | 14-27 ms (máx 2-2,5 ms con plazo de 2; 0,5-1,2 con plazo de 0,5) |
-  | Horneado por pasos de 2 ms | 0,9-1,3 s | 0,41-0,64 s |
-  | Horneado de una vez (referencia) | 0,32-0,6 s | igual |
-  | Preparar las máscaras después (trabajo `exposure`) | ~120 ms (lo que cuesta hacerlas) | 1-5 ms (las hizo el horneado) |
-  | Llamadas del horneado con plazo de 0,5 ms: p50 / p95 / p99 | - | 0,45-0,51 / 0,95-1,02 / 1,4-1,7 ms |
+  | | Antes | Baldosas, por volumen | Baldosas, por caras al aire |
+  |---|---|---|---|
+  | Copia girada, por partes | 0,7-1,1 s en ~300-360 llamadas (máx 4-6 ms) | 14-27 ms | 12-27 ms (máx 0,5-1,3 ms con plazo de 0,5) |
+  | Horneado por pasos de 2 ms | 0,9-1,3 s | 0,41-0,64 s | 0,41-0,63 s |
+  | Horneado de una vez (referencia) | 0,32-0,6 s | igual | igual |
+  | Preparar las máscaras después (trabajo `exposure`) | ~120 ms (lo que cuesta hacerlas) | 1-5 ms | 1-5 ms |
+  | Llamadas del horneado con plazo de 0,5 ms: p50 / p95 / p99 | - | 0,45-0,51 / 0,95-1,02 / 1,4-1,7 ms | 0,37-0,40 / 0,57-0,69 / 0,80-1,13 ms |
+  | Llamada más larga del horneado con plazo de 0,5 ms | - | 2,8-15,9 ms | 1,9-3,1 ms |
+  | Llamadas del horneado con plazo de 2 ms: p50 / p95 / p99 | - | 2,0-2,2 / 3,3-4,3 / 4,0-7,3 ms | 1,9 / 2,2-2,5 / 2,6-3,2 ms |
 
-  Una llamada del horneado se pasa de su plazo lo que cueste la última unidad. La baldosa más pequeña (1 columna x 16
-  filas) cuesta hasta ~0,5 ms sin freno donde hay mucha cara al aire (copas de árboles), y la estimación por vóxeles
-  de la columna se queda corta en ~1 de cada 20. Por eso, con plazo de 0,5 ms, el p95 es el doble del plazo. A 6x, con
-  3 ms de plazo, eso son llamadas de ~6 ms en 1 de cada 20. Quedan además picos sueltos de 9-43 ms (1-2 por giro, en
-  bun). Parecen pausas del recolector, pero no está comprobado.
+  Con la estimación por volumen había además 1-2 llamadas de 20-46 ms por giro. No eran el recolector: siguen igual
+  con el recolector entero forzado entre llamadas (`GC=1` en el banco), y el montón no cambia durante la llamada.
+  Eran tandas del cielo: las filas se contaban a secas, y la medida de las de arriba (casi vacías) se quedaba diez
+  veces corta en las de abajo. Contando los píxeles con algo de cada fila, desaparecen.
 - `app/giro.html` mide las dos formas en cada máquina (`?modo=cache`: los otros 3 en segundo plano; sin modo: hornear
   al girar, con un cuadro de transición antes).
 - Las paredes que dependen del lado de la cámara son contenido: el juego las decide con un vestido.
