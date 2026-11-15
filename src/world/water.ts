@@ -43,6 +43,13 @@ export class WaterLayer {
   groundVersion = 0;                               // sube al cambiar el fondo, las paredes o las cuencas
   private readonly basin0: Uint8Array;             // las cuencas del mundo de partida (las ganadas jugando no están)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
+  // Las celdas mojadas fuera de cuenca (las que se empapan), en lista: así el empapado no recorre la rejilla. Entra
+  // toda celda que pueda mojarse fuera de cuenca: las del paso (activeCells), pour, syncGround e importState. Quien
+  // escriba sim.depth a mano fuera de cuenca, que use pour
+  private soakList: Int32Array;
+  private inSoak: Uint8Array;
+  private nSoak = 0;
+  soakVisited = 0;                                 // celdas recorridas por el último empapado (para medir y probar)
   private fountainOut: number[] = [];             // desagüe
 
   // Rejilla de celdas de CELL x CELL vóxeles en ejes del modelo: la celda (gx, gy) cubre x en [gx*CELL, gx*CELL+CELL)
@@ -75,6 +82,9 @@ export class WaterLayer {
       else if (anyWet) { this.basin[i] = 1; if (top > g) this.sim.depth[i] = top - g; }
     }
     this.basin0 = this.basin.slice();
+    this.soakList = new Int32Array(this.gw * this.gh);
+    this.inSoak = new Uint8Array(this.gw * this.gh);
+    this.soakAll();
     this.sim.wakeAll();
     this.widenRange();
     const f = world.fountain;
@@ -131,10 +141,21 @@ export class WaterLayer {
         }
         if (g < level) this.basin[i] = 1;
       }
+      this.soakMaybe(i);
       sim.wake(gx, gy, 3);
     }
     this.groundVersion++;
     this.widenRange();
+  }
+
+  private soakMaybe(i: number): void {
+    if (!this.inSoak[i] && !this.basin[i] && this.sim.depth[i]! > 0) { this.inSoak[i] = 1; this.soakList[this.nSoak++] = i; }
+  }
+  // La lista de lo que se empapa, otra vez desde toda la rejilla (al empezar y al cargar)
+  private soakAll(): void {
+    for (let k = 0; k < this.nSoak; k++) this.inSoak[this.soakList[k]!] = 0;
+    this.nSoak = 0;
+    for (let i = 0; i < this.basin.length; i++) this.soakMaybe(i);
   }
 
   // El fondo de una celda desde los vóxeles del mundo (el más alto de los suyos) y si tiene un agujero sin suelo
@@ -162,6 +183,7 @@ export class WaterLayer {
   importState(s: WaterState): void {
     this.sim.importState(s);
     this.basin.set(s.basin ?? this.basin0);
+    this.soakAll();
     if (this.watch) {
       this.watch.take();
       const { sim } = this;
@@ -230,6 +252,7 @@ export class WaterLayer {
     const i = this.cellOf(x, y);
     if (i < 0 || this.sim.solid[i]) return;
     this.sim.depth[i] = this.sim.depth[i]! + amount;
+    this.soakMaybe(i);
     this.sim.wake(i % this.gw, Math.floor(i / this.gw), 3);
   }
 
@@ -253,10 +276,21 @@ export class WaterLayer {
         if (over > 0) sim.depth[i] = Math.max(0, sim.depth[i]! - over * 0.3);
       }
       sim.step(1 / 120);
+      // Lo que pudo mojarse fuera de cuenca en este subpaso: solo las celdas que calculó
+      const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList;
+      for (let q = 0; q < act.length; q++) { const i = act[q]!; if (!inSoak[i] && !basin[i] && depth[i]! > 0) { inSoak[i] = 1; list[this.nSoak++] = i; } }
     }
-    // El agua que salta al suelo seco se empapa poco a poco
-    const soak = Math.min(dt, 0.05) * 0.3;
-    for (let i = 0; i < basin.length; i++) if (!basin[i] && sim.depth[i]! > 0) sim.depth[i] = sim.depth[i]! < 0.03 ? 0 : sim.depth[i]! - soak * Math.max(0.25, sim.depth[i]!);
+    // El agua que salta al suelo seco se empapa poco a poco (cada celda por su cuenta: el orden no cuenta)
+    const soak = Math.min(dt, 0.05) * 0.3, list = this.soakList, depth = sim.depth;
+    let m = 0;
+    this.soakVisited = this.nSoak;
+    for (let k = 0; k < this.nSoak; k++) {
+      const i = list[k]!;
+      if (basin[i] || !(depth[i]! > 0)) { this.inSoak[i] = 0; continue; }
+      depth[i] = depth[i]! < 0.03 ? 0 : depth[i]! - soak * Math.max(0.25, depth[i]!);
+      if (depth[i]! > 0) list[m++] = i; else this.inSoak[i] = 0;
+    }
+    this.nSoak = m;
   }
 
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,

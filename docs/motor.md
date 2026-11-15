@@ -800,12 +800,23 @@ water.follow(state.watchChanges());                                 // picar o p
   | | Sin freno | CPU a 6x |
   |---|---|---|
   | Paso del agua por tick (`step`), p50 / p95 / máx | 0,1 / 0,5 / 0,6 ms | 0,6 / 4,3-4,6 / 5,1-5,8 ms |
+  | Ídem en reposo, antes / ahora (p50) | | 0,6 / < 0,1 ms |
   | Cuadro de la GPU leído, sin / con agua, p50 | 0,5 / 0,6 ms | 2,2-2,4 / 2,7 ms |
   | Cuadro de la GPU leído, sin / con agua, p95 | 0,9 / 0,9 ms | 3,6-4,9 / 6,4-7,4 ms |
   | Cuadro de la CPU (detalle bajo), sin / con agua, p50 | 3,6 / 4,8 ms | 28 / 40-41 ms |
 
   El paso del agua es barato con el agua quieta y sube tras un pisotón, cuando la rejilla se despierta: un pisotón
   cada 30 ticks da el p95 de ~4,5 ms a 6x. En la GPU, el agua cuesta ~0,3-0,5 ms por cuadro a 6x (p50).
+
+  En reposo (nada despierto), el paso no recorre la rejilla: el simulador lleva las celdas despiertas en una lista
+  (`ShallowWater.visited`: las que recorrió el último paso) y el empapado, las mojadas fuera de cuenca
+  (`WaterLayer.soakVisited`). Antes recorría las 36.864 celdas dos veces por tick: 0,6 ms a 6x sin nada que hacer;
+  ahora, por debajo de 0,1 ms (lo que mide el reloj del navegador frenado). Con todo despierto cuesta lo mismo que
+  antes, y la simulación es la misma (`test/agua-reposo.test.ts`, con huellas fijadas con el código de antes).
+
+  Lo caro son los primeros ticks de una capa recién hecha: nace con todo lo mojado despierto y tarda unos 30 ticks en
+  dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
+  `first` y `firstFollow`). Con el JIT frío, más. `state.warmUp()` calienta el JIT pero no duerme el agua.
 
 ## Girar la cámara
 

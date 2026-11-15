@@ -1,8 +1,10 @@
 // El agua por columnas en un mundo de bloques alto (NARUTO): un mapa por semilla (generateMap) de 384 x 384 x 96
 // vóxeles con lagos, el agua con mapWater y un WaterLayer sin pared por altura, y el cuadro de la GPU (o la CPU).
 //   ?medir=1: mide lo que cuesta el agua y lo deja en window.__agua:
-//     - el paso del agua por tick (WaterLayer.step) en la simulación;
+//     - el paso del agua por tick (WaterLayer.step) en la simulación, con pisotones y en reposo (sin nada despierto);
 //     - el cuadro del compositor con agua y con el mismo mundo sin agua (read espera a la GPU)
+//     - los primeros ticks de una capa recién hecha (state.step, sin calentar): el más caro y en qué tick, sin seguir
+//       al mundo y siguiéndolo (follow);
 //   ?ruta=cpu   ?semilla=1   ?n=120 (cuadros medidos)
 import { material, type Palette } from '@core/index';
 import { StaticVoxels, WorldState } from '../../../src/world/state';
@@ -61,6 +63,20 @@ function measure(): unknown {
   }
   const out: Record<string, unknown> = { size: [s.width, s.depth, CH * B], wetCells, cells: water.gw * water.gh, zRange: water.zRange,
     stepP50: pct(steps, 0.5), stepP95: pct(steps, 0.95), stepMax: Math.max(...steps) };
+  // En reposo: se deja asentar (600 ticks sin pisotones) y se mide sin tocarla
+  for (let t = 0; t < 600; t++) water.step(1 / 60);
+  const rest: number[] = [];
+  for (let t = 0; t < 600; t++) { const a = performance.now(); water.step(1 / 60); rest.push(performance.now() - a); }
+  out.restP50 = pct(rest, 0.5); out.restP95 = pct(rest, 0.95); out.restMax = Math.max(...rest);
+  // Los primeros ticks de una capa nueva (la primera vez que se corre: con el JIT frío y todo lo mojado despierto)
+  for (const follow of [false, true]) {
+    const w2 = new WaterLayer(world, { wallAbove: Infinity }), st2 = new WorldState(s, [], w2, { seed: 1 });
+    if (follow) w2.follow(st2.watchChanges());
+    const ticks: number[] = [];
+    for (let t = 0; t < 240; t++) { const a = performance.now(); st2.step(); ticks.push(performance.now() - a); }
+    const max = Math.max(...ticks);
+    out[follow ? 'firstFollow' : 'first'] = { tick0: ticks[0], max, at: ticks.indexOf(max), over5: ticks.filter((x) => x > 5).length, p50: pct(ticks, 0.5) };
+  }
   // El cuadro: con agua y sin agua (el mismo mundo), en la GPU (read espera) y en la CPU
   const gc = GpuCompositor.create(document.createElement('canvas'));
   if (gc) {

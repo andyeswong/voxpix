@@ -27,6 +27,13 @@ export class ShallowWater {
   private active: Uint8Array;
   private list: Int32Array;
   private count = 0;
+  // Las celdas con awake > 0 (y quizá alguna ya dormida, hasta el siguiente paso): así un paso sin nada despierto no
+  // recorre la rejilla. El orden no cuenta: cada fase del paso es independiente celda a celda
+  private woken: Int32Array;
+  private inWoken: Uint8Array;
+  private nWoken = 0;
+  // Celdas recorridas por el último paso (para medir, y para probar que en reposo no recorre la rejilla)
+  visited = 0;
 
   constructor(w: number, h: number, opts: ShallowOptions = {}) {
     this.w = w; this.h = h;
@@ -41,17 +48,21 @@ export class ShallowWater {
     this.active = new Uint8Array(n);
     this.awake = new Uint16Array(n);
     this.list = new Int32Array(n);
+    this.woken = new Int32Array(n);
+    this.inWoken = new Uint8Array(n);
     this.wakeAll();
   }
 
+  private woke(i: number): void { if (!this.inWoken[i]) { this.inWoken[i] = 1; this.woken[this.nWoken++] = i; } }
+
   // Despierta todas las celdas mojadas (al empezar o tras cambiar el agua a mano)
   wakeAll(): void {
-    for (let i = 0; i < this.awake.length; i++) if (this.depth[i]! > 0) this.awake[i] = 60;
+    for (let i = 0; i < this.awake.length; i++) if (this.depth[i]! > 0) { this.awake[i] = 60; this.woke(i); }
   }
 
   wake(cx: number, cy: number, radius: number): void {
     for (let y = Math.max(0, Math.floor(cy - radius)); y <= Math.min(this.h - 1, Math.ceil(cy + radius)); y++)
-      for (let x = Math.max(0, Math.floor(cx - radius)); x <= Math.min(this.w - 1, Math.ceil(cx + radius)); x++) this.awake[y * this.w + x] = 90;
+      for (let x = Math.max(0, Math.floor(cx - radius)); x <= Math.min(this.w - 1, Math.ceil(cx + radius)); x++) { this.awake[y * this.w + x] = 90; this.woke(y * this.w + x); }
   }
 
   // Todo lo que define el estado del fluido (para snapshot, restore y hash). Las matrices de trabajo (active, list)
@@ -62,6 +73,9 @@ export class ShallowWater {
 
   importState(s: ReturnType<ShallowWater['exportState']>): void {
     this.depth.set(s.depth); this.fl.set(s.fl); this.fr.set(s.fr); this.ft.set(s.ft); this.fb.set(s.fb); this.awake.set(s.awake);
+    for (let k = 0; k < this.nWoken; k++) this.inWoken[this.woken[k]!] = 0;
+    this.nWoken = 0;
+    for (let i = 0; i < this.awake.length; i++) if (this.awake[i]) this.woke(i);
   }
 
   // Las celdas que se calcularon en el último paso (las despiertas y sus vecinas)
@@ -82,12 +96,17 @@ export class ShallowWater {
 
   // Lista de celdas a calcular: las despiertas y sus vecinas
   private markActive(): void {
-    const { w, h, active, awake, list } = this;
+    const { w, h, active, awake, list, woken, inWoken } = this;
     for (let k = 0; k < this.count; k++) active[list[k]!] = 0;
     let n = 0;
     const add = (j: number) => { if (!active[j]) { active[j] = 1; list[n++] = j; } };
-    for (let i = 0; i < awake.length; i++) {
-      if (!awake[i]) continue;
+    // Las despiertas, de su lista; las que se durmieron salen de ella
+    let m = 0;
+    this.visited = this.nWoken;
+    for (let k = 0; k < this.nWoken; k++) {
+      const i = woken[k]!;
+      if (!awake[i]) { inWoken[i] = 0; continue; }
+      woken[m++] = i;
       const x = i % w, y = (i - x) / w;
       add(i);
       if (x > 0) add(i - 1);
@@ -95,6 +114,7 @@ export class ShallowWater {
       if (y > 0) add(i - w);
       if (y < h - 1) add(i + w);
     }
+    this.nWoken = m;
     this.count = n;
   }
 
@@ -104,8 +124,9 @@ export class ShallowWater {
     const k = dt * this.g / l;                       // A*g/l con A = l² y el volumen dividido por l²
     const damp = Math.max(0, 1 - this.damping * dt);
     this.markActive();
-    const { list, awake } = this;
+    const { list, awake, woken, inWoken } = this;
     const n = this.count;
+    let nw = this.nWoken;
     // 1) flujos hacia las 4 vecinas según la diferencia de superficie
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
@@ -132,9 +153,10 @@ export class ShallowWater {
       const outflow = fl[i]! + fr[i]! + ft[i]! + fb[i]!;
       const delta = dt * (inflow - outflow);
       depth[i] = Math.max(0, depth[i]! + delta);
-      if (Math.abs(delta) > 2e-4 || outflow > 0.02) awake[i] = 60;
+      if (Math.abs(delta) > 2e-4 || outflow > 0.02) { awake[i] = 60; if (!inWoken[i]) { inWoken[i] = 1; woken[nw++] = i; } }
       else if (awake[i]! > 0) awake[i] = awake[i]! - 1;
     }
+    this.nWoken = nw;
     // Las celdas dormidas no guardan flujo (si no, al despertar empujarían agua vieja)
     for (let q = 0; q < n; q++) { const i = list[q]!; if (!awake[i]) fl[i] = fr[i] = ft[i] = fb[i] = 0; }
   }
