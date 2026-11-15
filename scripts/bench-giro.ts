@@ -2,6 +2,8 @@
 // horneado por separado, con llamadas de 2 ms como las da una cola (PLAZO=0.5: de 0,5 ms, lo que son 3 ms a 6x), lo que
 // deja por hacer después (el trabajo exposure) y el mismo horneado de una vez.
 //   bun scripts/bench-giro.ts [giros=1,2] [tiradas=2]     GC=1: el recolector entero entre llamadas (fuera de la medida)
+// Con cada giro da también el ruido de la máquina: un cálculo fijo de la misma mediana que las llamadas, repetido las
+// mismas veces (lo que se pasa ese cálculo, se lo pasa cualquier trabajo)
 // El mundo: 384 x 384 x 96 vóxeles (48 x 48 x 12 bloques de 8) de generateTerrain, con el subsuelo lleno de piedra y
 // vetas de dos menas (las losas no son de un solo valor), árboles con hojas y un túnel. Sin freno de CPU.
 import { material, type Palette } from '../src/core';
@@ -49,6 +51,20 @@ export function benchWorld(): WorldState {
   return new WorldState(s, [{ id: 'a', kind: 'torch', x: 180.5, y: 191.5, z: 12, baked: true }], null);
 }
 
+// La referencia del ruido de la máquina: un cálculo puro (sin crear nada ni tocar el motor) calibrado a `ms`, repetido
+// `count` veces. Lo que tarda de más en sus peores veces (el sistema le quita la CPU, otro proceso) lo tendría cualquier
+// trabajo del mismo tamaño: las llamadas del horneado se comparan con esto, no con un número absoluto
+let sink = 0;
+function spin(n: number): void { let s = 0; for (let i = 0; i < n; i++) s += Math.sqrt(i * 1.0001 + sink); sink = s % 7; }
+function noise(ms: number, count: number): number[] {
+  let n = 20000;
+  for (let k = 0; k < 3; k++) { const t = performance.now(); for (let i = 0; i < 50; i++) spin(n); n = Math.max(1000, Math.round(n * ms / ((performance.now() - t) / 50))); }
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) { const t = performance.now(); spin(n); out.push(performance.now() - t); }
+  return out.sort((x, y) => x - y);
+}
+const pct = (v: number[], f: number) => v[Math.min(v.length - 1, Math.floor(f * v.length))]!;
+
 const OPTS = { topZ: 104, incline: 0.5, sky: true, outline: 'both' as const, outlineColor: '#101014' };
 
 if (import.meta.main) {
@@ -80,7 +96,8 @@ if (import.meta.main) {
     const e0 = performance.now();
     for (const j of rebakeChangedJobs(pb, p.result()!.view.frame().lights)) while (!j.run(Infinity));
     const expoMs = performance.now() - e0;
-    const stageMs = `[llamadas del horneado p50 ${pq(0.5)} p95 ${pq(0.95)} p99 ${pq(0.99)}, > 1 ms: ${sorted.filter((x) => x > 1).length}] (imagen ${pb.ms.render.toFixed(0)}, luz ${pb.ms.light.toFixed(0)}; después, exposure ${expoMs.toFixed(0)} ms)`;
+    const ref = noise(pct(sorted, 0.5), sorted.length);
+    const stageMs = `[llamadas del horneado p50 ${pq(0.5)} p95 ${pq(0.95)} p99 ${pq(0.99)} máx ${sorted.at(-1)!.toFixed(2)}, > 1 ms: ${sorted.filter((x) => x > 1).length}; ruido (cálculo fijo de la misma mediana, las mismas veces): p50 ${pct(ref, 0.5).toFixed(2)} p95 ${pct(ref, 0.95).toFixed(2)} p99 ${pct(ref, 0.99).toFixed(2)} máx ${ref.at(-1)!.toFixed(2)}] (imagen ${pb.ms.render.toFixed(0)}, luz ${pb.ms.light.toFixed(0)}; después, exposure ${expoMs.toFixed(0)} ms)`;
     const a = performance.now();
     const v = new WorldView(st, q, { cut: true });
     const b = performance.now();

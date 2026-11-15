@@ -712,6 +712,22 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
   | Llamada más larga del horneado con plazo de 0,5 ms | - | 2,8-15,9 ms | 1,9-3,1 ms |
   | Llamadas del horneado con plazo de 2 ms: p50 / p95 / p99 | - | 2,0-2,2 / 3,3-4,3 / 4,0-7,3 ms | 1,9 / 2,2-2,5 / 2,6-3,2 ms |
 
+  El banco da también el ruido de la máquina con cada giro: un cálculo puro, sin memoria ni motor, calibrado a la
+  mediana de las llamadas y repetido las mismas veces. Lo que se pase ese cálculo se lo pasa cualquier trabajo del
+  mismo tamaño. En el portátil de las medidas (WSL, 24 hilos), con plazo de 0,5 ms, 3 tiradas de los giros 1 y 2:
+
+  | | Llamadas del horneado | Cálculo fijo de la misma mediana |
+  |---|---|---|
+  | p50 | 0,38-0,40 ms | 0,34-0,39 ms |
+  | p95 | 0,56-0,72 ms | 0,42-0,50 ms |
+  | p99 | 0,89-1,30 ms | 0,60-0,82 ms |
+  | Máximo | 1,5-5,1 ms | 1,2-2,1 ms |
+
+  Una puerta absoluta por debajo del ruido (p. ej. máximo <= 0,6 ms con plazo de 0,5) no la pasa ni el cálculo fijo.
+  Lo que es del motor es la diferencia con el ruido: ~0,15 ms en p95 y 0,3-0,5 ms en p99. La misma baldosa repetida
+  30 veces da mediana 0,2-0,4 ms y su peor vez 1,3-2,5 ms. Esos picos no salen de la estimación ni del recolector
+  (siguen con una recolección forzada antes de cada vez) ni del JIT (no compila nada durante la llamada).
+
   Con la estimación por volumen había además 1-2 llamadas de 20-46 ms por giro. No eran el recolector: siguen igual
   con el recolector entero forzado entre llamadas (`GC=1` en el banco), y el montón no cambia durante la llamada.
   Eran tandas del cielo: las filas se contaban a secas, y la medida de las de arriba (casi vacías) se quedaba diez
