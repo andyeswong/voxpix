@@ -57,6 +57,16 @@ describe('losas de StaticVoxels', () => {
     expect(t.exportChunks()).toEqual(ex);
   });
 
+  it('una losa de un solo valor que se reescribe con más de 256 valores distintos: la paleta rehecha (repack) se sigue usando', () => {
+    const s = new StaticVoxels(PAL, 16, 16, 0, 15), ref = new Map<number, number>();
+    for (let z = 0; z < 8; z++) for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) s.set(x, y, z, 5);
+    for (let z = 0; z < 8; z++) for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) { const v = 1 + ((x * 7 + y * 13 + z) % 400); s.set(x, y, z, v); ref.set((z * 16 + y) * 16 + x, v); }
+    let n = 0;
+    for (const [x, y, z, v] of s.entries()) { n++; expect(v).toBe(ref.get((z * 16 + y) * 16 + x)); }
+    expect(n).toBe(2048);
+    expect(s.size).toBe(2048);
+  });
+
   it('un trozo que tuvo vóxeles y se vació se exporta como antes (la columna a ceros, no null)', () => {
     const s = new StaticVoxels(PAL, 32, 32, 0, 20);
     s.set(3, 3, 3, material(0, 1)); s.set(3, 3, 3, 0);

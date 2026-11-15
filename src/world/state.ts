@@ -40,6 +40,23 @@ export const SLAB = 16;           // get usa desplazamientos de 4 bits: CHUNK y 
 const SEGS = 4;
 const SLAB_CELLS = CHUNK * CHUNK * SLAB;
 
+// Para la copia girada por losas: dónde cae cada celda (ly, lx) de una capa de 16 x 16 al girar `q` cuartos (índice
+// ly * 16 + lx -> el girado), y el trozo de la copia donde cae cada trozo (como ViewCamera.cellToView, con ancho y
+// fondo múltiplos de CHUNK)
+const ROT_PERM = [0, 1, 2, 3].map((q) => {
+  const t = new Uint16Array(256);
+  for (let ly = 0; ly < CHUNK; ly++) for (let lx = 0; lx < CHUNK; lx++) {
+    const M = CHUNK - 1;
+    const [vx, vy] = q === 0 ? [lx, ly] : q === 1 ? [ly, M - lx] : q === 2 ? [M - lx, M - ly] : [M - ly, lx];
+    t[(ly << 4) | lx] = (vy << 4) | vx;
+  }
+  return t;
+});
+function rotChunk(q: number, cx: number, cy: number, cols: number, rows: number, dcols: number): number {
+  const [vx, vy] = q === 0 ? [cx, cy] : q === 1 ? [cy, cols - 1 - cx] : q === 2 ? [cols - 1 - cx, rows - 1 - cy] : [rows - 1 - cy, cx];
+  return vy * dcols + vx;
+}
+
 export class StaticVoxels implements VoxelSource {
   readonly cols: number;
   readonly rows: number;
@@ -215,12 +232,13 @@ export class StaticVoxels implements VoxelSource {
       const p = this.pal[si] = new Uint16Array(256);
       p[0] = this.uni[si]!; this.palN[si] = 1;
     }
-    const p = this.pal[si];
+    let p = this.pal[si];
     if (!p) { d[i] = value; return; }
     let n = this.palN[si]!, k = 0;
     while (k < n && p[k] !== value) k++;
     if (k === n) {
-      if (n === 256) { this.repack(si); n = this.palN[si]!; }
+      // repack hace una paleta nueva (y cambia los índices): se sigue con esa, no con la de antes
+      if (n === 256) { this.repack(si); p = this.pal[si]!; n = this.palN[si]!; }
       if (n === 256) {
         // Más de 256 valores distintos en uso: la losa pasa a 2 bytes por vóxel
         const w = new Uint16Array(SLAB_CELLS);
@@ -305,6 +323,67 @@ export class StaticVoxels implements VoxelSource {
     this.height.fill(this.zMin);
     for (const [x, y, z] of this.entries()) { const h = y * this.width + x; if (z + 1 > this.height[h]!) this.height[h] = z + 1; }
     this.fgrid = null;
+  }
+
+  // ---- la copia girada (WorldView, prepareViewJob): losa a losa, sin pasar por set
+  // ¿Se puede copiar src girado `quarter` cuartos por losas? Hace falta que cada trozo caiga entero en un trozo de la
+  // copia: sin girar, siempre; girado, con ancho y fondo múltiplos de CHUNK. Si no, se copia vóxel a vóxel (set)
+  static slabCopyable(src: StaticVoxels, quarter: number): boolean {
+    return quarter === 0 || (src.width % CHUNK === 0 && src.depth % CHUNK === 0);
+  }
+
+  // Copia en esta (recién hecha, del tamaño girado) las losas [from, to) de src (en su orden: trozo * nz + losa),
+  // giradas `quarter` cuartos como ViewCamera.cellToView. Cada losa se copia de una vez: sus datos con los índices
+  // girados dentro de la capa de 16 x 16 (la misma paleta), y la de un solo valor, ese valor. Al acabar las losas de un
+  // trozo: su altura por columna (de lo copiado), su versión y su caja de cambios (el trozo entero, como importChunks).
+  // El contenido es el mismo que copiando vóxel a vóxel; el reloj y las versiones, no (cuentan trozos, no vóxeles)
+  copyRotatedSlabs(src: StaticVoxels, quarter: number, from: number, to: number): void {
+    if (!StaticVoxels.slabCopyable(src, quarter)) throw new Error('copia por losas: ancho o fondo no múltiplo del trozo');
+    const perm = ROT_PERM[quarter]!, nz = this.nz;
+    for (let si = from; si < to; si++) {
+      const c = Math.floor(si / nz), s = si - c * nz, cx = c % src.cols, cy = Math.floor(c / src.cols);
+      const dc = rotChunk(quarter, cx, cy, src.cols, src.rows, this.cols), di = dc * nz + s;
+      this.count[di] = src.count[si]!;
+      const d = src.data[si];
+      if (!d) { this.uni[di] = src.uni[si]!; }
+      else {
+        const out = d instanceof Uint8Array ? new Uint8Array(SLAB_CELLS) : new Uint16Array(SLAB_CELLS);
+        for (let base = 0; base < SLAB_CELLS; base += 256) for (let k = 0; k < 256; k++) out[base | perm[k]!] = d[base | k]!;
+        this.data[di] = out;
+        const p = src.pal[si];
+        if (p) { this.pal[di] = p.slice(); this.palN[di] = src.palN[si]!; }
+      }
+      if (s === nz - 1) this.finishChunk(dc);
+    }
+  }
+
+  // Después de copiar las losas del trozo c: la altura de sus columnas (lo más alto lleno), y, si tiene algo, su versión
+  // y su caja de cambios
+  private finishChunk(c: number): void {
+    const nz = this.nz, X = (c % this.cols) * CHUNK, Y = Math.floor(c / this.cols) * CHUNK;
+    let any = false;
+    for (let s = 0; s < nz; s++) if (this.count[c * nz + s]) { any = true; break; }
+    if (!any) return;
+    for (let ly = 0; ly < CHUNK; ly++) for (let lx = 0; lx < CHUNK; lx++) {
+      let h = this.zMin;
+      for (let s = nz - 1; s >= 0 && h === this.zMin; s--) {
+        const si = c * nz + s;
+        if (!this.count[si]) continue;
+        const d = this.data[si], hs = Math.min(SLAB, this.zh - s * SLAB);
+        if (!d) { h = this.zMin + s * SLAB + hs; break; }
+        const p = this.pal[si];
+        for (let lz = hs - 1; lz >= 0; lz--) {
+          const i = (lz << 8) | (ly << 4) | lx;
+          if (p ? p[d[i]!] : d[i]) { h = this.zMin + s * SLAB + lz + 1; break; }
+        }
+      }
+      this.height[(Y + ly) * this.width + X + lx] = h;
+    }
+    this.alloc[c] = 1;
+    this.versions[c] = this.worldVersions[c] = ++this.clock;
+    const o = c * SEGS * 7;
+    this.segN[c] = 1;
+    this.seg.set([this.clock, X, Y, this.zMin, Math.min(this.width, X + CHUNK) - 1, Math.min(this.depth, Y + CHUNK) - 1, this.zMax], o);
   }
 
   // ---- los materiales (materials.ts): lo que no es fondo (bed) no cuenta para el agua, y lo que no bloquea (blocks)

@@ -278,6 +278,11 @@ budget.run();
 - El contrato, probado con un reloj de mentira desde el primer cuadro (`test/view/budget.test.ts`): si ninguna unidad
   de trabajo es más larga que el presupuesto de su fase, ningún `run()` pasa de `near.ms + ms`, y cada trabajo acaba
   igual que sin plazo.
+- La cola es una, y las keys las pone quien encola: un trabajo nuevo con la misma key SUSTITUYE al que hay en la cola.
+  Las de `rebakeChangedJobs` (`rect:...`, `light:N`, `sky:...`, `view-cut`, `exposure:N`) no dicen de qué vista son.
+  Con varias vistas en la misma cola (varios giros preparándose o al día), hay que distinguirlas, p. ej. con un sufijo
+  por giro (`light:3@q1`); si no, el trabajo de un giro pisa al de otro. `prepareViewJob` ya lleva el giro en la suya
+  (`view:q`), y su horneado, `bake:q`.
 - `rebakeChangedJobs(baked, luces, { near })`: con `near` (x, y del mundo), cada trabajo lleva `priority` (su distancia
   en pantalla) y `FrameBudget` hace antes los de prioridad más baja, aunque haya trabajo viejo en la cola. Los
   trabajos sin prioridad van detrás, en su orden.
@@ -665,11 +670,46 @@ view.voxelAt(baked, sx, sy); view.pointAt(baked, sx, sy);
 
 - `view.camera` (`ViewCamera`) es lo único que sabe pasar del mundo a la vista y al revés: celdas, puntos,
   direcciones y giros.
-- Cada giro es un horneado y, salvo el 0, una copia girada de los vóxeles. En un mundo de 640 x 480, un giro tarda
-  ~0,7-1 s en hornearse y ocupa ~19 MB de horneado más ~32 MB de vóxeles girados (los 4 guardados, ~170 MB).
+- Cada giro es un horneado y, salvo el 0, una copia girada de los vóxeles. En un mundo de 640 x 480 con 40 de alto,
+  un giro tarda ~0,7-1 s en hornearse y ocupa ~19 MB de horneado más ~32 MB de vóxeles girados (los 4 guardados,
+  ~170 MB).
 - Para no congelar la vista, `prepareViewJob(state, q, opciones)` prepara un giro como un trabajo que se reanuda
   (`ViewJob`): se mete en la cola con presupuesto (`FrameBudget`) y `result()` da `{ view, baked }` al acabar. Debajo
   está `bakeWorldJob`, el horneado entero por pasos, igual byte a byte que `bakeWorld`.
+- La copia girada va por losas (`StaticVoxels.copyRotatedSlabs`). Cada losa de 16 x 16 x 16 se copia de una vez:
+  - sus datos, con los índices girados dentro de cada capa de 16 x 16 y la misma paleta;
+  - la de un solo valor, ese valor.
+
+  Al acabar las losas de un trozo, se calculan sus alturas, su versión y su caja de cambios. No pasa por `set`: ni
+  versiones ni avisos por vóxel. El contenido es el mismo que copiando vóxel a vóxel (hay prueba: vóxeles, alturas,
+  instantánea, lo expuesto y el horneado, en los 4 giros). El reloj y las versiones no: cuentan trozos, no vóxeles.
+  Hace falta que ancho y fondo sean múltiplos de 16 (`StaticVoxels.slabCopyable`); si no, se copia vóxel a vóxel como
+  antes. En `prepareViewJob`, la unidad de la etapa `copy` es una losa.
+- El horneado por pasos va por baldosas de 16 filas de pantalla. Cada baldosa lleva las columnas que caben en lo que
+  queda del plazo de la llamada, según lo medido en su banda (una columna como mínimo). Antes de cada baldosa se
+  preparan las máscaras de lo expuesto de lo que va a recorrer (hasta el plazo). El cielo y la luz también cortan su
+  unidad por el plazo. Antes eran franjas de toda la altura sin mirar el plazo:
+  - con pasos de 2 ms cabían 1-2 columnas;
+  - cada franja renderizaba además una columna de margen a cada lado (el contorno);
+  - costaba 2-3 veces el horneado de una vez;
+  - una columna no se podía partir.
+- Medido con `bun scripts/bench-giro.ts`, sin freno: un mundo de bloques de 384 x 384 x 96 con 9,6 M de vóxeles
+  llenos (subsuelo de piedra con vetas, árboles y un túnel), con corte de vista, cielo y contorno, giros 1 y 2. Con
+  `PLAZO=0.5` se dan llamadas de 0,5 ms (lo que son 3 ms a 6x):
+
+  | | Antes | Ahora |
+  |---|---|---|
+  | Copia girada, por partes | 0,7-1,1 s en ~300-360 llamadas (máx 4-6 ms) | 14-27 ms (máx 2-2,5 ms con plazo de 2; 0,5-1,2 con plazo de 0,5) |
+  | Horneado por pasos de 2 ms | 0,9-1,3 s | 0,41-0,64 s |
+  | Horneado de una vez (referencia) | 0,32-0,6 s | igual |
+  | Preparar las máscaras después (trabajo `exposure`) | ~120 ms (lo que cuesta hacerlas) | 1-5 ms (las hizo el horneado) |
+  | Llamadas del horneado con plazo de 0,5 ms: p50 / p95 / p99 | - | 0,45-0,51 / 0,95-1,02 / 1,4-1,7 ms |
+
+  Una llamada del horneado se pasa de su plazo lo que cueste la última unidad. La baldosa más pequeña (1 columna x 16
+  filas) cuesta hasta ~0,5 ms sin freno donde hay mucha cara al aire (copas de árboles), y la estimación por vóxeles
+  de la columna se queda corta en ~1 de cada 20. Por eso, con plazo de 0,5 ms, el p95 es el doble del plazo. A 6x, con
+  3 ms de plazo, eso son llamadas de ~6 ms en 1 de cada 20. Quedan además picos sueltos de 9-43 ms (1-2 por giro, en
+  bun). Parecen pausas del recolector, pero no está comprobado.
 - `app/giro.html` mide las dos formas en cada máquina (`?modo=cache`: los otros 3 en segundo plano; sin modo: hornear
   al girar, con un cuadro de transición antes).
 - Las paredes que dependen del lado de la cámara son contenido: el juego las decide con un vestido.

@@ -184,47 +184,77 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
     ...(opts.warmExposure !== false ? { exposurePending: true } : {}),
   };
   let skyRow = opts.sky ? 0 : H;
-  // La imagen se pinta por franjas de columnas directamente en el horneado (nadie lo ve todavía: no hace falta doble búfer)
-  const rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: H - 1 };
-  const buf: RectBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, w: W, h: H };
+  // La imagen se pinta por BALDOSAS (BAKE_BAND filas x las columnas que quepan), directamente en el horneado (nadie lo
+  // ve todavía: no hace falta doble búfer), con el camino del rehorneado por recuadro (renderColumns): el mismo
+  // resultado byte a byte que de una vez. Antes eran franjas de columnas con toda la altura: con un paso de 2 ms
+  // cabían 1-2 columnas, y cada franja renderizaba además una columna de margen a cada lado (el contorno), así que
+  // costaba 2-3 veces el horneado de una vez; y una columna entera no se podía partir (a 6x no cabía en 3 ms)
   const lights = world.lights.filter((l) => l.baked !== false);
-  // Lo que cuesta cada columna de píxeles: los vóxeles de su columna x (y la de al lado, que también se mira), de la
-  // rejilla de alturas. Con eso y lo que se va midiendo (ms por vóxel), cada franja se corta para que tarde lo que
-  // toca, también al pasar de columnas vacías a una pared larga
-  const vox = new Float64Array(W + 1);
-  const hgt = world.model.height, zMin = world.model.zMin;
-  for (let y = 0; y < world.depth; y++) for (let x = 0; x < world.width; x++) vox[x + 1] = vox[x + 1]! + Math.max(0, hgt[y * world.width + x]! - zMin);
-  const colCost = (c: number) => 1 + vox[c]! + (c > 0 ? vox[c - 1]! : 0);
-  let col = 0, li = 0, cell = 0, msPerVox = -1, msPerCell = -1;
+  // Lo que cuesta cada columna de una banda: los vóxeles de su columna x (y la de al lado, que también se mira) en las
+  // y que pueden caer en las filas de la banda (stripRegion), de la rejilla de alturas por prefijos. Con eso y lo que
+  // se va midiendo en la banda (ms por vóxel), cada baldosa se corta para que quepa en lo que queda del plazo de la
+  // llamada (entre BAKE_MIN_MS y BAKE_STEP_MS): la unidad es la baldosa, su tamaño sale de la estimación
+  const D = world.depth, wW = world.width, hgt = world.model.height, zMin = world.model.zMin, zMax = world.model.zMax;
+  const a = incline;
+  const pre = new Float64Array((wW + 1) * (D + 1));               // pre[x * (D + 1) + y]: vóxeles de la columna x con y' < y
+  for (let x = 0; x < wW; x++) for (let y = 0; y < D; y++) pre[x * (D + 1) + y + 1] = pre[x * (D + 1) + y]! + Math.max(0, hgt[y * wW + x]! - zMin);
+  let band = -1, R0 = 0, R1 = -1, yLo = 0, yHi = -1;
+  const colVox = (x: number) => (x < 0 || x >= wW ? 0 : pre[x * (D + 1) + yHi + 1]! - pre[x * (D + 1) + yLo]!);
+  const colCost = (c: number) => 1 + colVox(c) + colVox(c - 1);
+  let rect: ScreenRect = { x0: 0, x1: W - 1, y0: 0, y1: -1 };
+  let buf: RectBuffers | null = null;
+  const nextBand = (): boolean => {
+    band++;
+    R0 = band * BAKE_BAND; R1 = Math.min(H - 1, R0 + BAKE_BAND - 1);
+    if (R0 >= H) return false;
+    yHi = Math.min(D - 1, Math.max(-1, Math.ceil((originY - R0 - zMin) / a) + 1));
+    yLo = Math.max(0, Math.floor((originY - R1 - 1 - zMax - 1) / a) - 1);
+    rect = { x0: 0, x1: W - 1, y0: R0, y1: R1 };
+    const o = R0 * W, n = (R1 - R0 + 1) * W;
+    buf = { rgba: b.rgba.subarray(o * 4, (o + n) * 4), depth: b.depth.subarray(o, o + n), face: b.face.subarray(o, o + n), pick: b.pick.subarray(o, o + n), w: W, h: R1 - R0 + 1 };
+    col = 0; msPerVox = -1;
+    return true;
+  };
+  let col = W, li = 0, cell = 0, msPerVox = -1, msPerCell = -1, msPerSkyRow = -1, imageDone = !nextBand();
   let zone: BakedLight | null | undefined;
   const job: ViewJob = {
     key,
     run(deadline) {
       do {
         const t = performance.now();
-        if (col <= rect.x1) {
-          // La primera franja, de una columna (para medir); luego, las columnas que quepan en BAKE_STEP_MS
+        // Cada unidad (una baldosa, unas filas de cielo, unos píxeles de luz) se corta, según lo medido de su clase, para
+        // que quepa en lo que queda del plazo (entre BAKE_MIN_MS y BAKE_STEP_MS)
+        const want = Math.min(BAKE_STEP_MS, Math.max(BAKE_MIN_MS, deadline - t));
+        if (!imageDone) {
+          // Una columna (la primera de cada banda, para medir), y las que quepan según lo medido en la banda
           let c1 = col, cost = colCost(col);
-          if (msPerVox > 0) while (c1 < rect.x1 && c1 - col < 64 && (cost + colCost(c1 + 1)) * msPerVox <= BAKE_STEP_MS) cost += colCost(++c1);
-          renderColumns(b, rect, buf, col, c1, false);
+          if (msPerVox > 0) while (c1 < rect.x1 && c1 - col < 255 && (cost + colCost(c1 + 1)) * msPerVox <= want) cost += colCost(++c1);
+          // Antes, las máscaras de lo expuesto de lo que va a recorrer (hasta el plazo; si no acaban, sigue en la llamada
+          // siguiente): con ellas solo se recorre lo que tiene alguna cara al aire, y son las que haría después el
+          // trabajo exposure
+          if (!warmStrip(b, rect, col, c1, deadline)) continue;
+          const t2 = performance.now();
+          renderColumns(b, rect, buf!, col, c1);
           col = c1 + 1;
-          const ms = performance.now() - t;
-          const rate = ms / cost;
+          const ms = performance.now() - t2, rate = ms / cost;
           msPerVox = msPerVox < 0 ? rate : msPerVox * 0.7 + rate * 0.3;
-          b.ms.render += ms;
+          b.ms.render += performance.now() - t;
+          if (col > rect.x1) imageDone = !nextBand();
         } else if (skyRow < H) {
-          // El cielo, por filas (lee la cara de cada píxel: después de la imagen)
-          const y1 = Math.min(H - 1, skyRow + 7);
+          // El cielo, por filas (lee la cara de cada píxel: después de la imagen); la primera tanda, de una fila
+          const rows = msPerSkyRow > 0 ? Math.max(1, Math.floor(want / msPerSkyRow)) : 1;
+          const y1 = Math.min(H - 1, skyRow + rows - 1);
           fillSky(b, 0, skyRow, W - 1, y1);
+          const rate = (performance.now() - t) / (y1 - skyRow + 1);
+          msPerSkyRow = msPerSkyRow < 0 ? rate : msPerSkyRow * 0.7 + rate * 0.3;
           skyRow = y1 + 1;
         } else if (li < lights.length) {
           if (zone === undefined) { zone = lightZone(b, lights[li]!); cell = 0; msPerCell = -1; }
           const n = zone ? zone.rect.w * zone.rect.h : 0;
           if (zone && cell < n) {
-            // Trozos de píxeles de la zona según lo que se va midiendo de esta luz (el primero, pequeño, para medir;
-            // en una máquina lenta, menos de una fila)
-            const want = msPerCell > 0 ? Math.max(16, Math.floor(BAKE_STEP_MS / msPerCell)) : 64;
-            const c1 = Math.min(n, cell + want);
+            // Trozos de píxeles de la zona según lo que se va midiendo de esta luz (el primero, pequeño, para medir)
+            const cells = msPerCell > 0 ? Math.max(4, Math.floor(want / msPerCell)) : 16;
+            const c1 = Math.min(n, cell + cells);
             weightCells(b, zone, cell, c1);
             const rate = (performance.now() - t) / (c1 - cell);
             msPerCell = msPerCell < 0 ? rate : msPerCell * 0.7 + rate * 0.3;
@@ -233,17 +263,20 @@ export function bakeWorldJob(world: Bakeable, opts: Parameters<typeof bakeWorld>
           if (!zone || cell >= n) { if (zone) b.lights.push(zone); zone = undefined; li++; }
           b.ms.light += performance.now() - t;
         }
-        if (col > rect.x1 && skyRow >= H && li >= lights.length) {
+        if (imageDone && skyRow >= H && li >= lights.length) {
           b.ms.render = Math.round(b.ms.render); b.ms.light = Math.round(b.ms.light);
           return true;
         }
-      } while (performance.now() < deadline);
+        // Otra unidad en esta llamada solo si cabe al menos la más pequeña (si no, se pasaría del plazo)
+      } while (performance.now() < deadline - BAKE_MIN_MS);
       return false;
     },
   };
   return { baked: b, job };
 }
-const BAKE_STEP_MS = 2;   // lo que se busca que tarde cada paso del horneado entero
+const BAKE_STEP_MS = 2;   // lo más que se busca que tarde cada unidad del horneado entero (menos si el plazo es menor)
+const BAKE_MIN_MS = 0.25; // y lo menos (aunque el plazo ya haya pasado)
+const BAKE_BAND = 16;     // filas de cada banda de baldosas
 
 // Calienta el camino del rehorneado (el JIT compila renderColumns al usarlo): si no, la primera vez que algo se
 // rompe en la partida, sus primeras franjas cuestan 4-7 ms en vez de ~1. Se renderizan unas franjas de prueba en

@@ -231,15 +231,16 @@ describe('hornear sin congelar la vista', () => {
     for (const q of Q) {
       const st = oddWorld();
       const prep = prepareViewJob(st, q, { topZ: 20 });
-      let steps = 0;
+      let steps = 0, inBake = false;
       while (!prep.job.run(0)) {
         expect(prep.result()).toBeNull();
         // Cambios en mitad del trabajo: mientras se copian los vóxeles (6 trozos) y ya horneando
         if (steps === 2) for (let z = 1; z < 9; z++) st.solid.set(4, 16, z, 0);
-        if (steps === 10) for (let z = 1; z < 6; z++) st.solid.set(30, 20, z, material(0, 2));
+        if (!inBake && prep.stage() === 'bake') { inBake = true; for (let z = 1; z < 6; z++) st.solid.set(30, 20, z, material(0, 2)); }
         steps++;
       }
-      expect(steps).toBeGreaterThan(10);
+      expect(inBake).toBe(true);                                 // el segundo cambio cayó a medio horneado
+      expect(steps).toBeGreaterThan(4);
       const { view, baked } = prep.result()!;
       rebakeChanged(baked, view.frame().lights);
       const fresh = new WorldView(st, q);

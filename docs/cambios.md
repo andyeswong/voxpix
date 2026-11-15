@@ -147,6 +147,19 @@ Un `.voxpix.json` (versión 3) puede traer varios clips con nombre (quieto, anda
 clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `clipDone`. Ver
 [Animaciones con nombre](motor.md#animaciones-con-nombre).
 
+### Preparar un giro
+
+- La copia girada de los vóxeles va por losas (`StaticVoxels.copyRotatedSlabs`), sin pasar por `set`. En un mundo de
+  384 x 384 x 96 con 9,6 M de vóxeles llenos baja de 0,7-1,1 s a 14-27 ms, y en `prepareViewJob` su unidad es una losa.
+- El horneado por pasos (`bakeWorldJob`) va por baldosas que se cortan por el plazo de cada llamada, con las máscaras
+  de lo expuesto. Baja de 0,9-1,3 s a 0,41-0,64 s, y deja hechas las máscaras que antes hacía después el trabajo
+  `exposure` (~120 ms).
+- `prepareViewJob` en el giro 0 con corte (`{ cut: true }`) también copia por partes. Antes hacía la copia entera en
+  la etapa `view`, de una vez.
+- Arreglado en `StaticVoxels`: una losa que pasaba de 256 valores distintos reescribiendo vóxeles podía quedarse con
+  valores equivocados. Después de rehacer su paleta, seguía escribiendo en la paleta vieja.
+- Ver [Girar la cámara](motor.md#girar-la-cámara).
+
 ### Niebla por altura
 
 `Frame2DOptions.fog` funde hacia un color lo que se ve por debajo de una altura de foco: así se nota la altura en la

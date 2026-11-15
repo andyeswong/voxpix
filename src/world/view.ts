@@ -110,6 +110,7 @@ export class ViewCamera {
 // (así el horneado y el rehorneado por trozos funcionan igual, con sus versiones)
 function rotatedStatic(src: StaticVoxels, cam: ViewCamera): StaticVoxels {
   const s = new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
+  if (StaticVoxels.slabCopyable(src, cam.quarter)) { s.copyRotatedSlabs(src, cam.quarter, 0, src.cols * src.rows * src.nz); return s; }
   for (const [x, y, z, v] of src.entries()) { const [vx, vy] = cam.cellToView(x, y); s.set(vx, vy, z, v); }
   return s;
 }
@@ -427,7 +428,8 @@ export class WorldView implements RenderState {
 //
 // Etapas (prep.stage()), y run() no pasa de una a otra en la misma llamada, para que el juego decida dónde cae cada
 // una (p. ej. en la partida solo 'bake', y el resto en los respiros):
-//   'copy'  la copia girada de los vóxeles, por trozos (reserva memoria que se queda: puede despertar al recolector);
+//   'copy'  la copia girada de los vóxeles, por losas (copyRotatedSlabs; vóxel a vóxel por trozos si el ancho o el
+//           fondo no son múltiplos de CHUNK). Reserva memoria que se queda: puede despertar al recolector;
 //   'view'  la vista: el vestido entero y la rejilla del agua girada, de una vez;
 //   'alloc' la reserva de los búferes del horneado (imagen, profundidad, vóxel, cara y rejilla de sombras), de una vez;
 //   'bake'  el horneado por pasos que se adaptan a lo que tardan;
@@ -437,8 +439,12 @@ export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Pa
   const src = state.solid;
   const cam = new ViewCamera(quarter, src.width, src.depth);
   const since = src.clock;
-  const rotated = quarter === 0 && !viewOpts.dress ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
-  const nChunks = src.cols * src.rows;
+  // La vista tiene su copia si está girada, vestida o con corte (WorldView): se hace aquí, por partes
+  const rotated = quarter === 0 && !viewOpts.dress && !viewOpts.cut ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
+  // Por losas (copyRotatedSlabs: cada una, unos µs) si los trozos caen enteros en los de la copia; si no, vóxel a vóxel
+  // por trozos, como antes
+  const bySlab = StaticVoxels.slabCopyable(src, quarter);
+  const units = bySlab ? src.cols * src.rows * src.nz : src.cols * src.rows;
   let c = 0;
   let done: { view: WorldView; baked: Baked } | null = null;
   let bake: { baked: Baked; job: ViewJob } | null = null;
@@ -450,10 +456,13 @@ export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Pa
       switch (stage()) {
         case 'copy':
           // La copia girada, un trozo del mundo cada vez; al acabarla, se para (la etapa siguiente, en otra llamada)
-          while (rotated && c < nChunks) {
-            const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
-            for (const [x, y, z, v] of src.entries({ x0: cx, y0: cy, x1: cx + CHUNK - 1, y1: cy + CHUNK - 1 })) { const [vx, vy] = cam.cellToView(x, y); rotated.set(vx, vy, z, v); }
-            c++;
+          while (rotated && c < units) {
+            if (bySlab) { rotated.copyRotatedSlabs(src, quarter, c, c + 1); c++; }
+            else {
+              const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
+              for (const [x, y, z, v] of src.entries({ x0: cx, y0: cy, x1: cx + CHUNK - 1, y1: cy + CHUNK - 1 })) { const [vx, vy] = cam.cellToView(x, y); rotated.set(vx, vy, z, v); }
+              c++;
+            }
             if (performance.now() >= deadline) break;
           }
           return false;
@@ -472,7 +481,7 @@ export function prepareViewJob(state: WorldState, quarter: Quarter, bakeOpts: Pa
   };
   function stage(): PrepStage {
     if (done) return 'done';
-    if (rotated && c < nChunks) return 'copy';
+    if (rotated && c < units) return 'copy';
     if (!view) return 'view';
     if (!bake) return 'alloc';
     return 'bake';
