@@ -186,9 +186,9 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
-    // Una entidad con un modelo sin vóxeles que da sombra: sin sombra y sin romper el cuadro
+    // Una entidad con un modelo sin vóxeles que da sombra, junto a MAIA: sin sombra y sin romper el cuadro
     name: 'oficina entidad de modelo vacío', theme: 'oficina', ticks: 30,
-    setup: (s) => { s.entities.add({ model: new Model(maiaModel.palette, 'vacio'), x: 0, y: 0, z: 1, castsShadow: true }); },
+    setup: (s, rt) => { const m = s.entities.get(rt.entityId!)!; s.entities.add({ model: new Model(maiaModel.palette, 'vacio'), x: m.x + 6, y: m.y, z: m.z, castsShadow: true }); },
   },
   {
     // Los horneados guardados en la GPU (bakedKeep): se pinta con este, luego con el del giro 1, se rompe la columna y
