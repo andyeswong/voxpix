@@ -822,6 +822,12 @@ water.follow(state.watchChanges());                                 // picar o p
   girada en reposo pasa de 169 µs a 0,6 µs. Lo copiado es siempre lo mismo que la copia entera
   (`test/agua-vista.test.ts`). Quien escriba `sim.depth` a mano, que use `pour` o `disturb`: así queda apuntado.
 
+  Una celda de pared que se despierta (`wake` no mira si es pared: un pisotón, unas gotas o `syncGround` junto a una
+  pared) se duerme como una celda quieta. Antes se quedaba despierta para siempre: seguía en la lista de lo que se
+  calcula y marcaba su trozo cada tick. El agua no cambia (profundidad, flujos y gotas iguales); cambian las
+  despiertas y los sellos de los trozos, y con ellos la huella de los mundos con paredes. La del mundo alto, casi sin
+  paredes, no cambia.
+
   Lo caro son los primeros ticks de una capa recién hecha: nace con todo lo mojado despierto y tarda unos 30 ticks en
   dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
   `first` y `firstFollow`). Con el JIT frío, más. `state.warmUp()` calienta el JIT pero no duerme el agua.

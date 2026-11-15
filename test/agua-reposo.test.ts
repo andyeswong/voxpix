@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WaterLayer } from '../src/world/water';
+import { ShallowWater } from '../src/fluid/shallow';
 import { clearBox } from '../src/world/edit';
 import { buildWorldState, type World } from '../src/world/build';
 import { generateLayout } from '../src/worldgen';
@@ -58,6 +59,22 @@ describe('agua en reposo', () => {
     expect(water.depthAt(50, 50)).toBe(0);
     expect(water.soakVisited).toBe(0);
     expect(water.sim.visited).toBe(0);
+  });
+
+  it('una pared despertada se duerme como las demás (antes se quedaba despierta para siempre)', () => {
+    const sim = new ShallowWater(16, 16);
+    for (let i = 0; i < 256; i++) sim.depth[i] = 2;
+    for (let y = 0; y < 16; y++) { sim.solid[y * 16 + 8] = 1; sim.depth[y * 16 + 8] = 0; }   // una pared en x 8
+    for (let t = 0; t < 200; t++) sim.step(1 / 120);
+    expect(sim.activeCount).toBe(0);
+    sim.wake(8, 8, 3);                                                     // despierta también la pared
+    const awake = () => (sim.exportState().awake);
+    expect(awake()[8 * 16 + 8]).toBeGreaterThan(0);
+    for (let t = 0; t < 200; t++) sim.step(1 / 120);
+    expect(Array.from(awake()).filter((a, i) => a && sim.solid[i]).length).toBe(0);
+    expect(sim.activeCount).toBe(0);
+    sim.step(1 / 120);
+    expect(sim.visited).toBe(0);
   });
 
   it('nacer dormida (asleep): con lagos en reposo, la misma agua que naciendo despierta y durmiéndose, sin sus ticks caros', () => {
@@ -117,5 +134,7 @@ describe('agua en reposo', () => {
   });
 });
 
-const PINNED = '1f3622ce';                     // la huella con el código que recorría la rejilla (6296d11)
-const PINNED_ROOMS = '74cc9fe0';               // la del mundo de salas, también con el código de antes (6296d11)
+const PINNED = '1f3622ce';                     // la huella con el código que recorría la rejilla (6296d11); dormir las paredes no la cambia
+// La del mundo de salas: igual a la de antes de las listas (74cc9fe0, 6296d11) hasta que las paredes despertadas
+// pasaron a dormirse (la del mundo alto, arriba, no cambió: casi no tiene paredes)
+const PINNED_ROOMS = 'a8709df8';

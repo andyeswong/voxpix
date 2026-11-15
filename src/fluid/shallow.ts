@@ -147,7 +147,8 @@ export class ShallowWater {
     // 2) profundidad: lo que entra de las vecinas menos lo que sale. Una celda que ya no se mueve se va durmiendo.
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
-      if (solid[i]) continue;
+      // Una pared no tiene agua que mover: si la despertaron (wake no mira si es pared), se duerme como una celda quieta
+      if (solid[i]) { if (awake[i]! > 0) awake[i] = awake[i]! - 1; continue; }
       const x = i % w, y = (i - x) / w;
       const inflow = (x > 0 ? fr[i - 1]! : 0) + (x < w - 1 ? fl[i + 1]! : 0) + (y > 0 ? fb[i - w]! : 0) + (y < h - 1 ? ft[i + w]! : 0);
       const outflow = fl[i]! + fr[i]! + ft[i]! + fb[i]!;
