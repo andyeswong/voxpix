@@ -313,8 +313,10 @@ const hit = pickBlock(grid, view, baked, sx, sy);       // { cell: [bx, by, bz],
 - Las propiedades (`BlockProps`): `solid` (bloquea el paso), `light` (`'blocks'` o `'passes'`) y `emissive` salen de
   los materiales de sus rampas (docs/render.md, Materiales), que son los que de verdad usan la colisión, la luz y el
   render; si se escriben, tienen que coincidir (si no, error). `density` es la media de sus vóxeles, o la que se diga.
-  `emits` es la luz fija que pone al colocarse (`addFixed`; `at` es dónde, en vóxeles del bloque) y quita al
-  quitarse. `covered` es el bloque en que se convierte cuando tiene uno sólido encima (la hierba tapada, tierra).
+  `emits` es la luz fija que pone al colocarse (`addFixed`; `at` es dónde, en vóxeles del bloque sin girar) y quita al
+  quitarse. Un bloque puesto girado (`set(..., giro)`) gira su luz con sus vóxeles (`turnPoint`, el punto como
+  `turnCell` la celda): una luz en una cara sale de esa cara girada. Sin girar, o con la luz en el centro, todo queda
+  igual, byte a byte (`test/luz-girada.test.ts`, contra 28f1e22; `bun scripts/huella-luz.ts <raíz>` da esa huella). `covered` es el bloque en que se convierte cuando tiene uno sólido encima (la hierba tapada, tierra).
   Lo demás (cuánto cuesta picarlo, qué suelta, recetas) es del juego, no del set.
 - `BlockGrid`: la rejilla (`cols`, `rows`, `layers`) es la fuente de verdad y los vóxeles su dibujo. `get`, `set(bx,
   by, bz, tipo, giro?)` (0 quita; aplica `covered` y `emits`), `fill(b0, b1, tipo)` (para generar), `props`,

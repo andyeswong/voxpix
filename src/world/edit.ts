@@ -35,6 +35,18 @@ export function turnCell(x: number, y: number, yaw: Yaw): [number, number] {
   }
 }
 
+// Un punto de un bloque de lado n (medido desde su esquina, en vóxeles, no una celda) girado como turnCell gira sus
+// celdas y como BlockGrid lo pone de vuelta en su caja: el punto sigue en el mismo sitio del dibujo. El centro (n/2, n/2)
+// no se mueve
+export function turnPoint(x: number, y: number, yaw: Yaw, n: number): [number, number] {
+  switch (yaw) {
+    case 90: return [n - y, x];
+    case 180: return [n - x, n - y];
+    case 270: return [y, n - x];
+    default: return [x, y];
+  }
+}
+
 const grow = (b: Box3 | null, x: number, y: number, z: number): Box3 => {
   if (!b) return { x0: x, y0: y, z0: z, x1: x, y1: y, z1: z };
   if (x < b.x0) b.x0 = x; if (y < b.y0) b.y0 = y; if (z < b.z0) b.z0 = z;

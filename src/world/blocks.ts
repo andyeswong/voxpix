@@ -6,7 +6,7 @@
 //     instantánea y la huella del mundo (WorldState.addPart).
 // docs/motor.md, "Bloques".
 import { Model, decode, material, rampMaterial, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
-import { clearBox, rampMap, turnCell, type Yaw } from './edit';
+import { clearBox, rampMap, turnCell, turnPoint, type Yaw } from './edit';
 import type { Box3 } from './changes';
 import type { WorldState, LightId, StatePart, StateHasher } from './state';
 import type { WorldView } from './view';
@@ -20,7 +20,8 @@ export interface BlockProps {
   light: 'blocks' | 'passes';         // deja pasar la luz (todas sus rampas dejan pasar algo: hojas, vidrio)
   emissive: boolean;                  // brilla solo (alguna rampa emisiva)
   density: number;                    // kg/m³, la media de sus vóxeles (sus materiales), o la que se diga
-  // La luz que pone al colocarse (una fija, addFixed) y dónde, en vóxeles del bloque (por defecto, el centro de arriba)
+  // La luz que pone al colocarse (una fija, addFixed) y dónde, en vóxeles del bloque sin girar (por defecto, el centro de
+  // arriba): puesto girado, el punto gira con él
   emits?: { kind: SourceKind; radius?: number; intensity?: number; color?: readonly [number, number, number]; at?: readonly [number, number, number] };
   covered?: string;                   // el bloque en que se convierte cuando tiene uno sólido encima (hierba -> tierra)
 }
@@ -208,8 +209,9 @@ export class BlockGrid implements StatePart {
       if (list.length) box = union(box, { x0: b.x0 + bd[0]!, y0: b.y0 + bd[1]!, z0: b.z0 + bd[2]!, x1: b.x0 + bd[3]!, y1: b.y0 + bd[4]!, z1: b.z0 + bd[5]! });
       const e = def.props.emits;
       if (e) {
-        const N = this.N, at = e.at ?? [N / 2, N / 2, N];
-        this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + at[0], y: b.y0 + at[1], z: b.z0 + at[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
+        // `at` gira con el bloque, como sus vóxeles: la luz sale de donde está su llama en cualquier giro
+        const N = this.N, at = e.at ?? [N / 2, N / 2, N], [ax, ay] = turnPoint(at[0], at[1], (q * 90) as Yaw, N);
+        this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + ax, y: b.y0 + ay, z: b.z0 + at[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
       }
     }
     return box;
