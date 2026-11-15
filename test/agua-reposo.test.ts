@@ -1,7 +1,7 @@
 // El agua en reposo no cuesta nada: un paso sin nada despierto no recorre la rejilla, ni el simulador (las despiertas
 // van en lista) ni el empapado (las celdas mojadas fuera de cuenca, también). Picar, pisar o echar agua en suelo seco
-// las vuelve a recorrer, y luego se duermen. La simulación es la misma que recorriendo la rejilla: la huella de la
-// partida de abajo está fijada con el código de antes
+// las vuelve a recorrer, y luego se duermen (las huellas de las partidas de abajo, fijadas: su historia, junto a ellas).
+// Y lo que no debe quedarse despierto para siempre: una pared despertada, un canal picado desde un lago hasta una fosa
 import { describe, it, expect, vi } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
@@ -137,7 +137,35 @@ describe('agua en reposo', () => {
     } finally { warn.mockRestore(); }
   });
 
-  it('la misma simulación que recorriendo la rejilla (la huella, fijada con el código de antes)', () => {
+  it('una fosa picada en seco y luego unida al lago por un canal: se llenan al nivel del lago, pasan a ser cuenca y todo se duerme sin crear agua ni desaguar', () => {
+    const { st, water } = setup();
+    const sim = water.sim, n = water.gw * water.gh;
+    const vol = () => { let v = 0; for (let i = 0; i < n; i++) v += sim.depth[i]!; return v; };
+    for (let t = 0; t < 200; t++) st.step();
+    const v0 = vol();
+    clearBox(st, { x0: 52, y0: 28, z0: 36, x1: 59, y1: 35, z1: 63 });   // la fosa, en seco (el lago acaba en x 39)
+    for (let t = 0; t < 60; t++) st.step();
+    expect(vol()).toBe(v0);                                                // picar en seco no crea agua
+    clearBox(st, { x0: 40, y0: 30, z0: 37, x1: 51, y1: 31, z1: 63 });   // el canal del lago a la fosa
+    let most = 0;
+    for (let t = 0; t < 1200; t++) { st.step(); most = Math.max(most, vol()); }
+    expect(most).toBeLessThanOrEqual(v0 + 1e-3);                           // nunca hay más agua que al empezar
+    expect(water.depthAt(55, 31)).toBeGreaterThan(1.5);                    // la fosa tiene agua
+    expect(water.depthAt(45, 30)).toBeGreaterThan(0.5);                    // y el canal
+    // Al nivel del lago, también en su otra punta: sin escalón (una celda dormida más alta despierta a su vecina)
+    expect(water.surfaceAt(55, 31)).toBeCloseTo(water.surfaceAt(30, 30), 2);
+    expect(water.surfaceAt(17, 42)).toBeCloseTo(water.surfaceAt(30, 30), 2);
+    expect(water.isBasin(Math.floor(31 / 2) * water.gw + Math.floor(55 / 2))).toBe(true);
+    expect(sim.activeCount).toBe(0);                                       // todo dormido
+    expect(water.soakVisited).toBe(0);                                     // nada empapándose
+    const v1 = vol();
+    for (let t = 0; t < 600; t++) st.step();
+    expect(vol()).toBe(v1);                                                // y el lago no se va vaciando
+    // Lo que falta es lo que saltó al suelo seco al bajar el lago (lleno hasta el borde) y se empapó: nada más
+    expect(v0 - v1).toBeLessThan(10);
+  });
+
+  it('la huella de una partida con zanja, pisotones, salto a la orilla y agua en seco (fijada)', () => {
     const { st, water } = setup();
     for (let t = 0; t < 600; t++) {
       if (t === 10) clearBox(st, { x0: 40, y0: 28, z0: 35, x1: 47, y1: 35, z1: 63 });   // una zanja que el lago llena (despierta
@@ -150,7 +178,7 @@ describe('agua en reposo', () => {
     expect(st.hash()).toBe(PINNED);
   });
 
-  it('y en el mundo de salas, con su fuente y pisotones por todo el agua (la huella, fijada con el código de antes)', () => {
+  it('y la del mundo de salas, con su fuente y pisotones por todo el agua (fijada)', () => {
     const { state } = buildWorldState(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
     const w = state.water!, wet: number[] = [];
     for (let i = 0; i < w.sim.depth.length; i++) if (!w.sim.solid[i] && w.sim.depth[i]! > 0.5) wet.push(i);
@@ -162,7 +190,11 @@ describe('agua en reposo', () => {
   });
 });
 
-const PINNED = '1f3622ce';                     // la huella con el código que recorría la rejilla (6296d11); dormir las paredes no la cambia
+// La huella con el código que recorría la rejilla (6296d11) era 1f3622ce, y dormir las paredes no la cambió. Cambió
+// cuando picar en seco dejó de crear agua, la cuenca pasó a extenderse por lo picado bajo el nivel del lago, y una celda
+// dormida con el agua más alta que una vecina despierta pasó a despertarse
+const PINNED = '4e3ead35';
 // La del mundo de salas: igual a la de antes de las listas (74cc9fe0, 6296d11) hasta que las paredes despertadas
-// pasaron a dormirse (la del mundo alto, arriba, no cambió: casi no tiene paredes)
-const PINNED_ROOMS = 'a8709df8';
+// pasaron a dormirse (a8709df8; la del mundo alto, arriba, no cambió: casi no tiene paredes), y luego cuando una celda
+// dormida con el agua más alta que una vecina despierta pasó a despertarse
+const PINNED_ROOMS = 'd562d5e7';

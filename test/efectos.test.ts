@@ -125,9 +125,11 @@ describe('efectos en el mundo', () => {
   it('los visuales, encendidos o apagados, no cambian la huella; las gotas dan la de siempre', () => {
     const base = play('sin');
     // La huella de esta partida con gotas desde antes de los efectos (las gotas son la primera partícula de simulación).
-    // Cambió solo cuando todas las paredes pasaron a medir 16 (antes 2000e11e, f7c71f7f), y cuando las celdas de pared
-    // del agua que se despiertan pasaron a dormirse (antes se quedaban despiertas para siempre: 33c3dbcb)
-    expect(base).toEqual(['c9b0e542', '883dc48d']);
+    // Cambió solo cuando todas las paredes pasaron a medir 16 (antes 2000e11e, f7c71f7f), cuando las celdas de pared
+    // del agua que se despiertan pasaron a dormirse (antes se quedaban despiertas para siempre: 33c3dbcb), y cuando una
+    // celda dormida con el agua más alta que una vecina despierta pasó a despertarse (antes el nivel se quedaba en
+    // escalón: 883dc48d)
+    expect(base).toEqual(['c9b0e542', '68c840aa']);
     expect(play('con')).toEqual(base);
     expect(play('apagados')).toEqual(base);
   });

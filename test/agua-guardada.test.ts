@@ -53,7 +53,11 @@ describe('agua guardada', () => {
     expect(b.st.hash()).toBe(a.st.hash());
     expect(Array.from(b.water.sim.ground)).toEqual(Array.from(a.water.sim.ground));
     expect(Array.from(b.water.sim.solid)).toEqual(Array.from(a.water.sim.solid));
-    expect(b.water.zRange).toEqual(a.water.zRange);
+    // El tramo de alturas con agua posible cubre toda el agua (no tiene por qué ser igual: se rehace al picar y al cargar)
+    for (let i = 0; i < b.water.gw * b.water.gh; i++) {
+      const d = b.water.sim.depth[i]!;
+      if (d > 0.04 && !b.water.sim.solid[i]) { const s = b.water.sim.ground[i]! + d; expect(s).toBeGreaterThanOrEqual(b.water.zRange[0]); expect(s).toBeLessThanOrEqual(b.water.zRange[1]); }
+    }
     for (let t = 0; t < 180; t++) {
       a.st.step(); b.st.step();
       expect(b.st.hash(), `tick ${t}`).toBe(a.st.hash());

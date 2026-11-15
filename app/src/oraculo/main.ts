@@ -338,7 +338,8 @@ SCENARIOS.push({ name: 'oficina multitud de 60 con niebla por altura', theme: 'o
 
 // Un mundo de bloques alto (de 4 vóxeles) con lagos: generateMap, applyMap sin el agua y el agua con mapWater y un
 // WaterLayer que no tiene pared por altura. La superficie del agua queda a z 40-44, por encima del tramo de siempre
-function highWaterWorld(): { world: World; state: WorldState; spawn: { x: number; y: number }; lake: { x: number; y: number } } {
+// bigLake: la salida, junto a un lago de 40 columnas del mapa o más (aquí, el más grande) (para picar su orilla: un charco no llenaría la poza)
+function highWaterWorld(bigLake = false): { world: World; state: WorldState; spawn: { x: number; y: number }; lake: { x: number; y: number } } {
   const N = 4, pal = { ramps: [
     { name: 'piedra', colors: ['#2a2b32', '#3e4049', '#565a64', '#727784'] },
     { name: 'tierra', colors: ['#3a2618', '#553823', '#704b2e', '#8c6040'] },
@@ -359,9 +360,25 @@ function highWaterWorld(): { world: World; state: WorldState; spawn: { x: number
   const state = new WorldState(s, [], new WaterLayer(world, { wallAbove: Infinity }), { seed: 3 });
   // La salida: la columna seca más cercana al centro de un lago (el más grande que toque el centro del mapa)
   let best: { x: number; y: number } | null = null, lake = { x: 200, y: 200 }, bd = Infinity;
+  // El tamaño del lago de cada columna con agua (en la capa del nivel del mar)
+  const size = new Int32Array(100 * 100), wetAt = (i: number) => map.cells[10 * 100 * 100 + i] === T('agua');
+  for (let i = 0; i < 100 * 100; i++) {
+    if (!wetAt(i) || size[i]) continue;
+    const q = [i];
+    size[i] = -1;
+    for (let k = 0; k < q.length; k++) {
+      const c = q[k]!, cx = c % 100, cy = (c - cx) / 100;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = cx + dx, ny = cy + dy, j = ny * 100 + nx;
+        if (nx < 0 || ny < 0 || nx >= 100 || ny >= 100 || size[j] || !wetAt(j)) continue;
+        size[j] = -1; q.push(j);
+      }
+    }
+    for (const c of q) size[c] = q.length;
+  }
   for (let y = 0; y < 100; y++) for (let x = 0; x < 100; x++) {
     const wetNear = map.cells[(10 * 100 + y) * 100 + x] === T('agua');
-    if (!wetNear) continue;
+    if (!wetNear || (bigLake && size[y * 100 + x]! < 40)) continue;
     for (const [dx, dy] of [[3, 0], [-3, 0], [0, 3], [0, -3]] as const) {
       const nx = x + dx, ny = y + dy;
       if (nx < 0 || ny < 0 || nx >= 100 || ny >= 100 || map.heights[ny * 100 + nx]! < 10) continue;
@@ -466,7 +483,7 @@ async function run(): Promise<void> {
     const look = sc.look ? sc.look(THEMES[sc.theme].look) : THEMES[sc.theme].look;
     let { world, state } = buildWorldState(layout, look);
     let highSpawn: { x: number; y: number } | null = null, lake = { x: 0, y: 0 };
-    if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld());
+    if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld(!!sc.highWater.dig));
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
       if (sc.veg) vegetate(world, [204, 184]);
@@ -497,7 +514,8 @@ async function run(): Promise<void> {
         const m = view.frame().entities.find((e) => e.id === rt.entityId)!, p = viewOf(view.camera.viewDepth, b, m.x, m.y, m.z);
         gpu.read(view.frame(), b, { vx: p.vx, vy: p.vy, vw: VW, vh: VH, time: 0, lights: true, ambient: THEMES[sc.theme].ambient }, 'frame');
       }
-      // Una poza ancha de la salida al lago (está a 3 bloques), hasta z 40 (el agua está a 44): el agua entra y se ve
+      // Una poza ancha de la salida al lago (está a 3 bloques, y el lago es grande), hasta z 40 (el agua está a 44): el
+      // agua del lago entra y se ve (picar en seco no crea agua: la que se ve es la que llega del lago)
       clearBox(state, { x0: Math.min(spawn.x, lake.x) - 14, y0: Math.min(spawn.y, lake.y) - 14, z0: 40, x1: Math.max(spawn.x, lake.x) + 14, y1: Math.max(spawn.y, lake.y) + 14, z1: 63 });
       for (let t = 0; t < 120; t++) rt.step(NO_INPUT);
       rebakeChanged(b, view.frame().lights);

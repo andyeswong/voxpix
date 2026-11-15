@@ -154,33 +154,60 @@ export class WaterLayer {
 
   // El fondo (y si es pared) de las celdas que tocan la caja de vóxeles, otra vez desde el mundo: tras picar o poner.
   // La superficie del agua se queda donde estaba (un hoyo junto al agua se llena, poner un bloque la desplaza), y una
-  // celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca (no se empapa)
-  syncGround(box: { x0: number; y0: number; x1: number; y1: number }): void {
-    const { sim } = this;
-    const gx0 = Math.max(0, Math.floor(box.x0 / CELL)), gx1 = Math.min(this.gw - 1, Math.floor(box.x1 / CELL));
-    const gy0 = Math.max(0, Math.floor(box.y0 / CELL)), gy1 = Math.min(this.gh - 1, Math.floor(box.y1 / CELL));
-    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
-      const i = gy * this.gw + gx;
-      const [g, hole] = this.groundOf(gx, gy);
-      const surface = sim.solid[i] ? -Infinity : sim.ground[i]! + sim.depth[i]!;
-      sim.ground[i] = g;
-      sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
-      sim.depth[i] = sim.solid[i] ? 0 : Math.max(0, surface - g);
-      if (!sim.solid[i] && !this.basin[i]) {
-        let level = -Infinity;
-        for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
-          const nx = gx + ox, ny = gy + oy;
-          if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
-          const j = ny * this.gw + nx;
-          if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, sim.ground[j]! + sim.depth[j]!);
-        }
-        if (g < level) this.basin[i] = 1;
+  // celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca (no se empapa). Y desde ella, como el
+  // agua: las vecinas sin pared con el fondo por debajo de ese nivel también, y las suyas (un canal abierto a un lago
+  // y la fosa en que acaba, aunque se picara antes y esté fuera de la caja); si no, se empaparían para siempre y el
+  // lago se iría vaciando por ellas sin dormirse nunca
+  syncGround(box: { x0: number; y0: number; x1: number; y1: number } | ReadonlyArray<{ x0: number; y0: number; x1: number; y1: number }>): void {
+    const { sim } = this, boxes = Array.isArray(box) ? box : [box as { x0: number; y0: number; x1: number; y1: number }];
+    // 1) el fondo, la pared y la profundidad de todas las cajas (las de un paso juntas: una zanja que cruza trozos llega
+    //    en varias, y la cuenca tiene que ver el fondo nuevo de todas)
+    const cells: number[] = [];
+    for (const b of boxes) {
+      const gx0 = Math.max(0, Math.floor(b.x0 / CELL)), gx1 = Math.min(this.gw - 1, Math.floor(b.x1 / CELL));
+      const gy0 = Math.max(0, Math.floor(b.y0 / CELL)), gy1 = Math.min(this.gh - 1, Math.floor(b.y1 / CELL));
+      for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+        const i = gy * this.gw + gx;
+        const [g, hole] = this.groundOf(gx, gy);
+        // La superficie que se conserva: la del agua que hay. Una celda seca no tiene (picarla no crea agua: el hoyo lo
+        // llena lo que le llegue de sus vecinas)
+        const surface = sim.solid[i] || !(sim.depth[i]! > 0) ? -Infinity : sim.ground[i]! + sim.depth[i]!;
+        sim.ground[i] = g;
+        sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
+        sim.depth[i] = sim.solid[i] ? 0 : Math.max(0, surface - g);
+        cells.push(i);
+        sim.wake(gx, gy, 3);
       }
-      this.soakMaybe(i);
-      sim.wake(gx, gy, 3);
+      this.changed(gx0, gy0, gx1, gy1);
     }
+    // 2) la cuenca: una celda por debajo del agua de una vecina de cuenca pasa a serlo, y desde ella, como el agua, las
+    //    vecinas sin pared con el fondo por debajo de ese nivel, y las suyas
+    const flood: number[] = [], floodLevel: number[] = [];
+    for (const i of cells) {
+      if (sim.solid[i] || this.basin[i]) continue;
+      const gx = i % this.gw, gy = (i - gx) / this.gw;
+      let level = -Infinity;
+      for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = gx + ox, ny = gy + oy;
+        if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
+        const j = ny * this.gw + nx;
+        if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, sim.ground[j]! + sim.depth[j]!);
+      }
+      if (sim.ground[i]! < level) { this.basin[i] = 1; flood.push(i); floodLevel.push(level); }
+    }
+    for (let k = 0; k < flood.length; k++) {
+      const i = flood[k]!, level = floodLevel[k]!, gx = i % this.gw, gy = (i - gx) / this.gw;
+      for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = gx + ox, ny = gy + oy;
+        if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
+        const j = ny * this.gw + nx;
+        if (this.basin[j] || sim.solid[j] || !(sim.ground[j]! < level)) continue;
+        this.basin[j] = 1; flood.push(j); floodLevel.push(level);
+        this.changedCell(j);
+      }
+    }
+    for (const i of cells) this.soakMaybe(i);
     this.groundVersion++;
-    this.changed(gx0, gy0, gx1, gy1);
     this.widenRange();
   }
 
@@ -332,7 +359,7 @@ export class WaterLayer {
   // Un paso de simulación de `dt` (el mundo lo llama con 1/60 fijo): exactamente round(dt * 120) subpasos de 1/120,
   // sin acumular tiempo, así la misma partida da siempre el mismo agua
   step(dt: number): void {
-    if (this.watch) for (const b of this.watch.take().boxes) this.syncGround(b);
+    if (this.watch) { const boxes = this.watch.take().boxes; if (boxes.length) this.syncGround(boxes); }
     const { sim, basin } = this;
     const f = this.world.fountain;
     for (let n = Math.max(1, Math.round(dt * 120)); n > 0; n--) {

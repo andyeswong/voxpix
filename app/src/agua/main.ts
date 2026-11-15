@@ -5,6 +5,9 @@
 //     - el cuadro del compositor con agua y con el mismo mundo sin agua (read espera a la GPU)
 //     - los primeros ticks de una capa recién hecha (state.step, sin calentar): el más caro y en qué tick, sin seguir
 //       al mundo, siguiéndolo (follow) y naciendo dormida (asleep);
+//   ?medir=fosa: una fosa en seco junto al lago más hondo y luego un canal que la une a él (siguiendo al mundo, la capa
+//     nacida dormida): cuántas celdas siguen despiertas y de qué clase, cuánta agua se pierde, y lo que cuestan el paso
+//     y la copia de una vista girada (WaterView) los últimos 600 ticks de 1800
 //   ?ruta=cpu   ?semilla=1   ?n=120 (cuadros medidos)
 import { material, type Palette } from '@core/index';
 import { StaticVoxels, WorldState } from '../../../src/world/state';
@@ -16,6 +19,8 @@ import { createCompositor } from '../../../src/view/compositor';
 import { GpuCompositor } from '../../../src/view/gpu/compositor';
 import { frame2D, type Frame2DOptions } from '../../../src/world/frame2d';
 import type { World } from '../../../src/world/build';
+import { clearBox } from '../../../src/world/edit';
+import { WorldView } from '../../../src/world/view';
 
 const VW = 384, VH = 216, B = 8, CW = 48, CD = 48, CH = 12;
 const q = new URLSearchParams(location.search);
@@ -97,6 +102,42 @@ function measure(): unknown {
   out.cpu = { offP50: pct(sin, 0.5), onP50: pct(con, 0.5), offP95: pct(sin, 0.95), onP95: pct(con, 0.95) };
   return out;
 }
+function fosa(): unknown {
+  const w = new WaterLayer(world, { wallAbove: Infinity, asleep: true }), st = new WorldState(s, [], w, { seed: 1 });
+  w.follow(st.watchChanges());
+  const view = new WorldView(st, 1), sim = w.sim, gw = w.gw, gh = w.gh;
+  let deep = 0;
+  for (let i = 0; i < gw * gh; i++) if (sim.depth[i]! > sim.depth[deep]!) deep = i;
+  const cy = Math.floor(deep / gw);
+  let ex = deep % gw;
+  while (ex + 1 < gw && sim.depth[cy * gw + ex + 1]! > 0.5) ex++;
+  const surf = sim.ground[cy * gw + ex]! + sim.depth[cy * gw + ex]!;
+  const X = (ex + 14) * 2, Y = cy * 2, Z = Math.floor(surf) - 3;
+  const vol = () => { let v = 0; for (let i = 0; i < gw * gh; i++) v += sim.depth[i]!; return v; };
+  const tick = () => { st.step(); view.frame(); };
+  for (let t = 0; t < 60; t++) tick();
+  clearBox(st, { x0: X, y0: Y - 4, z0: Z, x1: X + 7, y1: Y + 3, z1: CH * B - 1 });          // la fosa, en seco
+  for (let t = 0; t < 60; t++) tick();
+  clearBox(st, { x0: ex * 2 + 2, y0: Y, z0: Z + 1, x1: X, y1: Y + 1, z1: CH * B - 1 });      // el canal
+  const steps: number[] = [], frames: number[] = [];
+  let v0 = 0;
+  for (let t = 0; t < 1800; t++) {
+    if (t === 1200) v0 = vol();
+    let a = performance.now(); st.step(); const x = performance.now() - a;
+    a = performance.now(); view.frame(); const y = performance.now() - a;
+    if (t >= 1200) { steps.push(x); frames.push(y); }
+  }
+  const awake = sim.exportState().awake;
+  let lake = 0, edge = 0, wetOut = 0, dry = 0;
+  for (let i = 0; i < gw * gh; i++) {
+    if (!awake[i] || sim.solid[i]) continue;
+    const d = sim.depth[i]!, b = w.isBasin(i);
+    if (!b && d > 0) wetOut++; else if (!b) dry++; else if (d > 0.04) lake++; else edge++;
+  }
+  return { surface: surf, awake: { lake, edge, wetOut, dry }, active: sim.activeCount, soaking: w.soakVisited, lostPer600: v0 - vol(),
+    stepP50: pct(steps, 0.5), stepP95: pct(steps, 0.95), viewP50: pct(frames, 0.5), viewP95: pct(frames, 0.95), viewCells: (view.frame().water as unknown as { visited: number }).visited };
+}
+if (q.get('medir') === 'fosa') (window as unknown as { __niebla: unknown }).__niebla = fosa();
 if (q.get('medir') === '1') (window as unknown as { __niebla: unknown; __agua: unknown }).__agua = (window as unknown as { __niebla: unknown }).__niebla = measure();
 
 let acc = 0, n = 0, avg = 0;

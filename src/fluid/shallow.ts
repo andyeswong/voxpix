@@ -11,6 +11,11 @@ export interface ShallowOptions {
   cell?: number;         // vóxeles por celda
 }
 
+// Cuánto más alta (en vóxeles) tiene que estar el agua de una celda dormida que la de su vecina despierta para
+// despertarla: con menos, lo que bajaría en un subpaso no llega a lo que la mantiene despierta (2e-4 con k = 1/120 *
+// 400 / 2: 0,0144), y se volvería a dormir sin moverse
+const UPHILL = 0.02;
+
 export class ShallowWater {
   readonly w: number;
   readonly h: number;
@@ -34,6 +39,10 @@ export class ShallowWater {
   private nWoken = 0;
   // Celdas recorridas por el último paso (para medir, y para probar que en reposo no recorre la rejilla)
   visited = 0;
+  // Las dormidas que hay que despertar al acabar el paso (uphill)
+  private uphillList: Int32Array;
+  private inUphill: Uint8Array;
+  private nUphill = 0;
 
   constructor(w: number, h: number, opts: ShallowOptions = {}) {
     this.w = w; this.h = h;
@@ -50,6 +59,8 @@ export class ShallowWater {
     this.list = new Int32Array(n);
     this.woken = new Int32Array(n);
     this.inWoken = new Uint8Array(n);
+    this.uphillList = new Int32Array(n);
+    this.inUphill = new Uint8Array(n);
     this.wakeAll();
   }
 
@@ -143,6 +154,10 @@ export class ShallowWater {
       const out = (L + R + T + B) * dt;
       if (out > depth[i]! && out > 0) { const sc = depth[i]! / out; L *= sc; R *= sc; T *= sc; B *= sc; }
       fl[i] = L; fr[i] = R; ft[i] = T; fb[i] = B;
+      // Una vecina dormida con agua más alta: solo las despiertas mandan agua, así que dormida no bajaría nunca hacia
+      // aquí (el nivel se quedaría en escalón). Se despierta al acabar el paso (no a mitad: el orden no debe contar)
+      if (x > 0 && !awake[i - 1]) this.uphill(i - 1, s); if (x < w - 1 && !awake[i + 1]) this.uphill(i + 1, s);
+      if (y > 0 && !awake[i - w]) this.uphill(i - w, s); if (y < h - 1 && !awake[i + w]) this.uphill(i + w, s);
     }
     // 2) profundidad: lo que entra de las vecinas menos lo que sale. Una celda que ya no se mueve se va durmiendo.
     for (let q = 0; q < n; q++) {
@@ -160,6 +175,17 @@ export class ShallowWater {
     this.nWoken = nw;
     // Las celdas dormidas no guardan flujo (si no, al despertar empujarían agua vieja)
     for (let q = 0; q < n; q++) { const i = list[q]!; if (!awake[i]) fl[i] = fr[i] = ft[i] = fb[i] = 0; }
+    // Las dormidas con agua más alta que una vecina despierta, para el paso siguiente
+    for (let k2 = 0; k2 < this.nUphill; k2++) { const j = this.uphillList[k2]!; this.inUphill[j] = 0; if (!awake[j]) { awake[j] = 60; this.woke(j); } }
+    this.nUphill = 0;
+  }
+
+  // j, vecina de una celda despierta con superficie s: si está dormida, sin pared y con su agua por encima de s más de lo
+  // que la dormiría (UPHILL), se apunta para despertarla
+  private uphill(j: number, s: number): void {
+    if (this.awake[j] || this.solid[j] || this.inUphill[j] || !(this.depth[j]! > 0)) return;
+    if (this.ground[j]! + this.depth[j]! - s <= UPHILL) return;
+    this.inUphill[j] = 1; this.uphillList[this.nUphill++] = j;
   }
 
   // Empuja el agua desde (cx, cy) hacia fuera, sin crear ni perder: baja el centro y sube un anillo alrededor

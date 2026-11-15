@@ -768,8 +768,14 @@ water.follow(state.watchChanges());                                 // picar o p
 - `waterTop` puede ser `Int16Array` (antes `Int8Array`, hasta 127).
 - `follow(watch)`: en cada `step`, el agua rehace el fondo y la pared de las celdas que tocan los vóxeles cambiados
   (`syncGround`):
-  - la superficie se queda donde estaba, así que un hoyo junto al agua se llena y un bloque puesto la desplaza;
-  - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa;
+  - en una celda con agua, la superficie se queda donde estaba: picar bajo el agua la hace más honda y un bloque puesto
+    la desplaza. Una celda seca no tiene superficie que conservar: picarla no crea agua (antes el hoyo nacía lleno hasta
+    el suelo de antes, con agua de la nada); lo llena lo que le llegue de sus vecinas;
+  - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa, y desde ella,
+    como el agua, las vecinas sin pared con el fondo por debajo de ese nivel, y las suyas: un canal picado desde un
+    lago y la fosa en que acaba (aunque se picara antes, en seco). Todas las cajas de un paso se rehacen juntas (una
+    zanja que cruza trozos llega en varias). Antes solo pasaba a cuenca la primera celda del canal: el resto y la
+    fosa se empapaban sin parar, el lago se vaciaba por ellas y nunca se dormía;
   - `groundVersion` sube cada vez que cambian el fondo, las paredes o las cuencas (también al cargar): la GPU los vuelve
     a subir entonces. Antes solo los subía con el primer cuadro, y tras picar dibujaba fondo viejo con profundidad nueva.
 
@@ -827,6 +833,11 @@ water.follow(state.watchChanges());                                 // picar o p
   calcula y marcaba su trozo cada tick. El agua no cambia (profundidad, flujos y gotas iguales); cambian las
   despiertas y los sellos de los trozos, y con ellos la huella de los mundos con paredes. La del mundo alto, casi sin
   paredes, no cambia.
+
+  Una celda dormida no manda agua (solo las despiertas la mandan), así que si su vecina despierta queda más baja que
+  ella (un canal que se vacía junto a un lago quieto), se despierta al acabar el paso (más de 0,02 de diferencia:
+  menos no la mantendría despierta). Antes el nivel se quedaba en escalón para siempre: el lago a un nivel y el canal
+  a otro, y las celdas de entre medias despiertas.
 
   Lo caro son los primeros ticks de una capa recién hecha: nace con todo lo mojado despierto y tarda unos 30 ticks en
   dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
