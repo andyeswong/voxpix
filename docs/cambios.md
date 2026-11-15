@@ -1,5 +1,83 @@
 # Cambios
 
+## Notas de versión de trozos-z (de ae36cb1 a cc1dc6f)
+
+Lo que llega a master con trozos-z, por tema: una línea por commit, con sus números. Las medidas son sin freno salvo que
+se diga; "a 6x" es en Edge con la CPU frenada 6 veces. El detalle de cada tema está más abajo y en
+[motor.md](motor.md).
+
+### La cola con plazo y las máscaras de lo expuesto
+- `cf66d5b`: las luces cerca del jugador van con el presupuesto cercano. Una antorcha nueva alumbra en 4 cuadros a 6x
+  en vez de 9, y las luces de un corte acaban en 24-29 cuadros en vez de 39-44.
+- `7ac463c`: esa prioridad, solo para lo que cambia el mundo, no para lo que toca un corte de vista. En una noche con
+  antorchas, los cuadros de más de 25 ms a 6x bajan de 8-34 a 6-7 por tirada.
+- `d6070c5`: lo expuesto se guarda por losa, y las franjas lo preparan dentro de su plazo. La llamada de recuadro del
+  corte con contorno pasa de p50 8,6 / p95 15,5 / máx 29 a 6 / 12 / ~21 ms a 6x.
+- `16071a8`: el horneado inicial recorre sin máscaras: ~1.500-2.000 ms a 6x en vez de ~2.650.
+- `42213ab`: las máscaras las prepara después un trabajo de la cola (`exposure`), detrás de todo.
+- `946eb39`: si preparar las máscaras no acaba, falla con un error en vez de colgarse.
+- `7bd497e`: un trabajo saltado 4 cuadros seguidos por no caber va el primero de su fase; ya no se queda sin correr.
+- `ca195d7`: la fase normal se lleva lo que sobra del presupuesto cercano.
+- `64a46ba`: con un tope (`spare`, por defecto `ms`). Preparar lo expuesto tarda 80 cuadros en el banco en vez de 160,
+  sin los 28-43 cuadros de más de 25 ms de la noche que daba el sobrante entero.
+- `b9fb522`: docs, por qué el trabajo de las máscaras corría con ~1,8 ms por cuadro en un juego.
+
+### Cortar la vista, moverse por niveles, iconos y contexto de la GPU
+- `db2f9a6`: el corte de vista admite varias cajas, cada una con su `zTop` (el corte de casa de muñecas).
+- `875e154`: `moveBodyLevels` recuerda el suelo de cada columna y el último apoyo en cada llamada: ~3,3 → ~2,6 µs.
+- `e363680`: `iconSheet` / `modelIcon` con `outlineColor`, el contorno fijo del mundo.
+- `aed3adc`: al recuperar el contexto de WebGL se repite lo precalentado: 64 sprites en el atlas en vez de 41.
+
+### Girar la cámara (preparar un giro)
+- `8984cf6`: la copia girada va por losas (`copyRotatedSlabs`): de 0,7-1,1 s a 14-27 ms en 384 x 384 x 96. El
+  horneado por pasos va por baldosas cortadas por el plazo: de 0,9-1,3 s a 0,41-0,64 s. Arregla un fallo de
+  `StaticVoxels.write` (seguía escribiendo en la paleta vieja tras `repack`).
+- `9c77103`: las baldosas se estiman por sus caras al aire y el cielo por sus píxeles con algo. Con llamadas de
+  0,5 ms, el p95 pasa de 0,95-1,02 a 0,57-0,69 ms, y la más larga, de 2,8-15,9 a 1,9-3,1 ms. Los picos de 20-46 ms no
+  eran el recolector: eran tandas del cielo.
+- `90c0d45`: `bench-giro` da también el ruido de la máquina (un cálculo fijo de la misma mediana), para juzgar contra
+  él.
+- `7d8e2d6`: `render()` ya no crea memoria por cada cara; mismo resultado byte a byte. El horneado de una vez pasa de
+  0,32-0,6 a 0,2-0,42 s, y frente al ruido pasan 8 de 12 corridas en vez de 1 de 6.
+- `e620a70`: docs, la puerta relativa al ruido se juzga sin la primera corrida del proceso.
+
+### El cuadro: niebla, fondo transparente y la GPU
+- `8b490bb`: niebla por altura (`Frame2DOptions.fog`), en la CPU y en la GPU, con la mezcla en pasos de 1/256. Cuesta
+  ~1,2 ms a 6x en la CPU y no se nota en la GPU.
+- `c1f1e40`: `background: 'transparent'`, alfa 0 donde no hay nada, para pintar el cielo detrás del lienzo. El oráculo
+  compara también el alfa.
+- `9db614f`: las subidas parciales de los pesos de luz eran inválidas en Chromium (faltaba `UNPACK_IMAGE_HEIGHT`) y la
+  GPU se quedaba con la luz vieja tras picar junto a una luz. Además, una entidad con un modelo sin vóxeles ya no rompe
+  el cuadro. El oráculo falla con cualquier error de WebGL.
+- `49967d5`: la escena del oráculo con la entidad de modelo vacío, junto al jugador y dando sombra.
+
+### Mapa por semilla y agua en un mundo alto
+- `3839b11`: `generateMap` genera relieve, estratos, lagos con orilla, vetas, cuevas y lo sembrado; además
+  `applyMap`, `mapColumn` y `mapHash`. En 384 x 384 x 96, generarlo cuesta ~1-2,5 ms y escribirlo, ~0,21 s.
+- `cc1dc6f`: el agua por columnas en un mundo alto:
+  - `wallAbove`;
+  - un tramo de alturas que se ensancha a las cuencas, en la CPU y en la GPU;
+  - `waterTop` en `Int16Array`;
+  - `follow`, que sigue lo picado y lo puesto;
+  - el corte, que esconde el agua de encima;
+  - `mapWater`.
+
+  Las escenas de agua de antes, iguales. A 6x, el paso del agua cuesta p50 0,6 / p95 ~4,5 ms con pisotones, y la GPU,
+  +0,3-0,5 ms por cuadro.
+
+### Ejemplos hechos solo con el editor
+- `977f717`: un minero enano: 6 x 6 x 14, clips quieto, andar y atacar.
+- `be1a8f3`: su variante B, con casco de hierro de una capa (6 x 6 x 13).
+- `dcc2f42`: tres flores como bloques que se cruzan y dejan pasar la luz (material `follaje`).
+- `8a0d3d7`: bloques medievales: menas, adoquín, tablas, arena, mesa, horno apagado y encendido, cofre cerrado y
+  abierto, escalera y hueso.
+- `1e2db37`: un error de tipos de su prueba.
+- `d62d24b`: objetos de mano (picos, espadas, palo y lingotes), con su agarre.
+- `05b8f17`: restaura `test/objetos.test.ts`, que `d62d24b` había sobrescrito; la prueba nueva va en
+  `test/objetos-mano.test.ts`.
+
+Al final: 531 pruebas y 79 escenas del oráculo (CPU = GPU), todas en verde.
+
 ## Mundos de bloques, picar en partida y caminos por niveles
 
 Desde `ff1bd2d` ("moveBody path without boxed doubles"). Es lo que hace falta para un juego de bloques en la vista
