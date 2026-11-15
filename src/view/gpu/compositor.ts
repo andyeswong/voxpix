@@ -107,7 +107,8 @@ export class GpuCompositor {
   private tSprDepth: WebGLTexture | null = null;
   private tSprVox: WebGLTexture | null = null;
   private bodies = new Map<VoxelSource, { ax: number; min: [number, number, number]; size: [number, number, number]; data: Uint8Array }>();
-  private bodyW = 0;
+  private readonly bodyAtlas: Atlas3D;
+  private readonly occAtlas: Atlas3D;
   private tBody: WebGLTexture;
   private entTarget: EntTarget | null = null;
   private tOcc: WebGLTexture;
@@ -196,6 +197,8 @@ export class GpuCompositor {
     uploadTo(gl, gl.TEXTURE_3D, this.tOcc);
     nearest(gl, gl.TEXTURE_3D);
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, 1, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array(1));
+    this.bodyAtlas = new Atlas3D(this.tBody);
+    this.occAtlas = new Atlas3D(this.tOcc);
   }
 
   // Pinta el cuadro en el lienzo
@@ -815,29 +818,12 @@ export class GpuCompositor {
     const size: [number, number, number] = [x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1];
     const data = new Uint8Array(size[0] * size[1] * size[2]);
     for (const [x, y, z] of vs) data[((z - z0) * size[1] + (y - y0)) * size[0] + (x - x0)] = 255;
-    bd = { ax: this.bodyW, min: [x0, y0, z0], size, data };
-    this.bodyW += size[0];
+    bd = { ax: this.bodyAtlas.add(size, data), min: [x0, y0, z0], size, data };
     this.bodies.set(m, bd);
-    this.bodiesDirty = true;
     return bd;
   }
-  private bodiesDirty = false;
 
-  private syncBodies(): void {
-    if (!this.bodiesDirty) return;
-    this.bodiesDirty = false;
-    const gl = this.gl;
-    let H = 1, D = 1;
-    for (const bd of this.bodies.values()) { H = Math.max(H, bd.size[1]); D = Math.max(D, bd.size[2]); }
-    const W = Math.max(1, this.bodyW);
-    const all = new Uint8Array(W * H * D);
-    for (const bd of this.bodies.values()) {
-      const [sx, sy, sz] = bd.size;
-      for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) all.set(bd.data.subarray((z * sy + y) * sx, (z * sy + y + 1) * sx), (z * H + y) * W + bd.ax);
-    }
-    uploadTo(gl, gl.TEXTURE_3D, this.tBody);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, W, H, D, 0, gl.RED, gl.UNSIGNED_BYTE, all);
-  }
+  private syncBodies(): void { this.bodyAtlas.sync(this.gl); }
 
   private ensureEntTarget(w: number, h: number): EntTarget {
     const t = this.entTarget;
@@ -879,27 +865,17 @@ export class GpuCompositor {
         const [x, y, z] = unkey(k);
         data[((z - o.min[2]) * size[1] + (y - o.min[1])) * size[0] + (x - o.min[0])] = 255;
       }
-      this.occSlabs.set(o, { ax: this.occW, size, data });
-      this.occW += size[0];
+      this.occSlabs.set(o, { ax: this.occAtlas.add(size, data), size, data });
       grown = true;
     }
     // Un cuerpo vacío (no debería llegar: shadowCasters lo salta) va como caja vacía en el sitio 0
     this.occPlace = occs.map((o) => { const sl = this.occSlabs.get(o); return sl ? { min: o.min, size: sl.size, ax: sl.ax } : { min: [0, 0, 0] as [number, number, number], size: [0, 0, 0] as [number, number, number], ax: 0 }; });
-    if (!grown) return;
-    const gl = this.gl;
-    let H = 1, D = 1;
-    for (const sl of this.occSlabs.values()) { H = Math.max(H, sl.size[1]); D = Math.max(D, sl.size[2]); }
-    const W = Math.max(1, this.occW);
-    const all = new Uint8Array(W * H * D);
-    for (const sl of this.occSlabs.values()) {
-      const [sx, sy, sz] = sl.size;
-      for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) all.set(sl.data.subarray((z * sy + y) * sx, (z * sy + y + 1) * sx), (z * H + y) * W + sl.ax);
-    }
-    uploadTo(gl, gl.TEXTURE_3D, this.tOcc);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, W, H, D, 0, gl.RED, gl.UNSIGNED_BYTE, all);
+    if (grown) this.occAtlas.sync(this.gl);
   }
   private occSlabs = new Map<object, { ax: number; size: [number, number, number]; data: Uint8Array }>();
-  private occW = 0;
+
+  // Cuántas veces se rehízo entero y cuántos cuerpos se subieron sueltos, en cada atlas 3D (para medir y probar)
+  atlas3DStats(): { bodies: Atlas3DStats; occupancy: Atlas3DStats } { return { bodies: { ...this.bodyAtlas.stats }, occupancy: { ...this.occAtlas.stats } }; }
 
   private syncWater(state: RenderState, b: Baked, o: Frame2DOptions): boolean {
     const gl = this.gl;
@@ -1107,6 +1083,56 @@ function nearest(gl: WebGL2RenderingContext, target: number): void {
 
 // Las subidas usan su propia unidad de textura: si no, enlazar para subir pisaría lo que un paso ya enlazó
 const UPLOAD_UNIT = 15;
+export interface Atlas3DStats { full: number; parts: number; width: number; capacity: [number, number, number] }
+
+// Un atlas 3D de cuerpos (R8), uno detrás de otro en x (lo leen los shaders con texelFetch dentro de cada uno: lo que
+// sobra alrededor no se lee). Lo nuevo se sube solo (texSubImage3D); el atlas se rehace entero solo cuando no cabe
+// (el doble de ancho, y el alto y el hondo del mayor). Antes se rehacía y se subía entero con cada cuerpo nuevo: con
+// muchos modelos, precalentar uno costaba lo de todos
+export class Atlas3D {
+  private readonly slabs: Array<{ ax: number; size: [number, number, number]; data: Uint8Array }> = [];
+  private pending: number[] = [];
+  private cap: [number, number, number] = [0, 0, 0];
+  private width = 0;
+  readonly stats: Atlas3DStats = { full: 0, parts: 0, width: 0, capacity: [0, 0, 0] };
+  constructor(private readonly tex: WebGLTexture) {}
+  // Apunta un cuerpo (size: x, y, z; data: x más rápido, luego y, luego z) y devuelve su x en el atlas
+  add(size: [number, number, number], data: Uint8Array): number {
+    const ax = this.width;
+    this.slabs.push({ ax, size, data });
+    this.pending.push(this.slabs.length - 1);
+    this.width += size[0];
+    return ax;
+  }
+  sync(gl: WebGL2RenderingContext): void {
+    if (!this.pending.length) return;
+    let H = this.cap[1], D = this.cap[2];
+    for (const k of this.pending) { const s = this.slabs[k]!.size; H = Math.max(H, s[1]); D = Math.max(D, s[2]); }
+    uploadTo(gl, gl.TEXTURE_3D, this.tex);
+    if (this.width > this.cap[0] || H > this.cap[1] || D > this.cap[2]) {
+      // No cabe: uno nuevo, más grande, con todos
+      const W = Math.max(64, this.width > this.cap[0] ? Math.max(this.width, this.cap[0] * 2) : this.cap[0]);
+      H = Math.max(1, H); D = Math.max(1, D);
+      const all = new Uint8Array(W * H * D);
+      for (const sl of this.slabs) {
+        const [sx, sy, sz] = sl.size;
+        for (let z = 0; z < sz; z++) for (let y = 0; y < sy; y++) all.set(sl.data.subarray((z * sy + y) * sx, (z * sy + y + 1) * sx), (z * H + y) * W + sl.ax);
+      }
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.R8, W, H, D, 0, gl.RED, gl.UNSIGNED_BYTE, all);
+      this.cap = [W, H, D];
+      this.stats.full++;
+    } else {
+      for (const k of this.pending) {
+        const sl = this.slabs[k]!, [sx, sy, sz] = sl.size;
+        if (sx && sy && sz) gl.texSubImage3D(gl.TEXTURE_3D, 0, sl.ax, 0, 0, sx, sy, sz, gl.RED, gl.UNSIGNED_BYTE, sl.data);
+        this.stats.parts++;
+      }
+    }
+    this.pending = [];
+    this.stats.width = this.width; this.stats.capacity = [...this.cap];
+  }
+}
+
 function uploadTo(gl: WebGL2RenderingContext, target: number, t: WebGLTexture): void {
   gl.activeTexture(gl.TEXTURE0 + UPLOAD_UNIT);
   gl.bindTexture(target, t);

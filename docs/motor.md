@@ -588,7 +588,14 @@ if (clipDone(c, ms)) { /* un clip que no se repite (atacar, morir) acabó: el si
 - `clipFrameAt(clip, ms)`: el cuadro a los `ms` de empezar; si el clip se repite, da la vuelta; si no, se queda en el
   último. `clipDone(clip, ms)`: si un clip que no se repite ya acabó.
 - Las versiones 1 y 2 del archivo se leen como un clip `anim` que se repite.
-- Conviene precalentar (`compositor.prewarm`) los cuadros de todos los clips que vayan a salir.
+- Conviene precalentar (`compositor.prewarm`) los cuadros de todos los clips que vayan a salir. Se puede hacer de
+  golpe (una lista) o poco a poco, unos sprites por cuadro detrás de una pantalla de carga: cada llamada cuesta lo suyo
+  (dibujar y subir sus sprites, unos 2 ms por sprite a 6x), no lo de todo lo que ya hay. Los cuerpos de cada modelo
+  (para el rayo de su luz y para su sombra) van en dos atlas 3D en la GPU que suben solo lo nuevo y se rehacen enteros
+  solo al quedarse pequeños (el doble de ancho). Antes se rehacían y se subían enteros con cada modelo nuevo: con 120
+  modelos con sombra ya subidos, una llamada de 2 sprites costaba 82-86 ms a 6x (la peor 137); ahora, 3,9 (la peor
+  8,5-10). `app/multitud.html?medir=prewarm&extra=120` lo mide; `GpuCompositor.atlas3DStats()` dice cuántas veces se
+  rehizo cada atlas y cuántos cuerpos se subieron sueltos.
 
 ## Luces
 

@@ -11,6 +11,7 @@ import { bakeWorld } from '../../../src/world/bake';
 import { createCompositor } from '../../../src/view/compositor';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import maiaFile from '../../../models/maia/maia.json';
+import enanoFile from '../../../models/enano/enano-b.voxpix.json';
 
 const VW = 384, VH = 216;
 const q = new URLSearchParams(location.search);
@@ -54,6 +55,42 @@ if (warm) {
   if (warm >= 2) compositor.frame(state, baked, frameOpts(0));
   warmMs = performance.now() - w0;
 }
+// ?medir=prewarm: tras 60 cuadros, una cola de 7 modelos nuevos (cuadros del walk de otro modelo) x 8 rumbos con
+// sombra, 2 sprites por cuadro con prewarm: cuánto cuesta cada llamada, y cuántas veces se rehicieron los atlas 3D de
+// cuerpos y de ocupación (GpuCompositor.atlas3DStats)
+const medir = q.get('medir') === 'prewarm';
+const frameMs: number[] = [], calls: Array<Record<string, number>> = [];
+const enano = walkFrames(Model.fromJSON(enanoFile as unknown as ModelFile)).slice(0, 7);
+const queue = enano.flatMap((model) => [0, 45, 90, 135, 180, 225, 270, 315].map((yaw) => ({ model, yaws: [yaw], casts: true })));
+let tick = 0, qFrom = -1;
+// ?extra=K: antes, K modelos más con sombra ya precalentados (copias de los cuadros del walk: cada una, su cuerpo y su
+// ocupación), como un juego con muchos modelos
+const extra = Number(q.get('extra') ?? 0);
+if (medir && extra) {
+  const copies = Array.from({ length: extra }, (_, k) => Model.fromJSON(walk[k % walk.length]!.toJSON()));
+  compositor.prewarm(baked, frameOpts(0), copies.map((model) => ({ model, casts: true })));
+}
+function measureTick(): void {
+  tick++;
+  const gc = (compositor as unknown as { gpu?: { atlas3DStats?(): unknown } }).gpu;
+  if (tick > 60 && queue.length) {
+    if (qFrom < 0) qFrom = frameMs.length;
+    const a = performance.now();
+    compositor.prewarm(baked, frameOpts(tick / 60), queue.splice(0, 2));
+    calls.push({ ms: performance.now() - a });
+  }
+  if (!queue.length && qFrom >= 0 && frameMs.length > qFrom + calls.length + 60 && !(window as unknown as { __niebla?: unknown }).__niebla) {
+    const sum = (k: string) => calls.reduce((s, c) => s + c[k]!, 0);
+    const keys = Object.keys(calls[0]!);
+    const during = frameMs.slice(qFrom, qFrom + calls.length), before = frameMs.slice(qFrom - 60, qFrom);
+    (window as unknown as { __niebla: unknown }).__niebla = {
+      calls: calls.length, perCall: Object.fromEntries(keys.map((k) => [k, +(sum(k) / calls.length).toFixed(2)])), maxCall: Math.max(...calls.map((c) => c.ms!)),
+      worstCalls: [...calls].sort((x, y) => y.ms! - x.ms!).slice(0, 4).map((c) => Object.fromEntries(Object.entries(c).map(([k, v]) => [k, +v.toFixed(1)]))),
+      frameBefore: +(before.reduce((s, x) => s + x, 0) / before.length).toFixed(2), frameDuring: +(during.reduce((s, x) => s + x, 0) / during.length).toFixed(2), frameDuringMax: Math.max(...during),
+      atlas: compositor.atlasStats(), atlas3D: gc?.atlas3DStats?.(),
+    };
+  }
+}
 // El primer cuadro y el peor (lo que se nota como tirón)
 let first = -1, worst = 0, frames = 0;
 
@@ -72,10 +109,12 @@ function loop(now: number): void {
     state.entities.setModel(ids[k]!, walk[Math.floor((now / WALK_FRAME_MS) + k) % 8]!);
   });
   state.step();
+  if (medir) measureTick();
   const t0 = performance.now();
   simAcc += t0 - s0;
   compositor.frame(state, baked, frameOpts(t));
   const ms = performance.now() - t0;
+  if (medir) frameMs.push(ms);
   if (first < 0) first = ms;
   if (++frames > 1) worst = Math.max(worst, ms);
   (window as unknown as { __multitud: unknown }).__multitud = { first, worst, warmMs, frames };
