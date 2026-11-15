@@ -2,13 +2,13 @@
 // van en lista) ni el empapado (las celdas mojadas fuera de cuenca, también). Picar, pisar o echar agua en suelo seco
 // las vuelve a recorrer, y luego se duermen. La simulación es la misma que recorriendo la rejilla: la huella de la
 // partida de abajo está fijada con el código de antes
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WaterLayer } from '../src/world/water';
 import { ShallowWater } from '../src/fluid/shallow';
 import { clearBox } from '../src/world/edit';
-import { buildWorldState, type World } from '../src/world/build';
+import { buildWorld, buildWorldState, type World } from '../src/world/build';
 import { generateLayout } from '../src/worldgen';
 import { BlockSet, BlockGrid, type VoxsetFile } from '../src/world/blocks';
 import { generateMap, applyMap, mapWater } from '../src/world/mapgen';
@@ -95,6 +95,7 @@ describe('agua en reposo', () => {
     let wet = 0;
     for (let i = 0; i < awake.sim.depth.length; i++) if (awake.sim.depth[i]! > 0.04) wet++;
     expect(wet).toBeGreaterThan(100);
+    expect(asleep.bornAsleep).toBe(true);
     a.step(); b.step();
     expect(awake.sim.visited).toBeGreaterThan(100);                        // despierta: recorre todo lo mojado
     expect(asleep.sim.visited).toBe(0);                                    // dormida: nada
@@ -107,6 +108,33 @@ describe('agua en reposo', () => {
     for (const st of [a, b]) st.events.disturb((i0 % awake.gw) * 2, Math.floor(i0 / awake.gw) * 2, 2.8, 3);
     for (let t = 0; t < 90; t++) { a.step(); b.step(); }
     same();
+  });
+
+  it('con agua que no nace en reposo (en pendiente, o con fuente), asleep se ignora con un aviso y nace despierta', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      // El lago de arriba con la mitad este 3 más alta: el agua cae hacia el oeste
+      const mk = (asleep: boolean) => {
+        const s = new StaticVoxels(PAL, W, D, 0, 63);
+        const lake = (x: number, y: number) => x >= 16 && x < 40 && y >= 20 && y < 44;
+        for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) for (let z = 0; z < (lake(x, y) ? BED : FLOOR); z++) s.set(x, y, z, material(0, 1));
+        const wet = new Uint8Array(W * D), waterTop = new Int16Array(W * D);
+        for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) if (lake(x, y)) { wet[y * W + x] = 1; waterTop[y * W + x] = x >= 28 ? FLOOR - 1 : FLOOR - 4; }
+        const water = new WaterLayer({ model: s, lights: [], width: W, depth: D, wet, waterTop } as unknown as World, { wallAbove: Infinity, asleep });
+        return { water, st: new WorldState(s, [], water, { seed: 5 }) };
+      };
+      const a = mk(false), b = mk(true);
+      expect(b.water.bornAsleep).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0]![0])).toMatch(/asleep ignorado/);
+      for (let t = 0; t < 60; t++) { a.st.step(); b.st.step(); }
+      expect(b.st.hash()).toBe(a.st.hash());                                // como sin la opción
+      // Un mundo de salas con fuente: también
+      const world = buildWorld(generateLayout(THEMES.medieval.spec, 7), THEMES.medieval.look);
+      expect(world.fountain).toBeTruthy();
+      expect(new WaterLayer(world, { asleep: true }).bornAsleep).toBe(false);
+      expect(String(warn.mock.calls[1]![0])).toMatch(/fuente/);
+    } finally { warn.mockRestore(); }
   });
 
   it('la misma simulación que recorriendo la rejilla (la huella, fijada con el código de antes)', () => {

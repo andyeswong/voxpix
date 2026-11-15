@@ -27,9 +27,10 @@ const MARCH = 40;                                 // píxeles que sube como much
 export interface WaterOptions {
   wallAbove?: number;
   // asleep: la capa nace dormida (sin esto, nace con todo lo mojado despierto y tarda ~30 ticks en dormirse, y esos
-  // ticks son los más caros de la partida). Solo para agua que nace en reposo, con la superficie plana en cada lago
-  // (la de mapWater lo es): si no, se queda como nació hasta que algo la despierte. Cambia la huella (las despiertas
-  // están en ella); por defecto, como siempre
+  // ticks son los más caros de la partida). Solo si el agua nace en reposo: ninguna celda mojada puede echar agua a
+  // una vecina (la superficie plana en cada lago, como la de mapWater) y no hay fuente. Si no, se ignora con un aviso
+  // y nace despierta, como siempre (bornAsleep dice qué pasó). Cambia la huella (las despiertas están en ella); por
+  // defecto, como siempre
   asleep?: boolean;
 }
 
@@ -49,6 +50,7 @@ export class WaterLayer {
   readonly glow: number;                           // luz mínima de la superficie: 1 si la rampa del agua es emisiva, 0 si no
   readonly basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
   groundVersion = 0;                               // sube al cambiar el fondo, las paredes o las cuencas
+  readonly bornAsleep: boolean;                    // si nació dormida (WaterOptions.asleep, con el agua en reposo)
   private readonly basin0: Uint8Array;             // las cuencas del mundo de partida (las ganadas jugando no están)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   // Las celdas mojadas fuera de cuenca (las que se empapan), en lista: así el empapado no recorre la rejilla. Entra
@@ -98,7 +100,10 @@ export class WaterLayer {
     this.soakList = new Int32Array(this.gw * this.gh);
     this.inSoak = new Uint8Array(this.gw * this.gh);
     this.soakAll();
-    if (!opts.asleep) this.sim.wakeAll();
+    const still = opts.asleep ? (world.fountain ? 'tiene fuente' : this.restless()) : null;
+    if (opts.asleep && still) console.warn(`WaterLayer: asleep ignorado, el agua no nace en reposo (${still}); nace despierta`);
+    this.bornAsleep = !!opts.asleep && !still;
+    if (!this.bornAsleep) this.sim.wakeAll();
     this.widenRange();
     const f = world.fountain;
     if (f) {
@@ -117,6 +122,23 @@ export class WaterLayer {
     // Cinco tonos (del hondo a la espuma): una rampa más corta repite sus extremos, una más larga se muestrea
     this.tones = [0, 1, 2, 3, 4].map((k) => rgbOf(colors[Math.round((k * (colors.length - 1)) / 4)]!));
     this.glow = ramp && rampMaterial(ramp).emissive ? 1 : 0;
+  }
+
+  // Por qué el agua no está en reposo (una celda mojada más alta que una vecina a la que puede echar agua), o null
+  private restless(): string | null {
+    const { sim, gw, gh } = this;
+    for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
+      const i = gy * gw + gx;
+      if (sim.solid[i] || !(sim.depth[i]! > 0)) continue;
+      const s = sim.ground[i]! + sim.depth[i]!;
+      for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = gx + ox, ny = gy + oy;
+        if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
+        const j = ny * gw + nx;
+        if (!sim.solid[j] && s > sim.ground[j]! + sim.depth[j]!) return `la celda ${gx},${gy} puede echar agua a ${nx},${ny}`;
+      }
+    }
+    return null;
   }
 
   // El tramo de alturas con agua posible: el de siempre, ensanchado a las cuencas (su fondo y su superficie) con margen

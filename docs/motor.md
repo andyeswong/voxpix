@@ -832,8 +832,10 @@ water.follow(state.watchChanges());                                 // picar o p
   dormirse. A 6x, con el JIT ya caliente: el primer tick 15,6-15,9 ms y unos 25 por encima de 5 ms (`?medir=1`,
   `first` y `firstFollow`). Con el JIT frío, más. `state.warmUp()` calienta el JIT pero no duerme el agua.
   `new WaterLayer(world, { asleep: true })` nace dormida: el primer tick no cuesta nada (máximo 0,3-0,5 ms a 6x en esos
-  ticks, `firstAsleep`). Solo para agua que nace en reposo, con la superficie plana en cada lago, como la de
-  `mapWater`: termina igual que la que nace despierta y se duerme (`test/agua-reposo.test.ts`). Cambia la huella
+  ticks, `firstAsleep`). Solo vale para agua que nace en reposo: ninguna celda mojada puede echar agua a una vecina
+  (la superficie plana en cada lago, como la de `mapWater`) y no hay fuente. Si no, la capa lo comprueba al nacer,
+  ignora la opción con un aviso (`console.warn`) y nace despierta, como siempre; `bornAsleep` dice qué pasó. Con el
+  agua en reposo termina igual que la que nace despierta y se duerme (`test/agua-reposo.test.ts`). Cambia la huella
   (las despiertas están en ella); por defecto, como siempre.
 
 ## Girar la cámara
