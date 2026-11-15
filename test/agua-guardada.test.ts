@@ -47,7 +47,9 @@ describe('agua guardada', () => {
     expect(a.water.depthAt(44, 31)).toBeGreaterThan(0.5);                  // y tiene agua
     const bytes = encodeSnapshot(a.st.snapshot());
     const b = generated();
+    const v0 = b.water.groundVersion;
     b.st.restore(decodeSnapshot(bytes));
+    expect(b.water.groundVersion).toBeGreaterThan(v0);                     // el fondo rehecho llega a la GPU
     expect(b.st.hash()).toBe(a.st.hash());
     expect(Array.from(b.water.sim.ground)).toEqual(Array.from(a.water.sim.ground));
     expect(Array.from(b.water.sim.solid)).toEqual(Array.from(a.water.sim.solid));

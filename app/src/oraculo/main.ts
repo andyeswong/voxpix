@@ -68,7 +68,7 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
-  highWater?: { cut?: boolean; dig?: boolean };   // un mundo alto con lagos (mapgen + WaterLayer con wallAbove), con corte o picando la orilla
+  highWater?: { cut?: boolean; dig?: boolean; gpuFirst?: boolean };   // un mundo alto con lagos (mapgen + WaterLayer con wallAbove), con corte o picando la orilla (gpuFirst: la GPU ya dibujó un cuadro antes de picar)
   clearBg?: boolean;                         // fondo transparente (Frame2DOptions.background = 'transparent')
   fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
@@ -374,6 +374,8 @@ function highWaterWorld(): { world: World; state: WorldState; spawn: { x: number
 for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, stompEvery: 40, highWater: {} });
 SCENARIOS.push({ name: 'agua en mundo alto con corte', theme: 'medieval', ticks: 60, highWater: { cut: true } });
 SCENARIOS.push({ name: 'agua en mundo alto picando la orilla', theme: 'medieval', ticks: 240, highWater: { dig: true } });
+// Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
+for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
 
 function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx: number; vy: number } {
   const feet = b.cam.project(x + 0.5, y, z);
@@ -491,6 +493,10 @@ async function run(): Promise<void> {
       rebakeChanged(b, view.frame().lights);
     }
     if (sc.highWater?.dig) {
+      if (sc.highWater.gpuFirst) {
+        const m = view.frame().entities.find((e) => e.id === rt.entityId)!, p = viewOf(view.camera.viewDepth, b, m.x, m.y, m.z);
+        gpu.read(view.frame(), b, { vx: p.vx, vy: p.vy, vw: VW, vh: VH, time: 0, lights: true, ambient: THEMES[sc.theme].ambient }, 'frame');
+      }
       // Una poza ancha de la salida al lago (está a 3 bloques), hasta z 40 (el agua está a 44): el agua entra y se ve
       clearBox(state, { x0: Math.min(spawn.x, lake.x) - 14, y0: Math.min(spawn.y, lake.y) - 14, z0: 40, x1: Math.max(spawn.x, lake.x) + 14, y1: Math.max(spawn.y, lake.y) + 14, z1: 63 });
       for (let t = 0; t < 120; t++) rt.step(NO_INPUT);

@@ -58,7 +58,10 @@ describe('agua en un mundo alto', () => {
     const view = new WorldView(st, 0, { cut: true });                       // una vista que también lo sigue
     clearBox(st, { x0: 40, y0: 28, z0: 36, x1: 47, y1: 35, z1: 63 });      // una zanja al este, hasta z 36
     for (let k = 0; k < 6; k++) for (const [x, y] of [[30, 30], [31, 30], [30, 31], [31, 31]] as const) st.solid.set(x, y, BED + k, material(0, 1));   // un pilar de 2 x 2 dentro del lago hasta z 40
+    const v0 = water.groundVersion;
     st.step();
+    expect(water.groundVersion).toBeGreaterThan(v0);                       // la GPU vuelve a subir el fondo
+    expect(view.frame().water!.groundVersion).toBe(water.groundVersion);
     expect(water.surfaceAt(30, 30)).toBeLessThanOrEqual(FLOOR + 0.01);     // el agua desplazada no sube por encima
     for (let t = 0; t < 240; t++) st.step();
     expect(cellDepth(water, 44, 31)).toBeGreaterThan(0.5);                 // la zanja tiene agua

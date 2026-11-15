@@ -40,6 +40,7 @@ export class WaterLayer {
   readonly tones: Array<[number, number, number]>;
   readonly glow: number;                           // luz mínima de la superficie: 1 si la rampa del agua es emisiva, 0 si no
   readonly basin: Uint8Array;                      // 1 = celda de cuenca (si no, suelo seco: el agua se empapa)
+  groundVersion = 0;                               // sube al cambiar el fondo, las paredes o las cuencas
   private readonly basin0: Uint8Array;             // las cuencas del mundo de partida (las ganadas jugando no están)
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   private fountainOut: number[] = [];             // desagüe
@@ -132,6 +133,7 @@ export class WaterLayer {
       }
       sim.wake(gx, gy, 3);
     }
+    this.groundVersion++;
     this.widenRange();
   }
 
@@ -169,6 +171,7 @@ export class WaterLayer {
         sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
       }
     }
+    this.groundVersion++;
     this.widenRange();
   }
 

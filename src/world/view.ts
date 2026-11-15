@@ -159,6 +159,7 @@ class WaterView implements WaterSurface {
     }
   }
   get zRange(): readonly [number, number] { return this.src.zRange; }
+  get groundVersion(): number { return this.src.groundVersion; }
   get toneColors(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
   get tones(): ReadonlyArray<readonly [number, number, number]> { return this.src.toneColors; }
   get glow(): number { return this.src.glow; }

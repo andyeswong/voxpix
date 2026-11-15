@@ -768,7 +768,9 @@ water.follow(state.watchChanges());                                 // picar o p
 - `follow(watch)`: en cada `step`, el agua rehace el fondo y la pared de las celdas que tocan los vóxeles cambiados
   (`syncGround`):
   - la superficie se queda donde estaba, así que un hoyo junto al agua se llena y un bloque puesto la desplaza;
-  - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa.
+  - una celda que queda por debajo del agua de una vecina de cuenca pasa a ser cuenca y no se empapa;
+  - `groundVersion` sube cada vez que cambian el fondo, las paredes o las cuencas (también al cargar): la GPU los vuelve
+    a subir entonces. Antes solo los subía con el primer cuadro, y tras picar dibujaba fondo viejo con profundidad nueva.
 
   Sin `follow`, como siempre: el agua no se entera.
 - Guardar y cargar: la instantánea del agua lleva también las cuencas (`basin`, con las ganadas jugando). Al cargar
@@ -789,7 +791,8 @@ water.follow(state.watchChanges());                                 // picar o p
   - `test/agua-guardada.test.ts`: se pica la orilla, corre el agua, se guarda y se carga en un mundo recién
     generado: la misma huella en cada tick, también picando después. Calentar (`warmUp`) no cambia lo que viene
     después. Una instantánea sin `basin` carga.
-  - El oráculo: 6 escenas de agua en un mundo alto (los 4 giros, con corte y picando la orilla), y las de agua de
+  - El oráculo: 8 escenas de agua en un mundo alto (los 4 giros, con corte, picando la orilla y picándola después de
+    un primer cuadro de la GPU en los giros 0 y 1), y las de agua de
     antes, iguales.
 - Coste: `app/agua.html?medir=1`, Edge con una RTX 4090. Mundo de 384 x 384 x 96 hecho con `generateMap`, 6.544 celdas
   con agua de 36.864, la vista sobre el lago:

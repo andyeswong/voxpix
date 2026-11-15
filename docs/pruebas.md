@@ -20,10 +20,11 @@ La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo 
 - **`app/oraculo-render.html`:** el render y la luz del editor. Compara 6 modelos con 10 juegos de opciones (giros,
   elevaciones, contorno interior, oblicua plana, zoom del editor) y la luz por píxel. Devuelve el resultado en
   `window.__oracle`.
-- **`app/oraculo.html`:** el cuadro del mundo. Compara 79 escenarios, entre ellos:
+- **`app/oraculo.html`:** el cuadro del mundo. Compara 81 escenarios, entre ellos:
   - la salida en los tres temas;
   - el lago con pisotones, también con niebla por altura;
-  - agua en un mundo de bloques alto, en los 4 giros, con corte y picando la orilla;
+  - agua en un mundo de bloques alto, en los 4 giros, con corte y picando la orilla (también después de un primer
+    cuadro de la GPU, en los giros 0 y 1: el fondo nuevo tiene que llegarle);
   - una columna rota rehorneada, y un picado junto a cada luz después de un cuadro (los pesos se suben por recuadro);
   - una entidad con un modelo sin vóxeles;
   - multitudes de 60 y 200;

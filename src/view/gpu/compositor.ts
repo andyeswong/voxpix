@@ -118,6 +118,7 @@ export class GpuCompositor {
   private tWDepth: WebGLTexture | null = null;
   private tWStatic: WebGLTexture | null = null;
   private waterOf: unknown = null;
+  private waterGround = -1;                        // la groundVersion del agua cuyo fondo está subido
   // Destinos de la vista
   private targets: [Target, Target] | null = null;
   private out: { fbo: WebGLFramebuffer; tex: WebGLTexture } | null = null;
@@ -905,14 +906,23 @@ export class GpuCompositor {
     const wl = state.water;
     if (!wl) return false;
     const sim = wl.sim;
-    if (this.waterOf !== wl || !this.tWDepth) {
-      this.waterOf = wl;
-      for (const t of [this.tWDepth, this.tWStatic]) if (t) gl.deleteTexture(t);
+    // El fondo, las paredes y las cuencas: al cambiar de agua y cada vez que cambian (con follow, al picar o poner)
+    const staticOf = () => {
       const st = new Float32Array(wl.gw * wl.gh * 4);
       for (let i = 0; i < wl.gw * wl.gh; i++) { st[i * 4] = sim.ground[i]!; st[i * 4 + 1] = sim.solid[i]!; st[i * 4 + 2] = wl.isBasin(i) ? 1 : 0; }
-      this.tWStatic = tex2D(gl, gl.RGBA32F, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, st);
+      return st;
+    };
+    if (this.waterOf !== wl || !this.tWDepth) {
+      this.waterOf = wl;
+      this.waterGround = wl.groundVersion ?? 0;
+      for (const t of [this.tWDepth, this.tWStatic]) if (t) gl.deleteTexture(t);
+      this.tWStatic = tex2D(gl, gl.RGBA32F, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf());
       this.tWDepth = tex2D(gl, gl.R32F, wl.gw, wl.gh, gl.RED, gl.FLOAT, sim.depth);
       return true;
+    }
+    if ((wl.groundVersion ?? 0) !== this.waterGround) {
+      this.waterGround = wl.groundVersion ?? 0;
+      subImage(gl, this.tWStatic!, 0, 0, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf(), wl.gw, 4);
     }
     // Cada cuadro, solo las columnas de celdas que se ven (y una más a cada lado, por las vecinas)
     const gx0 = Math.max(0, Math.floor(o.vx / 2) - 2), gx1 = Math.min(wl.gw - 1, Math.ceil((o.vx + o.vw) / 2) + 2);

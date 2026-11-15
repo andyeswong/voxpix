@@ -895,6 +895,9 @@ export interface WaterSurface {
   readonly toneColors: ReadonlyArray<readonly [number, number, number]>;
   readonly glow?: number;            // luz mínima de la superficie (1: un líquido que brilla solo)
   readonly zRange?: readonly [number, number];   // alturas con agua posible (WaterLayer.zRange); sin él, -16..32
+  // Sube cada vez que cambian el fondo, las paredes o las cuencas (WaterLayer.syncGround, importState): quien los copie
+  // (la GPU) los vuelve a copiar. Sin él, no cambian nunca
+  readonly groundVersion?: number;
   isBasin(i: number): boolean;
   draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean): void;
