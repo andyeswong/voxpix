@@ -27,13 +27,15 @@ export interface MaterialProps {
   reflect: number;    // 0..1: cuánto refleja. RESERVADO: todavía no lo pinta ningún render (metal, agua: fase 2)
   density: number;    // kg/m³: el peso de lo que está hecho de esto (un vóxel mide VOXEL_M de lado). Lo usan los objetos
   crush: boolean;     // se aplasta o se rompe al pasar o al golpearlo (world/crush.ts): la vegetación
+  ladder: boolean;    // se trepa: mientras un cuerpo de moveBodyLevels lo toca, sube y baja con la entrada vertical y no
+                      // cae (runtime/levels.ts). El motor no sabe qué es: quien lo usa marca el material
 }
 
 // El lado de un vóxel en metros: una loseta de 16 vóxeles es 1 m. La masa de un vóxel es density * VOXEL_M³
 export const VOXEL_M = 1 / 16;
 export const VOXEL_M3 = VOXEL_M ** 3;
 
-export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false };
+export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false };
 
 // La lista de materiales. Añadir uno es añadir una fila; las propiedades que no se dicen son las del sólido.
 export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>>> = {
@@ -46,6 +48,7 @@ export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>
   madera: { density: 600 },
   tela: { density: 300 },
   tierra: { density: 1500 },
+  escala: { light: 0.6, bed: false, blocks: false, ladder: true, density: 600 },     // se cruza y se trepa (moveBodyLevels)
 };
 
 // Las propiedades de una rampa: las del sólido, encima las de su material, encima sus props
@@ -73,6 +76,7 @@ export interface MaterialTable {
   bed: Uint8Array;         // por material: 1 si el agua lo cuenta como fondo
   blocks: Uint8Array;      // por material: 1 si bloquea el paso
   climb: Uint8Array;       // por material: 1 si se puede subir y pisar
+  ladder: Uint8Array;      // por material: 1 si se trepa
 }
 
 // La tabla de una paleta, o null si todos sus materiales tratan la luz, el agua y el paso como el sólido (entonces
@@ -83,15 +87,15 @@ export function materialsOf(p: Palette): MaterialTable | null {
   let t = cache.get(p);
   if (t !== undefined) return t;
   const ramps = p.ramps.map(rampMaterial);
-  const special = ramps.some((m) => m.light > 0 || m.backlit > 0 || !m.bed || !m.blocks || !m.climb);
+  const special = ramps.some((m) => m.light > 0 || m.backlit > 0 || !m.bed || !m.blocks || !m.climb || m.ladder);
   if (!special) { cache.set(p, null); return null; }
   const n = MAX_RAMPS * MAX_TONES + 1;
-  t = { ramps, light: new Float32Array(n), sun: new Uint8Array(n).fill(SUN_OPAQUE), backlit: new Float32Array(n), bed: new Uint8Array(n).fill(1), blocks: new Uint8Array(n).fill(1), climb: new Uint8Array(n).fill(1) };
+  t = { ramps, light: new Float32Array(n), sun: new Uint8Array(n).fill(SUN_OPAQUE), backlit: new Float32Array(n), bed: new Uint8Array(n).fill(1), blocks: new Uint8Array(n).fill(1), climb: new Uint8Array(n).fill(1), ladder: new Uint8Array(n) };
   t.sun[0] = 0; t.bed[0] = 0; t.blocks[0] = 0; t.light[0] = 1;
   ramps.forEach((m, i) => {
     const a = i * MAX_TONES + 1, b = a + MAX_TONES;
     t!.light.fill(Math.fround(m.light), a, b); t!.sun.fill(sunCost(m.light), a, b); t!.backlit.fill(Math.fround(m.backlit), a, b);
-    t!.bed.fill(m.bed ? 1 : 0, a, b); t!.blocks.fill(m.blocks ? 1 : 0, a, b); t!.climb.fill(m.climb ? 1 : 0, a, b);
+    t!.bed.fill(m.bed ? 1 : 0, a, b); t!.blocks.fill(m.blocks ? 1 : 0, a, b); t!.climb.fill(m.climb ? 1 : 0, a, b); t!.ladder.fill(m.ladder ? 1 : 0, a, b);
   });
   cache.set(p, t);
   return t;

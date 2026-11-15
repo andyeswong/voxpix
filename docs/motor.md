@@ -491,6 +491,17 @@ if (m.landed > 40) { /* una caída de más de 40 vóxeles: lo que el juego quier
 - Dentro de una llamada guarda lo que da el suelo de cada columna (los subpasos pisan casi las mismas) y el último
   apoyo (el del final suele repetir el del vertical): los mismos resultados, ~20 % menos por llamada
   (`bun scripts/bench-niveles.ts`: 20 cuerpos de radio 3, ~3,3 -> ~2,6 µs en el mundo de bloques).
+- Trepar: los vóxeles de un material con `ladder` (el material `escala`: se cruza, deja pasar algo de luz y se trepa)
+  se suben y se bajan. Mientras el cuerpo toca uno (su huella, el radio y medio vóxel más, entre los pies y la cabeza),
+  el último argumento, `up`, lo mueve en z: 1 sube, -1 baja y 0 lo deja donde está, a `ladderSpeed` vóxeles por tick
+  (por defecto `LADDER_SPEED`, 0,5), sin gravedad y sin caída que contar. Sube lo que deje el techo y baja hasta el
+  suelo. Para salir por arriba se anda hacia el suelo de arriba: el escalón lo sube encima. El motor no sabe qué es
+  una escalera: quien lo usa marca el material. Devuelve `climbing` (trepa en este tick). Sin vóxeles que se trepan,
+  todo es como antes (`test/escalas.test.ts`).
+
+```ts
+const m = moveBodyLevels(state, jugador, dx, dy, saltar, reglas, arriba ? 1 : abajo ? -1 : 0);
+```
 
 ## Caminos
 

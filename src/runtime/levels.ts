@@ -16,8 +16,10 @@ export interface LevelRules {
   gravity: number;     // lo que gana vz hacia abajo cada tick (vóxeles por tick²)
   jump: number;        // la vz con la que salta (vóxeles por tick)
   maxFall: number;     // la vz más rápida cayendo
+  ladderSpeed?: number;   // vóxeles por tick que sube o baja trepando (materiales con ladder); por defecto LADDER_SPEED
 }
 export const LEVEL_RULES: LevelRules = { step: 2, gravity: 0.08, jump: 1.3, maxFall: 4 };
+export const LADDER_SPEED = 0.5;
 
 const SUBSTEP = 0.5;
 
@@ -104,12 +106,29 @@ function stepTo(w: WorldState, b: LevelBody, nx: number, ny: number, rules: Leve
   return true;
 }
 
-export interface LevelMove { blocked: boolean; grounded: boolean; landed: number }
+// ¿Toca el cuerpo algún vóxel que se trepa? Su huella (el radio y medio vóxel más, para que pegado a la escala cuente)
+// entre los pies y la cabeza
+function onLadder(w: WorldState, b: LevelBody, mt: NonNullable<Mt>): boolean {
+  const s = w.solid, r = b.r + 0.5, rr = r * r, z0 = Math.max(s.zMin, Math.floor(b.z)), z1 = Math.min(s.zMax, Math.ceil(b.z + b.height) - 1);
+  for (let cy = Math.floor(b.y - r); cy <= Math.floor(b.y + r); cy++) for (let cx = Math.floor(b.x - r); cx <= Math.floor(b.x + r); cx++) {
+    if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth) continue;
+    const ex = Math.min(Math.max(b.x, cx), cx + 1) - b.x, ey = Math.min(Math.max(b.y, cy), cy + 1) - b.y;
+    if (ex * ex + ey * ey >= rr) continue;
+    for (let z = z0; z <= z1; z++) { const v = s.get(cx, cy, z); if (v && mt.ladder[v]) return true; }
+  }
+  return false;
+}
+
+export interface LevelMove { blocked: boolean; grounded: boolean; landed: number; climbing: boolean }
 
 // Un tick: anda (dx, dy) en subpasos (cada eje por separado, como moveBody, para resbalar por las paredes), salta si
 // `jump` y está en el suelo, y cae con la gravedad hasta apoyarse. Un techo corta el salto. landed: la altura de la
-// caída si acaba de aterrizar (0 si no), para el daño por caída que quiera el juego
-export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: number, jump = false, rules: LevelRules = LEVEL_RULES): LevelMove {
+// caída si acaba de aterrizar (0 si no), para el daño por caída que quiera el juego.
+// Trepar: mientras el cuerpo toca un vóxel de un material con ladder, `up` lo mueve en z (1 sube, -1 baja, 0 se queda,
+// ladderSpeed vóxeles por tick) y no cae: sin gravedad, sin caída que contar. Sube lo que deje el techo y baja hasta el
+// suelo. Para salir por arriba se anda hacia donde está el suelo: el escalón lo sube encima. Sin vóxeles que se trepan,
+// todo es como antes
+export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: number, jump = false, rules: LevelRules = LEVEL_RULES, up = 0): LevelMove {
   const n = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / SUBSTEP));
   const ddx = dx / n, ddy = dy / n, mt = materialsOf(w.solid.palette);
   gen = (gen + 1) >>> 0 || 1;                                      // una marca nueva: lo guardado antes no vale
@@ -117,6 +136,18 @@ export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: numb
   for (let i = 0; i < n; i++) {
     if (ddx !== 0 && !stepTo(w, b, b.x + ddx, b.y, rules, mt)) hit = true;
     if (ddy !== 0 && !stepTo(w, b, b.x, b.y + ddy, rules, mt)) hit = true;
+  }
+  // Trepando: arriba o abajo con up, sin caer
+  if (mt && onLadder(w, b, mt)) {
+    const speed = rules.ladderSpeed ?? LADDER_SPEED, g = support(w, b.x, b.y, b.z, b.r, 0, mt);
+    b.vz = 0; delete b.fallFrom;
+    if (up > 0) {
+      const nz = b.z + speed * Math.min(1, up);
+      let z = b.z;
+      while (z < nz) { const t = Math.min(nz, Math.floor(z) + 1); if (!clear(w, b.x, b.y, t, b.r, b.height, mt)) break; z = t; }
+      b.z = z;
+    } else if (up < 0) b.z = Math.max(g, b.z - speed * Math.min(1, -up));
+    return { blocked: hit, grounded: g >= b.z - 1e-6, landed: 0, climbing: true };
   }
   // Vertical
   const ground = support(w, b.x, b.y, b.z, b.r, 0, mt);
@@ -140,5 +171,5 @@ export function moveBodyLevels(w: WorldState, b: LevelBody, dx: number, dy: numb
     }
   }
   const g2 = support(w, b.x, b.y, b.z, b.r, 0, mt);
-  return { blocked: hit, grounded: b.vz === 0 && g2 >= b.z - 1e-6, landed: Math.max(0, landed) };
+  return { blocked: hit, grounded: b.vz === 0 && g2 >= b.z - 1e-6, landed: Math.max(0, landed), climbing: false };
 }
