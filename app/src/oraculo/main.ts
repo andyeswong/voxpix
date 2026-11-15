@@ -170,6 +170,27 @@ const SCENARIOS: Scenario[] = [
     },
   },
   {
+    // Lo mismo, pero con un cuadro de la GPU antes de romper: la luz se rehace sobre la que la GPU ya tiene y se sube
+    // solo su recuadro sucio (texSubImage3D con UNPACK_SKIP_*)
+    // Se pica junto a cada luz horneada (un hueco de 3 x 3 al sur y al este de ella, hasta el suelo): cada una se rehace
+    // en parte, con su recuadro sucio lejos de la primera fila de su zona
+    name: 'medieval picado junto a las luces tras un cuadro (pesos por recuadro)', theme: 'medieval', ticks: 120,
+    after: (s, b, gpuFrame, view) => {
+      gpuFrame();
+      for (const l of view.frame().lights) {
+        if (l.baked === false) continue;
+        const cx = Math.round(l.x) + 3, cy = Math.round(l.y) - 3;
+        for (let z = 0; z <= Math.ceil(l.z); z++) for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) if (x >= 0 && y >= 0 && x < s.solid.width && y < s.solid.depth && s.solid.get(x, y, z)) s.solid.set(x, y, z, 0);
+      }
+      rebakeChanged(b, view.frame().lights);
+    },
+  },
+  {
+    // Una entidad con un modelo sin vóxeles que da sombra: sin sombra y sin romper el cuadro
+    name: 'oficina entidad de modelo vacío', theme: 'oficina', ticks: 30,
+    setup: (s) => { s.entities.add({ model: new Model(maiaModel.palette, 'vacio'), x: 0, y: 0, z: 1, castsShadow: true }); },
+  },
+  {
     // Los horneados guardados en la GPU (bakedKeep): se pinta con este, luego con el del giro 1, se rompe la columna y
     // se rehornea ESTE mientras está guardado; al volver, la GPU lo pone al día por su número de serie
     name: 'medieval columna rota, ida y vuelta a otro horneado', theme: 'medieval', ticks: 120,
@@ -313,6 +334,7 @@ function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx:
 }
 
 interface Result {
+  glErrors?: number[];     // errores de WebGL de la escena (códigos de getError): cualquiera es fallo
   name: string;
   pixels: number;
   differ: number;          // píxeles con el cuadro final distinto
@@ -434,8 +456,12 @@ async function run(): Promise<void> {
     const gMul = gpu.read(rs, b, o, 'multiply');
     const gAdd = gpu.read(rs, b, o, 'add');
     const empty = new Uint8ClampedArray(VW * VH * 4);
+    // Los errores de WebGL que haya dejado la escena (una subida inválida no sube nada y no salta por sí sola)
+    const gl = (gpu as unknown as { gl: WebGL2RenderingContext }).gl, glErrors: number[] = [];
+    for (let e = gl.getError(); e !== gl.NO_ERROR && glErrors.length < 8; e = gl.getError()) glErrors.push(e);
     const r = compare(sc.name, { color: parts.view, mul: layers?.multiply ?? empty, add: layers?.add ?? empty, final: cpuFinal },
       { color: gColor, mul: gMul, add: gAdd, final: gFinal }, ambient, o.lights, [c1 - c0, c2 - c1], parts.total);
+    if (glErrors.length) { r.glErrors = glErrors; r.pass = false; }
     results.push(r);
     shots[sc.name] = { cpu: toPng(cpuFinal), gpu: toPng(gFinal), diff: toPng(diffMask(cpuFinal, gFinal)), colorDiff: toPng(diffMask(parts.view, gColor)) };
     out.textContent += `  ${r.pass ? 'BIEN' : 'MAL '} difieren ${(r.share * 100).toFixed(3)} % (${r.differ}), color>2: ${r.colorOff}, luz a 1 nivel: ${r.mulOff1}, a más: ${r.mulOff2}, add a más: ${r.addOff2}, máx ${r.maxFinal}\n`;

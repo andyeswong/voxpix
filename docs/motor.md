@@ -478,6 +478,12 @@ state.entities.setTint(id, [1, 1, 1]);       // destello de golpe: color plano c
 state.entities.remove(id);
 ```
 
+- Una entidad cuyo modelo no tiene vóxeles (un cuadro de animación vacío, un modelo aún sin cargar) no se pinta, no da
+  sombra ni sombra de contacto, y la consola lo avisa una vez por modelo. Antes, en la GPU, su caja vacía rompía el
+  cuadro (`RangeError: Invalid typed array length: -Infinity` en `syncOcc`).
+- `facing` puede ser negativo o pasar de una vuelta: el cuerpo que da sombra va girado a su cuarto de vuelta más
+  cercano. Un valor que no es un número cuenta como 0.
+
 - `castsShadow`: `true` compite por las sombras de verdad (como mucho 8 por cuadro, las más cercanas al centro de la
   vista); `'always'` la reserva siempre (el personaje).
 - Las rampas `emissive` del modelo brillan solas.

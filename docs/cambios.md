@@ -161,6 +161,17 @@ clips del editor y en el juego se leen con `clipsFromFile`, `clipFrameAt` y `cli
   valores equivocados. Después de rehacer su paleta, seguía escribiendo en la paleta vieja.
 - Ver [Girar la cámara](motor.md#girar-la-cámara).
 
+### Arreglos del compositor de la GPU
+
+- Los pesos de una luz rehecha en parte se suben solo por su recuadro sucio (`texSubImage3D` con `UNPACK_SKIP_*`). Sin
+  `UNPACK_IMAGE_HEIGHT`, que a 0 vale el alto de la subida, un recuadro que no empezaba en la primera fila de la zona
+  era una subida inválida en Chromium (`GL_INVALID_OPERATION: invalid unpack params combination`). No subía nada, y la
+  GPU seguía con los pesos viejos de esa luz. Comprobado en Edge con una página de prueba, y en el oráculo con un picado
+  junto a cada luz: antes, error 1282 y 40 píxeles con la luz a más de un nivel; ahora, nada.
+- Una entidad con un modelo sin vóxeles rompía el cuadro de la GPU (`syncOcc` con tamaño `-Infinity`). Ahora no se
+  pinta ni da sombra, y se avisa una vez.
+- El oráculo da por fallado un escenario que deje errores de WebGL.
+
 ### Niebla por altura
 
 `Frame2DOptions.fog` funde hacia un color lo que se ve por debajo de una altura de foco: así se nota la altura en la

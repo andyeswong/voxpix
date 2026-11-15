@@ -313,12 +313,20 @@ export function dropLook(state: RenderState, ambient: readonly [number, number, 
 // castsShadow 'always' (el personaje), y el resto de los huecos, las true de pies más cercanos al centro de la vista;
 // las demás solo llevan la de contacto. En el orden de la lista de entidades.
 export const MAX_CASTERS = 8;
+// Una entidad cuyo modelo no tiene vóxeles no tiene cuerpo que dé sombra: se avisa una vez por modelo
+const emptyWarned = new WeakSet<object>();
+function emptyBody(e: Entity): boolean {
+  if (!occupancy(e.model, e.yaw).empty) return false;
+  if (!emptyWarned.has(e.model)) { emptyWarned.add(e.model); console.warn(`[voxpix] la entidad ${String(e.id)} tiene un modelo sin vóxeles: no da sombra`); }
+  return true;
+}
+
 export function shadowCasters(state: RenderState, b: Baked, o: Frame2DOptions): Entity[] {
   const cx = o.vx + o.vw / 2, cy = o.vy + o.vh / 2;
   const cand = state.entities.map((e, i) => {
     const [sx, sy] = b.cam.project(Math.round(e.x) + 0.5, Math.round(e.y), e.z);
     return { e, i, d: (sx - cx) ** 2 + (sy - cy) ** 2 };
-  }).filter((c) => c.e.castsShadow);
+  }).filter((c) => c.e.castsShadow && !emptyBody(c.e));
   if (cand.length <= MAX_CASTERS) return cand.map((c) => c.e);
   const rank = (c: typeof cand[number]) => (c.e.castsShadow === 'always' ? 0 : 1);
   return cand.sort((a, c) => rank(a) - rank(c) || a.d - c.d || a.i - c.i).slice(0, MAX_CASTERS).sort((a, c) => a.i - c.i).map((c) => c.e);
@@ -377,7 +385,9 @@ function entityRenderOptions(b: Baked, e: Entity, o: Frame2DOptions) {
 }
 
 // ¿Cae algo de su lienzo (o de su sombra de contacto) en la vista?
+// Una entidad sin vóxeles no se pinta (ni su sombra de contacto): no hay nada que ver
 export function onView(d: EntitySprite, o: Frame2DOptions): boolean {
+  if (occupancy(d.e.model, 0).empty) return false;
   return d.offX + EW > o.vx && d.offX < o.vx + o.vw && d.offY + EH > o.vy && d.offY < o.vy + o.vh + 8;
 }
 
@@ -599,9 +609,11 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
 }
 
 // El cuerpo de una entidad como conjunto de vóxeles locales (girado al cuarto de vuelta más cercano) y su caja
-const occCache = new WeakMap<VoxelSource, Map<number, { set: Set<number>; min: [number, number, number]; max: [number, number, number] }>>();
+const occCache = new WeakMap<VoxelSource, Map<number, { set: Set<number>; min: [number, number, number]; max: [number, number, number]; empty: boolean }>>();
+// Un modelo sin vóxeles da un cuerpo vacío (empty: su caja no tiene sentido) y no da sombra: shadowCasters lo salta.
+// Un giro que no es un número finito cuenta como 0; uno negativo o de más de una vuelta, como su cuarto
 export function occupancy(model: VoxelSource, yaw: number) {
-  const turns = ((Math.round(yaw / 90) % 4) + 4) % 4;
+  const turns = Number.isFinite(yaw) ? ((Math.round(yaw / 90) % 4) + 4) % 4 : 0;
   let m = occCache.get(model);
   if (!m) occCache.set(model, (m = new Map()));
   let o = m.get(turns);
@@ -615,7 +627,7 @@ export function occupancy(model: VoxelSource, yaw: number) {
       min[0] = Math.min(min[0], rx); min[1] = Math.min(min[1], ry); min[2] = Math.min(min[2], z);
       max[0] = Math.max(max[0], rx + 1); max[1] = Math.max(max[1], ry + 1); max[2] = Math.max(max[2], z + 1);
     }
-    m.set(turns, (o = { set, min, max }));
+    m.set(turns, (o = { set, min, max, empty: set.size === 0 }));
   }
   return o;
 }

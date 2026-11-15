@@ -570,12 +570,18 @@ export class GpuCompositor {
       if (!z || (!fresh && old[i] === z)) return;
       const r = z.rect, d = z.dirty;
       if (!fresh && d && z.base && old[i] === z.base) {
-        if (d.w <= 0 || d.h <= 0) return;
+        // El recuadro sucio, dentro de la zona (si no, la subida es inválida y no sube nada)
+        const x0 = Math.max(0, d.x), y0 = Math.max(0, d.y), x1 = Math.min(r.w, d.x + d.w), y1 = Math.min(r.h, d.y + d.h);
+        if (x1 <= x0 || y1 <= y0) return;
+        // En una subida 3D, UNPACK_IMAGE_HEIGHT a 0 vale el alto de la subida, y entonces SKIP_ROWS + alto se pasa de la
+        // imagen: Chromium la rechaza ("invalid unpack params combination"). La imagen es la zona: r.h filas de r.w
         gl.pixelStorei(gl.UNPACK_ROW_LENGTH, r.w);
-        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, d.x);
-        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, d.y);
-        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, d.x, d.y, i, d.w, d.h, 1, gl.RED, gl.FLOAT, z.weight);
+        gl.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, r.h);
+        gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x0);
+        gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y0);
+        gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, x0, y0, i, x1 - x0, y1 - y0, 1, gl.RED, gl.FLOAT, z.weight);
         gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+        gl.pixelStorei(gl.UNPACK_IMAGE_HEIGHT, 0);
         gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
         gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
       } else gl.texSubImage3D(gl.TEXTURE_2D_ARRAY, 0, 0, 0, i, r.w, r.h, 1, gl.RED, gl.FLOAT, z.weight);
@@ -751,7 +757,7 @@ export class GpuCompositor {
         for (const yaw of it.yaws ?? HEADINGS) {
           if (performance.now() - t0 > budgetMs) { left++; continue; }
           this.spriteLayer(entitySprite(b, warmEntity(it.model, yaw), o));
-          if (it.casts) occs.push(occupancy(it.model, yaw));
+          if (it.casts) { const oc = occupancy(it.model, yaw); if (!oc.empty) occs.push(oc); }
         }
         if (o.lights) this.body(it.model);
       }
@@ -861,7 +867,7 @@ export class GpuCompositor {
   private syncOcc(occs: Array<ReturnType<typeof occupancy>>): void {
     let grown = false;
     for (const o of occs) {
-      if (this.occSlabs.has(o)) continue;
+      if (this.occSlabs.has(o) || o.empty) continue;
       const size: [number, number, number] = [o.max[0] - o.min[0], o.max[1] - o.min[1], o.max[2] - o.min[2]];
       const data = new Uint8Array(size[0] * size[1] * size[2]);
       for (const k of o.set) {
@@ -872,7 +878,8 @@ export class GpuCompositor {
       this.occW += size[0];
       grown = true;
     }
-    this.occPlace = occs.map((o) => { const sl = this.occSlabs.get(o)!; return { min: o.min, size: sl.size, ax: sl.ax }; });
+    // Un cuerpo vacío (no debería llegar: shadowCasters lo salta) va como caja vacía en el sitio 0
+    this.occPlace = occs.map((o) => { const sl = this.occSlabs.get(o); return sl ? { min: o.min, size: sl.size, ax: sl.ax } : { min: [0, 0, 0] as [number, number, number], size: [0, 0, 0] as [number, number, number], ax: 0 }; });
     if (!grown) return;
     const gl = this.gl;
     let H = 1, D = 1;
