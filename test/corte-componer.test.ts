@@ -10,7 +10,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView, type Quarter } from '../src/world/view';
 import { bakeWorld } from '../src/world/bake';
 import { frame2D, sectionFor, type Frame2DOptions } from '../src/world/frame2d';
-import { sectionAround } from '../src/world/section';
+import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT } from '../src/world/section';
 import type { WorldLight } from '../src/world/build';
 
 const pal = { ramps: [
@@ -95,6 +95,27 @@ describe('corte al componer', () => {
     const r = pair(1, 67, 40, 112);
     expect(r.count).toBeGreaterThan(1000);
     expect(r.inside + r.outside).toBe(0);
+  });
+
+  it('por franjas (SectionPainter): la misma capa que la de la caja entera, pintando solo lo nuevo al andar', () => {
+    const st = new WorldState(build(null), [], null), view = new WorldView(st, 0);
+    const bf = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, outline: 'both', sky: true });
+    const p = new SectionPainter(bf, { ahead: 4, behind: 1 });
+    for (const [k, gx] of [40, 44, 52, 60, 68].entries()) {
+      const c0 = sectionAround(view.camera, gx, 59, TZ0, 32);
+      p.set(c0, 1);
+      const before = p.painted;
+      p.paintAll();
+      expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : 1) * (STRIP / UNIT));   // la caja, 4 franjas por delante y 1 por detrás; luego, una (de UNIT en UNIT)
+      const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x1 / STRIP) * STRIP + STRIP - 1 })!;
+      expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
+      expect(Array.from(L.mask)).toEqual(Array.from(R.mask));
+      for (let q = 0; q < R.w * R.h; q++) {
+        if (!R.mask[q]) continue;
+        for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
+        if (L.depth[q] !== R.depth[q] || L.sky![q] !== R.sky![q]) expect(`profundidad o cielo ${q}`).toBe('igual');
+      }
+    }
   });
 
   it('sin sección, el cuadro de siempre', () => {

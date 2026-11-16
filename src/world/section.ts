@@ -32,15 +32,45 @@ export interface SectionLayer {
 
 const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
-export function sectionLayer(b: Baked, cut: SectionCut): SectionLayer | null {
+// cols (opcional): solo esas columnas de vóxeles (x0..x1) del recuadro, con la caja del corte tal cual (puede ser más
+// ancha que ellas): así se pinta una sección por franjas (SectionPainter). Sin cols, las de la caja con 1 de margen
+// Los rayos de cielo (como skyOf del horneado) de la cara `f` del vóxel `k`, con la caja [X0, X1] x [Y0, Y1] desde zMin
+// cortada
+function cutSky(b: Baked, X0: number, X1: number, Y0: number, Y1: number, zMin: number, k: number, f: number): number {
+  if (Number.isNaN(k) || f < 0) return SKY_RAYS;
+  const s = b.source;
+  const inBox = (x: number, y: number, z: number) => x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && z >= zMin;
+  const colTop = (x: number, y: number) => {
+    let t = s.height[y * s.width + x]!;
+    if (x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && t > zMin) { t = zMin; while (t > s.zMin && !s.get(x, y, t - 1)) t--; }
+    return t;
+  };
+  const [vx, vy, vz] = unkey(k), n = DIR_VECTORS[f]!;
+  const cx = vx + n[0], cy = vy + n[1], cz = vz + n[2];
+  let open = 0;
+  if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth || colTop(cx, cy) <= cz) open++;
+  for (const [dx, dy] of SKY_DIRS) {
+    let clear = true;
+    for (let q = 1; q <= SKY_REACH; q++) {
+      const x = cx + dx * q, y = cy + dy * q, z = cz + q;
+      if (x < 0 || y < 0 || x >= s.width || y >= s.depth || z > s.zMax) break;
+      if (!inBox(x, y, z) && s.get(x, y, z)) { clear = false; break; }
+      if (q === SKY_REACH && colTop(x, y) > z) clear = false;
+    }
+    if (clear) open++;
+  }
+  return open;
+}
+
+export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1: number }): SectionLayer | null {
   const s = b.source, a = b.options.oblique?.y ?? 1, O = b.options.originY, ox = b.options.originX ?? 0;
   const depthBack = cut.depth ?? 32;
   const X0 = Math.max(0, cut.x0), X1 = Math.min(s.width - 1, cut.x1), Y0 = Math.max(0, cut.y0), Y1 = Math.min(s.depth - 1, cut.y1);
   if (X0 > X1 || Y0 > Y1) return null;
   const zMin = cut.zMin, top = s.zMax;
   const inBox = (x: number, y: number, z: number) => x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && z >= zMin;
-  // El recuadro: donde cae la caja (lo que se sustituye solo puede estar ahí), con 1 de margen
-  const rx = Math.max(0, Math.floor(ox + X0) - 1), rx1 = Math.min(b.width - 1, Math.ceil(ox + X1 + 1) + 1);
+  // El recuadro: donde cae la caja (lo que se sustituye solo puede estar ahí), con 1 de margen; o las columnas pedidas
+  const rx = Math.max(0, cols ? Math.floor(ox + cols.x0) : Math.floor(ox + X0) - 1), rx1 = Math.min(b.width - 1, cols ? Math.ceil(ox + cols.x1) : Math.ceil(ox + X1 + 1) + 1);
   const ry = Math.max(0, Math.floor(O - a * (Y1 + 1) - (top + 1)) - 1), ry1 = Math.min(b.height - 1, Math.ceil(O - a * Y0 - zMin) + 1);
   if (rx > rx1 || ry > ry1) return null;
   const w = rx1 - rx + 1, h = ry1 - ry + 1;
@@ -73,17 +103,19 @@ export function sectionLayer(b: Baked, cut: SectionCut): SectionLayer | null {
   // render), y lo que el corte destapa (la cara sur de la fila y1 + 1 y la de arriba del suelo de la caja)
   const get = (x: number, y: number, z: number) => (inBox(x, y, z) ? 0 : s.get(x, y, z));
   const faces: FaceSet = frontFaces(b.options);
-  const bx0 = X0 - 1, bx1 = X1 + 1, zLo = Math.max(s.zMin, zMin - Math.ceil(depthBack * a) - 2);
+  // (con cols, lo de la caja solo en esas columnas y su vecina)
+  const cx0 = Math.max(X0, rx - ox - 1), cx1 = Math.min(X1, rx1 - ox + 1);
+  const bx0 = Math.max(X0 - 1, rx - ox - 1), bx1 = Math.min(X1 + 1, rx1 - ox + 1), zLo = Math.max(s.zMin, zMin - Math.ceil(depthBack * a) - 2);
   const src: VoxelSource = {
     palette: s.palette,
     get,
     entries: () => { throw new Error('la sección se recorre con forEachExposed'); },
     forEachExposed: (fn) => {
       // Detrás: lo expuesto del mundo (no cambia con el corte, salvo la fila pegada a la caja, que va aparte)
-      s.forEachExposed((x, y, z, v) => { if (!(y === Y1 + 1 && x >= X0 && x <= X1 && z >= zMin)) fn(x, y, z, v); },
+      s.forEachExposed((x, y, z, v) => { if (!(y === Y1 + 1 && x >= cx0 && x <= cx1 && z >= zMin)) fn(x, y, z, v); },
         { x0: bx0, y0: Y1 + 1, x1: bx1, y1: Math.min(s.depth - 1, Y1 + depthBack), z0: zLo, z1: top }, true, faces);
       // La fila de detrás de la caja, con su cara sur destapada
-      if (Y1 + 1 < s.depth) for (let z = zMin; z <= top; z++) for (let x = X0; x <= X1; x++) { const v = s.get(x, Y1 + 1, z); if (v) fn(x, Y1 + 1, z, v); }
+      if (Y1 + 1 < s.depth) for (let z = zMin; z <= top; z++) for (let x = cx0; x <= cx1; x++) { const v = s.get(x, Y1 + 1, z); if (v) fn(x, Y1 + 1, z, v); }
       // El suelo de la caja (sus caras de arriba destapadas) y los lados de la caja por debajo de zMin
       for (let y = Y0; y <= Y1; y++) for (let x = bx0; x <= bx1; x++) for (let z = Math.max(s.zMin, zMin - 2); z < zMin; z++) { const v = s.get(x, y, z); if (v) fn(x, y, z, v); }
       // Los vóxeles de los píxeles del borde
@@ -120,31 +152,7 @@ export function sectionLayer(b: Baked, cut: SectionCut): SectionLayer | null {
   let sky: Uint8Array | null = null;
   if (b.sky) {
     sky = new Uint8Array(w * h);
-    const colTop = (x: number, y: number) => {
-      let t = s.height[y * s.width + x]!;
-      if (x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && t > zMin) { t = zMin; while (t > s.zMin && !s.get(x, y, t - 1)) t--; }
-      return t;
-    };
-    for (let t = 0; t < w * h; t++) {
-      if (!mask[t]) continue;
-      const k = pick[t]!;
-      if (Number.isNaN(k)) { sky[t] = SKY_RAYS; continue; }
-      const [vx, vy, vz] = unkey(k), n = DIR_VECTORS[face[t]!]!;
-      const cx = vx + n[0], cy = vy + n[1], cz = vz + n[2];
-      let open = 0;
-      if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth || colTop(cx, cy) <= cz) open++;
-      for (const [dx, dy] of SKY_DIRS) {
-        let clear = true;
-        for (let q = 1; q <= SKY_REACH; q++) {
-          const x = cx + dx * q, y = cy + dy * q, z = cz + q;
-          if (x < 0 || y < 0 || x >= s.width || y >= s.depth || z > s.zMax) break;
-          if (get(x, y, z)) { clear = false; break; }
-          if (q === SKY_REACH && colTop(x, y) > z) clear = false;
-        }
-        if (clear) open++;
-      }
-      sky[t] = open;
-    }
+    for (let q = 0; q < w * h; q++) if (mask[q]) sky[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick[q]!, face[q]!);
   }
   return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count };
 }
@@ -156,4 +164,179 @@ export function sectionAround(camera: { pointToView(x: number, y: number): [numb
   const [vx, vy] = camera ? camera.pointToView(x, y) : [x, y];
   const x0 = Math.floor(vx - width / 2);
   return { x0, x1: x0 + Math.max(1, Math.round(width)) - 1, y0: 0, y1: Math.floor(vy), zMin: Math.round(z), ...(depth !== undefined ? { depth } : {}) };
+}
+
+// ---- La sección por franjas, pintada por delante (para seguir a un objetivo que anda sin repintarla en cada cuadro)
+// Las columnas se pintan por franjas de STRIP con la caja "ancha" (todas las columnas cortadas: el píxel de una columna
+// solo depende de las de al lado por su tono y su cielo), una vez, como trabajo de la cola con plazo; al componer la
+// caja de cada cuadro (por franjas enteras) solo se copian. En la columna de cada borde de la caja, el tono (AO) y,
+// hasta SKY_REACH columnas hacia dentro, el cielo de cueva son los de un corte que siguiera (lo mide la prueba); el
+// contorno de la costura en los bordes sí es el del corte. Una franja caduca si se rehornea algo en sus columnas, y
+// todas si cambian la fila del objetivo, sus pies o y0.
+export const STRIP = 8;     // la caja se mueve por franjas de STRIP columnas
+export const UNIT = 4;      // y se pinta de UNIT en UNIT (un paso de la cola: unos 1,6 ms sin freno)
+
+export class SectionPainter {
+  private strips = new Map<number, { layer: SectionLayer | null; serial: number }>();
+  private track = '';
+  private cut: SectionCut | null = null;
+  private dir = 0;
+  private composed: { key: string; layer: SectionLayer | null } | null = null;
+  // Franjas que se pintan por delante (en la dirección en que anda) y por detrás
+  ahead: number;
+  behind: number;
+  // Franjas pintadas (para medir)
+  painted = 0;
+
+  constructor(readonly b: Baked, opts: { ahead?: number; behind?: number } = {}) {
+    this.ahead = opts.ahead ?? 4; this.behind = opts.behind ?? 1;
+  }
+
+  // La caja de este cuadro (o null: sin corte) y hacia dónde anda en x de la vista (-1, 0, 1). La caja se lleva a
+  // franjas enteras (las que toca)
+  set(cut: SectionCut | null, dir = 0): void {
+    this.dir = dir;
+    if (!cut) { this.cut = null; return; }
+    const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = Math.floor(cut.x1 / STRIP) * STRIP + STRIP - 1;
+    this.cut = { ...cut, x0, x1 };
+    const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}`;
+    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; }
+  }
+
+  // ¿La franja i está pintada y al día con la imagen?
+  private fresh(i: number): boolean {
+    const st = this.strips.get(i);
+    if (!st) return false;
+    const pub = this.b.published;
+    if (pub.serial === st.serial) return true;
+    const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
+    if (st.serial < oldest - 1) return false;                             // ya no se sabe qué cambió
+    // Lo que pinta una unidad depende de sus columnas y, por el tono y el cielo, de SKY_REACH + 1 a cada lado
+    const ox = this.b.options.originX ?? 0, m = SKY_REACH + 1, x0 = ox + i * UNIT, x1 = x0 + UNIT - 1;
+    for (const r of pub.rects) if (r.serial > st.serial && r.x1 >= x0 - m && r.x0 <= x1 + m) return false;
+    st.serial = pub.serial;
+    return true;
+  }
+
+  // Las franjas que faltan, en orden: las de la caja (de la del centro hacia fuera), las de delante y las de detrás
+  private wanted(): number[] {
+    const c = this.cut;
+    if (!c) return [];
+    // (en unidades de UNIT columnas; ahead y behind van en franjas)
+    const per = STRIP / UNIT, i0 = c.x0 / UNIT, i1 = (c.x1 + 1) / UNIT - 1, mid = Math.floor((i0 + i1) / 2), out: number[] = [];
+    for (let d = 0; mid - d >= i0 || mid + d <= i1; d++) { if (mid + d <= i1) out.push(mid + d); if (d && mid - d >= i0) out.push(mid - d); }
+    const fwd = this.dir >= 0 ? 1 : -1;
+    for (let k = 1; k <= this.ahead * per; k++) out.push(fwd > 0 ? i1 + k : i0 - k);
+    for (let k = 1; k <= this.behind * per; k++) out.push(fwd > 0 ? i0 - k : i1 + k);
+    const maxI = Math.floor((this.b.source.width - 1) / UNIT);
+    return out.filter((i) => i >= 0 && i <= maxI && !this.fresh(i));
+  }
+
+  // Un trabajo de la cola: pinta franjas hasta el plazo (una por lo menos). null si no falta ninguna
+  job(): { key: string; priority: number; run(deadline: number): boolean } | null {
+    if (!this.wanted().length) return null;
+    return { key: 'section', priority: 0, run: (deadline: number) => {
+      do {
+        const i = this.wanted()[0];
+        if (i === undefined) return true;
+        this.paint(i);
+      } while (performance.now() < deadline);
+      return !this.wanted().length;
+    } };
+  }
+
+  // ¿Están pintadas (y al día) todas las franjas de la caja de ahora? Si no, en esas columnas aún no se ve la sección
+  ready(): boolean {
+    const c = this.cut;
+    if (!c) return true;
+    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) if (i >= 0 && i * UNIT < this.b.source.width && !this.fresh(i)) return false;
+    return true;
+  }
+
+  // Pinta ya todas las que faltan (para probar y medir)
+  paintAll(): void { for (let i = this.wanted()[0]; i !== undefined; i = this.wanted()[0]) this.paint(i); }
+
+  private paint(i: number): void {
+    const c = this.cut!;
+    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9 };
+    // Con una columna de margen a cada lado (el contorno, el borde y la costura miran a los vecinos); se copian sus 8
+    this.strips.set(i, { layer: sectionLayer(this.b, wide, { x0: i * UNIT - 1, x1: i * UNIT + UNIT }), serial: this.b.published.serial });
+    this.painted++;
+    this.composed = null;
+  }
+
+  // La capa de la caja de ahora, con lo que ya está pintado (las franjas que falten, sin sustituir todavía)
+  layer(): SectionLayer | null {
+    const c = this.cut;
+    if (!c) return null;
+    const i0 = c.x0 / UNIT, i1 = (c.x1 + 1) / UNIT - 1;
+    let ready = '';
+    for (let i = i0; i <= i1; i++) ready += this.fresh(i) ? '1' : '0';
+    const key = `${c.x0},${c.x1}:${ready}:${this.b.published.serial}`;
+    if (this.composed && this.composed.key === key) return this.composed.layer;
+    const layer = this.compose(c);
+    this.composed = { key, layer };
+    return layer;
+  }
+
+  private compose(c: SectionCut): SectionLayer | null {
+    const b = this.b, ox = b.options.originX ?? 0;
+    // Las filas son las mismas en todas las franjas (dependen de y0, y1, zMin y la altura del mundo)
+    let ry = -1, h = 0;
+    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) { const st = this.strips.get(i)?.layer; if (st) { ry = st.y; h = st.h; break; } }
+    if (ry < 0) return null;
+    // (el mismo recuadro que sectionLayer con esta caja)
+    const rx = Math.max(0, Math.floor(ox + c.x0) - 1), rx1 = Math.min(b.width - 1, Math.ceil(ox + c.x1 + 1) + 1), w = rx1 - rx + 1;
+    const mask = new Uint8Array(w * h), rgba = new Uint8ClampedArray(w * h * 4), depth = new Float32Array(w * h).fill(Infinity);
+    const face = new Int8Array(w * h).fill(-1), pick = new Float64Array(w * h).fill(NaN), sky = b.sky ? new Uint8Array(w * h) : null;
+    let count = 0;
+    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
+      if (!this.fresh(i)) continue;
+      const st = this.strips.get(i)!.layer;
+      if (!st) continue;
+      for (let j = 0; j < h; j++) for (let k = 0; k < st.w; k++) {
+        const gx = st.x + k, li = gx - rx;
+        if (li < 0 || li >= w || gx < ox + i * UNIT || gx > ox + i * UNIT + UNIT - 1) continue;
+        const sq = j * st.w + k, q = j * w + li;
+        mask[q] = st.mask[sq]!; if (mask[q] === 1) count++;
+        rgba[q * 4] = st.rgba[sq * 4]!; rgba[q * 4 + 1] = st.rgba[sq * 4 + 1]!; rgba[q * 4 + 2] = st.rgba[sq * 4 + 2]!; rgba[q * 4 + 3] = st.rgba[sq * 4 + 3]!;
+        depth[q] = st.depth[sq]!; face[q] = st.face[sq]!; pick[q] = st.pick[sq]!;
+        if (sky && st.sky) sky[q] = st.sky[sq]!;
+      }
+    }
+    if (!count) return null;
+    // El cielo cerca de los bordes en x (a SKY_REACH + 1 columnas): con la caja de verdad (las franjas lo hicieron con
+    // la ancha, que deja ver cielo de lado)
+    if (sky) {
+      const m = SKY_REACH + 1, X0 = Math.max(0, c.x0), X1 = Math.min(b.source.width - 1, c.x1), Y0 = Math.max(0, c.y0), Y1 = Math.min(b.source.depth - 1, c.y1);
+      for (let j = 0; j < h; j++) for (let li = 0; li < w; li++) {
+        const q = j * w + li, x = rx + li - ox;
+        if (mask[q] && (x - c.x0 < m || c.x1 - x < m)) sky[q] = cutSky(b, X0, X1, Y0, Y1, c.zMin, pick[q]!, face[q]!);
+      }
+    }
+    // Los bordes en x: el píxel horneado de fuera junto a uno sustituido es borde (con su luz y su vóxel: lo horneado),
+    // y el sustituido junto a uno horneado mucho más cerca lleva el contorno de la costura
+    const gap = b.options.innerGap ?? innerGapFor(b.options), both = b.options.outline === 'both';
+    const fixed = b.options.outlineColor ? rgbOf(b.options.outlineColor) : null;
+    for (const [inX, outX] of [[ox + c.x0, ox + c.x0 - 1], [ox + c.x1, ox + c.x1 + 1]] as const) {
+      const li = inX - rx, lo = outX - rx;
+      if (lo < 0 || lo >= w) continue;
+      for (let j = 0; j < h; j++) {
+        const q = j * w + li, qo = j * w + lo, gi = (ry + j) * b.width + outX;
+        if (mask[q] !== 1) continue;
+        if (!mask[qo] && !Number.isNaN(b.pick[gi]!)) {
+          mask[qo] = 2;
+          rgba.set(b.rgba.subarray(gi * 4, gi * 4 + 4), qo * 4); depth[qo] = b.depth[gi]!; face[qo] = b.face[gi]!; pick[qo] = b.pick[gi]!;
+          if (sky && b.sky) sky[qo] = b.sky[gi]!;
+        }
+        if (both && depth[q] !== Infinity && b.depth[gi]! < depth[q]! - gap) {
+          let col: readonly [number, number, number];
+          if (fixed) col = fixed;
+          else { const [x, y, z] = unkey(pick[q]!), { ramp } = decode(b.source.get(x, y, z)); col = rgbOf(b.source.palette.ramps[ramp]?.colors[0] ?? '#000000'); }
+          rgba[q * 4] = col[0]; rgba[q * 4 + 1] = col[1]; rgba[q * 4 + 2] = col[2]; rgba[q * 4 + 3] = 255;
+        }
+      }
+    }
+    return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count };
+  }
 }

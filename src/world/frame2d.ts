@@ -49,12 +49,15 @@ export interface Frame2DOptions {
   // Corte al componer (section.ts): una caja de la imagen horneada que se trata como aire al componer, para ver de
   // perfil lo que hay detrás de la fila del objetivo sin rehornear. null o sin campo: nada (el cuadro de siempre)
   section?: SectionCut | null;
+  // La capa ya hecha (SectionPainter.layer(): la sección pintada por franjas, por delante). Si está, manda sobre section
+  sectionLayer?: SectionLayer | null;
 }
 
 // La capa de sección de unas opciones (o null), guardada por horneado: se rehace si cambia la caja o la imagen
 // (un rehorneado publica un recuadro nuevo)
 const sectionCache = new WeakMap<Baked, { key: string; layer: SectionLayer | null }>();
 export function sectionFor(b: Baked, o: Frame2DOptions): SectionLayer | null {
+  if (o.sectionLayer !== undefined) return o.sectionLayer;
   if (!o.section) return null;
   const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''}:${b.published.serial}:${b.version}`;
   const hit = sectionCache.get(b);
@@ -222,7 +225,7 @@ export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked): 
   return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
 }
 function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array): Float32Array {
-  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!, sec = sectionFor(b, o);
+  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!, sec = o.section || o.sectionLayer ? sectionFor(b, o) : null;
   for (let y = 0; y < o.vh; y++) for (let x = 0; x < o.vw; x++) {
     const gx = o.vx + x, gy = o.vy + y, si = sec ? secIndex(sec, gx, gy) : -1;
     const k = si >= 0 && sec!.sky ? sec!.sky[si]! : gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
@@ -252,7 +255,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
   } else for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = 0; view[i - 2] = 0; view[i - 1] = 0; }
   // El corte al componer: lo de detrás de la caja en los píxeles cuya primera superficie estaba en ella
-  const sec = o.section ? sectionFor(b, o) : null;
+  const sec = o.section || o.sectionLayer ? sectionFor(b, o) : null;
   if (sec) {
     const bg = o.background === 'transparent' ? null : o.background ?? BACKGROUND;
     for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {

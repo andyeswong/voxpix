@@ -79,3 +79,35 @@ for (const width of (process.argv[2] ?? '32,384').split(',').map(Number)) {
   }
   console.log(`ancho ${width} vóxeles (${width / 8} bloques): ${count} píxeles sustituidos; la capa p50 ${p(tl, 0.5).toFixed(2)} ms (6x ${(p(tl, 0.5) * K).toFixed(1)}), p95 ${p(tl, 0.95).toFixed(2)}; el cuadro de la CPU con capa p50 ${p(tf, 0.5).toFixed(1)} ms, sin capa ${p(tn, 0.5).toFixed(1)} ms`);
 }
+
+// ANDAR=1: el objetivo anda por el túnel a 5 bloques/s (40 vóxeles/s, a 60 cuadros por segundo) con SectionPainter: la
+// sección se pinta por franjas con SECCION_MS ms de cola por cuadro (a 6x; 4 por defecto) y FRANJAS por delante (4).
+// Cuenta: el cuadro en que aparece entera la primera vez, los cuadros con hueco después (alguna franja de la caja sin
+// pintar), lo que cuesta componer la capa por cuadro y lo que se pinta por cuadro (a 6x)
+if (process.env.ANDAR === '1') {
+  const { SectionPainter } = await import('../src/world/section');
+  const budget6 = Number(process.env.SECCION_MS ?? 4), ahead = Number(process.env.FRANJAS ?? 4);
+  for (const width of (process.argv[2] ?? '32,128,192,384').split(',').map(Number)) {
+    const painter = new SectionPainter(b, { ahead, behind: 1 });
+    let x = 64, appear = -1, holes = 0;
+    const comp: number[] = [], paint: number[] = [], extra: number[] = [];
+    for (let f = 0; f < 420 && x < W - 64; f++) {
+      x += 40 / 60;
+      painter.set({ ...(await import('../src/world/section')).sectionAround(null, x, ty, tz, width) }, 1);
+      const j = painter.job();
+      let a = performance.now();
+      if (j) j.run(a + budget6 / K);
+      paint.push((performance.now() - a) * K);
+      a = performance.now(); const L = painter.layer(); comp.push((performance.now() - a) * K);
+      const ok = painter.ready();
+      if (appear < 0 && ok) appear = f;
+      else if (appear >= 0 && !ok) holes++;
+      if (f % 20 === 0 && L) {
+        const opts = { ...base, vx: Math.max(0, Math.min(b.width - VW, Math.round(x) - VW / 2)) };
+        a = performance.now(); frame2D(st, b, { ...opts, sectionLayer: L }); const tw = performance.now() - a;
+        a = performance.now(); frame2D(st, b, opts); extra.push((tw - (performance.now() - a)) * K);
+      }
+    }
+    console.log(`ancho ${width / 8} bloques: aparece en el cuadro ${appear}, huecos después ${holes}; componer p50 ${p(comp, 0.5).toFixed(2)} p95 ${p(comp, 0.95).toFixed(2)} máx ${p(comp, 1).toFixed(1)} ms; pintar p50 ${p(paint, 0.5).toFixed(1)} p95 ${p(paint, 0.95).toFixed(1)} máx ${p(paint, 1).toFixed(1)} ms; cuadro de la CPU con capa, de más ${extra.length ? p(extra, 0.5).toFixed(1) : '-'} ms (todo a 6x); franjas pintadas ${painter.painted}`);
+  }
+}
