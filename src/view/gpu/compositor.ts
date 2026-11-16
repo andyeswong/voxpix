@@ -13,10 +13,10 @@
 import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
-import { sectionFor, backlitKeyOf } from '../../world/frame2d';
-import type { SectionLayer } from '../../world/section';
+import { sectionFor } from '../../world/frame2d';
+import { secIdx, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, skyAmbient, unprojector, rowP, worldYAt, type Baked, type BakedLight } from '../../world/bake';
+import { worldPointAt, skyAmbient, unprojector, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
@@ -579,29 +579,26 @@ export class GpuCompositor {
     const cols: ReadonlyArray<readonly [number, number]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;
     for (const [g0, g1] of cols) {
       const a = Math.max(sec.x, g0), z = Math.min(sec.x + sec.w - 1, g1);
-      if (a <= z) this.uploadSectionCols(b, sec, a, z);
+      if (a <= z) this.uploadSectionCols(sec, a, z);
     }
     this.sectionMs = performance.now() - t0;
   }
 
-  // Las columnas de imagen g0..g1 de la capa a las texturas del anillo (en dos trozos si dan la vuelta)
-  private uploadSectionCols(b: Baked, sec: SectionLayer, g0: number, g1: number): void {
-    const gl = this.gl, { w, h } = sec, n = g1 - g0 + 1, TW = this.secSize[0];
+  // Las columnas de imagen g0..g1 de la capa a las texturas del anillo (en dos trozos si dan la vuelta). La y del mundo
+  // y la luz por detrás vienen hechas en la capa (se calculan al pintarla)
+  private uploadSectionCols(sec: SectionLayer, g0: number, g1: number): void {
+    const gl = this.gl, { h } = sec, n = g1 - g0 + 1, TW = this.secSize[0];
     const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
-    const u = unprojector(b), mt = materialsOf(b.source.palette), vals = this.backVals, anyBack = vals.some((v) => v > 0);
-    for (let j = 0; j < h; j++) {
-      const P = rowP(u, sec.y + j);
-      color.set(sec.rgba.subarray((j * w + g0 - sec.x) * 4, (j * w + g1 - sec.x + 1) * 4), j * n * 4);
-      for (let k = 0; k < n; k++) {
-        const q = j * w + g0 - sec.x + k, o = (j * n + k) * 4, m = sec.mask[q]!;
-        if (!m) { geo[o] = Infinity; continue; }
-        const f = sec.face[q]!, d = sec.depth[q]!;
-        geo[o] = d;
-        geo[o + 1] = f >= 0 && d !== Infinity ? worldYAt(u, P, d) : 0;
-        const back = f >= 0 && anyBack ? backlitKeyOf(b, mt, sec.pick[q]!) : 0;
-        geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(back, 1) : f;
-        geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
-      }
+    const vals = this.backVals;
+    for (let j = 0; j < h; j++) for (let k = 0; k < n; k++) {
+      const q = secIdx(sec, g0 + k, j), o = (j * n + k) * 4, m = sec.mask[q]!;
+      if (!m) { geo[o] = Infinity; continue; }
+      color[o] = sec.rgba[q * 4]!; color[o + 1] = sec.rgba[q * 4 + 1]!; color[o + 2] = sec.rgba[q * 4 + 2]!; color[o + 3] = sec.rgba[q * 4 + 3]!;
+      const f = sec.face[q]!, back = f >= 0 ? sec.back[q]! : 0;
+      geo[o] = sec.depth[q]!;
+      geo[o + 1] = sec.wy[q]!;
+      geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(Math.fround(back), 1) : f;
+      geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
     }
     for (let k0 = 0; k0 < n;) {
       const tx = (g0 + k0) % TW, pw = Math.min(n - k0, TW - tx);

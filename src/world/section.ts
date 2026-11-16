@@ -10,8 +10,8 @@
 // En qué difiere del corte horneado (WorldView.setCut + rehorneado): la luz de las luces fijas en los píxeles de la
 // sección llega sin sombras (como la de las dinámicas), y el tono (AO) de los vóxeles horneados que tocan la caja es
 // el de antes de cortar. El cielo de cueva y el contorno de la costura sí son los del corte.
-import { render, unkey, decode, innerGapFor, rgbOf, type VoxelSource, DIR_VECTORS } from '../core';
-import { SKY_RAYS, SKY_REACH, type Baked } from './bake';
+import { render, unkey, decode, innerGapFor, rgbOf, materialsOf, type VoxelSource, DIR_VECTORS } from '../core';
+import { SKY_RAYS, SKY_REACH, unprojector, rowP, worldYAt, type Baked } from './bake';
 import type { FaceSet } from './state';
 import { frontFaces } from '../core';
 
@@ -27,11 +27,24 @@ export interface SectionLayer {
   readonly face: Int8Array;
   readonly pick: Float64Array;
   readonly sky: Uint8Array | null;      // rayos de cielo por píxel (si el horneado tiene cielo)
+  // La y del mundo de lo que se ve en cada píxel (worldYAt con su profundidad; 0 sin cara) y la luz por detrás de su
+  // material: lo que necesita la luz por píxel (el compositor de la GPU lo sube tal cual)
+  readonly wy: Float32Array;
+  readonly back: Float32Array;
   readonly count: number;               // píxeles sustituidos (los de borde no cuentan)
+  // Los arrays van por filas de `stride` (por defecto w). Con ring (los de SectionPainter), la columna de imagen gx está
+  // en gx mod ring (un anillo: al mover la caja no se copia nada); si no, en gx - x. secIdx da el índice
+  readonly stride?: number;
+  readonly ring?: number;
   // Solo en las de SectionPainter: la capa anterior y las columnas de píxeles (de la imagen) que cambiaron desde ella;
   // lo demás de las columnas que comparten es igual. Para subir solo eso (el compositor de la GPU)
   readonly base?: SectionLayer | null;
   readonly dirty?: ReadonlyArray<readonly [number, number]>;
+}
+
+// El índice en los arrays de la capa del píxel de la columna de imagen gx y la fila j de la capa (sin mirar el recuadro)
+export function secIdx(L: SectionLayer, gx: number, j: number): number {
+  return j * (L.stride ?? L.w) + (L.ring ? gx & (L.ring - 1) : gx - L.x);
 }
 
 const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
@@ -158,7 +171,18 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
     sky = new Uint8Array(w * h);
     for (let q = 0; q < w * h; q++) if (mask[q]) sky[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick[q]!, face[q]!);
   }
-  return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count };
+  // La geometría de la luz por píxel
+  const wy = new Float32Array(w * h), back = new Float32Array(w * h), u = unprojector(b), mt = materialsOf(s.palette);
+  for (let j = 0; j < h; j++) {
+    const P = rowP(u, ry + j);
+    for (let i = 0; i < w; i++) {
+      const q = j * w + i;
+      if (!mask[q]) continue;
+      if (face[q]! >= 0 && depth[q] !== Infinity) wy[q] = worldYAt(u, P, depth[q]!);
+      if (mt && !Number.isNaN(pick[q]!)) { const [x, y, z] = unkey(pick[q]!); back[q] = mt.backlit[s.get(x, y, z)]!; }
+    }
+  }
+  return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count };
 }
 
 // La caja del corte para un objetivo en (x, y, z) del MUNDO (los pies de un cuerpo): `width` vóxeles de ancho centrados
@@ -180,19 +204,27 @@ export function sectionAround(camera: { pointToView(x: number, y: number): [numb
 export const STRIP = 8;     // la caja se mueve por franjas de STRIP columnas
 export const UNIT = 4;      // y se pinta de UNIT en UNIT (un paso de la cola: unos 1,6 ms sin freno)
 
+// Lo compuesto de SectionPainter: un anillo de RW columnas (potencia de 2) por h filas
 interface Raw {
-  rx: number; w: number; h: number; ry: number;
-  mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null;
-  units: Map<number, SectionLayer | null>;     // las unidades copiadas (la capa de cada una, para saber si sigue siendo esa)
+  RW: number; h: number; ry: number; rx: number; w: number;
+  mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null; wy: Float32Array; back: Float32Array;
+  units: Map<number, SectionLayer | null>;     // las unidades que están (la capa de cada una, para saber si sigue siendo esa)
   edges: [number, number];                     // las columnas de píxeles de los bordes de la caja (llevan los arreglos)
 }
-type CopySource = { x?: number; rx?: number; w: number; mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null };
+
+// Los tramos de las columnas de imagen gx0..gx1 que caen seguidos en el anillo: [gx, n]
+function ringRuns(RW: number, gx0: number, gx1: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let g = gx0; g <= gx1;) { const n = Math.min(gx1 - g + 1, RW - (g & (RW - 1))); out.push([g, n]); g += n; }
+  return out;
+}
 
 // Columnas sin sección
 function clearCols(to: Raw, gx0: number, gx1: number): void {
-  for (let j = 0; j < to.h; j++) {
-    const a = j * to.w + gx0 - to.rx, z = a + gx1 - gx0 + 1;
+  for (const [g, n] of ringRuns(to.RW, gx0, gx1)) for (let j = 0; j < to.h; j++) {
+    const a = j * to.RW + (g & (to.RW - 1)), z = a + n;
     to.mask.fill(0, a, z); to.rgba.fill(0, a * 4, z * 4); to.depth.fill(Infinity, a, z); to.face.fill(-1, a, z); to.pick.fill(NaN, a, z);
+    to.wy.fill(0, a, z); to.back.fill(0, a, z);
     if (to.sky) to.sky.fill(0, a, z);
   }
 }
@@ -208,17 +240,17 @@ function unitCount(L: SectionLayer, gx: number): number {
   return n;
 }
 
-// Copia las columnas de píxeles gx0..gx1 (globales) de una capa a otra con las mismas filas, una copia por fila y array
-function copyCols(from: CopySource, to: Raw, gx0: number, gx1: number): void {
-  const fx = from.x ?? from.rx!, n = gx1 - gx0 + 1, fw = from.w, tw = to.w;
-  void tw;
-  for (let j = 0; j < to.h; j++) {
-    const fq = j * fw + gx0 - fx, tq = j * to.w + gx0 - to.rx;
+// Copia las columnas de imagen gx0..gx1 de la capa de una unidad (sin anillo) al anillo, una copia por fila, tramo y array
+function copyCols(from: SectionLayer, to: Raw, gx0: number, gx1: number): void {
+  for (const [g, n] of ringRuns(to.RW, gx0, gx1)) for (let j = 0; j < to.h; j++) {
+    const fq = j * from.w + g - from.x, tq = j * to.RW + (g & (to.RW - 1));
     to.mask.set(from.mask.subarray(fq, fq + n), tq);
     to.rgba.set(from.rgba.subarray(fq * 4, (fq + n) * 4), tq * 4);
     to.depth.set(from.depth.subarray(fq, fq + n), tq);
     to.face.set(from.face.subarray(fq, fq + n), tq);
     to.pick.set(from.pick.subarray(fq, fq + n), tq);
+    to.wy.set(from.wy.subarray(fq, fq + n), tq);
+    to.back.set(from.back.subarray(fq, fq + n), tq);
     if (to.sky && from.sky) to.sky.set(from.sky.subarray(fq, fq + n), tq);
   }
 }
@@ -231,7 +263,6 @@ export class SectionPainter {
   private composed: { key: string; layer: SectionLayer | null } | null = null;
   // Lo copiado de las unidades para la caja de ahora, sin los arreglos de los bordes (se lleva al mover la caja)
   private raw: Raw | null = null;
-  private spare: Raw | null = null;
   private last: SectionLayer | null = null;      // la última capa compuesta (la base de la siguiente)
   // El cielo de cueva de las columnas junto a cada borde de la caja, por posición de la caja (se adelanta en la cola)
   private edgeSkies = new Map<string, Uint8Array>();
@@ -406,45 +437,41 @@ export class SectionPainter {
     const { ry, h } = rows;
     // (el mismo recuadro que sectionLayer con esta caja)
     const rx = Math.max(0, Math.floor(ox + c.x0) - 1), rx1 = Math.min(b.width - 1, Math.ceil(ox + c.x1 + 1) + 1), w = rx1 - rx + 1;
-    // Dos búferes que se turnan: se escribe en uno leyendo lo de antes del otro (la capa que se devolvió hace dos
-    // composiciones deja de valer)
-    const prev = this.raw?.h === h && this.raw.ry === ry ? this.raw : null;
-    let raw = this.spare;
-    if (!raw || raw.w !== w || raw.h !== h) {
-      raw = { rx, w, h, ry, mask: new Uint8Array(w * h), rgba: new Uint8ClampedArray(w * h * 4), depth: new Float32Array(w * h),
-        face: new Int8Array(w * h), pick: new Float64Array(w * h), sky: b.sky ? new Uint8Array(w * h) : null, units: new Map(), edges: [0, -1] };
-    }
-    raw.rx = rx; raw.ry = ry; raw.units = new Map(); raw.edges = [ox + c.x0, ox + c.x1];
+    // Un anillo: lo que ya está de la composición anterior no se mueve (la columna gx está siempre en gx mod RW). La capa
+    // que se devolvió antes deja de valer
+    let RW = 256;
+    while (RW < w) RW *= 2;
+    const old = this.raw;
+    const prev = old && old.h === h && old.ry === ry && old.RW === RW ? old : null;
+    const raw: Raw = prev ?? { RW, h, ry, rx, w, mask: new Uint8Array(RW * h), rgba: new Uint8ClampedArray(RW * h * 4), depth: new Float32Array(RW * h).fill(Infinity),
+      face: new Int8Array(RW * h).fill(-1), pick: new Float64Array(RW * h).fill(NaN), sky: b.sky ? new Uint8Array(RW * h) : null, wy: new Float32Array(RW * h), back: new Float32Array(RW * h), units: new Map(), edges: [0, -1] };
+    const prevRx = prev ? prev.rx : 0, prevW = prev ? prev.w : 0, prevUnits = prev ? prev.units : new Map<number, SectionLayer | null>(), prevEdges = prev ? prev.edges : [0, -1];
+    raw.rx = rx; raw.w = w; raw.units = new Map(); raw.edges = [ox + c.x0, ox + c.x1];
     // Lo de antes vale salvo cerca de sus bordes (donde lleva los arreglos de los bordes): eso, de las unidades
     const m = SKY_REACH + 1, nearPrevEdge = (gx0: number, gx1: number) =>
-      !!prev && (gx0 <= prev.edges[0] + m && gx1 >= prev.edges[0] - 1 || gx0 <= prev.edges[1] + 1 && gx1 >= prev.edges[1] - m);
-    // Las columnas: de lo de antes (en tramos seguidos: una copia por fila y tramo), de una unidad, o vacías
-    let count = 0, run0 = -1, run1 = -1, src: CopySource | null = null;
+      !!prev && (gx0 <= prevEdges[0]! + m && gx1 >= prevEdges[0]! - 1 || gx0 <= prevEdges[1]! + 1 && gx1 >= prevEdges[1]! - m);
+    // Las columnas: las que ya están se quedan; las demás, de una unidad o vacías
+    let count = 0;
     const dirty: Array<[number, number]> = [];
-    const flush = () => {
-      if (run0 >= 0) { if (src) copyCols(src, raw!, run0, run1); else clearCols(raw!, run0, run1); if (src !== prev) dirty.push([run0, run1]); }
-      run0 = -1;
+    const put = (L: SectionLayer | null, gx0: number, gx1: number) => {
+      if (L) copyCols(L, raw, gx0, gx1); else clearCols(raw, gx0, gx1);
+      const d = dirty[dirty.length - 1];
+      if (d && d[1] === gx0 - 1) d[1] = gx1; else dirty.push([gx0, gx1]);
     };
-    const take = (s: CopySource | null, gx0: number, gx1: number) => {
-      if (run0 >= 0 && s === src && s !== null && s === prev && gx0 === run1 + 1) { run1 = gx1; return; }
-      if (run0 >= 0 && s === null && src === null && gx0 === run1 + 1) { run1 = gx1; return; }
-      flush(); src = s; run0 = gx0; run1 = gx1;
-    };
-    if (ox + c.x0 > rx) take(null, rx, ox + c.x0 - 1);
+    if (ox + c.x0 > rx) put(null, rx, ox + c.x0 - 1);
     for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
       const gx0 = Math.max(rx, ox + i * UNIT), gx1 = Math.min(rx1, ox + i * UNIT + UNIT - 1);
       if (gx0 > gx1) continue;
-      if (!this.fresh(i)) { take(null, gx0, gx1); continue; }
+      if (!this.fresh(i)) { put(null, gx0, gx1); continue; }
       const L = this.strips.get(i)!.layer;
       raw.units.set(i, L);
       count += L ? unitCount(L, ox + i * UNIT) : 0;
-      if (prev && L && prev.units.get(i) === L && gx0 >= prev.rx && gx1 < prev.rx + prev.w && !nearPrevEdge(gx0, gx1)) take(prev, gx0, gx1);
-      else take(L, gx0, gx1);
+      if (prev && prevUnits.get(i) === L && gx0 >= prevRx && gx1 < prevRx + prevW && !nearPrevEdge(gx0, gx1)) continue;
+      put(L, gx0, gx1);
     }
-    if (ox + c.x1 < rx1) take(null, ox + c.x1 + 1, rx1);
-    flush();
-    this.spare = this.raw; this.raw = raw;
-    const { mask, rgba, depth, face, pick, sky } = raw;
+    if (ox + c.x1 < rx1) put(null, ox + c.x1 + 1, rx1);
+    this.raw = raw;
+    const { mask, rgba, depth, face, pick, sky, wy, back } = raw;
     const base = prev ? this.last : null;
     // (y lo que cambian los arreglos de los bordes de ahora)
     dirty.push([ox + c.x0 - 1, ox + c.x0 + m], [ox + c.x1 - m, ox + c.x1 + 1]);
@@ -456,9 +483,9 @@ export class SectionPainter {
       for (const side of [0, 1] as const) {
         const es = this.edgeSky(c, side, ry, h);
         for (let k = 0; k < m; k++) {
-          const li = ox + (side ? c.x1 - k : c.x0 + k) - rx;
-          if (li < 0 || li >= w) continue;
-          for (let j = 0; j < h; j++) { const v = es[j * m + k]!; if (v !== 255) sky[j * w + li] = v; }
+          const gx = ox + (side ? c.x1 - k : c.x0 + k);
+          if (gx < rx || gx > rx1) continue;
+          for (let j = 0; j < h; j++) { const v = es[j * m + k]!; if (v !== 255) sky[j * RW + (gx & (RW - 1))] = v; }
         }
       }
     }
@@ -466,16 +493,19 @@ export class SectionPainter {
     // y el sustituido junto a uno horneado mucho más cerca lleva el contorno de la costura
     const gap = b.options.innerGap ?? innerGapFor(b.options), both = b.options.outline === 'both';
     const fixed = b.options.outlineColor ? rgbOf(b.options.outlineColor) : null;
+    const u = unprojector(b), mt = materialsOf(b.source.palette);
     for (const [inX, outX] of [[ox + c.x0, ox + c.x0 - 1], [ox + c.x1, ox + c.x1 + 1]] as const) {
-      const li = inX - rx, lo = outX - rx;
-      if (lo < 0 || lo >= w) continue;
+      if (outX < rx || outX > rx1) continue;
       for (let j = 0; j < h; j++) {
-        const q = j * w + li, qo = j * w + lo, gi = (ry + j) * b.width + outX;
+        const q = j * RW + (inX & (RW - 1)), qo = j * RW + (outX & (RW - 1)), gi = (ry + j) * b.width + outX;
         if (mask[q] !== 1) continue;
         if (!mask[qo] && !Number.isNaN(b.pick[gi]!)) {
           mask[qo] = 2;
           rgba.set(b.rgba.subarray(gi * 4, gi * 4 + 4), qo * 4); depth[qo] = b.depth[gi]!; face[qo] = b.face[gi]!; pick[qo] = b.pick[gi]!;
           if (sky && b.sky) sky[qo] = b.sky[gi]!;
+          wy[qo] = face[qo]! >= 0 && depth[qo] !== Infinity ? worldYAt(u, rowP(u, ry + j), depth[qo]!) : 0;
+          const [vx, vy, vz] = unkey(pick[qo]!);
+          back[qo] = mt ? mt.backlit[b.source.get(vx, vy, vz)]! : 0;
         }
         if (both && depth[q] !== Infinity && b.depth[gi]! < depth[q]! - gap) {
           let col: readonly [number, number, number];
@@ -485,7 +515,7 @@ export class SectionPainter {
         }
       }
     }
-    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count, base, dirty };
+    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, base, dirty, stride: RW, ring: RW };
     this.last = layer;
     return layer;
   }

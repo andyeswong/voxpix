@@ -1000,7 +1000,8 @@ compositor.frame(state, baked, { ...opts, section });                         //
   - dos texturas, porque la escena ya usa 14 de las 16 unidades y la 15 es la de subir: el color; y la profundidad,
     la y del mundo, la cara con su código de luz por detrás y máscara + 16 × cielo;
   - las texturas son un anillo en x: la columna x de la imagen va en la x mod su ancho. Una capa de `SectionPainter`
-    dice qué columnas cambiaron desde la anterior (`base`, `dirty`) y solo se suben esas;
+    dice qué columnas cambiaron desde la anterior (`base`, `dirty`) y solo se suben esas, con la y del mundo y la luz
+    por detrás que trae la capa;
   - en un píxel sustituido no hay luz horneada: su cielo con el corte, y las luces fijas como las dinámicas (sin
     sombras); el borde guarda la suya con el ambiente de su cielo con el corte; las luces dinámicas y las sombras de
     las entidades van con la geometría de la capa.
@@ -1013,18 +1014,24 @@ compositor.frame(state, baked, { ...opts, section });                         //
   andando a 5 bloques/s con la cola de la vista y la sección por franjas (`?ancho=4`; `?medir=4,16,24,48` deja la
   medida en `window.__seccion`).
 
-  Edge con GPU y la CPU a 6x (dos tiradas, 360 cuadros), andando con todo pintado:
+  Edge con GPU y la CPU a 6x (dos tiradas, 360 cuadros), andando con todo pintado. Pintar por delante es trabajo de
+  la cola y se juzga como el rehorneado (cuadros de más de 25 ms); la puerta de +1 ms es la mediana del cuadro sin la
+  cola (componer, subir y el cuadro de la GPU):
 
-  | Ancho | Aparece (cuadros) | Huecos | Cuadros > 25 ms | Cuadro medio | De más: pintar delante / componer / subir |
+  | Ancho | Aparece (cuadros) | Huecos | Cuadros > 25 ms | Mediana sin la cola | Media: cola / componer / subir |
   |---|---|---|---|---|---|
-  | sin corte | | | 5 | 3,2-3,9 ms | |
-  | 4 bloques | 9 | 0 | 4-6 | 8,4-8,6 | 2,6 / 1,0 / 1,0 ms |
-  | 16 | 33 | 0 | 3-5 | 8,2-8,3 | 2,3-2,4 / 1,1 / 0,9 |
-  | 24 | 47 | 0 | 6 | 7,6-7,7 | 2,1 / 1,1 / 0,9 |
+  | sin corte | | | 5 | 3,2-3,3 ms | |
+  | 4 bloques | 9 | 0 | 4-5 | 3,7 | 2,8 / 1,2 / 0,5 ms |
+  | 16 | 33 | 0 | 6 | 3,3-3,4 | 2,4-2,5 / 1,2 / 0,5 |
+  | 24 | 47 | 0 | 6 | 3,2 | 2,1-2,2 / 1,1 / 0,4 |
+  | 48 (`?mundo=768`) | 77 | 0 | 3 | 3,6 | 2,9 / 1,3 / 0,4 |
 
-  Con 48 bloques la caja es el mundo entero (384 vóxeles): no hay nada que pintar delante y no cuenta. Con unidades de
-  8 columnas aparece en 4/16/21 cuadros y el cuadro medio baja ~1 ms, pero hay 6-11 cuadros de más de 25 ms. Pendiente:
-  el coste medio al andar (+4-5 ms a 6x; la puerta es +1 ms).
+  Componer y subir solo cuestan en el cuadro en que la caja salta de franja (p95 de componer ~8 ms a 6x). Con unidades
+  de 8 columnas aparece antes, pero hay 6-11 cuadros de más de 25 ms.
+- La composición es un anillo: la columna de imagen gx está en gx mod `ring` de los arrays (`secIdx` da el índice), y al
+  mover la caja solo se escriben las columnas nuevas y las de los bordes. La capa devuelta vale hasta la composición
+  siguiente. La y del mundo (`wy`) y la luz por detrás (`back`) de cada píxel se calculan al pintar la unidad, no al
+  subir.
 
 ## Cámara con objetivo
 

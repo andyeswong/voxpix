@@ -8,7 +8,7 @@ import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
-import { sectionLayer, type SectionCut, type SectionLayer } from './section';
+import { sectionLayer, secIdx, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -71,7 +71,7 @@ function secIndex(sec: SectionLayer | null, sx: number, sy: number): number {
   if (!sec) return -1;
   const i = sx - sec.x, j = sy - sec.y;
   if (i < 0 || j < 0 || i >= sec.w || j >= sec.h) return -1;
-  const q = j * sec.w + i;
+  const q = secIdx(sec, sx, j);
   return sec.mask[q] ? q : -1;
 }
 
@@ -259,7 +259,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   if (sec) {
     const bg = o.background === 'transparent' ? null : o.background ?? BACKGROUND;
     for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
-      const q = j * sec.w + i;
+      const q = secIdx(sec, sec.x + i, j);
       if (!sec.mask[q]) continue;
       const x = sec.x + i - vx, y = sec.y + j - vy;
       if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
@@ -275,7 +275,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     // En la sección no hay luz horneada: su ambiente (con su cielo) y las luces fijas como las dinámicas (sin sombras)
     const sk = o.cave && b.sky && sec.sky ? skyAmbient(ambient, o.cave) : null;
     for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
-      const q = j * sec.w + i;
+      const q = secIdx(sec, sec.x + i, j);
       if (!sec.mask[q]) continue;
       const x = sec.x + i - vx, y = sec.y + j - vy;
       if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
@@ -620,7 +620,6 @@ function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions):
 
 // La luz por detrás (MaterialProps.backlit) del material que se ve en el píxel idx de la imagen horneada (0 si no
 // tiene: un sólido, o una paleta sin materiales especiales)
-export { backlitKey as backlitKeyOf };
 function backlitKey(b: Baked, mt: MaterialTable | null, k: number): number {
   if (!mt || Number.isNaN(k)) return 0;
   const [x, y, z] = unkey(k);

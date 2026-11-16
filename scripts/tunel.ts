@@ -7,8 +7,9 @@ import type { WorldLight } from '../src/world/build';
 import { BlockSet, BlockGrid } from '../src/world/blocks';
 import { generateTerrain } from '../src/world/terrain';
 
-export function tunnelWorld(blocks: boolean, torches: boolean): { s: StaticVoxels; lights: WorldLight[]; W: number; ZT: number } {
-  const W = 384, ZT = 96, B = 8;
+// width: el ancho en vóxeles (384; el fondo sigue siendo 384)
+export function tunnelWorld(blocks: boolean, torches: boolean, width = 384): { s: StaticVoxels; lights: WorldLight[]; W: number; D: number; ZT: number } {
+  const W = width, D = 384, ZT = 96, B = 8;
   const pal = { ramps: [
     { name: 'piedra', colors: ['#202428', '#3a4048', '#565e68', '#76808c', '#9aa4b0'] },
     { name: 'tierra', colors: ['#2a1a10', '#4a3020', '#6a4a30', '#8a6644', '#aa8460'] },
@@ -17,7 +18,7 @@ export function tunnelWorld(blocks: boolean, torches: boolean): { s: StaticVoxel
   ] } as Palette;
   // El terreno de bench-picar (a media altura, +-3 bloques) con un túnel este-oeste de 1,5 bloques de alto (y 184..199,
   // z 8..19), bajo todo el relieve: el corte (zTop 20, en su techo) siempre quita algo
-  const s = new StaticVoxels(pal, W, W, 0, ZT - 1);
+  const s = new StaticVoxels(pal, W, D, 0, ZT - 1);
   const half = Math.floor(ZT / B / 2);
   const hb = (bx: number, by: number) => half + Math.round(3 * Math.sin(bx / 5.3) * Math.cos(by / 4.1));
   // MUNDO=bloques: el mundo de bloques de bench-caminos (generateTerrain, árboles con hojas), con el mismo túnel cavado
@@ -40,7 +41,7 @@ export function tunnelWorld(blocks: boolean, torches: boolean): { s: StaticVoxel
       scatter: [{ on: 'hierba', density: 0.02, spacing: 4, structure: [[0, 0, 1, 'tronco'], [0, 0, 2, 'tronco'], [0, 0, 3, 'tronco'], ...leaf, [0, 0, 5, 'hojas']] }],
     }, new BlockGrid(new WorldState(s, [], null), set));
     for (let y = 184; y < 200; y++) for (let x = 0; x < W; x++) for (let z = 8; z < 20; z++) s.set(x, y, z, 0);
-  } else for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+  } else for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) {
     const top = hb(x >> 3, y >> 3) * B;
     for (let z = 0; z < top; z++) {
       if (y >= 184 && y < 200 && z >= 8 && z < 20) continue;
@@ -50,5 +51,5 @@ export function tunnelWorld(blocks: boolean, torches: boolean): { s: StaticVoxel
   const lights: WorldLight[] = torches
     ? [{ id: 'a', kind: 'torch', x: 180.5, y: 191.5, z: 12, baked: true }, { id: 'b', kind: 'torch', x: 230.5, y: 191.5, z: 12, baked: true }]
     : [];
-  return { s, lights, W, ZT };
+  return { s, lights, W, D, ZT };
 }

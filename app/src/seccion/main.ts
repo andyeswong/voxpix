@@ -2,7 +2,7 @@
 // scripts/tunel.ts (de bloques, con dos antorchas fijas dentro del túnel), MAIA andando por el túnel hacia el este a 5
 // bloques/s, la vista siguiéndola y la sección pintada por franjas con SectionPainter en la cola de la vista
 // (FrameBudget(3, cercano 8 / 64), como bench-corte).
-//   ?ancho=4: el ancho de la caja en bloques (8 vóxeles)   ?ruta=cpu: compone la CPU
+//   ?ancho=4: el ancho de la caja en bloques (8 vóxeles)   ?ruta=cpu: compone la CPU   ?mundo=768: el ancho del mundo
 //   ?medir=4,48: mide, con cuadros seguidos sin esperar al reloj, andar sin corte y con el corte de cada ancho, y lo deja
 //   en window.__seccion. Por cuadro: el paso del mundo, la cola, la capa y el cuadro de la GPU esperado (read). Con el
 //   freno de CDP, son los ms a esa velocidad
@@ -26,9 +26,9 @@ canvas.width = VW; canvas.height = VH;
 const sc = Math.max(1, Math.floor(Math.min(innerWidth / VW, innerHeight / VH)));
 canvas.style.width = `${VW * sc}px`; canvas.style.height = `${VH * sc}px`;
 
-const { s, lights, W, ZT } = tunnelWorld(true, true);
+const { s, lights, W, D, ZT } = tunnelWorld(true, true, Number(q.get('mundo') ?? 384));
 const state = new WorldState(s, lights, null);
-const baked = bakeWorld({ model: s, lights, width: W, depth: W }, { topZ: ZT, incline: 0.5, sky: true, outline: 'both' });
+const baked = bakeWorld({ model: s, lights, width: W, depth: D }, { topZ: ZT, incline: 0.5, sky: true, outline: 'both' });
 const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
 const TY = 191, TZ = 8, X0 = 64, X1 = W - 64;
 const id = state.entities.add({ model: walk[0]!, x: X0, y: TY, z: TZ, facing: 90 });
@@ -88,7 +88,9 @@ function measure(widths: number[]): unknown {
     const st = (a: number[]) => ({ p50: +pct(a, 0.5).toFixed(2), p95: +pct(a, 0.95).toFixed(2), max: +Math.max(...a).toFixed(1), mean: +(a.reduce((x, y) => x + y, 0) / a.length).toFixed(2) });
     // Andando con todo pintado (después de que aparece; sin corte, todos)
     const only = (a: number[]) => a.filter((_, k) => steady[k]);
-    const walking = { frames: only(frame).length, over25: only(frame).filter((v) => v > 25).length, frame: st(only(frame)), queue: st(only(queue)), layer: st(only(layerMs)), read: st(only(read)), upload: st(only(upload)) };
+    // Lo que no es la cola (componer, subir, el cuadro): la puerta de +1 ms es su mediana
+    const rest = frame.map((v, k) => v - queue[k]!);
+    const walking = { rest: st(only(rest)), frames: only(frame).length, over25: only(frame).filter((v) => v > 25).length, frame: st(only(frame)), queue: st(only(queue)), layer: st(only(layerMs)), read: st(only(read)), upload: st(only(upload)) };
     return { width, frames: N, appear, holes, over25: frame.filter((v) => v > 25).length, frame: st(frame), queue: st(queue), layer: st(layerMs), read: st(read), upload: st(upload), painted: w.painter?.painted ?? 0, walking };
   };
   const base = run(0);

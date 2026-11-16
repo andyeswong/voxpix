@@ -10,7 +10,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView, type Quarter } from '../src/world/view';
 import { bakeWorld } from '../src/world/bake';
 import { frame2D, sectionFor, type Frame2DOptions } from '../src/world/frame2d';
-import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT, type SectionLayer } from '../src/world/section';
+import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT, secIdx, type SectionLayer } from '../src/world/section';
 import type { WorldLight } from '../src/world/build';
 
 const pal = { ramps: [
@@ -110,7 +110,7 @@ describe('corte al componer', () => {
       if (!mirror || mirror.y !== L.y || mirror.h !== L.h) mirror = { y: L.y, h: L.h, mask: new Uint8Array(BW * L.h), rgba: new Uint8Array(BW * L.h * 4), depth: new Float32Array(BW * L.h), sky: new Uint8Array(BW * L.h) };
       const cols: ReadonlyArray<readonly [number, number]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
       for (const [g0, g1] of cols) for (let g = Math.max(L.x, g0); g <= Math.min(L.x + L.w - 1, g1); g++) for (let j = 0; j < L.h; j++) {
-        const q = j * L.w + g - L.x, m = j * BW + g;
+        const q = secIdx(L, g, j), m = j * BW + g;
         mirror.mask[m] = L.mask[q]!; mirror.depth[m] = L.depth[q]!; mirror.sky[m] = L.sky![q]!;
         for (let c = 0; c < 4; c++) mirror.rgba[m * 4 + c] = L.rgba[q * 4 + c]!;
       }
@@ -127,13 +127,14 @@ describe('corte al componer', () => {
       sync(L);
       if (k > 0) expect(L.base).not.toBeNull();                            // al andar se pone al día por columnas
       expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
-      expect(Array.from(L.mask)).toEqual(Array.from(R.mask));
       for (let q = 0; q < R.w * R.h; q++) {
-        const m = Math.floor(q / R.w) * BW + R.x + (q % R.w);
+        const gx = R.x + (q % R.w), j = Math.floor(q / R.w), l = secIdx(L, gx, j), m = j * BW + gx;
+        if (L.mask[l] !== R.mask[q]) expect(`máscara ${q} k ${k}`).toBe('igual');
         if (mirror!.mask[m] !== R.mask[q]) expect(`copia: máscara ${q}`).toBe('igual');
         if (!R.mask[q]) continue;
-        for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== R.rgba[q * 4 + c] || mirror!.rgba[m * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
-        if (L.depth[q] !== R.depth[q] || L.sky![q] !== R.sky![q]) expect(`profundidad o cielo ${q} col ${q % R.w} k ${k} ${L.depth[q]} ${R.depth[q]} ${L.sky![q]} ${R.sky![q]} w ${R.w}`).toBe('igual');
+        for (let c = 0; c < 4; c++) if (L.rgba[l * 4 + c] !== R.rgba[q * 4 + c] || mirror!.rgba[m * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
+        if (L.depth[l] !== R.depth[q] || L.sky![l] !== R.sky![q]) expect(`profundidad o cielo ${q} k ${k}`).toBe('igual');
+        if (L.wy[l] !== R.wy[q] || L.back[l] !== R.back[q] || L.face[l] !== R.face[q]) expect(`geometría ${q} k ${k} ${L.wy[l]} ${R.wy[q]} ${L.back[l]} ${R.back[q]}`).toBe('igual');
         if (mirror!.depth[m] !== R.depth[q] || mirror!.sky[m] !== R.sky![q]) expect(`copia: profundidad o cielo ${q}`).toBe('igual');
       }
     }

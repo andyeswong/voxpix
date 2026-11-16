@@ -25,7 +25,7 @@ import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
-import { sectionAround, SectionPainter } from '../../../src/world/section';
+import { sectionAround, SectionPainter, secIdx } from '../../../src/world/section';
 import maiaFile from '../../../models/maia/maia.json';
 import { walkFrames } from '../../../src/anim/walk';
 
@@ -623,7 +623,7 @@ async function run(): Promise<void> {
       const L = sectionFor(b, o);
       let n1 = 0, n2 = 0;
       if (L) for (let j = 0; j < L.h; j++) for (let i = 0; i < L.w; i++) {
-        const x = L.x + i - vx, y = L.y + j - vy, m = L.mask[j * L.w + i];
+        const x = L.x + i - vx, y = L.y + j - vy, m = L.mask[secIdx(L, L.x + i, j)];
         if (x < 0 || y < 0 || x >= VW || y >= VH || !m) continue;
         if (m === 1) n1++; else n2++;
         const q = (y * VW + x) * 4;
