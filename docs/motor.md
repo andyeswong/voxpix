@@ -856,6 +856,32 @@ water.follow(state.watchChanges());                                 // picar o p
   agua en reposo termina igual que la que nace despierta y se duerme (`test/agua-reposo.test.ts`). Cambia la huella
   (las despiertas están en ella); por defecto, como siempre.
 
+## Cámara con objetivo
+
+La ventana de la vista (`vx`, `vy` de `Frame2DOptions`) sigue a un punto, normalmente un cuerpo, con zona muerta y
+suavizado (`src/view/follow.ts`). Es de la vista: no toca el mundo ni la huella, y avanza con el tiempo real del cuadro.
+
+```ts
+import { FollowCamera, targetPixel } from '@voxpix/view/follow';
+const cam = new FollowCamera({ viewW: 384, viewH: 216, deadZone: [24, 16], speed: 6, bounds: baked });
+cam.snap(...targetPixel(view.camera, baked, body.x, body.y, body.z));     // al empezar, tras un salto o al girar
+// cada cuadro
+cam.follow(...targetPixel(view.camera, baked, body.x, body.y, body.z), dt);
+compositor.frame(state, baked, { ...opts, vx: cam.vx, vy: cam.vy });
+```
+
+- `deadZone`: ancho y alto en píxeles de un rectángulo en el centro de la ventana. Mientras el objetivo está dentro, la
+  cámara no se mueve; al salir, va a por él hasta dejarlo en su borde. Por defecto 0 x 0: siempre centrado.
+- `speed`: por segundo. Cada cuadro recorre la parte `1 - e^(-speed * dt)` de lo que le falta, así que sigue igual a
+  30 que a 144 cuadros por segundo. Con 6, el 90 % en unos 0,38 s. `Infinity`: de golpe.
+- `bounds` (opcional, un `Baked` vale): la ventana no sale de la imagen; si la imagen es más pequeña, se centra.
+- Los parámetros son campos que se pueden cambiar en marcha (`cam.deadZone`, `cam.speed`, `cam.viewW`...).
+- Los 4 giros: `targetPixel(view.camera, baked, x, y, z)` pasa el punto del mundo a la vista girada y lo proyecta con
+  la cámara de su horneado. Da coordenadas continuas, y el píxel es su `floor`. Sin girar vale `null` como cámara. Al
+  cambiar de giro hay otra imagen: `snap` con el objetivo en ella.
+- Pruebas: `test/camara-objetivo.test.ts` (zona muerta, suavizado igual a 30 y a 144 cuadros por segundo, límites, y
+  en los 4 giros el píxel del objetivo cae en un pilar rojo).
+
 ## Girar la cámara
 
 La cámara oblicua gira en cuartos de vuelta con `WorldView` (`src/world/view.ts`). La simulación no se entera: la
