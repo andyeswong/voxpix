@@ -160,6 +160,17 @@ export function renderBasis(o: RenderOptions): { cam: Camera; Lm: [number, numbe
   return { cam, Lm: norm(toModel(Lw)), viewM: toModel(fwd) };
 }
 
+// Las caras que miran a la cámara con estas opciones (las únicas que pinta render): como direcciones x, y, z, y una clave
+// que las identifica. Un vóxel que solo tiene aire por otras caras no pinta nada (StaticVoxels.forEachExposed con
+// ellas se lo salta)
+export function frontFaces(o: RenderOptions): { key: number; dirs: Array<readonly [number, number, number]> } {
+  const { viewM } = renderBasis(o);
+  let key = 0;
+  const dirs: Array<readonly [number, number, number]> = [];
+  for (let f = 0; f < 6; f++) if (dot(DIRS[f]!, viewM) < -1e-9) { key |= 1 << f; dirs.push(DIRS[f]! as unknown as readonly [number, number, number]); }
+  return { key, dirs };
+}
+
 export function render(model: VoxelSource, o: RenderOptions): Rendered {
   const { cam, Lm, viewM } = renderBasis(o);
   const smooth = o.smooth ?? 0.6;

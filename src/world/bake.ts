@@ -5,9 +5,9 @@
 // Si cambian vóxeles a mitad de partida, rebake() rehace SOLO lo afectado: el recuadro de pantalla de los trozos
 // cambiados, la rejilla de sombras de esas columnas y los pesos de las luces que los alcanzan. El resultado es el
 // mismo, byte a byte, que hornear el mundo entero de nuevo (hay prueba).
-import { render, camera, unkey, decode, DIR_VECTORS, facingOf, materialsOf, type RenderOptions, type Camera, type VoxelSource } from '../core';
+import { render, camera, unkey, decode, DIR_VECTORS, facingOf, materialsOf, frontFaces, type RenderOptions, type Camera, type VoxelSource } from '../core';
 import { resolveLight } from './lightutil';
-import { CHUNK, type StaticVoxels } from './state';
+import { CHUNK, type StaticVoxels, type FaceSet } from './state';
 import type { Box3 } from './changes';
 import type { WorldLight } from './build';
 import type { LightId } from './state';
@@ -743,12 +743,22 @@ function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: nu
   const parts = (b.options.yaw ?? 0) !== 0 ? [region] : bands;
   for (const part of parts) {
     const most = warmBatches(b.source, part);
-    for (let n = 0; !b.source.warmExposed(part, WARM_ROWS); n++) {
+    for (let n = 0; !b.source.warmExposed(part, WARM_ROWS, facesOf(b)); n++) {
       if (n > most) throw new Error(`lo expuesto no acaba: ${n} tandas en una región que tiene como mucho ${most}`);
       if (performance.now() >= deadline) return false;
     }
   }
   return true;
+}
+
+// Las caras que pinta el render con las opciones del horneado: el rehorneado solo recorre los vóxeles con aire delante
+// de alguna de ellas (los otros no pintan nada: la imagen es la misma, y las paredes de canto de un corte hondo no se
+// recorren)
+const FACES = new WeakMap<Baked, FaceSet>();
+function facesOf(b: Baked): FaceSet {
+  let f = FACES.get(b);
+  if (!f) { f = frontFaces(b.options); FACES.set(b, f); }
+  return f;
 }
 
 // remember: false para recorrer una sola vez (el horneado inicial): sin las máscaras de lo expuesto (ver forEachExposed)
@@ -757,7 +767,7 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
   const { halo, R0, R1, C0, C1, region, bands } = stripRegion(b, r, c0, c1);
   const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
   const banded = (fn: (x: number, y: number, z: number, v: number) => void) => {
-    for (const band of bands) s.forEachExposed(fn, band, remember);
+    for (const band of bands) s.forEachExposed(fn, band, remember, facesOf(b));
   };
   const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region, remember) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });

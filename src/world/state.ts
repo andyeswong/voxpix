@@ -28,6 +28,9 @@ export const CHUNK = 16;
 // 2026-11-02); los enteros pequeños no. Ninguna altura de vóxel llega a él
 export const NO_FOOT = -1_000_000_000;
 
+// Unas caras (direcciones) con su clave: forEachExposed con ellas da solo los vóxeles con aire delante de alguna
+export interface FaceSet { key: number; dirs: ReadonlyArray<readonly [number, number, number]> }
+
 // Una losa preparada para StaticVoxels.writeChunkPrepared (como una losa de 1 byte por dentro)
 export interface PreparedSlab { d: Uint8Array; pal: Uint16Array; palN: number; count: number }
 
@@ -78,6 +81,12 @@ export class StaticVoxels implements VoxelSource {
   private expo: Array<Uint16Array | null> = [];
   private expoOk: Array<Uint8Array | null> = [];  // qué filas de la máscara están hechas (se hacen al pedirlas)
   private expoAt: Float64Array = new Float64Array(0);
+  // Lo mismo, pero contando solo unas caras (las que miran a la cámara: forEachExposed con faces): un vóxel con aire solo
+  // por otras caras no pinta nada. Un juego de máscaras para una lista de caras (expoKey); con otra, se rehacen
+  private expoF: Array<Uint16Array | null> = [];
+  private expoFOk: Array<Uint8Array | null> = [];
+  private expoFAt: Float64Array = new Float64Array(0);
+  private expoKey = -1;
   private epoch = 0;
   private alloc: Uint8Array;                              // el trozo tuvo algún vóxel alguna vez (exportChunks)
   // La CAJA de lo cambiado en cada trozo, por tramos de la historia (para rehornear solo eso, changedBox): hasta
@@ -127,6 +136,9 @@ export class StaticVoxels implements VoxelSource {
     this.expo = new Array(this.cols * this.rows * this.nz).fill(null);
     this.expoOk = new Array(this.cols * this.rows * this.nz).fill(null);
     this.expoAt = new Float64Array(this.cols * this.rows * this.nz).fill(-1);
+    this.expoF = new Array(this.cols * this.rows * this.nz).fill(null);
+    this.expoFOk = new Array(this.cols * this.rows * this.nz).fill(null);
+    this.expoFAt = new Float64Array(this.cols * this.rows * this.nz).fill(-1);
   }
 
   // Vóxeles que caben en la losa s de un trozo (la última puede ser más baja)
@@ -577,7 +589,7 @@ export class StaticVoxels implements VoxelSource {
   // superconjunto: el render da los mismos píxeles). Para recorrer UNA vez todo el mundo (el horneado inicial), donde
   // hacer las máscaras de todas las losas cuesta más que lo que ahorran (en un navegador frenado, el render del
   // horneado subía un 70 %)
-  forEachExposed(fn: (x: number, y: number, z: number, v: number) => void, region?: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }, remember = true): void {
+  forEachExposed(fn: (x: number, y: number, z: number, v: number) => void, region?: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }, remember = true, faces?: FaceSet): void {
     const r = region ?? { x0: 0, y0: 0, x1: this.width - 1, y1: this.depth - 1 };
     const rz0 = Math.max(this.zMin, r.z0 ?? this.zMin), rz1 = Math.min(this.zMax, r.z1 ?? this.zMax);
     if (rz0 > rz1) return;
@@ -624,10 +636,10 @@ export class StaticVoxels implements VoxelSource {
             continue;
           }
           // Solo los vóxeles con alguna cara al aire (la máscara de la losa), en el mismo orden: z, y, x
-          const { m: mask, ok } = this.exposure(cx, cy, s), range = ((1 << (lx1 + 1)) - 1) & ~((1 << lx0) - 1);
+          const { m: mask, ok } = this.exposure(cx, cy, s, faces), range = ((1 << (lx1 + 1)) - 1) & ~((1 << lx0) - 1);
           for (let lz = lzA; lz <= lzB; lz++) for (let ly = ly0; ly <= ly1; ly++) {
             const r = (lz << 4) | ly;
-            if (!ok[r]) { mask[r] = this.exposureRow(si, s, cx, cy, lz, ly); ok[r] = 1; }
+            if (!ok[r]) { mask[r] = this.exposureRow(si, s, cx, cy, lz, ly, faces); ok[r] = 1; }
             let bits = mask[r]! & range;
             const row = lz * CC + ly * CHUNK;
             while (bits) {
@@ -658,7 +670,7 @@ export class StaticVoxels implements VoxelSource {
   // La máscara de lo expuesto de la losa s del trozo (cx, cy), al día. Por filas: cuando cambia el trozo o un vecino
   // solo se borra qué filas están hechas, y cada fila se calcula la primera vez que alguien la pide (una franja
   // estrecha pide las suyas, no la losa entera)
-  private exposure(cx: number, cy: number, s: number): { m: Uint16Array; ok: Uint8Array } {
+  private exposure(cx: number, cy: number, s: number, faces?: FaceSet): { m: Uint16Array; ok: Uint8Array } {
     const c = cy * this.cols + cx, si = c * this.nz + s, V = this.versions;
     let at = V[c]!;
     if (cx > 0) at = Math.max(at, V[c - 1]!);
@@ -666,6 +678,13 @@ export class StaticVoxels implements VoxelSource {
     if (cy > 0) at = Math.max(at, V[c - this.cols]!);
     if (cy < this.rows - 1) at = Math.max(at, V[c + this.cols]!);
     at += this.epoch * 4294967296;
+    if (faces) {
+      if (faces.key !== this.expoKey) { this.expoKey = faces.key; this.expoFAt.fill(-1); }
+      let m = this.expoF[si], ok = this.expoFOk[si];
+      if (!m || !ok) { m = this.expoF[si] = new Uint16Array(SLAB * CHUNK); ok = this.expoFOk[si] = new Uint8Array(SLAB * CHUNK); }
+      if (this.expoFAt[si] !== at) { ok.fill(0); this.expoFAt[si] = at; }
+      return { m, ok };
+    }
     let m = this.expo[si], ok = this.expoOk[si];
     if (!m || !ok) { m = this.expo[si] = new Uint16Array(SLAB * CHUNK); ok = this.expoOk[si] = new Uint8Array(SLAB * CHUNK); }
     if (this.expoAt[si] !== at) { ok.fill(0); this.expoAt[si] = at; }
@@ -675,7 +694,7 @@ export class StaticVoxels implements VoxelSource {
   // (la misma región, con su z0..z1): quien recorre por pasos con plazo (el rehorneado por franjas) prepara primero lo
   // que tiene que recalcular, que después del cambio de una zona entera (un corte) es mucho, y el recorrido ya no paga
   // ese pico. Va por filas y no por reloj (aquí no se lee el reloj: es del mundo). Devuelve true si ya está todo
-  warmExposed(region: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }, rows: number): boolean {
+  warmExposed(region: { x0: number; y0: number; x1: number; y1: number; z0?: number; z1?: number }, rows: number, faces?: FaceSet): boolean {
     const r = region, rz0 = Math.max(this.zMin, r.z0 ?? this.zMin), rz1 = Math.min(this.zMax, r.z1 ?? this.zMax);
     if (rz0 > rz1) return true;
     const s0 = (rz0 - this.zMin) >> 4, s1 = (rz1 - this.zMin) >> 4;
@@ -701,11 +720,11 @@ export class StaticVoxels implements VoxelSource {
             if (!open) continue;
           }
           const lzA = Math.max(0, rz0 - z0), lzB = Math.min(hs - 1, rz1 - z0, top - 1 - z0);
-          const { m, ok } = this.exposure(cx, cy, s);
+          const { m, ok } = this.exposure(cx, cy, s, faces);
           for (let lz = lzA; lz <= lzB; lz++) for (let ly = ly0; ly <= ly1; ly++) {
             const q = (lz << 4) | ly;
             if (ok[q]) continue;
-            m[q] = this.exposureRow(si, s, cx, cy, lz, ly); ok[q] = 1;
+            m[q] = this.exposureRow(si, s, cx, cy, lz, ly, faces); ok[q] = 1;
             if (++made >= rows) return false;
           }
         }
@@ -716,14 +735,25 @@ export class StaticVoxels implements VoxelSource {
   // La fila (lz, ly) de la máscara de la losa si: un bit por x con vóxel y alguna cara al aire
   // Cuántas filas de lo expuesto se han hecho (para medir, y para probar que no se rehace lo hecho)
   exposureRows = 0;
-  private exposureRow(si: number, s: number, cx: number, cy: number, lz: number, ly: number): number {
+  private exposureRow(si: number, s: number, cx: number, cy: number, lz: number, ly: number, faces?: FaceSet): number {
     this.exposureRows++;
     const d = this.data[si], p = this.pal[si], u = this.uni[si]!;
     const hs = Math.min(SLAB, this.zh - s * SLAB), z0 = s * SLAB + this.zMin, X = cx * CHUNK, Y = cy * CHUNK, row = (lz << 8) | (ly << 4);
     let bits = 0;
     for (let lx = 0; lx < CHUNK; lx++) {
       const v = d ? (p ? p[d[row + lx]!]! : d[row + lx]!) : u;
-      if (v && !this.buried(d, p, lx, ly, lz, hs, X + lx, Y + ly, z0 + lz)) bits |= 1 << lx;
+      if (!v) continue;
+      if (faces) {
+        // Con aire delante de alguna de esas caras (dentro de la losa, su array; en el borde, get)
+        const x = X + lx, y = Y + ly, z = z0 + lz;
+        for (const [dx, dy, dz] of faces.dirs) {
+          const nx = lx + dx, ny = ly + dy, nz = lz + dz;
+          const w = nx >= 0 && nx < CHUNK && ny >= 0 && ny < CHUNK && nz >= 0 && nz < hs
+            ? (d ? (p ? p[d[(nz << 8) | (ny << 4) | nx]!]! : d[(nz << 8) | (ny << 4) | nx]!) : u)
+            : this.get(x + dx, y + dy, z + dz);
+          if (!w) { bits |= 1 << lx; break; }
+        }
+      } else if (!this.buried(d, p, lx, ly, lz, hs, X + lx, Y + ly, z0 + lz)) bits |= 1 << lx;
     }
     return bits;
   }

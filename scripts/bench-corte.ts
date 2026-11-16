@@ -4,7 +4,7 @@
 // señal de desarrollo; la medida de verdad es en el navegador, con freno.
 // Por evento: la llamada a budget.run más larga, los cuadros hasta que no queda trabajo cercano (aparece) y hasta que la
 // cola se vacía (acaba). Y las llamadas que se pasan de 10 ms, con lo que hizo cada trabajo en ellas.
-// Uso: bun scripts/bench-corte.ts [tiradas 3]. ANT=2: dos antorchas fijas dentro del túnel. DOS=1: dos cajas (la de los pies, 16 x 32); DOS=2: la de los pies de 24 x 64 hacia la cámara. NEAR=ms: el presupuesto
+// Uso: bun scripts/bench-corte.ts [tiradas 3]. ANT=2: dos antorchas fijas dentro del túnel. DOS=1: dos cajas (la de los pies, 16 x 32); DOS=2: la de los pies de 24 x 64 hacia la cámara; DOS=3: la de frente de 32 x 224. NEAR=ms: el presupuesto
 // cercano (como a 6x; 8 por defecto). VER=1: cada evento con sus llamadas, y las estimaciones de la cola al final
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
@@ -115,6 +115,9 @@ const at = (x0: number): ViewCut | ViewCut[] => {
   // DOS=2: la caja de los pies como la de un juego: 24 de ancho centrada en la de siempre y 64 de fondo hacia la cámara
   // (y pequeñas) desde el borde del túnel, hasta los pies
   if (process.env.DOS === '2') return [roof, { x0: x0 + 4, y0: 191 - 63, x1: x0 + 27, y1: 191, zTop: 8 }];
+  // DOS=3: la caja de frente del juego (FERN, 2026-11-16): 32 de ancho y 224 de fondo hacia la cámara desde el túnel,
+  // de los pies (z 8) hacia arriba (unos 72 de alto con el relieve de aquí)
+  if (process.env.DOS === '3') return [roof, { x0, y0: 191 - 223, x1: x0 + 31, y1: 191, zTop: 8 }];
   return process.env.DOS === '1' ? [roof, { x0, y0: 176, x1: x0 + 31, y1: 191, zTop: 8 }] : roof;
 };
 // ANTORCHA=1: en vez de cortes, poner una antorcha junto al jugador (en el túnel, sin corte) y contar los cuadros hasta
@@ -151,6 +154,8 @@ const mx = res.map((r) => r.max), ap = res.map((r) => r.appear), en = res.map((r
 for (const [k, v] of Object.entries(byClass)) { v.sort((a, b) => a - b); console.log(`  llamadas ${k}: n ${v.length}, p50 ${v[v.length >> 1]!.toFixed(1)}, p95 ${v[Math.floor(0.95 * (v.length - 1))]!.toFixed(1)}, máx ${v.at(-1)!.toFixed(1)} ms (a 6x), más de 6,7 (1 ms sin freno): ${v.filter((x) => x > 6.7).length}`); }
 console.log(`${res.length} eventos: budget.run máx por evento (a 6x) p50 ${p(mx, 0.5).toFixed(1)} p95 ${p(mx, 0.95).toFixed(1)} máx ${p(mx, 1).toFixed(1)} ms; ` +
   `aparece p50 ${p(ap, 0.5)} máx ${p(ap, 1)} cuadros; acaba p50 ${p(en, 0.5)} máx ${p(en, 1)}`);
+const PF = (globalThis as { __perfil?: Record<string, number> }).__perfil;
+if (PF) console.log(`perfil (sin freno, todas las tiradas): warmExposed ${PF.warm!.toFixed(0)} ms, forEachExposed ${PF.each!.toFixed(0)} ms en ${PF.eachCalls} llamadas, ${(PF.voxels! / 1e6).toFixed(1)} M vóxeles recorridos`);
 if (process.env.VER) {
   const c = (q as unknown as { costs: Map<string, { ms: number[]; p95: number }> }).costs;
   for (const [k, v] of c) console.log('estimación', k, 'p95', (v.p95 * K).toFixed(1), 'muestras', v.ms.map((x) => (x * K).toFixed(1)).sort((a, b) => +a - +b).join(' '));
