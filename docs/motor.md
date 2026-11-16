@@ -412,6 +412,54 @@ applyMap(map, grid);                                                   // o leer
 - `generateTerrain` sigue igual: trabaja con nombres de bloque y escribe directamente en la rejilla, sin agua ni
   cuevas.
 
+## Mundo por regiones
+
+El mapa por semilla generado por cajas de cualquier tamaño, en cualquier sitio y en cualquier orden
+(`src/world/regiongen.ts`). Regla de oro: lo que sale en una región no depende de qué otras regiones se generaron antes
+ni de en qué orden. Todo sale de la semilla y de la posición, así que un mundo sin bordes se genera a trozos según se
+recorre, y el mismo sitio sale siempre igual.
+
+```ts
+import { generateRegion, applyRegion, regionHash } from '@voxpix/world/regiongen';
+const r = generateRegion(spec, { x0, y0, z0, width: 16, depth: 16, height: 24 });   // celdas (bloques)
+r.cells; r.heights; r.sown;              // lo sembrado cuya celda de arriba está en la región
+r.touching;                              // lo sembrado que escribe alguna celda de la región (aunque nazca fuera)
+applyRegion(r, grid, [gx, gy, gz]);      // la región en (gx, gy, gz) de un BlockGrid, con lo que la toca, recortado
+```
+
+El `spec` es el de `generateMap` (`MapSpec`), con `bottom` opcional. Cambia donde dependía del mapa entero o del orden:
+- Relieve, estratos, agua y orilla: por columna, del ruido global, como en `generateMap`. El agua llena toda columna
+  por debajo del nivel del mar.
+- Vetas: cada celda de su materia empieza una mancha según un hash de la celda. La mancha crece con un azar sembrado
+  por esa celda y no se aleja más de 3 celdas de ella (`VEIN_REACH`). Se calculan contra los estratos, y se aplican en
+  orden de veta.
+- Cuevas: gusanos por macrocelda de 32 x 32 columnas (`CAVE_CELL`). Cada macrocelda tiene los suyos por hash: de media,
+  `caves.count` por cada `width` x `depth` columnas del spec, la densidad del mapa de siempre. Para una región se
+  recorren los de las macroceldas que pueden llegar a ella (longitud y radio de su spec).
+- Lo sembrado: el candidato sale por hash de la columna, como en `generateMap`. Se siembra si su prioridad (otro hash)
+  es la mayor entre los candidatos válidos de su regla con los que choca: a menos de `spacing`, o que se pisan. Las
+  reglas van en orden: una no puede pisar lo sembrado por las anteriores.
+- Una estructura se siembra si cabe en el rango de z del mundo (de `bottom`, o de 0, a `height - 1`), no en la región:
+  en x e y no hay borde.
+- `bottom` (opcional): por debajo, aire (un abismo). Sin `bottom`, el último estrato sigue hacia abajo sin fin. Las
+  cuevas no tocan la capa de abajo (`bottom`, o z = 0).
+- `width` y `depth` del spec ya no limitan nada: solo dan la densidad de las cuevas.
+- `generateMap` sigue igual (su huella fijada no cambia). `generateRegion` del mismo spec no da lo mismo: vetas,
+  cuevas y siembra cambian de dibujo, con la misma densidad.
+
+Pruebas (`test/mundo-regiones.test.ts`):
+- Un mundo de 192 x 192 generado entero y en trozos de 16 x 16 en orden aleatorio da las mismas celdas, alturas y
+  lista sembrada.
+- Lo mismo cortado en z y lejos del origen, también en negativo.
+- La huella fijada de una región de 64 x 64.
+
+Si una pieza deja de ser local (vetas con un azar en serie, siembra sin margen, cuevas sin las macroceldas vecinas),
+la prueba de 192 x 192 falla.
+
+Coste, en Bun sin freno, con vetas, cuevas, árboles y flores: un trozo de 16 x 16 x 24, p50 2,2 ms y p95 3,8 ms. Paga
+sobre todo el margen de la siembra: unas 11 columnas a cada lado para los árboles y las flores. Una región de 96 x 96,
+12,8 ms (`generateMap` del mismo tamaño, 12,2).
+
 ## Caminos por niveles
 
 `PathField` tiene un suelo por celda (el de arriba). Para bichos que entren en túneles, cuevas o pisos,
