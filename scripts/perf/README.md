@@ -67,5 +67,6 @@ Sigue valiendo el aviso de arriba: el freno no frena la GPU, la aceptación es e
 MAIA andando por el túnel de `scripts/tunel.ts` a 5 bloques/s con la sección por franjas (`SectionPainter`) en la cola de
 la vista. `?medir=4,16,24,48&n=360` corre sin esperar al reloj: andar sin corte y con el corte de cada ancho. Por cuadro,
 el paso del mundo, la cola, la capa y el cuadro de la GPU esperado (`read`); separa lo de antes de que aparezca la sección
-de lo de andar con todo pintado. Lo deja en `window.__seccion`. Las cifras, en docs/motor.md ("Corte al componer").
+de lo de andar con todo pintado. Lo deja en `window.__seccion`, que recoge `seccion.ps1` (como `perf.ps1`, con `-Gpu` y `-Rate`). Las cifras, en
+docs/motor.md ("Corte al componer").
 
