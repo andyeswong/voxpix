@@ -12,6 +12,10 @@ import type { WorldState, LightId, StatePart, StateHasher } from './state';
 import type { WorldView } from './view';
 import type { Baked } from './bake';
 import type { SourceKind } from '../lighting/lights';
+import { CHUNK as CHUNK_V, SLAB, type PreparedSlab } from './state';
+const TEMPLATE_MAP = new Uint8Array(256);              // stampRegion: valor del tipo -> entrada de la paleta de la losa
+import { applyRegion, type GeneratedRegion } from './regiongen';
+const SLAB_CELLS_V = CHUNK_V * CHUNK_V * SLAB;
 
 // Lo que es un bloque para quien juega con él. solid, light y emissive salen de los materiales de sus rampas (lo que
 // de verdad hacen la colisión, la luz horneada y el render); si se escriben, tienen que coincidir
@@ -188,6 +192,108 @@ export class BlockGrid implements StatePart {
         }
   }
 
+  // Escribe una región generada (regiongen.ts) en (gx, gy, gz) de la rejilla, como applyRegion, pero de una vez por
+  // trozo de vóxeles: cada losa se compone en memoria desde las plantillas de sus bloques y se instala entera
+  // (StaticVoxels.writeChunkSlabs), sin pasar vóxel a vóxel por set. Deja los mismos vóxeles, alturas y celdas que
+  // applyRegion (lo sembrado sigue yendo con set, con sus variantes y luces). Vale cuando la región cubre trozos de
+  // vóxeles enteros con toda la altura de la rejilla (lo de encima de la rejilla queda en aire); si no, hace applyRegion
+  stampRegion(r: GeneratedRegion, at: readonly [number, number, number] = [0, 0, 0], opts: { skip?: readonly number[] } = {}): void {
+    for (const step of this.stampSteps(r, at, opts)) step();
+  }
+
+  // Lo mismo por pasos, para la cola con plazo (FrameBudget): las celdas, cada trozo de vóxeles (unos 0,05 ms) y cada
+  // estructura sembrada. run(deadline) avanza hasta el plazo (un paso por lo menos) y da true al acabar
+  stampRegionJob(r: GeneratedRegion, at: readonly [number, number, number] = [0, 0, 0], opts: { skip?: readonly number[] } = {}, key = 'stamp'): { key: string; run(deadline: number): boolean } {
+    const steps = this.stampSteps(r, at, opts);
+    let k = 0;
+    return { key, run: (deadline: number) => { do { steps[k++]!(); } while (k < steps.length && performance.now() < deadline); return k >= steps.length; } };
+  }
+
+  private stampSteps(r: GeneratedRegion, at: readonly [number, number, number], opts: { skip?: readonly number[] }): Array<() => void> {
+    const s = this.state.solid, N = this.N, o = this.origin, { width: W, depth: D, height: H } = r.region, [gx, gy, gz] = at;
+    const vx0 = o.x + gx * N, vy0 = o.y + gy * N;
+    const aligned = CHUNK_V % N === 0 && vx0 % CHUNK_V === 0 && vy0 % CHUNK_V === 0 && (W * N) % CHUNK_V === 0 && (D * N) % CHUNK_V === 0
+      && gz === 0 && H === this.layers && o.z === s.zMin && !s.onSet && gx >= 0 && gy >= 0 && gx + W <= this.cols && gy + D <= this.rows;
+    if (!aligned) return [() => applyRegion(r, this, at, opts)];
+    const skip = new Set(opts.skip ?? []);
+    const steps: Array<() => void> = [];
+    // 1) las celdas (y las luces de lo que emite, como write)
+    steps.push(() => { for (let bz = 0; bz < H; bz++) for (let by = 0; by < D; by++) for (let bx = 0; bx < W; bx++) {
+      let type = r.cells[(bz * D + by) * W + bx]!;
+      if (skip.has(type)) type = 0;
+      const i = this.at(gx + bx, gy + by, gz + bz), old = this.cells[i]!;
+      if (old && this.blocks.get(old).props.emits) {
+        const id = this.lightOf.get(i);
+        if (id !== undefined && this.state.lights.get(id)) this.state.lights.removeFixed(id);
+        this.lightOf.delete(i);
+      }
+      this.cells[i] = type; this.yaws[i] = 0;
+      const e = type ? this.blocks.get(type).props.emits : undefined;
+      if (e) {
+        const b = this.box(gx + bx, gy + by, gz + bz), ep = e.at ?? [N / 2, N / 2, N];
+        this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + ep[0], y: b.y0 + ep[1], z: b.z0 + ep[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
+      }
+    } });
+    // 2) los vóxeles, trozo a trozo: cada losa se compone ya con índices de 1 byte y su paleta (la entrada 0, el aire),
+    // desde las plantillas de sus bloques; un bloque cae entero en una losa (N divide a 16)
+    const per = CHUNK_V / N;                                   // bloques por lado de un trozo de vóxeles
+    const zOff = o.z - s.zMin;
+    for (let cy = vy0 / CHUNK_V; cy < (vy0 + D * N) / CHUNK_V; cy++) for (let cx = vx0 / CHUNK_V; cx < (vx0 + W * N) / CHUNK_V; cx++) steps.push(() => {
+      const slabs: Array<PreparedSlab | null> = new Array(s.nz).fill(null);
+      const tops = new Int16Array(CHUNK_V * CHUNK_V).fill(s.zMin);
+      const bx0 = (cx * CHUNK_V - o.x) / N, by0 = (cy * CHUNK_V - o.y) / N;
+      let overflow = false;
+      for (let bz = 0; bz < this.layers && !overflow; bz++) for (let ly = 0; ly < per; ly++) for (let lx = 0; lx < per; lx++) {
+        const type = this.cells[this.at(bx0 + lx, by0 + ly, bz)]!;
+        if (!type) continue;
+        const tp = this.template(type), zb = zOff + bz * N, si = zb >> 4;
+        const sl = slabs[si] ?? (slabs[si] = { d: new Uint8Array(SLAB_CELLS_V), pal: new Uint16Array(256), palN: 1, count: 0 });
+        // Los valores del tipo en la paleta de la losa
+        const map = TEMPLATE_MAP;
+        for (let q = 0; q < tp.values.length; q++) {
+          const v = tp.values[q]!;
+          let k = 1;
+          while (k < sl.palN && sl.pal[k] !== v) k++;
+          if (k === sl.palN) { if (sl.palN === 256) { overflow = true; break; } sl.pal[sl.palN++] = v; }
+          map[q] = k;
+        }
+        if (overflow) break;
+        const base = ((zb & 15) << 8) | ((ly * N) << 4) | (lx * N), d = sl.d, rel = tp.rel, slot = tp.slot;
+        for (let k = 0; k < rel.length; k++) d[base + rel[k]!] = map[slot[k]!]!;
+        sl.count += rel.length;
+        const zTop = s.zMin + zb;
+        for (let q = 0; q < N * N; q++) {
+          const tz = tp.top[q]!;
+          if (!tz) continue;
+          const col = ((ly * N + Math.floor(q / N)) << 4) | (lx * N + (q % N));
+          if (zTop + tz > tops[col]!) tops[col] = zTop + tz;
+        }
+      }
+      if (!overflow) { s.writeChunkPrepared(cy * s.cols + cx, slabs, tops); return; }
+      // Más de 256 valores distintos en una losa (no pasa con bloques normales): con valores, como siempre
+      const vals: Array<Uint16Array | null> = new Array(s.nz).fill(null);
+      for (let bz = 0; bz < this.layers; bz++) for (let ly = 0; ly < per; ly++) for (let lx = 0; lx < per; lx++) {
+        const type = this.cells[this.at(bx0 + lx, by0 + ly, bz)]!;
+        if (!type) continue;
+        const list = this.stampList(type, 0), ox = lx * N, oy = ly * N, oz = zOff + bz * N;
+        for (let k = 0; k < list.length; k += 4) {
+          const z = oz + list[k + 2]!, si = z >> 4;
+          (vals[si] ?? (vals[si] = new Uint16Array(SLAB_CELLS_V)))[((z & 15) << 8) | ((oy + list[k + 1]!) << 4) | (ox + list[k]!)] = list[k + 3]!;
+        }
+      }
+      s.writeChunkSlabs(cy * s.cols + cx, vals);
+    });
+    // 3) lo sembrado que toca la región, con set (variantes tapadas y luces), recortado a ella: como applyRegion
+    const { x0, y0, z0 } = r.region;
+    // (una estructura por paso: un árbol son unos cuantos bloques enteros con set)
+    for (const sw of r.touching) steps.push(() => { for (const [dx, dy, dz, ty] of r.structures[sw.rule]!) {
+      const wx = sw.x + dx, wy = sw.y + dy, wz = sw.z + dz;
+      if (wx < x0 || wy < y0 || wz < z0 || wx >= x0 + W || wy >= y0 + D || wz >= z0 + H) continue;
+      this.set(gx + wx - x0, gy + wy - y0, gz + wz - z0, ty);
+    } });
+    return steps;
+  }
+
   private write(i: number, bx: number, by: number, bz: number, type: number, yaw: Yaw): Box3 | null {
     const q = (yaw / 90) & 3;
     if (this.cells[i] === type && (this.yaws[i] === q || !type)) return null;
@@ -240,6 +346,28 @@ export class BlockGrid implements StatePart {
     return e;
   }
   private stampList(type: number, q: number): Int32Array { return this.stampEntry(type, q).list; }
+  // La plantilla de un tipo sin girar para componer losas (stampRegion): por vóxel, su sitio dentro de una losa con el
+  // bloque en la esquina ((z << 8) | (y << 4) | x) y cuál de los valores del tipo es; y por columna (y * N + x), la
+  // cara de arriba del más alto (z + 1; 0 si no hay)
+  private templates = new Map<number, { rel: Uint16Array; slot: Uint8Array; values: Uint16Array; top: Uint8Array }>();
+  private template(type: number) {
+    let e = this.templates.get(type);
+    if (!e) {
+      const list = this.stampList(type, 0), N = this.N, n = list.length / 4;
+      const rel = new Uint16Array(n), slot = new Uint8Array(n), values: number[] = [], top = new Uint8Array(N * N);
+      for (let k = 0; k < n; k++) {
+        const x = list[k * 4]!, y = list[k * 4 + 1]!, z = list[k * 4 + 2]!, v = list[k * 4 + 3]!;
+        rel[k] = (z << 8) | (y << 4) | x;
+        let q = values.indexOf(v);
+        if (q < 0) { q = values.length; values.push(v); }
+        slot[k] = q;
+        if (z + 1 > top[y * N + x]!) top[y * N + x] = z + 1;
+      }
+      e = { rel, slot, values: Uint16Array.from(values), top };
+      this.templates.set(type, e);
+    }
+    return e;
+  }
   private bounds(type: number, q: number): number[] { return this.stampEntry(type, q).bounds; }
 
   // ---- parte del estado del mundo (WorldState.addPart)

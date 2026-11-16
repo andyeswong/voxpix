@@ -456,6 +456,20 @@ Pruebas (`test/mundo-regiones.test.ts`):
 Si una pieza deja de ser local (vetas con un azar en serie, siembra sin margen, cuevas sin las macroceldas vecinas),
 la prueba de 192 x 192 falla.
 
+Escribir una región en la rejilla: `applyRegion` va vóxel a vóxel por `set` (un trozo de 16 x 16 bloques de 8 y 24 de
+alto: 40 ms). `grid.stampRegion(r, at, opts)` deja lo mismo de una vez por trozo de vóxeles: compone cada losa con
+índices de 1 byte desde las plantillas de sus bloques y la instala entera (`StaticVoxels.writeChunkPrepared`, o
+`writeChunkSlabs` con valores). Sube una versión por trozo, avisa con la caja del trozo y deja las mismas alturas.
+Lo sembrado sigue con `set` (variantes tapadas y luces).
+- Vale si la región cubre trozos de vóxeles enteros con toda la altura de la rejilla; si no, hace `applyRegion`.
+- `grid.stampRegionJob(r, at, opts)` es lo mismo por pasos para `FrameBudget`: las celdas, cada trozo de vóxeles y
+  cada estructura sembrada.
+- En Bun sin freno, por trozo de 16 x 16 x 24 bloques: p50 3,2-3,7 ms y p95 4,8-5,2 ms (antes 40,6). Cada paso, p50
+  0,03 ms y p99 0,2 ms.
+- `test/trozo-rapido.test.ts`: los mismos vóxeles, alturas, celdas y luces que `applyRegion`, también por pasos y
+  escribiendo encima de lo que había; los avisos de cambio son la caja de cada trozo; si no está alineada, hace
+  `applyRegion`.
+
 Coste, en Bun sin freno, con vetas, cuevas, árboles y flores: un trozo de 16 x 16 x 24, p50 2,2 ms y p95 3,8 ms. Paga
 sobre todo el margen de la siembra: unas 11 columnas a cada lado para los árboles y las flores. Una región de 96 x 96,
 12,8 ms (`generateMap` del mismo tamaño, 12,2).

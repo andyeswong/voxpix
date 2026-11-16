@@ -28,6 +28,9 @@ export const CHUNK = 16;
 // 2026-11-02); los enteros pequeños no. Ninguna altura de vóxel llega a él
 export const NO_FOOT = -1_000_000_000;
 
+// Una losa preparada para StaticVoxels.writeChunkPrepared (como una losa de 1 byte por dentro)
+export interface PreparedSlab { d: Uint8Array; pal: Uint16Array; palN: number; count: number }
+
 // Vóxeles estáticos en trozos. Un TROZO es una columna de CHUNK x CHUNK con toda la altura (zMin..zMax): es la
 // unidad de las versiones, de changedSince, de watchChanges y del rehorneado. Por dentro, cada trozo se guarda en
 // LOSAS de CHUNK x CHUNK x SLAB vóxeles, y cada losa ocupa solo lo que necesita:
@@ -39,6 +42,7 @@ export const NO_FOOT = -1_000_000_000;
 export const SLAB = 16;           // get usa desplazamientos de 4 bits: CHUNK y SLAB tienen que ser 16
 const SEGS = 4;
 const SLAB_CELLS = CHUNK * CHUNK * SLAB;
+const PAL_LOOKUP = new Uint16Array(65536);           // writeChunkSlabs: valor -> entrada de la paleta + 1 (0: no está)
 
 // Para la copia girada por losas: dónde cae cada celda (ly, lx) de una capa de 16 x 16 al girar `q` cuartos (índice
 // ly * 16 + lx -> el girado), y el trozo de la copia donde cae cada trozo (como ViewCamera.cellToView, con ancho y
@@ -173,6 +177,81 @@ export class StaticVoxels implements VoxelSource {
       while (t >= this.zMin && !this.get(x, y, t)) t--;
       this.height[h] = t >= this.zMin ? t + 1 : this.zMin;
     }
+  }
+
+  // Escribe de una vez TODAS las losas del trozo c (un trozo nuevo: lo que tuviera se pierde). slabs[s]: los valores de
+  // la losa s en el orden de dentro de la losa ((z & 15) << 8 | (y & 15) << 4 | x & 15), o null si toda es aire. Para
+  // generar trozos enteros sin pasar vóxel a vóxel por set: deja los mismos vóxeles, alturas y avisos (una caja por el
+  // trozo entero) que escribirlos con set, con una sola versión. Con onSet puesto no vale (no avisaría vóxel a vóxel)
+  // tops (opcional): por columna del trozo ((y & 15) << 4 | x & 15), la cara de arriba del más alto (z + 1; zMin si no
+  // hay), si quien compone las losas ya la sabe; si no, se busca
+  writeChunkSlabs(c: number, slabs: ReadonlyArray<Uint16Array | null>, tops?: Int16Array): void {
+    if (this.onSet) throw new Error('writeChunkSlabs no avisa a onSet: escribe con set');
+    let any = false;
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, v = slabs[s] ?? null, n = this.cap(s);
+      this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; this.count[si] = 0; this.palN[si] = 0;
+      if (!v) continue;
+      let filled = 0, first = v[0]!, same = true;
+      for (let j = 0; j < n; j++) { const w = v[j]!; if (w) filled++; if (w !== first) same = false; }
+      if (!filled) continue;
+      any = true;
+      this.count[si] = filled;
+      if (same) { this.uni[si] = first; continue; }                         // llena y toda igual: sin datos
+      // Paleta de 1 byte mientras quepa (en el orden en que aparecen); si no, 2 bytes. La tabla de búsqueda (valor ->
+      // entrada + 1) es una sola para todas las losas: se limpia lo que se usó
+      const p = new Uint16Array(256), d = new Uint8Array(SLAB_CELLS), idx = PAL_LOOKUP;
+      let k = 0, wide = false;
+      for (let j = 0; j < n; j++) {
+        const w = v[j]!;
+        let e = idx[w]!;
+        if (!e) { if (k === 256) { wide = true; break; } p[k++] = w; e = idx[w] = k; }
+        d[j] = e - 1;
+      }
+      for (let q = 0; q < k; q++) idx[p[q]!] = 0;
+      if (wide) { const w = new Uint16Array(SLAB_CELLS); w.set(v.subarray(0, n)); this.data[si] = w; }
+      else { this.data[si] = d; this.pal[si] = p; this.palN[si] = k; }
+    }
+    if (any) this.alloc[c] = 1;
+    this.finishWritten(c, tops);
+  }
+
+  // Lo mismo que writeChunkSlabs con las losas ya preparadas por quien las compone (como una losa de 1 byte por dentro):
+  // sus índices (null: toda la losa es pal[0]), su paleta, cuántas entradas usa y cuántos vóxeles llenos tiene. Así no
+  // se vuelve a recorrer cada vóxel para hacer la paleta y contar
+  writeChunkPrepared(c: number, slabs: ReadonlyArray<PreparedSlab | null>, tops: Int16Array): void {
+    if (this.onSet) throw new Error('writeChunkPrepared no avisa a onSet: escribe con set');
+    let any = false;
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, v = slabs[s] ?? null;
+      this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; this.count[si] = 0; this.palN[si] = 0;
+      if (!v || !v.count) continue;
+      any = true;
+      this.count[si] = v.count;
+      // La entrada 0 de la paleta es el aire (los huecos); llena de un solo valor, la losa queda sin datos
+      if (v.count === this.cap(s) && v.palN === 2) { this.uni[si] = v.pal[1]!; continue; }
+      this.data[si] = v.d; this.pal[si] = v.pal; this.palN[si] = v.palN;
+    }
+    if (any) this.alloc[c] = 1;
+    this.finishWritten(c, tops);
+  }
+
+  // Lo común de escribir un trozo entero: alturas, versión, caja de lo cambiado y avisos
+  private finishWritten(c: number, tops?: Int16Array): void {
+    const cx = c % this.cols, cy = Math.floor(c / this.cols);
+    const x0 = cx * CHUNK, y0 = cy * CHUNK, x1 = Math.min(this.width, x0 + CHUNK) - 1, y1 = Math.min(this.depth, y0 + CHUNK) - 1;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      let h: number;
+      if (tops) h = tops[((y & 15) << 4) | (x & 15)]!;
+      else { let t = this.zMax; while (t >= this.zMin && !this.get(x, y, t)) t--; h = t >= this.zMin ? t + 1 : this.zMin; }
+      this.height[y * this.width + x] = h;
+      if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
+    }
+    this.versions[c] = ++this.clock;
+    if (!this.viewWrites) this.worldVersions[c] = this.clock;
+    this.note(c, x0, y0, this.zMin); this.note(c, x1, y1, this.zMax);
+    const watchers = this.feed?.list;
+    if (watchers) for (const w of watchers) { w.voxel(c, x0, y0, this.zMin); w.voxel(c, x1, y1, this.zMax); }
   }
 
   // Apunta el vóxel (x, y, z) del trozo c, que acaba de cambiar con la versión this.clock, en su tramo abierto
