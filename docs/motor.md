@@ -918,6 +918,48 @@ water.follow(state.watchChanges());                                 // picar o p
   agua en reposo termina igual que la que nace despierta y se duerme (`test/agua-reposo.test.ts`). Cambia la huella
   (las despiertas están en ella); por defecto, como siempre.
 
+## Corte al componer (capa de sección)
+
+Ver de perfil lo que hay detrás de un objetivo (una galería bajo tierra, como en un juego de perfil) sin rehornear
+(`src/world/section.ts`). Una caja de la imagen horneada se trata como aire al componer:
+- columnas [x0, x1] x [y0, y1], de zMin hacia arriba;
+- y1 es la fila del objetivo; y0, la del lado de la cámara.
+
+Lo de detrás nunca se horneó (lo tapaba lo de delante), así que se pinta al momento, con el mismo render que el
+horneado:
+- el suelo que queda dentro de la caja;
+- `depth` filas detrás de y1 (32 por defecto: en esta proyección el rayo baja 0,5 por cada vóxel hacia el fondo).
+
+```ts
+import { sectionAround } from '@voxpix/world/section';
+const section = sectionAround(view.camera, body.x, body.y, body.z, 32);      // 32 vóxeles de ancho; en los 4 giros
+compositor.frame(state, baked, { ...opts, section });                         // (por ahora, la CPU: frame2D)
+```
+
+- Se sustituyen los píxeles cuya primera superficie horneada está en la caja (se sabe por el `pick` horneado). Con
+  ellos se repinta también su borde: los píxeles horneados que los tocan, con su mismo vóxel, para que el contorno y
+  el tono de la costura sean los del corte.
+- En la sección no hay luz horneada. Lleva su ambiente con el cielo de cueva del mundo cortado, y las luces fijas le
+  llegan como las dinámicas, sin sombras. El borde guarda su luz horneada.
+- La capa se guarda por horneado, caja y número de serie de lo publicado: un rehorneado la rehace.
+- Contra el corte horneado (el mismo mundo con la caja quitada, horneado entero), en los 4 giros y con contorno `both`
+  (`test/corte-componer.test.ts`):
+  - sin luces fijas, el cuadro es igual byte a byte, también con una luz dinámica y con todo el ancho de la vista;
+  - con cielo de cueva, la capa es igual; fuera difieren unos píxeles horneados junto al corte, que con el corte
+    ganan cielo (menos de 80, como mucho 12 niveles);
+  - con una luz fija, la capa difiere solo en la sombra de esa luz.
+  - Sin sección, el cuadro de siempre: oráculo 81/81, byte a byte.
+- Coste, en Bun sin freno, en el túnel de `scripts/bench-seccion.ts`, rehaciendo la capa en cada cuadro (la caja
+  sigue al objetivo):
+
+  | Ancho | Píxeles sustituidos | Capa (sin freno) | Capa (a 6x) |
+  |---|---|---|---|
+  | 32 vóxeles (4 bloques) | 4.736 | 5,5 ms | ~37 ms |
+  | 384 vóxeles (todo el ancho de la vista) | 56.288 | 58 ms | ~390 ms |
+
+  De eso, el render es el 65 % y el cielo de cueva el 25 %. Pendiente: no rehacerla en cada cuadro (la caja por
+  bloques, una sección más ancha que la caja pintada por franjas con FrameBudget), y la GPU.
+
 ## Cámara con objetivo
 
 La ventana de la vista (`vx`, `vy` de `Frame2DOptions`) sigue a un punto, normalmente un cuerpo, con zona muerta y

@@ -8,6 +8,7 @@ import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
+import { sectionLayer, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -45,6 +46,30 @@ export interface Frame2DOptions {
   // (0..255), para que se note la altura en la vista oblicua (una torre y una zanja de un bloque no se dibujan igual).
   // null, sin campo o strength 0: nada (el cuadro de siempre, byte a byte). Ver HeightFog
   fog?: HeightFog | null;
+  // Corte al componer (section.ts): una caja de la imagen horneada que se trata como aire al componer, para ver de
+  // perfil lo que hay detrás de la fila del objetivo sin rehornear. null o sin campo: nada (el cuadro de siempre)
+  section?: SectionCut | null;
+}
+
+// La capa de sección de unas opciones (o null), guardada por horneado: se rehace si cambia la caja o la imagen
+// (un rehorneado publica un recuadro nuevo)
+const sectionCache = new WeakMap<Baked, { key: string; layer: SectionLayer | null }>();
+export function sectionFor(b: Baked, o: Frame2DOptions): SectionLayer | null {
+  if (!o.section) return null;
+  const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''}:${b.published.serial}:${b.version}`;
+  const hit = sectionCache.get(b);
+  if (hit && hit.key === key) return hit.layer;
+  const layer = sectionLayer(b, c);
+  sectionCache.set(b, { key, layer });
+  return layer;
+}
+// El índice en la capa del píxel (sx, sy) de la imagen horneada si se sustituye; -1 si no
+function secIndex(sec: SectionLayer | null, sx: number, sy: number): number {
+  if (!sec) return -1;
+  const i = sx - sec.x, j = sy - sec.y;
+  if (i < 0 || j < 0 || i >= sec.w || j >= sec.h) return -1;
+  const q = j * sec.w + i;
+  return sec.mask[q] ? q : -1;
 }
 
 // La z de cada píxel es la del punto que se ve en él (escenario, entidad o agua), sacada de su profundidad y su fila
@@ -197,9 +222,10 @@ export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked): 
   return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
 }
 function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array): Float32Array {
-  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!;
+  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!, sec = sectionFor(b, o);
   for (let y = 0; y < o.vh; y++) for (let x = 0; x < o.vw; x++) {
-    const gx = o.vx + x, gy = o.vy + y, k = gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
+    const gx = o.vx + x, gy = o.vy + y, si = sec ? secIndex(sec, gx, gy) : -1;
+    const k = si >= 0 && sec!.sky ? sec!.sky[si]! : gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
     out[i] = t[k * 3]!; out[i + 1] = t[k * 3 + 1]!; out[i + 2] = t[k * 3 + 2]!;
   }
   return out;
@@ -225,12 +251,47 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     const bg = o.background ?? BACKGROUND;
     for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
   } else for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = 0; view[i - 2] = 0; view[i - 1] = 0; }
+  // El corte al componer: lo de detrás de la caja en los píxeles cuya primera superficie estaba en ella
+  const sec = o.section ? sectionFor(b, o) : null;
+  if (sec) {
+    const bg = o.background === 'transparent' ? null : o.background ?? BACKGROUND;
+    for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
+      const q = j * sec.w + i;
+      if (!sec.mask[q]) continue;
+      const x = sec.x + i - vx, y = sec.y + j - vy;
+      if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+      const t = y * vw + x;
+      depthBuf[t] = sec.depth[q]!;
+      if (sec.rgba[q * 4 + 3]) { view[t * 4] = sec.rgba[q * 4]!; view[t * 4 + 1] = sec.rgba[q * 4 + 1]!; view[t * 4 + 2] = sec.rgba[q * 4 + 2]!; view[t * 4 + 3] = 255; }
+      else if (bg) { view[t * 4] = bg[0]; view[t * 4 + 1] = bg[1]; view[t * 4 + 2] = bg[2]; view[t * 4 + 3] = 255; }
+      else { view[t * 4] = 0; view[t * 4 + 1] = 0; view[t * 4 + 2] = 0; view[t * 4 + 3] = 0; }
+    }
+  }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
+  if (total && sec) {
+    // En la sección no hay luz horneada: su ambiente (con su cielo) y las luces fijas como las dinámicas (sin sombras)
+    const sk = o.cave && b.sky && sec.sky ? skyAmbient(ambient, o.cave) : null;
+    for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
+      const q = j * sec.w + i;
+      if (!sec.mask[q]) continue;
+      const x = sec.x + i - vx, y = sec.y + j - vy;
+      if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+      const t = (y * vw + x) * 3;
+      if (sec.mask[q] === 2) {
+        // Borde: guarda su luz horneada (su vóxel es el mismo); solo cambia el ambiente por el de su cielo con el corte
+        if (sk) { const k0 = b.sky![(sec.y + j) * b.width + sec.x + i]!, k = sec.sky![q]!; for (let c = 0; c < 3; c++) total[t + c] = total[t + c]! - sk[k0 * 3 + c]! + sk[k * 3 + c]!; }
+        continue;
+      }
+      if (sk) { const k = sec.sky![q]!; total[t] = sk[k * 3]!; total[t + 1] = sk[k * 3 + 1]!; total[t + 2] = sk[k * 3 + 2]!; }
+      else { total[t] = ambient[0]; total[t + 1] = ambient[1]; total[t + 2] = ambient[2]; }
+    }
+    for (const bl of b.lights) addDynamicLight(b, bl.light, total, o, sec, true);
+  }
   if (total) {
     // Luces dinámicas (las añadidas en partida): por cuadro, en su radio
-    for (const l of state.lights) if (l.baked === false) addDynamicLight(b, l, total, o);
+    for (const l of state.lights) if (l.baked === false) addDynamicLight(b, l, total, o, sec);
     // Sombras de las entidades: lo que su cuerpo tapa de cada luz (solo las MAX_CASTERS más cercanas al centro)
-    if (o.detail !== 'bajo') for (const e of shadowCasters(state, b, o)) castShadow(state, b, e, total, o);
+    if (o.detail !== 'bajo') for (const e of shadowCasters(state, b, o)) castShadow(state, b, e, total, o, sec);
   }
 
   // Las entidades: primero todas las sombras de contacto (en el suelo), después, en cada píxel, la entidad más
@@ -556,6 +617,11 @@ function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions):
 
 // La luz por detrás (MaterialProps.backlit) del material que se ve en el píxel idx de la imagen horneada (0 si no
 // tiene: un sólido, o una paleta sin materiales especiales)
+function backlitKey(b: Baked, mt: MaterialTable | null, k: number): number {
+  if (!mt || Number.isNaN(k)) return 0;
+  const [x, y, z] = unkey(k);
+  return mt.backlit[b.source.get(x, y, z)]!;
+}
 export function backlitAt(b: Baked, mt: MaterialTable | null, idx: number): number {
   if (!mt) return 0;
   const k = b.pick[idx]!;
@@ -586,7 +652,9 @@ export function screenBox(b: Baked, x: number, y: number, z: number, r: number, 
   return ix0 > ix1 || iy0 > iy1 ? null : [ix0, iy0, ix1, iy1];
 }
 
-function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2DOptions): void {
+// sec: con un corte al componer, en sus píxeles la luz va con lo que se ve en ellos (la capa); onlySec: solo ahí (las
+// luces fijas, que fuera de la capa ya están horneadas)
+function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null, onlySec = false): void {
   const p = resolveLight(l, o.time);
   const box = screenBox(b, l.x, l.y, l.z, p.radius, o);
   if (!box) return;
@@ -601,9 +669,11 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
     const P = rowP(u, sy);
     for (let sx = x0; sx <= x1; sx++) {
       const idx = sy * b.width + sx;
-      const f = b.face[idx]!;
+      const si = sec ? secIndex(sec, sx, sy) : -1;
+      if (onlySec && (si < 0 || sec!.mask[si] !== 1)) continue;
+      const f = si >= 0 ? sec!.face[si]! : b.face[idx]!;
       if (f < 0) continue;
-      const d = b.depth[idx]!;
+      const d = si >= 0 ? sec!.depth[si]! : b.depth[idx]!;
       if (d === Infinity) continue;
       const wy = worldYAt(u, P, d), wz = P - u.a * wy;
       const dx = l.x - sx, dy = l.y - wy, dz = l.z - wz;
@@ -612,7 +682,7 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
       // contribution(), en línea
       const dist = Math.hypot(dx, dy, dz), n = DIR_VECTORS[f]!, k = 1 - dist / r;
       const ndl = dist < 1e-6 ? 1 : (n[0] * dx + n[1] * dy + n[2] * dz) / dist;
-      const w = k * k * p.intensity * (dist < 1e-6 ? 1 : facingOf(ndl, ndl <= 0 ? backlitAt(b, mt, idx) : 0)) * (p.spot ? spotFactor(p.spot, -dx, -dy, -dz) : 1);
+      const w = k * k * p.intensity * (dist < 1e-6 ? 1 : facingOf(ndl, ndl <= 0 ? (si >= 0 ? backlitKey(b, mt, sec!.pick[si]!) : backlitAt(b, mt, idx)) : 0)) * (p.spot ? spotFactor(p.spot, -dx, -dy, -dz) : 1);
       if (!w) continue;
       const q = ((sy - o.vy) * o.vw + (sx - o.vx)) * 3;
       total[q] = total[q]! + cr * w; total[q + 1] = total[q + 1]! + cg * w; total[q + 2] = total[q + 2]! + cb * w;
@@ -673,7 +743,7 @@ function blockedByBody(occ: ReturnType<typeof occupancy>, P: [number, number, nu
 
 export const SHADOW_REACH = 48;     // hasta dónde se busca sombra alrededor de la entidad (en planta)
 
-function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions): void {
+function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null): void {
   const occ = occupancy(e.model, e.yaw);
   const ex = Math.round(e.x), ey = Math.round(e.y), ez = e.z;
   // Las luces que llegan a la zona de la entidad
@@ -685,10 +755,18 @@ function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array
   const baked = new Map(b.lights.map((bl) => [bl.light.id, bl] as const));
   const mt = materialsOf(b.source.palette);
   const [x0, y0, x1, y1] = box;
+  const u = sec ? unprojector(b) : null;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
-    const f = b.face[sy * b.width + sx]!;
+    const si = sec ? secIndex(sec, sx, sy) : -1;
+    const f = si >= 0 ? sec!.face[si]! : b.face[sy * b.width + sx]!;
     if (f < 0) continue;
-    const P = worldPointAt(b, sx, sy);
+    let P: [number, number, number] | null;
+    if (si >= 0) {
+      const d = sec!.depth[si]!;
+      if (d === Infinity) continue;
+      const Pr = rowP(u!, sy), wy = worldYAt(u!, Pr, d);
+      P = [sx, wy, Pr - u!.a * wy];                                    // como worldPointAt
+    } else P = worldPointAt(b, sx, sy);
     if (!P || Math.abs(P[0] - ex) > SHADOW_REACH || Math.abs(P[1] - ey) > SHADOW_REACH) continue;
     const n = DIR_VECTORS[f]!;
     // En los ejes de la entidad (sus pies en el origen; el cuerpo ya está girado en `occ`)
@@ -699,11 +777,11 @@ function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array
       // Quitar lo que esta luz aportaba aquí
       const p = resolveLight(l, o.time);
       let w = 0;
-      const bl = baked.get(l.id);
+      const bl = si >= 0 && sec!.mask[si] === 1 ? undefined : baked.get(l.id);
       if (bl) {
         const r = bl.rect, lx = sx - r.x, ly = sy - r.y;
         if (lx >= 0 && ly >= 0 && lx < r.w && ly < r.h) w = bl.weight[ly * r.w + lx]! * (p.intensity / bl.intensity);
-      } else w = contribution(p, P, n, backlitAt(b, mt, sy * b.width + sx));
+      } else w = contribution(p, P, n, si >= 0 ? backlitKey(b, mt, sec!.pick[si]!) : backlitAt(b, mt, sy * b.width + sx));
       if (!w) continue;
       total[q] = Math.max(0, total[q]! - p.color[0] * w);
       total[q + 1] = Math.max(0, total[q + 1]! - p.color[1] * w);
