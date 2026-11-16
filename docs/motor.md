@@ -962,9 +962,13 @@ compositor.frame(state, baked, { ...opts, section });                         //
   - la caja se mueve por franjas de 8 columnas (`STRIP`);
   - las columnas se pintan de 4 en 4 (`UNIT`) con la caja "ancha" (todas cortadas), como trabajo de la cola con
     plazo: primero las de la caja, luego 4 franjas por delante en la dirección en que anda (`ahead`) y 1 por detrás;
-  - al componer solo se copian, y en los bordes de la caja se rehacen el cielo (a 9 columnas), el borde y el contorno
-    de la costura;
-  - una unidad caduca si se rehornea algo a 9 columnas de ella, y todas si cambian la fila del objetivo o sus pies.
+  - al componer, lo de la composición anterior se desplaza (una copia por fila) y de las unidades solo se copia lo
+    nuevo y lo que estaba junto a los bordes de antes. En los bordes de ahora se rehacen el borde y el contorno de la
+    costura, y el cielo de 9 columnas, que la cola ya adelantó para la caja siguiente. Dos búferes se turnan: la capa
+    devuelta vale hasta dos composiciones después;
+  - una unidad caduca si se rehornea algo a 9 columnas de ella, y todas si cambian la fila del objetivo o sus pies;
+  - un paso de pintado no se corta: dentro del trabajo, el siguiente solo empieza si cabe lo que costó el último, y
+    entre trabajos manda la FrameBudget.
   - La capa compuesta es la misma que la de la caja entera (`test/corte-componer.test.ts`).
 
   ```ts
@@ -975,16 +979,20 @@ compositor.frame(state, baked, { ...opts, section });                         //
   compositor.frame(state, baked, { ...opts, sectionLayer: painter.layer() });
   ```
 
-  En el túnel de `scripts/bench-seccion.ts` con `ANDAR=1`: 5 bloques/s, 4 ms de cola por cuadro (a 6x), 4 franjas
-  por delante. Ningún cuadro con hueco en ningún ancho. Componer cuesta 0 casi siempre y p95 ~9 ms (a 6x) en los
-  cuadros en que la caja salta una franja.
+  En el túnel de `scripts/bench-seccion.ts` con `ANDAR=1` (`ESCALA=1` para 1x), andando a 5 bloques/s con una
+  FrameBudget y 4 franjas por delante, no hay ningún cuadro con hueco en ningún ancho. Componer cuesta 0 salvo en el
+  cuadro en que la caja salta una franja (uno de cada 12): p95 0,5-0,9 ms a 1x, 5-6 ms a 6x, casi igual en todos los
+  anchos.
 
-  | Unidad de pintado | Aparece (cuadros): 4 bloques | 16 | 24 | 48 | Paso de pintado p95 / máx (6x) |
-  |---|---|---|---|---|---|
-  | 8 columnas | 4 | 16 | 21 | 34 | 13,7 / 19 ms |
-  | 4 columnas (la de ahora) | 9 | 33 | 47 | 77 | 9,3-9,8 / 18-24 ms |
-  | 2 columnas | 19 | 67 | 101 | 190 | 7,2 / 12-19 ms |
+  | Aparece en (cuadros) | 4 bloques | 16 | 24 | 48 |
+  |---|---|---|---|---|
+  | 1x, 4 ms de cola | 4 | 12 | 17 | 25 |
+  | 1x, 6 ms | | | 11 | 19 |
+  | 1x, 8 ms | | | 8 | 13 |
+  | 6x, 4 ms | 9 | 33 | 47 | 77 |
 
+  Unidades de pintado de 8 columnas en vez de 4: aparece antes (a 6x, 4/16/21/34), pero cada paso cuesta ~14 ms a 6x.
+  De 2 columnas: 19/67/101/190.
   Cada paso tiene un coste fijo (~1 ms sin freno) y la unidad pequeña no compensa. Pendiente: la GPU, que solo
   compone (sube la capa cuando cambia).
 

@@ -176,12 +176,61 @@ export function sectionAround(camera: { pointToView(x: number, y: number): [numb
 export const STRIP = 8;     // la caja se mueve por franjas de STRIP columnas
 export const UNIT = 4;      // y se pinta de UNIT en UNIT (un paso de la cola: unos 1,6 ms sin freno)
 
+interface Raw {
+  rx: number; w: number; h: number; ry: number;
+  mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null;
+  units: Map<number, SectionLayer | null>;     // las unidades copiadas (la capa de cada una, para saber si sigue siendo esa)
+  edges: [number, number];                     // las columnas de píxeles de los bordes de la caja (llevan los arreglos)
+}
+type CopySource = { x?: number; rx?: number; w: number; mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null };
+
+// Columnas sin sección
+function clearCols(to: Raw, gx0: number, gx1: number): void {
+  for (let j = 0; j < to.h; j++) {
+    const a = j * to.w + gx0 - to.rx, z = a + gx1 - gx0 + 1;
+    to.mask.fill(0, a, z); to.rgba.fill(0, a * 4, z * 4); to.depth.fill(Infinity, a, z); to.face.fill(-1, a, z); to.pick.fill(NaN, a, z);
+    if (to.sky) to.sky.fill(0, a, z);
+  }
+}
+
+// Los píxeles sustituidos de las UNIT columnas de una unidad (desde la columna de píxeles gx), una vez por capa
+const UNIT_COUNT = new WeakMap<SectionLayer, number>();
+function unitCount(L: SectionLayer, gx: number): number {
+  let n = UNIT_COUNT.get(L);
+  if (n !== undefined) return n;
+  n = 0;
+  for (let j = 0; j < L.h; j++) for (let k = gx - L.x; k < gx - L.x + UNIT; k++) if (k >= 0 && k < L.w && L.mask[j * L.w + k] === 1) n++;
+  UNIT_COUNT.set(L, n);
+  return n;
+}
+
+// Copia las columnas de píxeles gx0..gx1 (globales) de una capa a otra con las mismas filas, una copia por fila y array
+function copyCols(from: CopySource, to: Raw, gx0: number, gx1: number): void {
+  const fx = from.x ?? from.rx!, n = gx1 - gx0 + 1, fw = from.w, tw = to.w;
+  void tw;
+  for (let j = 0; j < to.h; j++) {
+    const fq = j * fw + gx0 - fx, tq = j * to.w + gx0 - to.rx;
+    to.mask.set(from.mask.subarray(fq, fq + n), tq);
+    to.rgba.set(from.rgba.subarray(fq * 4, (fq + n) * 4), tq * 4);
+    to.depth.set(from.depth.subarray(fq, fq + n), tq);
+    to.face.set(from.face.subarray(fq, fq + n), tq);
+    to.pick.set(from.pick.subarray(fq, fq + n), tq);
+    if (to.sky && from.sky) to.sky.set(from.sky.subarray(fq, fq + n), tq);
+  }
+}
+
 export class SectionPainter {
   private strips = new Map<number, { layer: SectionLayer | null; serial: number }>();
   private track = '';
   private cut: SectionCut | null = null;
   private dir = 0;
   private composed: { key: string; layer: SectionLayer | null } | null = null;
+  // Lo copiado de las unidades para la caja de ahora, sin los arreglos de los bordes (se lleva al mover la caja)
+  private raw: Raw | null = null;
+  private spare: Raw | null = null;
+  // El cielo de cueva de las columnas junto a cada borde de la caja, por posición de la caja (se adelanta en la cola)
+  private edgeSkies = new Map<string, Uint8Array>();
+  private edgeSerial = -1;
   // Franjas que se pintan por delante (en la dirección en que anda) y por detrás
   ahead: number;
   behind: number;
@@ -200,7 +249,7 @@ export class SectionPainter {
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = Math.floor(cut.x1 / STRIP) * STRIP + STRIP - 1;
     this.cut = { ...cut, x0, x1 };
     const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}`;
-    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; }
+    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.edgeSkies.clear(); }
   }
 
   // ¿La franja i está pintada y al día con la imagen?
@@ -233,16 +282,74 @@ export class SectionPainter {
   }
 
   // Un trabajo de la cola: pinta franjas hasta el plazo (una por lo menos). null si no falta ninguna
+  // (y, si ya están todas, el cielo de los bordes de la caja siguiente en la dirección en que anda). Con slack (ms que
+  // le quedan al cuadro sin el trabajo), un paso solo empieza si cabe entero: un paso cuesta lo que el último
   job(): { key: string; priority: number; run(deadline: number): boolean } | null {
-    if (!this.wanted().length) return null;
+    if (!this.wanted().length && !this.nextEdge()) return null;
     return { key: 'section', priority: 0, run: (deadline: number) => {
-      do {
+      for (let first = true; ; first = false) {
+        const now = performance.now();
+        if (!first && now + this.stepMs > deadline) break;
         const i = this.wanted()[0];
-        if (i === undefined) return true;
-        this.paint(i);
-      } while (performance.now() < deadline);
-      return !this.wanted().length;
+        if (i !== undefined) { this.paint(i); this.stepMs = performance.now() - now; continue; }
+        const e = this.nextEdge();
+        if (!e) return true;
+        this.edgeSky(e.c, e.side, e.ry, e.h);
+        if (performance.now() >= deadline) break;
+      }
+      return !this.wanted().length && !this.nextEdge();
     } };
+  }
+
+  // Lo que costó el último paso de pintado (ms, sin freno): para no empezar uno que no cabe
+  stepMs = 0;
+
+  // El primer cielo de borde que falta de la caja de ahora o de la siguiente (con sus unidades pintadas)
+  private nextEdge(): { c: SectionCut; side: 0 | 1; ry: number; h: number } | null {
+    const c = this.cut;
+    if (!c) return null;
+    const fwd = this.dir >= 0 ? STRIP : -STRIP;
+    const rows = this.rows(c);
+    if (!rows) return null;
+    for (const box of [c, { ...c, x0: c.x0 + fwd, x1: c.x1 + fwd }]) for (const side of [0, 1] as const) {
+      if (this.edgeSkies.has(this.edgeKey(box, side))) continue;
+      const e0 = side ? box.x1 - SKY_REACH : box.x0, e1 = side ? box.x1 : box.x0 + SKY_REACH;
+      let ok = e0 >= 0 && e1 < this.b.source.width;
+      for (let i = Math.floor(e0 / UNIT); ok && i <= Math.floor(e1 / UNIT); i++) ok = this.fresh(i);
+      if (ok) return { c: box, side, ry: rows.ry, h: rows.h };
+    }
+    return null;
+  }
+
+  private rows(c: SectionCut): { ry: number; h: number } | null {
+    for (const st of this.strips.values()) if (st.layer) return { ry: st.layer.y, h: st.layer.h };
+    void c;
+    return null;
+  }
+
+  private edgeKey(c: SectionCut, side: 0 | 1): string { return `${side}:${c.x0},${c.x1}`; }
+
+  // El cielo de las SKY_REACH + 1 columnas del borde `side` (0 el izquierdo, 1 el derecho) de la caja c, con la caja de
+  // verdad (las unidades lo hicieron con la ancha, que deja ver cielo de lado). 255: sin píxel de la sección
+  private edgeSky(c: SectionCut, side: 0 | 1, ry: number, h: number): Uint8Array {
+    if (this.edgeSerial !== this.b.published.serial) { this.edgeSkies.clear(); this.edgeSerial = this.b.published.serial; }
+    const key = this.edgeKey(c, side);
+    let out = this.edgeSkies.get(key);
+    if (out) return out;
+    const b = this.b, m = SKY_REACH + 1, X0 = Math.max(0, c.x0), X1 = Math.min(b.source.width - 1, c.x1);
+    const Y0 = Math.max(0, c.y0), Y1 = Math.min(b.source.depth - 1, c.y1);
+    out = new Uint8Array(m * h).fill(255);
+    for (let k = 0; k < m; k++) {
+      const x = side ? c.x1 - k : c.x0 + k, st = this.strips.get(Math.floor(x / UNIT))?.layer;
+      if (!st || !this.fresh(Math.floor(x / UNIT))) continue;
+      const sk = (b.options.originX ?? 0) + x - st.x;
+      for (let j = 0; j < h; j++) {
+        const sq = j * st.w + sk;
+        if (st.mask[sq]) out[j * m + k] = cutSky(b, X0, X1, Y0, Y1, c.zMin, st.pick[sq]!, st.face[sq]!);
+      }
+    }
+    this.edgeSkies.set(key, out);
+    return out;
   }
 
   // ¿Están pintadas (y al día) todas las franjas de la caja de ahora? Si no, en esas columnas aún no se ve la sección
@@ -262,7 +369,6 @@ export class SectionPainter {
     // Con una columna de margen a cada lado (el contorno, el borde y la costura miran a los vecinos); se copian sus 8
     this.strips.set(i, { layer: sectionLayer(this.b, wide, { x0: i * UNIT - 1, x1: i * UNIT + UNIT }), serial: this.b.published.serial });
     this.painted++;
-    this.composed = null;
   }
 
   // La capa de la caja de ahora, con lo que ya está pintado (las franjas que falten, sin sustituir todavía)
@@ -281,37 +387,58 @@ export class SectionPainter {
 
   private compose(c: SectionCut): SectionLayer | null {
     const b = this.b, ox = b.options.originX ?? 0;
-    // Las filas son las mismas en todas las franjas (dependen de y0, y1, zMin y la altura del mundo)
-    let ry = -1, h = 0;
-    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) { const st = this.strips.get(i)?.layer; if (st) { ry = st.y; h = st.h; break; } }
-    if (ry < 0) return null;
+    const rows = this.rows(c);
+    if (!rows) return null;
+    const { ry, h } = rows;
     // (el mismo recuadro que sectionLayer con esta caja)
     const rx = Math.max(0, Math.floor(ox + c.x0) - 1), rx1 = Math.min(b.width - 1, Math.ceil(ox + c.x1 + 1) + 1), w = rx1 - rx + 1;
-    const mask = new Uint8Array(w * h), rgba = new Uint8ClampedArray(w * h * 4), depth = new Float32Array(w * h).fill(Infinity);
-    const face = new Int8Array(w * h).fill(-1), pick = new Float64Array(w * h).fill(NaN), sky = b.sky ? new Uint8Array(w * h) : null;
-    let count = 0;
-    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
-      if (!this.fresh(i)) continue;
-      const st = this.strips.get(i)!.layer;
-      if (!st) continue;
-      for (let j = 0; j < h; j++) for (let k = 0; k < st.w; k++) {
-        const gx = st.x + k, li = gx - rx;
-        if (li < 0 || li >= w || gx < ox + i * UNIT || gx > ox + i * UNIT + UNIT - 1) continue;
-        const sq = j * st.w + k, q = j * w + li;
-        mask[q] = st.mask[sq]!; if (mask[q] === 1) count++;
-        rgba[q * 4] = st.rgba[sq * 4]!; rgba[q * 4 + 1] = st.rgba[sq * 4 + 1]!; rgba[q * 4 + 2] = st.rgba[sq * 4 + 2]!; rgba[q * 4 + 3] = st.rgba[sq * 4 + 3]!;
-        depth[q] = st.depth[sq]!; face[q] = st.face[sq]!; pick[q] = st.pick[sq]!;
-        if (sky && st.sky) sky[q] = st.sky[sq]!;
-      }
+    // Dos búferes que se turnan: se escribe en uno leyendo lo de antes del otro (la capa que se devolvió hace dos
+    // composiciones deja de valer)
+    const prev = this.raw?.h === h && this.raw.ry === ry ? this.raw : null;
+    let raw = this.spare;
+    if (!raw || raw.w !== w || raw.h !== h) {
+      raw = { rx, w, h, ry, mask: new Uint8Array(w * h), rgba: new Uint8ClampedArray(w * h * 4), depth: new Float32Array(w * h),
+        face: new Int8Array(w * h), pick: new Float64Array(w * h), sky: b.sky ? new Uint8Array(w * h) : null, units: new Map(), edges: [0, -1] };
     }
+    raw.rx = rx; raw.ry = ry; raw.units = new Map(); raw.edges = [ox + c.x0, ox + c.x1];
+    // Lo de antes vale salvo cerca de sus bordes (donde lleva los arreglos de los bordes): eso, de las unidades
+    const m = SKY_REACH + 1, nearPrevEdge = (gx0: number, gx1: number) =>
+      !!prev && (gx0 <= prev.edges[0] + m && gx1 >= prev.edges[0] - 1 || gx0 <= prev.edges[1] + 1 && gx1 >= prev.edges[1] - m);
+    // Las columnas: de lo de antes (en tramos seguidos: una copia por fila y tramo), de una unidad, o vacías
+    let count = 0, run0 = -1, run1 = -1, src: CopySource | null = null;
+    const flush = () => { if (run0 >= 0) { if (src) copyCols(src, raw!, run0, run1); else clearCols(raw!, run0, run1); } run0 = -1; };
+    const take = (s: CopySource | null, gx0: number, gx1: number) => {
+      if (run0 >= 0 && s === src && s !== null && s === prev && gx0 === run1 + 1) { run1 = gx1; return; }
+      if (run0 >= 0 && s === null && src === null && gx0 === run1 + 1) { run1 = gx1; return; }
+      flush(); src = s; run0 = gx0; run1 = gx1;
+    };
+    if (ox + c.x0 > rx) take(null, rx, ox + c.x0 - 1);
+    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
+      const gx0 = Math.max(rx, ox + i * UNIT), gx1 = Math.min(rx1, ox + i * UNIT + UNIT - 1);
+      if (gx0 > gx1) continue;
+      if (!this.fresh(i)) { take(null, gx0, gx1); continue; }
+      const L = this.strips.get(i)!.layer;
+      raw.units.set(i, L);
+      count += L ? unitCount(L, ox + i * UNIT) : 0;
+      if (prev && L && prev.units.get(i) === L && gx0 >= prev.rx && gx1 < prev.rx + prev.w && !nearPrevEdge(gx0, gx1)) take(prev, gx0, gx1);
+      else take(L, gx0, gx1);
+    }
+    if (ox + c.x1 < rx1) take(null, ox + c.x1 + 1, rx1);
+    flush();
+    this.spare = this.raw; this.raw = raw;
+    const { mask, rgba, depth, face, pick, sky } = raw;
     if (!count) return null;
     // El cielo cerca de los bordes en x (a SKY_REACH + 1 columnas): con la caja de verdad (las franjas lo hicieron con
     // la ancha, que deja ver cielo de lado)
     if (sky) {
-      const m = SKY_REACH + 1, X0 = Math.max(0, c.x0), X1 = Math.min(b.source.width - 1, c.x1), Y0 = Math.max(0, c.y0), Y1 = Math.min(b.source.depth - 1, c.y1);
-      for (let j = 0; j < h; j++) for (let li = 0; li < w; li++) {
-        const q = j * w + li, x = rx + li - ox;
-        if (mask[q] && (x - c.x0 < m || c.x1 - x < m)) sky[q] = cutSky(b, X0, X1, Y0, Y1, c.zMin, pick[q]!, face[q]!);
+      const m = SKY_REACH + 1;
+      for (const side of [0, 1] as const) {
+        const es = this.edgeSky(c, side, ry, h);
+        for (let k = 0; k < m; k++) {
+          const li = ox + (side ? c.x1 - k : c.x0 + k) - rx;
+          if (li < 0 || li >= w) continue;
+          for (let j = 0; j < h; j++) { const v = es[j * m + k]!; if (v !== 255) sky[j * w + li] = v; }
+        }
       }
     }
     // Los bordes en x: el píxel horneado de fuera junto a uno sustituido es borde (con su luz y su vóxel: lo horneado),

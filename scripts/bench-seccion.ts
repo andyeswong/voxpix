@@ -81,33 +81,38 @@ for (const width of (process.argv[2] ?? '32,384').split(',').map(Number)) {
 }
 
 // ANDAR=1: el objetivo anda por el túnel a 5 bloques/s (40 vóxeles/s, a 60 cuadros por segundo) con SectionPainter: la
-// sección se pinta por franjas con SECCION_MS ms de cola por cuadro (a 6x; 4 por defecto) y FRANJAS por delante (4).
+// sección se pinta por franjas con una FrameBudget de SECCION_MS ms por cuadro (4 por defecto) y FRANJAS por delante (4).
+// ESCALA=1: todo a 1x (el presupuesto y lo que se cuenta, sin multiplicar); si no, a 6x (los ms de la CPU sin freno por
+// 6,7 y el presupuesto dividido).
 // Cuenta: el cuadro en que aparece entera la primera vez, los cuadros con hueco después (alguna franja de la caja sin
 // pintar), lo que cuesta componer la capa por cuadro y lo que se pinta por cuadro (a 6x)
 if (process.env.ANDAR === '1') {
   const { SectionPainter } = await import('../src/world/section');
   const budget6 = Number(process.env.SECCION_MS ?? 4), ahead = Number(process.env.FRANJAS ?? 4);
+  const { FrameBudget } = await import('../src/view/budget');
+  const KX = process.env.ESCALA === '1' ? 1 : K;
   for (const width of (process.argv[2] ?? '32,128,192,384').split(',').map(Number)) {
-    const painter = new SectionPainter(b, { ahead, behind: 1 });
+    const painter = new SectionPainter(b, { ahead, behind: 1 }), budget = new FrameBudget(budget6 / KX);
     let x = 64, appear = -1, holes = 0;
-    const comp: number[] = [], paint: number[] = [], extra: number[] = [];
+    const comp: number[] = [], paint: number[] = [], extra: number[] = [], compW: number[] = [];
     for (let f = 0; f < 420 && x < W - 64; f++) {
       x += 40 / 60;
       painter.set({ ...(await import('../src/world/section')).sectionAround(null, x, ty, tz, width) }, 1);
       const j = painter.job();
+      if (j) budget.push(j);
       let a = performance.now();
-      if (j) j.run(a + budget6 / K);
-      paint.push((performance.now() - a) * K);
-      a = performance.now(); const L = painter.layer(); comp.push((performance.now() - a) * K);
+      budget.run();
+      paint.push((performance.now() - a) * KX);
+      a = performance.now(); const L = painter.layer(); comp.push((performance.now() - a) * KX); if (appear >= 0) compW.push(comp[comp.length - 1]!);
       const ok = painter.ready();
       if (appear < 0 && ok) appear = f;
       else if (appear >= 0 && !ok) holes++;
       if (f % 20 === 0 && L) {
         const opts = { ...base, vx: Math.max(0, Math.min(b.width - VW, Math.round(x) - VW / 2)) };
         a = performance.now(); frame2D(st, b, { ...opts, sectionLayer: L }); const tw = performance.now() - a;
-        a = performance.now(); frame2D(st, b, opts); extra.push((tw - (performance.now() - a)) * K);
+        a = performance.now(); frame2D(st, b, opts); extra.push((tw - (performance.now() - a)) * KX);
       }
     }
-    console.log(`ancho ${width / 8} bloques: aparece en el cuadro ${appear}, huecos después ${holes}; componer p50 ${p(comp, 0.5).toFixed(2)} p95 ${p(comp, 0.95).toFixed(2)} máx ${p(comp, 1).toFixed(1)} ms; pintar p50 ${p(paint, 0.5).toFixed(1)} p95 ${p(paint, 0.95).toFixed(1)} máx ${p(paint, 1).toFixed(1)} ms; cuadro de la CPU con capa, de más ${extra.length ? p(extra, 0.5).toFixed(1) : '-'} ms (todo a 6x); franjas pintadas ${painter.painted}`);
+    console.log(`ancho ${width / 8} bloques: aparece en el cuadro ${appear}, huecos después ${holes}; componer p95 ${p(comp, 0.95).toFixed(2)} máx ${p(comp, 1).toFixed(1)} ms, andando ya pintada p50 ${compW.length ? p(compW, 0.5).toFixed(2) : '-'} p95 ${compW.length ? p(compW, 0.95).toFixed(2) : '-'} máx ${compW.length ? p(compW, 1).toFixed(1) : '-'} ms; pintar p50 ${p(paint, 0.5).toFixed(1)} p95 ${p(paint, 0.95).toFixed(1)} máx ${p(paint, 1).toFixed(1)} ms; cuadro de la CPU con capa, de más ${extra.length ? p(extra, 0.5).toFixed(1) : '-'} ms (todo a ${KX === 1 ? '1x' : '6x'}); unidades pintadas ${painter.painted}`);
   }
 }

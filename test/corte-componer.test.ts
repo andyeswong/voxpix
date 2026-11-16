@@ -105,7 +105,7 @@ describe('corte al componer', () => {
       const c0 = sectionAround(view.camera, gx, 59, TZ0, 32);
       p.set(c0, 1);
       const before = p.painted;
-      p.paintAll();
+      p.job()?.run(Infinity);                                              // por la cola: también el cielo de los bordes de la caja siguiente
       expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : 1) * (STRIP / UNIT));   // la caja, 4 franjas por delante y 1 por detrás; luego, una (de UNIT en UNIT)
       const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x1 / STRIP) * STRIP + STRIP - 1 })!;
       expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
@@ -113,7 +113,7 @@ describe('corte al componer', () => {
       for (let q = 0; q < R.w * R.h; q++) {
         if (!R.mask[q]) continue;
         for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
-        if (L.depth[q] !== R.depth[q] || L.sky![q] !== R.sky![q]) expect(`profundidad o cielo ${q}`).toBe('igual');
+        if (L.depth[q] !== R.depth[q] || L.sky![q] !== R.sky![q]) expect(`profundidad o cielo ${q} col ${q % R.w} k ${k} ${L.depth[q]} ${R.depth[q]} ${L.sky![q]} ${R.sky![q]} w ${R.w}`).toBe('igual');
       }
     }
   });
