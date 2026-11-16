@@ -7,7 +7,8 @@
 //   rampas 'piedra', 'carbon', 'palo' y 'llama' del set al que se añaden (o las de MEDIEVAL_BASE si se corre solo).
 //   medievalBlocks(vp, add): pinta y añade los bloques en el set abierto.
 //   - La escalera va pegada a la cara +y (norte) de su celda: el juego la pone girada (BlockGrid.set con yaw) hacia la
-//     cara del bloque sólido en que se apoya. No es sólida (rampa 'palo', atravesable).
+//     cara del bloque sólido en que se apoya. No es sólida y se trepa: su rampa 'escalera' es de material 'escala'
+//     (ladder: true, la que lee moveBodyLevels).
 //   - El horno encendido lleva brasa emisiva en la boca; la luz que ponga (emits) la decide el juego.
 //   - El hueso es pequeño y no es sólido (rampa 'hueso', atravesable): es algo que se recoge.
 // Corrido solo (en la página del editor), crea un set "medieval" y devuelve su .voxset.json.
@@ -24,6 +25,7 @@ const MEDIEVAL_RAMPS = [
   { name: 'tabla', colors: ['#4a3018', '#6a4626', '#8c6036', '#ad7c48', '#c89a62'] },
   { name: 'hierro', colors: ['#3a4048', '#565e68', '#76808c', '#9aa4b0'] },
   { name: 'hueso', colors: ['#8a8070', '#b8ae9a', '#ddd4c0', '#f4eee0'], material: 'atravesable' },
+  { name: 'escalera', colors: ['#3a2614', '#5a3c20', '#7a5430'], material: 'escala' },
 ];
 function medievalBlocks(vp, add) {
   const N = 8, LO = -4, HI = 3;
@@ -113,8 +115,8 @@ function medievalBlocks(vp, add) {
   // Escalera: dos largueros y peldaños cada 2, pegada a la cara +y
   cube((x, y, z) => {
     if (y !== HI) return null;
-    if (x === -3 || x === 2) return `palo:${z === 7 ? 2 : 1}`;
-    return z % 2 === 1 && x > -3 && x < 2 ? 'palo:2' : null;
+    if (x === -3 || x === 2) return `escalera:${z === 7 ? 2 : 1}`;
+    return z % 2 === 1 && x > -3 && x < 2 ? 'escalera:2' : null;
   });
   add('escalera');
   // Hueso: tumbado en el suelo, con sus dos cabezas

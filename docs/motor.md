@@ -464,15 +464,17 @@ Lo sembrado sigue con `set` (variantes tapadas y luces).
 - Vale si la región cubre trozos de vóxeles enteros con toda la altura de la rejilla; si no, hace `applyRegion`.
 - `grid.stampRegionJob(r, at, opts)` es lo mismo por pasos para `FrameBudget`: las celdas, cada trozo de vóxeles y
   cada estructura sembrada.
-- En Bun sin freno, por trozo de 16 x 16 x 24 bloques: p50 3,2-3,7 ms y p95 4,8-5,2 ms (antes 40,6). Cada paso, p50
-  0,03 ms y p99 0,2 ms.
+- En Bun sin freno, por trozo de 16 x 16 x 24 bloques (`bun scripts/bench-region.ts`, dos tiradas, 2026-11-16):
+  p50 4,9-5,8 ms y p95 8,7 ms; `applyRegion`, p50 43-52 ms. Cada paso, p50 0,03 ms y p99 0,2 ms.
 - `test/trozo-rapido.test.ts`: los mismos vóxeles, alturas, celdas y luces que `applyRegion`, también por pasos y
   escribiendo encima de lo que había; los avisos de cambio son la caja de cada trozo; si no está alineada, hace
   `applyRegion`.
 
-Coste, en Bun sin freno, con vetas, cuevas, árboles y flores: un trozo de 16 x 16 x 24, p50 2,2 ms y p95 3,8 ms. Paga
-sobre todo el margen de la siembra: unas 11 columnas a cada lado para los árboles y las flores. Una región de 96 x 96,
-12,8 ms (`generateMap` del mismo tamaño, 12,2).
+Coste, en Bun sin freno, con vetas, cuevas, árboles y flores (el spec de `test/mundo-regiones.test.ts`;
+`bun scripts/bench-region.ts [trozos 36]`, dos tiradas, 2026-11-16):
+- un trozo de 16 x 16 x 24: p50 1,7-2,3 ms y p95 3,5-4,1 ms. Paga sobre todo el margen de la siembra: unas 11
+  columnas a cada lado para los árboles y las flores;
+- una región de 96 x 96: 13,5-18 ms; `generateMap` del mismo tamaño, 4,9-13,8 ms (varía mucho entre llamadas).
 
 ## Caminos por niveles
 
@@ -981,8 +983,8 @@ compositor.frame(state, baked, { ...opts, section });                         //
 
   En el túnel de `scripts/bench-seccion.ts` con `ANDAR=1` (`ESCALA=1` para 1x), andando a 5 bloques/s con una
   FrameBudget y 4 franjas por delante, no hay ningún cuadro con hueco en ningún ancho. Componer cuesta 0 salvo en el
-  cuadro en que la caja salta una franja (uno de cada 12): p95 0,5-0,9 ms a 1x, 5-6 ms a 6x, casi igual en todos los
-  anchos.
+  cuadro en que la caja salta una franja (uno de cada 12), casi igual en todos los anchos: en el navegador (Edge, CPU
+  a 6x, `app/seccion.html`), p95 ~8 ms en ese cuadro; en Bun, p95 8,4-9,1 ms a 6x emulado (×6,7) y 0,8 ms a 1x.
 
   | Aparece en (cuadros) | 4 bloques | 16 | 24 | 48 |
   |---|---|---|---|---|

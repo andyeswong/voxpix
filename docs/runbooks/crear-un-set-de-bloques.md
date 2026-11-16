@@ -12,11 +12,11 @@ rampas). Lo que hace el bloque sale de los materiales de sus rampas (`MATERIALS`
 | `material` | Bloquea el paso | Luz | Para |
 |---|---|---|---|
 | sin nada (`solido`) | sí | la tapa | piedra, tablas |
-| `atravesable` | no | la tapa | escalera, hueso, objetos sueltos |
+| `atravesable` | no | la tapa | hueso, objetos sueltos |
 | `follaje` | no | pasa | hierba, flores, hojas |
 | `arbusto` | sí | pasa | hojas que no se cruzan |
 | `vidrio` | sí | pasa | ventanas |
-| `escala` | no | pasa | se trepa (`moveBodyLevels`) |
+| `escala` | no | pasa | se trepa (`moveBodyLevels`): la escalera del ejemplo |
 
 `metal`, `madera`, `tela` y `tierra` solo cambian la densidad (y `metal`, `reflect`). `emissive: true` hace que la
 rampa brille sola. `vp.materials()` da la lista completa con sus propiedades.
@@ -126,7 +126,7 @@ Para que un bloque se lea a 16 px: [diseno-para-16-px.md](diseno-para-16-px.md).
 
 La prueba carga el `.voxset.json` y comprueba lo que promete el set: ids en orden, qué es sólido, qué brilla, y
 que todo cabe en el cubo. Ejemplos: `test/flores.test.ts` (sin sólidos, `light: 'passes'`, de pie en z = 0) y
-`test/bloques-medievales.test.ts` (sólidos, el horno encendido emisivo, la escalera en la fila y = 7).
+`test/bloques-medievales.test.ts` (sólidos, el horno encendido emisivo, la escalera en la fila y = 7 y de material `escala`).
 
     bunx vitest run test/bloques-medievales.test.ts test/flores.test.ts
 

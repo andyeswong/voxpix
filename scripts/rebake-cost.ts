@@ -1,10 +1,10 @@
 // Coste de rehornear tras destruir una columna (medieval, semilla 7) frente a hornear el nivel entero
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorldState } from '../src/world/build';
 import { bakeWorld, rebakeChanged } from '../src/world/bake';
 const layout = generateLayout(THEMES.medieval.spec, 7);
-const { world, state } = buildWorldState(layout, 'medieval');
+const { world, state } = buildWorldState(layout, THEMES.medieval.look);
 let t = performance.now();
 const b = bakeWorld(world, { topZ: 40, incline: 0.5 });
 const full = performance.now() - t;

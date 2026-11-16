@@ -1,14 +1,14 @@
 // Coste por cuadro del agua de la demo: simulación (2 pasos de 1/120 s) + dibujo en una vista de 384x216
 import { generateLayout } from '../src/worldgen';
-import { THEMES } from '../src/content/themes';
+import { THEMES } from '../src/samples/themes';
 import { buildWorld } from '../src/world/build';
 import { bakeWorld } from '../src/world/bake';
 import { WaterLayer } from '../src/world/water';
 for (const theme of ['medieval', 'cyberpunk', 'oficina'] as const) {
   const layout = generateLayout(THEMES[theme].spec, 7);
-  const world = buildWorld(layout, theme);
+  const world = buildWorld(layout, THEMES[theme].look);
   const b = bakeWorld(world);
-  const w = new WaterLayer(world, theme);
+  const w = new WaterLayer(world);
   const vol0 = w.sim.totalVolume();
   const view = b.rgba.slice(0, 384 * 216 * 4), depth = new Float32Array(384 * 216).fill(Infinity), total = new Float32Array(384 * 216 * 3);
   let tSim = 0, tDraw = 0;

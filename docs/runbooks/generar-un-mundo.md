@@ -147,8 +147,16 @@ carbón, hierro y oro, cuevas, árboles y flores, por semilla:
 Sin argumento corre las semillas 1, 2 y 3. La huella tiene que salir igual en cualquier máquina; los tiempos, no.
 Generar es barato; lo que cuesta es escribir los vóxeles.
 
-No hay banco para `generateRegion`. Los tiempos de `docs/motor.md` ("Mundo por regiones") no salen de ningún script del
-repo.
+`scripts/bench-region.ts` mide el mundo por regiones con el spec de `test/mundo-regiones.test.ts`: generar un trozo de
+16 x 16 x 24, una región de 96 x 96 (contra `generateMap` del mismo tamaño), y escribir un trozo con `applyRegion` y con
+`stampRegion`. Dos tiradas el 2026-11-16 (Alienware, Bun sin freno):
+
+    bun scripts/bench-region.ts
+    # generar un trozo de 16 x 16 x 24 (36 trozos): p50 1.7 ms, p95 3.5 ms, máx 3.8 ms
+    # región de 96 x 96: 13.5-16.5 ms; generateMap del mismo tamaño: 4.9-11.5 ms
+    # escribir un trozo (12): applyRegion p50 43.1 ms, p95 50.6 ms; stampRegion p50 4.9 ms, p95 8.7 ms
+
+Los números, en `docs/motor.md` ("Mundo por regiones").
 
 ## Paso a paso
 
@@ -158,4 +166,4 @@ repo.
 3. Una veta o regla de siembra nueva, al final de su lista.
 4. Fijar la huella del spec en una prueba (`mapHash` o `regionHash`), como `test/mapgen.test.ts`.
 5. Si es por regiones, comprobar entero contra trozos en orden aleatorio, como `test/mundo-regiones.test.ts`.
-6. Medir con `bun scripts/bench-mapa.ts` y anotar la huella.
+6. Medir con `bun scripts/bench-mapa.ts` (o `bun scripts/bench-region.ts` por regiones) y anotar la huella.
