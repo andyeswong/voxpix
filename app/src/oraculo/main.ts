@@ -14,7 +14,7 @@ import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type M
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
-import { frame2DParts, shadeLayers, applyFog, clearTransparent, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2DParts, shadeLayers, applyFog, clearTransparent, sectionFor, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
@@ -25,6 +25,7 @@ import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
+import { sectionAround, SectionPainter } from '../../../src/world/section';
 import maiaFile from '../../../models/maia/maia.json';
 import { walkFrames } from '../../../src/anim/walk';
 
@@ -73,6 +74,13 @@ interface Scenario {
   fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
   quarter?: Quarter;      // la vista girada (WorldView); 0 por defecto
+  // El corte al componer (Frame2DOptions.section, o sectionLayer con SectionPainter): una caja de `width` de ancho
+  // alrededor de MAIA, desde sus pies. Moviéndose: antes, la GPU dibuja con la caja 16 y 8 vóxeles más a un lado (sube
+  // una capa y la cambia)
+  // Con un anillo de paredes de piedra alrededor de MAIA (a 12-20 vóxeles, hasta z 28: el de delante es el que se
+  // corta, en cualquier giro) y, con torch, una antorcha fija dentro
+  // (z: la altura del corte; por defecto, la de los pies)
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number };
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
@@ -391,6 +399,16 @@ function highWaterWorld(bigLake = false): { world: World; state: WorldState; spa
 for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, stompEvery: 40, highWater: {} });
 SCENARIOS.push({ name: 'agua en mundo alto con corte', theme: 'medieval', ticks: 60, highWater: { cut: true } });
 SCENARIOS.push({ name: 'agua en mundo alto picando la orilla', theme: 'medieval', ticks: 240, highWater: { dig: true } });
+// El corte al componer, moviéndose, en los 4 giros: bajo el tejado (el cielo con el corte), con las antorchas fijas
+// (fijas como dinámicas en lo sustituido), y con entidades y una luz dinámica (sus sombras sobre la sección); con la
+// caja de cada cuadro (section) y con SectionPainter (sectionLayer)
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `corte al componer bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1 } });
+  SCENARIOS.push({ name: `corte al componer por franjas bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, painter: true, z: 1 } });
+  SCENARIOS.push({ name: `corte al componer con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true } });
+  const ent = SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!;
+  SCENARIOS.push({ ...ent, name: `corte al componer con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true } });
+}
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
 
@@ -404,6 +422,11 @@ function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx:
 
 interface Result {
   waterPx?: number;        // con agua en un mundo alto: píxeles con un tono del agua en la CPU
+  secPx?: number;          // con corte al componer: píxeles de la vista sustituidos (máscara 1) y de borde (2)
+  secBorder?: number;
+  secInfo?: unknown;
+  secDiffer?: number;      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
+  secMaxFinal?: number;
   waterPxNear?: number;    // y en el recuadro de pantalla de la poza de "picando la orilla" (entre la salida y el lago)
   alphaOff: number;        // píxeles con el alfa del cuadro distinto (cualquiera es fallo)
   clear: number;           // píxeles transparentes en la CPU (con fondo transparente)
@@ -498,6 +521,15 @@ async function run(): Promise<void> {
       for (let y = Math.max(0, spawn.y - 8); y < Math.min(world.depth, spawn.y + 40); y++) for (let x = Math.max(0, spawn.x - 40); x < Math.min(world.width, spawn.x + 40); x++)
         for (let z = 26; z < 30; z++) state.solid.set(x, y, z, material(0, 1));
     }
+    if (sc.section) {
+      for (let dy = -20; dy <= 20; dy++) for (let dx = -20; dx <= 20; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 12) continue;
+        const x = spawn.x + dx, y = spawn.y + dy;
+        if (x < 0 || y < 0 || x >= world.width || y >= world.depth) continue;
+        for (let z = 1; z < 29; z++) if (!state.solid.get(x, y, z)) state.solid.set(x, y, z, material(0, 1 + ((dx + dy + z) & 1)));
+      }
+      if (sc.section.torch) state.lights.addFixed({ kind: 'brazier', x: spawn.x + 6.5, y: spawn.y - 5.5, z: 12 });
+    }
     const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
     const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
     if (sc.highWater?.dig) (state.water as WaterLayer).follow(state.watchChanges());
@@ -523,12 +555,24 @@ async function run(): Promise<void> {
     const maia = view.frame().entities.find((e) => e.id === rt.entityId)!;
     const { vx, vy } = viewOf(view.camera.viewDepth, b, maia.x, maia.y, maia.z);
     const ambient = THEMES[sc.theme].ambient;
-    const o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
+    let o: Frame2DOptions = { vx, vy, vw: VW, vh: VH, time: sc.ticks / 60, lights: sc.lights ?? true, ambient,
       ...(sc.highlight ? { highlight: { box: view.viewBox(sc.highlight(world)), color: [255, 214, 102] as const, width: 2 } } : {}), ...(sc.lightCap !== undefined ? { entityLightCap: sc.lightCap } : {}),
       ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}),
       ...(sc.clearBg ? { background: 'transparent' as const } : {}),
       ...(sc.fog ? { fog: { focusZ: maia.z + 8, start: 2, full: 10, color: [40, 44, 70] as const, strength: 0.75 } } : {}) };
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
+    if (sc.section) {
+      const p = rt.player, at = (dx: number) => sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
+      const painter = sc.section.painter ? new SectionPainter(b) : null;
+      const step = (dx: number): Frame2DOptions => {
+        if (!painter) return { ...o, section: at(dx) };
+        painter.set(at(dx), 1);
+        painter.job()?.run(Infinity);
+        return { ...o, sectionLayer: painter.layer() };
+      };
+      for (const dx of [-16, -8]) gpu.read(view.frame(), b, step(dx), 'color');
+      o = step(0);
+    }
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');
       let other: { v: WorldView; b: Baked } | null = null;
@@ -574,6 +618,21 @@ async function run(): Promise<void> {
         if (tones.some((t) => parts.view[i] === t[0] && parts.view[i + 1] === t[1] && parts.view[i + 2] === t[2])) m++;
       }
       r.waterPxNear = m;
+    }
+    if (sc.section) {
+      const L = sectionFor(b, o);
+      let n1 = 0, n2 = 0;
+      if (L) for (let j = 0; j < L.h; j++) for (let i = 0; i < L.w; i++) {
+        const x = L.x + i - vx, y = L.y + j - vy, m = L.mask[j * L.w + i];
+        if (x < 0 || y < 0 || x >= VW || y >= VH || !m) continue;
+        if (m === 1) n1++; else n2++;
+        const q = (y * VW + x) * 4;
+        let fd = 0;
+        for (let ch = 0; ch < 3; ch++) fd = Math.max(fd, Math.abs(cpuFinal[q + ch]! - gFinal[q + ch]!));
+        if (fd) { r.secDiffer = (r.secDiffer ?? 0) + 1; r.secMaxFinal = Math.max(r.secMaxFinal ?? 0, fd); }
+      }
+      r.secPx = n1; r.secBorder = n2;
+      r.secInfo = { cut: o.section ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z] };
     }
     results.push(r);
     shots[sc.name] = { cpu: toPng(cpuFinal), gpu: toPng(gFinal), diff: toPng(diffMask(cpuFinal, gFinal)), colorDiff: toPng(diffMask(parts.view, gColor)) };

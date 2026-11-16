@@ -620,6 +620,7 @@ function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions):
 
 // La luz por detrás (MaterialProps.backlit) del material que se ve en el píxel idx de la imagen horneada (0 si no
 // tiene: un sólido, o una paleta sin materiales especiales)
+export { backlitKey as backlitKeyOf };
 function backlitKey(b: Baked, mt: MaterialTable | null, k: number): number {
   if (!mt || Number.isNaN(k)) return 0;
   const [x, y, z] = unkey(k);

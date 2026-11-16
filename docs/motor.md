@@ -993,8 +993,38 @@ compositor.frame(state, baked, { ...opts, section });                         //
 
   Unidades de pintado de 8 columnas en vez de 4: aparece antes (a 6x, 4/16/21/34), pero cada paso cuesta ~14 ms a 6x.
   De 2 columnas: 19/67/101/190.
-  Cada paso tiene un coste fijo (~1 ms sin freno) y la unidad pequeña no compensa. Pendiente: la GPU, que solo
-  compone (sube la capa cuando cambia).
+  Cada paso tiene un coste fijo (~1 ms sin freno) y la unidad pequeña no compensa. En el cuadro en que la caja salta
+  de franja (toca componer) y con la caja ya pintada, el trabajo de la cola no pinta lo de delante: no se suma a la
+  composición.
+- En la GPU (`src/view/gpu`) la capa solo se compone. `Frame2DOptions.section` o `sectionLayer` igual que en la CPU:
+  - dos texturas, porque la escena ya usa 14 de las 16 unidades y la 15 es la de subir: el color; y la profundidad,
+    la y del mundo, la cara con su código de luz por detrás y máscara + 16 × cielo;
+  - las texturas son un anillo en x: la columna x de la imagen va en la x mod su ancho. Una capa de `SectionPainter`
+    dice qué columnas cambiaron desde la anterior (`base`, `dirty`) y solo se suben esas;
+  - en un píxel sustituido no hay luz horneada: su cielo con el corte, y las luces fijas como las dinámicas (sin
+    sombras); el borde guarda la suya con el ambiente de su cielo con el corte; las luces dinámicas y las sombras de
+    las entidades van con la geometría de la capa.
+  - El oráculo (`app/oraculo.html`, "corte al componer"): un anillo de paredes alrededor de MAIA, la caja moviéndose
+    (la GPU dibuja antes con ella 16 y 8 vóxeles a un lado), bajo tejado (el cielo), con una antorcha fija y con
+    entidades y una luz dinámica, con `section` y con `SectionPainter`, en los 4 giros: 16 de 16, con 1500-3300
+    píxeles sustituidos en la vista; dentro de la capa, 1 píxel distinto (a 3) en una escena y 0 en las demás. Sin
+    capa, las 81 escenas de antes salen iguales byte a byte.
+- `app/seccion.html` lo mide en el navegador: el túnel de `scripts/tunel.ts` (de bloques, con dos antorchas), MAIA
+  andando a 5 bloques/s con la cola de la vista y la sección por franjas (`?ancho=4`; `?medir=4,16,24,48` deja la
+  medida en `window.__seccion`).
+
+  Edge con GPU y la CPU a 6x (dos tiradas, 360 cuadros), andando con todo pintado:
+
+  | Ancho | Aparece (cuadros) | Huecos | Cuadros > 25 ms | Cuadro medio | De más: pintar delante / componer / subir |
+  |---|---|---|---|---|---|
+  | sin corte | | | 5 | 3,2-3,9 ms | |
+  | 4 bloques | 9 | 0 | 4-6 | 8,4-8,6 | 2,6 / 1,0 / 1,0 ms |
+  | 16 | 33 | 0 | 3-5 | 8,2-8,3 | 2,3-2,4 / 1,1 / 0,9 |
+  | 24 | 47 | 0 | 6 | 7,6-7,7 | 2,1 / 1,1 / 0,9 |
+
+  Con 48 bloques la caja es el mundo entero (384 vóxeles): no hay nada que pintar delante y no cuenta. Con unidades de
+  8 columnas aparece en 4/16/21 cuadros y el cuadro medio baja ~1 ms, pero hay 6-11 cuadros de más de 25 ms. Pendiente:
+  el coste medio al andar (+4-5 ms a 6x; la puerta es +1 ms).
 
 ## Cámara con objetivo
 

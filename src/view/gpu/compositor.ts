@@ -13,8 +13,10 @@
 import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
+import { sectionFor, backlitKeyOf } from '../../world/frame2d';
+import type { SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, skyAmbient, unprojector, type Baked, type BakedLight } from '../../world/bake';
+import { worldPointAt, skyAmbient, unprojector, rowP, worldYAt, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
@@ -121,6 +123,14 @@ export class GpuCompositor {
   private waterOf: unknown = null;
   private waterGround = -1;                        // la groundVersion del agua cuyo fondo está subido
   // Destinos de la vista
+  // El corte al componer: la capa subida (se sube cuando cambia) y sus texturas, del tamaño de la mayor
+  private secLayer: SectionLayer | null = null;
+  private secOf: Baked | null = null;
+  private secSize: [number, number] = [0, 0];
+  private tSecColor: WebGLTexture | null = null;
+  private tSecGeo: WebGLTexture | null = null;
+  // ms de la última subida de la capa (0 si no cambió)
+  sectionMs = 0;
   private targets: [Target, Target] | null = null;
   private out: { fbo: WebGLFramebuffer; tex: WebGLTexture } | null = null;
   private size = [0, 0];
@@ -241,6 +251,8 @@ export class GpuCompositor {
     let up = performance.now();
     this.syncBaked(b);
     this.syncWeights(b, o);
+    const sec = o.section || o.sectionLayer ? sectionFor(b, o) : null;
+    this.syncSection(b, sec);
     let upMs = performance.now() - up;
     this.parts.baked = upMs;
     const [A, B] = this.ensureTargets(o.vw, o.vh);
@@ -293,6 +305,7 @@ export class GpuCompositor {
     bindTex(gl, 10, gl.TEXTURE_2D, E.contact, s.u.uContact);
     bindTex(gl, 7, gl.TEXTURE_3D, this.tOcc, s.u.uOcc);
     bindTex(gl, 9, gl.TEXTURE_2D, this.tWorldY, s.u.uWorldY);
+    this.bindSection(s, true);
     // El cielo: la luz ambiente de cada píxel según cuánto cielo ve (la misma tabla que lightView en la CPU)
     const useSky = !!(o.lights && o.cave && b.sky && this.tSky);
     gl.uniform1i(s.u.uUseSky, useSky ? 1 : 0);
@@ -455,6 +468,7 @@ export class GpuCompositor {
     bindTex(gl, 13, gl.TEXTURE_2D, useSky ? this.tSky : null, p.u.uSky);
     if (useSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform2i(p.u.uView, o.vx, o.vy);
+    this.bindSection(p, false);
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
@@ -538,6 +552,79 @@ export class GpuCompositor {
       if (this.tSky && b.sky) subImage(gl, this.tSky, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
     }
     this.bakedSerial = pub.serial;
+  }
+
+  // La capa del corte. Las texturas guardan cada columna x de la imagen en la columna x mod secTW (un anillo en x): una
+  // capa de SectionPainter dice qué columnas cambiaron desde la anterior (base, dirty) y solo se suben esas; si no, toda.
+  // Lo que la GPU necesita por píxel: su color; y su profundidad, la y del mundo (como fillWorldY, con la profundidad de
+  // la capa), la cara con el código de su luz por detrás (como fillFace, con el vóxel de la capa) y máscara + 16 * cielo
+  private syncSection(b: Baked, sec: SectionLayer | null): void {
+    this.sectionMs = 0;
+    if (sec === this.secLayer && b === this.secOf) return;
+    const up = this.secOf === b ? this.secLayer : null;
+    this.secLayer = sec; this.secOf = b;
+    if (!sec) return;
+    const t0 = performance.now(), gl = this.gl;
+    let full = !(sec.base && up && sec.base === up && sec.dirty && sec.y === up.y && sec.h === up.h);
+    if (!this.tSecColor || sec.w > this.secSize[0] || sec.h > this.secSize[1]) {
+      for (const tx of [this.tSecColor, this.tSecGeo]) if (tx) gl.deleteTexture(tx);
+      let W = 256;
+      while (W < sec.w) W *= 2;
+      const H = Math.max(sec.h, this.secSize[1]);
+      this.tSecColor = tex2D(gl, gl.RGBA8, W, H, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      this.tSecGeo = tex2D(gl, gl.RGBA32F, W, H, gl.RGBA, gl.FLOAT, null);
+      this.secSize = [W, H];
+      full = true;
+    }
+    const cols: ReadonlyArray<readonly [number, number]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;
+    for (const [g0, g1] of cols) {
+      const a = Math.max(sec.x, g0), z = Math.min(sec.x + sec.w - 1, g1);
+      if (a <= z) this.uploadSectionCols(b, sec, a, z);
+    }
+    this.sectionMs = performance.now() - t0;
+  }
+
+  // Las columnas de imagen g0..g1 de la capa a las texturas del anillo (en dos trozos si dan la vuelta)
+  private uploadSectionCols(b: Baked, sec: SectionLayer, g0: number, g1: number): void {
+    const gl = this.gl, { w, h } = sec, n = g1 - g0 + 1, TW = this.secSize[0];
+    const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
+    const u = unprojector(b), mt = materialsOf(b.source.palette), vals = this.backVals, anyBack = vals.some((v) => v > 0);
+    for (let j = 0; j < h; j++) {
+      const P = rowP(u, sec.y + j);
+      color.set(sec.rgba.subarray((j * w + g0 - sec.x) * 4, (j * w + g1 - sec.x + 1) * 4), j * n * 4);
+      for (let k = 0; k < n; k++) {
+        const q = j * w + g0 - sec.x + k, o = (j * n + k) * 4, m = sec.mask[q]!;
+        if (!m) { geo[o] = Infinity; continue; }
+        const f = sec.face[q]!, d = sec.depth[q]!;
+        geo[o] = d;
+        geo[o + 1] = f >= 0 && d !== Infinity ? worldYAt(u, P, d) : 0;
+        const back = f >= 0 && anyBack ? backlitKeyOf(b, mt, sec.pick[q]!) : 0;
+        geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(back, 1) : f;
+        geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
+      }
+    }
+    for (let k0 = 0; k0 < n;) {
+      const tx = (g0 + k0) % TW, pw = Math.min(n - k0, TW - tx);
+      gl.pixelStorei(gl.UNPACK_ROW_LENGTH, n);
+      gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, k0);
+      uploadTo(gl, gl.TEXTURE_2D, this.tSecColor!);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, 0, pw, h, gl.RGBA, gl.UNSIGNED_BYTE, color);
+      uploadTo(gl, gl.TEXTURE_2D, this.tSecGeo!);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, 0, pw, h, gl.RGBA, gl.FLOAT, geo);
+      k0 += pw;
+    }
+    gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+  }
+
+  // Las texturas y el recuadro de la capa, en la escena (all) o en el paso de la luz (solo la de la máscara y el cielo)
+  private bindSection(p: Program, all: boolean): void {
+    const gl = this.gl, sec = this.secLayer;
+    gl.uniform1i(p.u.uSec, sec ? 1 : 0);
+    gl.uniform4i(p.u.uSecRect, sec?.x ?? 0, sec?.y ?? 0, sec?.w ?? 0, sec?.h ?? 0);
+    gl.uniform1i(p.u.uSecTW, this.secSize[0] || 1);
+    bindTex(gl, 14, gl.TEXTURE_2D, sec ? this.tSecGeo : null, p.u.uSecGeo);
+    if (all) bindTex(gl, 11, gl.TEXTURE_2D, sec ? this.tSecColor : null, p.u.uSecColor);
   }
 
   // Los pesos de las luces fijas: una capa por luz elegida. Se eligen las que tocan la vista (todas, si no se dice) y,

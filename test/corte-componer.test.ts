@@ -10,7 +10,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView, type Quarter } from '../src/world/view';
 import { bakeWorld } from '../src/world/bake';
 import { frame2D, sectionFor, type Frame2DOptions } from '../src/world/frame2d';
-import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT } from '../src/world/section';
+import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT, type SectionLayer } from '../src/world/section';
 import type { WorldLight } from '../src/world/build';
 
 const pal = { ramps: [
@@ -97,23 +97,44 @@ describe('corte al componer', () => {
     expect(r.inside + r.outside).toBe(0);
   });
 
-  it('por franjas (SectionPainter): la misma capa que la de la caja entera, pintando solo lo nuevo al andar', () => {
+  it('por franjas (SectionPainter): la misma capa que la de la caja entera, pintando solo lo nuevo al andar; y lo que cambia (dirty) basta para ponerla al día', () => {
     const st = new WorldState(build(null), [], null), view = new WorldView(st, 0);
     const bf = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, outline: 'both', sky: true });
     const p = new SectionPainter(bf, { ahead: 4, behind: 1 });
+    // Una copia como la de la GPU: por columnas de la imagen, puesta al día solo con lo que dice cada capa (base y dirty)
+    const BW = bf.width;
+    let mirror: { y: number; h: number; mask: Uint8Array; rgba: Uint8Array; depth: Float32Array; sky: Uint8Array } | null = null, seen: SectionLayer | null = null;
+    const sync = (L: SectionLayer | null) => {
+      if (!L || L === seen) return;
+      const full = !mirror || !L.base || L.base !== seen || mirror.y !== L.y || mirror.h !== L.h;
+      if (!mirror || mirror.y !== L.y || mirror.h !== L.h) mirror = { y: L.y, h: L.h, mask: new Uint8Array(BW * L.h), rgba: new Uint8Array(BW * L.h * 4), depth: new Float32Array(BW * L.h), sky: new Uint8Array(BW * L.h) };
+      const cols: ReadonlyArray<readonly [number, number]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
+      for (const [g0, g1] of cols) for (let g = Math.max(L.x, g0); g <= Math.min(L.x + L.w - 1, g1); g++) for (let j = 0; j < L.h; j++) {
+        const q = j * L.w + g - L.x, m = j * BW + g;
+        mirror.mask[m] = L.mask[q]!; mirror.depth[m] = L.depth[q]!; mirror.sky[m] = L.sky![q]!;
+        for (let c = 0; c < 4; c++) mirror.rgba[m * 4 + c] = L.rgba[q * 4 + c]!;
+      }
+      seen = L;
+    };
     for (const [k, gx] of [40, 44, 52, 60, 68].entries()) {
       const c0 = sectionAround(view.camera, gx, 59, TZ0, 32);
       p.set(c0, 1);
+      sync(p.layer());                                                     // compone (en el cuadro del salto, lo de delante espera)
       const before = p.painted;
       p.job()?.run(Infinity);                                              // por la cola: también el cielo de los bordes de la caja siguiente
       expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : 1) * (STRIP / UNIT));   // la caja, 4 franjas por delante y 1 por detrás; luego, una (de UNIT en UNIT)
       const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x1 / STRIP) * STRIP + STRIP - 1 })!;
+      sync(L);
+      if (k > 0) expect(L.base).not.toBeNull();                            // al andar se pone al día por columnas
       expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
       expect(Array.from(L.mask)).toEqual(Array.from(R.mask));
       for (let q = 0; q < R.w * R.h; q++) {
+        const m = Math.floor(q / R.w) * BW + R.x + (q % R.w);
+        if (mirror!.mask[m] !== R.mask[q]) expect(`copia: máscara ${q}`).toBe('igual');
         if (!R.mask[q]) continue;
-        for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
+        for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== R.rgba[q * 4 + c] || mirror!.rgba[m * 4 + c] !== R.rgba[q * 4 + c]) expect(`color ${q}`).toBe('igual');
         if (L.depth[q] !== R.depth[q] || L.sky![q] !== R.sky![q]) expect(`profundidad o cielo ${q} col ${q % R.w} k ${k} ${L.depth[q]} ${R.depth[q]} ${L.sky![q]} ${R.sky![q]} w ${R.w}`).toBe('igual');
+        if (mirror!.depth[m] !== R.depth[q] || mirror!.sky[m] !== R.sky![q]) expect(`copia: profundidad o cielo ${q}`).toBe('igual');
       }
     }
   });

@@ -35,6 +35,25 @@ float spotOf(int i, vec3 v, vec3 dir) {
 }
 float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 
+// El corte al componer (frame2d.ts, Frame2DOptions.section / sectionLayer): la capa en su recuadro de la imagen
+// horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
+// del mundo, cara (con el código de su luz por detrás, como uFace) y máscara (1 sustituido, 2 borde) + 16 * cielo con el
+// corte (enteros pequeños: exactos en un float)
+const SECTION = `uniform bool uSec;
+uniform ivec4 uSecRect;                // x, y, w, h en la imagen horneada
+uniform int uSecTW;                    // la columna x de la imagen va en la x mod uSecTW de las texturas (un anillo)
+uniform sampler2D uSecGeo;
+ivec2 secTexel(ivec2 s) { return ivec2(s.x % uSecTW, s.y - uSecRect.y); }
+vec4 secGeo(ivec2 s) { return texelFetch(uSecGeo, secTexel(s), 0); }
+// La máscara de la capa en el píxel s de la imagen (0 fuera) y su cielo
+int secMask(ivec2 s) {
+  if (!uSec) return 0;
+  ivec2 l = s - uSecRect.xy;
+  if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return 0;
+  return int(secGeo(s).a) & 15;
+}
+int secSky(ivec2 s) { return int(secGeo(s).a) >> 4; }`;
+
 const HEADER = `#version 300 es
 precision highp float;
 precision highp int;
@@ -61,6 +80,8 @@ export const FRAG_SCENE = `${HEADER}
 uniform sampler2D uColor;
 uniform sampler2D uDepth;
 uniform isampler2D uFace;
+${SECTION}
+uniform sampler2D uSecColor;
 uniform float uBack[16];               // la luz por detrás de cada código de la cara (compositor.ts, backlitCodes)
 uniform sampler2D uWorldY;             // la y del mundo de cada píxel (calculada en la CPU en doble precisión)
 // El cielo (bake.ts, Baked.sky): cuánto cielo ve cada píxel (0..5) y la luz ambiente de cada nivel (skyAmbient, la
@@ -146,35 +167,40 @@ bool blockedByBody(int e, vec3 P, vec3 L) {
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
   ivec2 s = t + uView;
-  vec4 c = texelFetch(uColor, s, 0);
-  float depth = texelFetch(uDepth, s, 0).r;
+  // En la capa del corte (sm 1: sustituido, 2: borde) lo que se ve es lo de la capa
+  int sm = secMask(s);
+  vec4 sg = sm > 0 ? secGeo(s) : vec4(0.0);
+  vec4 c = sm > 0 ? texelFetch(uSecColor, secTexel(s), 0) : texelFetch(uColor, s, 0);
+  float depth = sm > 0 ? sg.r : texelFetch(uDepth, s, 0).r;
   vec3 col = c.a == 0.0 ? uBg : c.rgb;
   float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
   vec3 total = uAmbient;
   if (uUseSky) {
     ivec2 ssz = textureSize(uSky, 0);
-    int k = (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5;
+    int k = sm > 0 ? secSky(s) : (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5;
     total = uSkyAmb[k];
   }
   if (uLights) {
-    for (int i = 0; i < uNBaked; i++) {
+    // Un píxel sustituido no lleva luz horneada (era la de otra superficie): las luces fijas van como las dinámicas,
+    // sin sombras. El borde guarda la suya (su vóxel es el mismo)
+    if (sm != 1) for (int i = 0; i < uNBaked; i++) {
       ivec4 r = uBakedRect[i];
       ivec2 l = s - r.xy;
       if (l.x < 0 || l.y < 0 || l.x >= r.z || l.y >= r.w) continue;
       float w = texelFetch(uWeights, ivec3(l, i), 0).r;
       if (w != 0.0) total += uBakedColorK[i] * w;
     }
-    int fr = texelFetch(uFace, s, 0).r;
+    int fr = sm > 0 ? int(sg.b) : texelFetch(uFace, s, 0).r;
     if (fr >= 0) {
       int f = fr & 7;
       float back = uBack[fr >> 3];             // luz por detrás de su material (compositor.ts, fillFace)
       // El punto del mundo que se ve aquí (worldPointAt) y su normal
       float Pp = uOriginY - (float(s.y) + 0.5);
-      float wy = texelFetch(uWorldY, s, 0).r;
+      float wy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
       vec3 P = vec3(float(s.x), wy, Pp - uA * wy);
       vec3 n = uDirs[f];
       for (int i = 0; i < uNLights; i++) {
-        if (lightMeta(i).z == 0.0) continue;
+        if (lightMeta(i).z == 0.0 && !(sm == 1 && lightMeta(i).x >= 0.0)) continue;
         float w = contribution(i, P, n, back);
         if (w != 0.0) total += lightCol(i).rgb * w;
       }
@@ -190,7 +216,7 @@ void main() {
           if (!blockedByBody(e, Pl, lightPos(i).xyz - ep)) continue;
           float w = 0.0;
           int layer = int(lightMeta(i).x);
-          if (layer >= 0) {
+          if (layer >= 0 && sm != 1) {
             ivec4 r = uBakedRect[layer];
             ivec2 l = s - r.xy;
             if (l.x >= 0 && l.y >= 0 && l.x < r.z && l.y < r.w) w = texelFetch(uWeights, ivec3(l, layer), 0).r * lightMeta(i).y;
@@ -452,6 +478,7 @@ uniform bool uUseSky;
 uniform highp usampler2D uSky;
 uniform vec3 uSkyAmb[6];
 uniform ivec2 uView;
+${SECTION}
 uniform bool uFlip;
 uniform int uHeight;
 // La niebla por altura (frame2d.ts: applyFog): z del punto de cada píxel por su profundidad y su fila
@@ -499,7 +526,7 @@ void main() {
   vec3 amb = uAmbient;
   if (uUseSky) {
     ivec2 s = t + uView, ssz = textureSize(uSky, 0);
-    amb = uSkyAmb[(s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
+    amb = uSkyAmb[secMask(s) > 0 ? secSky(s) : (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
   }
   vec3 mul, add;
   for (int ch = 0; ch < 3; ch++) {

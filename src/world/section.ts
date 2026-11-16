@@ -28,6 +28,10 @@ export interface SectionLayer {
   readonly pick: Float64Array;
   readonly sky: Uint8Array | null;      // rayos de cielo por píxel (si el horneado tiene cielo)
   readonly count: number;               // píxeles sustituidos (los de borde no cuentan)
+  // Solo en las de SectionPainter: la capa anterior y las columnas de píxeles (de la imagen) que cambiaron desde ella;
+  // lo demás de las columnas que comparten es igual. Para subir solo eso (el compositor de la GPU)
+  readonly base?: SectionLayer | null;
+  readonly dirty?: ReadonlyArray<readonly [number, number]>;
 }
 
 const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
@@ -228,6 +232,7 @@ export class SectionPainter {
   // Lo copiado de las unidades para la caja de ahora, sin los arreglos de los bordes (se lleva al mover la caja)
   private raw: Raw | null = null;
   private spare: Raw | null = null;
+  private last: SectionLayer | null = null;      // la última capa compuesta (la base de la siguiente)
   // El cielo de cueva de las columnas junto a cada borde de la caja, por posición de la caja (se adelanta en la cola)
   private edgeSkies = new Map<string, Uint8Array>();
   private edgeSerial = -1;
@@ -249,7 +254,7 @@ export class SectionPainter {
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = Math.floor(cut.x1 / STRIP) * STRIP + STRIP - 1;
     this.cut = { ...cut, x0, x1 };
     const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}`;
-    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.edgeSkies.clear(); }
+    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
   }
 
   // ¿La franja i está pintada y al día con la imagen?
@@ -287,6 +292,9 @@ export class SectionPainter {
   job(): { key: string; priority: number; run(deadline: number): boolean } | null {
     if (!this.wanted().length && !this.nextEdge()) return null;
     return { key: 'section', priority: 0, run: (deadline: number) => {
+      // En el cuadro en que la caja salta de franja (toca componer) y con la caja ya pintada, lo de delante espera: no se
+      // suma a la composición (hay franjas pintadas por delante de sobra)
+      if (this.ready() && !this.composedBox()) return false;
       for (let first = true; ; first = false) {
         const now = performance.now();
         if (!first && now + this.stepMs > deadline) break;
@@ -299,6 +307,12 @@ export class SectionPainter {
       }
       return !this.wanted().length && !this.nextEdge();
     } };
+  }
+
+  // ¿La última composición es de la caja de ahora?
+  private composedBox(): boolean {
+    const c = this.cut;
+    return !!c && !!this.composed && this.composed.key.startsWith(`${c.x0},${c.x1}:`);
   }
 
   // Lo que costó el último paso de pintado (ms, sin freno): para no empezar uno que no cabe
@@ -406,7 +420,11 @@ export class SectionPainter {
       !!prev && (gx0 <= prev.edges[0] + m && gx1 >= prev.edges[0] - 1 || gx0 <= prev.edges[1] + 1 && gx1 >= prev.edges[1] - m);
     // Las columnas: de lo de antes (en tramos seguidos: una copia por fila y tramo), de una unidad, o vacías
     let count = 0, run0 = -1, run1 = -1, src: CopySource | null = null;
-    const flush = () => { if (run0 >= 0) { if (src) copyCols(src, raw!, run0, run1); else clearCols(raw!, run0, run1); } run0 = -1; };
+    const dirty: Array<[number, number]> = [];
+    const flush = () => {
+      if (run0 >= 0) { if (src) copyCols(src, raw!, run0, run1); else clearCols(raw!, run0, run1); if (src !== prev) dirty.push([run0, run1]); }
+      run0 = -1;
+    };
     const take = (s: CopySource | null, gx0: number, gx1: number) => {
       if (run0 >= 0 && s === src && s !== null && s === prev && gx0 === run1 + 1) { run1 = gx1; return; }
       if (run0 >= 0 && s === null && src === null && gx0 === run1 + 1) { run1 = gx1; return; }
@@ -427,7 +445,10 @@ export class SectionPainter {
     flush();
     this.spare = this.raw; this.raw = raw;
     const { mask, rgba, depth, face, pick, sky } = raw;
-    if (!count) return null;
+    const base = prev ? this.last : null;
+    // (y lo que cambian los arreglos de los bordes de ahora)
+    dirty.push([ox + c.x0 - 1, ox + c.x0 + m], [ox + c.x1 - m, ox + c.x1 + 1]);
+    if (!count) { this.last = null; return null; }
     // El cielo cerca de los bordes en x (a SKY_REACH + 1 columnas): con la caja de verdad (las franjas lo hicieron con
     // la ancha, que deja ver cielo de lado)
     if (sky) {
@@ -464,6 +485,8 @@ export class SectionPainter {
         }
       }
     }
-    return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count };
+    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, count, base, dirty };
+    this.last = layer;
+    return layer;
   }
 }
