@@ -37,18 +37,20 @@ for (const width of (process.argv[2] ?? '32,384').split(',').map(Number)) {
 }
 
 // ANDAR=1: el objetivo anda por el túnel a 5 bloques/s (40 vóxeles/s, a 60 cuadros por segundo) con SectionPainter: la
-// sección se pinta por franjas con una FrameBudget de SECCION_MS ms por cuadro (4 por defecto) y FRANJAS por delante (4).
+// sección se pinta por franjas con una FrameBudget de SECCION_MS ms por cuadro (3 por defecto) y 8 de lo cercano, como
+// la del juego, y FRANJAS por delante (4).
 // ESCALA=1: todo a 1x (el presupuesto y lo que se cuenta, sin multiplicar); si no, a 6x (los ms de la CPU sin freno por
 // 6,7 y el presupuesto dividido).
 // Cuenta: el cuadro en que aparece entera la primera vez, los cuadros con hueco después (alguna franja de la caja sin
 // pintar), lo que cuesta componer la capa por cuadro y lo que se pinta por cuadro (a 6x)
 if (process.env.ANDAR === '1') {
   const { SectionPainter } = await import('../src/world/section');
-  const budget6 = Number(process.env.SECCION_MS ?? 4), ahead = Number(process.env.FRANJAS ?? 4);
+  const budget6 = Number(process.env.SECCION_MS ?? 3), ahead = Number(process.env.FRANJAS ?? 4);
   const { FrameBudget } = await import('../src/view/budget');
   const KX = process.env.ESCALA === '1' ? 1 : K;
   for (const width of (process.argv[2] ?? '32,128,192,384').split(',').map(Number)) {
-    const painter = new SectionPainter(b, { ahead, behind: 1 }), budget = new FrameBudget(budget6 / KX);
+    // La cola del juego (FERN): 3 ms, y 8 de lo cercano (priority < 64), como a 6x
+    const painter = new SectionPainter(b, { ahead, behind: 1 }), budget = new FrameBudget(budget6 / KX, undefined, { ms: 8 / KX, below: 64 });
     let x = 64, appear = -1, holes = 0;
     const comp: number[] = [], paint: number[] = [], extra: number[] = [], compW: number[] = [];
     for (let f = 0; f < 420 && x < W - 64; f++) {
