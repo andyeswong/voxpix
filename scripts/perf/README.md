@@ -16,7 +16,8 @@ En Windows (Edge), desde WSL:
 Para reiniciar el servidor de vite antes de medir (si no, puede servir módulos viejos): `pkill -f "[v]ite app"`, con el
 corchete. Con `pkill -f "vite app"` el patrón coincide también con la línea de la propia shell que lo lanza, que muere
 con él, y lo que venía detrás en el mismo comando (cambiar de commit, medir) no se ejecuta: se mide lo que no se cree
-estar midiendo. Pasó dos veces. Con la CPU a 6x el horneado tarda
+estar midiendo. Pasó dos veces. Y el corchete no basta si en la misma línea va después `bunx vite app ...` (también
+coincide): el pkill, siempre en una llamada aparte. Con la CPU a 6x el horneado tarda
 ~6 s: espera al menos 20 s antes de medir.
 
 Primera medida (NARUTO, 2026-10-24, commit c96186a, Edge sin ventana en la Alienware): a 1x p95 16,8 y 0 % perdidos;
