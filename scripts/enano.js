@@ -1,3 +1,5 @@
+// Example of the editor API (window.voxpix): makes models/enano/enano.voxpix.json (and enano-b with variant B).
+// How to regenerate it: models/README.md.
 // Un minero enano medieval, hecho solo con el editor (window.voxpix): se corre en la página del editor (consola o CDP)
 // y devuelve el .voxpix.json (versión 3) con sus clips quieto, andar y atacar. Determinista.
 // Caja en TODOS los cuadros de todos los clips: x -3..2, y -3..2, z 0..13 (6 x 6 x 14). Frente hacia -y, pies en z = 0.

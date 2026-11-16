@@ -1,3 +1,5 @@
+// Example layer file for import-pxl --stack: makes models/maia/maia.json.
+// How to regenerate it: models/README.md.
 // MAIA v2 en vóxeles, capa por capa, para VoxPix (NARUTO, 2026-10-24).
 //
 // No se redibuja a MAIA: se le da volumen a su arte APROBADO (arte/aseprite-maia/v2_moonlighter, frente

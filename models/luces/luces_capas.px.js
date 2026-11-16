@@ -1,3 +1,5 @@
+// Example layer file for import-pxl --stack: makes models/luces/linterna.json, antorcha.json and linterna-neon.json.
+// How to regenerate them: models/README.md.
 // La luz que lleva MAIA, una por mundo (FERN, 2026-10-25). Solo de aspecto: siempre equipada, fuera de la tienda y
 // sin efecto en la simulación (MAIA). La luz en sí la pone el núcleo de NARUTO (luces que siguen a una entidad y
 // focos de cono); esto es el objeto que se ve en la mano.

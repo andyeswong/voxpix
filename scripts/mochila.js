@@ -1,3 +1,5 @@
+// Example of the editor API (window.voxpix): makes models/mochila/mochila.voxset.json.
+// How to regenerate it: models/README.md.
 // Una mochila de cuero, hecha solo con el editor (window.voxpix): para un icono (la mochila del inventario), en un
 // cubo de 8 x 8 x 8 de un set (x e y de -4 a 3, z de 0 a 7; el frente mira a -y), así su icono sale con iconSheet
 // como el de un bloque. No es para ponerla en el mundo. Determinista.

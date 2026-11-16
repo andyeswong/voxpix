@@ -1,3 +1,5 @@
+// Example of the editor API (window.voxpix): makes models/flores/flores.voxset.json.
+// How to regenerate it: models/README.md.
 // Tres flores como bloques de un set (roja, amarilla y blanca), hechas solo con el editor (window.voxpix). Cada una,
 // pequeña y de pie sobre z = 0 dentro de su cubo de 8 x 8 x 8 (x e y de -4 a 3). Con rampas de material
 // 'follaje' (el de hierba, flores y hojas) y sin brillo: se cruzan y dejan pasar la luz (props solid false, light

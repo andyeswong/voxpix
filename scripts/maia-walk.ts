@@ -1,3 +1,5 @@
+// Example: makes the walk frames models/maia/walk/maia_walk_N.json from models/maia/maia.json.
+// How to regenerate them: models/README.md.
 // El walk de MAIA en vóxeles para revisar, con la cámara del juego (oblicua, suelo a 0.5):
 //   - maia_walk_x6.png: filas frente, derecha, espalda, izquierda (vóxeles) y frente y espalda del walk 2D
 //     aprobado; columnas: quieto + los 8 cuadros;

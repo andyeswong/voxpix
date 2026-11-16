@@ -1,3 +1,5 @@
+// Example of the editor API (window.voxpix): makes models/objetos/objetos.voxset.json.
+// How to regenerate it: models/README.md.
 // Objetos de mano de un mundo medieval, hechos solo con el editor (window.voxpix): picos y espadas de madera, piedra y
 // hierro, un palo y lingotes de hierro y oro. Cada uno en un cubo de 8 x 8 x 8 de un set (x e y de -4 a 3, z de 0 a
 // 7), así su icono sale con iconSheet como el de un bloque. De pie, con el mango hacia abajo y el agarre en

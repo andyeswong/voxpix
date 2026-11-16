@@ -75,6 +75,13 @@ se diga; "a 6x" es en Edge con la CPU frenada 6 veces. El detalle de cada tema e
 - `d62d24b`: objetos de mano (picos, espadas, palo y lingotes), con su agarre.
 - `05b8f17`: restaura `test/objetos.test.ts`, que `d62d24b` había sobrescrito; la prueba nueva va en
   `test/objetos-mano.test.ts`.
+- Después de cc1dc6f: `cba1d2b` una mochila de cuero para un icono de inventario, y `31fa8c0` rehecha para leerse a
+  16 px (bloques de color grandes, sin salientes).
+- Todos los ejemplos, documentados en [models/README.md](../models/README.md): qué es cada uno, qué enseña de la API,
+  su tamaño, el script o el fichero de capas que lo genera y la orden para regenerarlo y comprobar que sale igual byte a
+  byte (comprobado el 2026-11-16: todos salen idénticos). Cada script de ejemplo lo dice en su cabecera. El paisaje
+  (`models/paisaje/medieval_capas.px.js`) no se importaba desde que `import-pxl` trae el global `vox`: declaraba su
+  propio `vox`; ahora se llama `cells`, y vuelve a dar sus 102.776 vóxeles.
 
 Al final: 531 pruebas y 79 escenas del oráculo (CPU = GPU), todas en verde.
 

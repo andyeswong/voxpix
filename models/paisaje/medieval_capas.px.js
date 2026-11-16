@@ -1,3 +1,5 @@
+// Example layer file for import-pxl --stack: a 128 x 128 landscape written as code.
+// How to import it: models/README.md.
 // Paisaje medieval de 128 x 128 para VoxPix, capa por capa (NARUTO, 2026-10-25). Lo genera este mismo código:
 // colinas de hierba con tierra y roca debajo, un río serpenteante y un lago excavados (vacíos: el agua se echa en la
 // app con la herramienta Fluido), arena en las orillas, un camino de tierra, un castillo en la colina (torre del
@@ -23,9 +25,9 @@ let seed = 1977
 function rnd() { seed |= 0; seed = (seed + 0x6d2b79f5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296 }
 
 // Ejes del modelo: x de -64 a 63 (este), y de -64 a 63 (norte); la imagen de cada capa tiene el norte arriba
-const vox = new Map()            // "x,y,z" -> tecla
-const put = (x, y, z, k) => { if (x >= -HALF && x < HALF && y >= -HALF && y < HALF && z >= 0 && z < H) vox.set(x + "," + y + "," + z, k) }
-const get = (x, y, z) => vox.get(x + "," + y + "," + z)
+const cells = new Map()          // "x,y,z" -> tecla
+const put = (x, y, z, k) => { if (x >= -HALF && x < HALF && y >= -HALF && y < HALF && z >= 0 && z < H) cells.set(x + "," + y + "," + z, k) }
+const get = (x, y, z) => cells.get(x + "," + y + "," + z)
 
 // ---- terreno: colinas suaves, más alto al noroeste (donde va el castillo)
 const riverX = (y) => 18 + 14 * Math.sin(y / 17) + 5 * Math.sin(y / 7.3)

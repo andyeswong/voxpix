@@ -175,6 +175,13 @@ En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y
 `worldgen` (mapas por semilla). Para un mundo de bloques que se pica en partida: `world/blocks`, `world/edit`,
 `world/terrain`, `world/paths` y `world/levelpaths`, `runtime/levels`, `world/save` y `lighting/daycycle`. La guía completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
 
+## Examples
+
+`models/` has the example models (a dwarf miner with animations, block sets of flowers and medieval blocks, hand-held
+items, a backpack icon, hand-held lights, a character made from 2D art and a 128 x 128 landscape), each one made from a
+script for the editor API or a layer file in this repository. [models/README.md](models/README.md) says what each
+one shows and how to regenerate it byte for byte.
+
 ## Agradecimientos
 
 - **[SpriteStack](https://spritestack.io/)**: la idea de pasar vóxeles a pixel art apilando capas viene de ahí.

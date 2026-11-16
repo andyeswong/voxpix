@@ -1,3 +1,5 @@
+// Example of the editor API (window.voxpix): makes models/medieval/medieval.voxset.json.
+// How to regenerate it: models/README.md.
 // Bloques de un mundo medieval, hechos solo con el editor (window.voxpix): menas de hierro y oro, adoquín, tablas,
 // arena, mesa de trabajo, horno (apagado y encendido), cofre (cerrado y abierto), escalera y hueso. Cubos de 8 x 8 x 8
 // (x e y de -4 a 3, z de 0 a 7; el frente mira a -y). Deterministas.
