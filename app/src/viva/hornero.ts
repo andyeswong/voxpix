@@ -13,12 +13,18 @@ let busyMs = 0, skipped = 0;
 // corrimiento lo descartó) y se salta. Se pinta de la cola propia, uno por tarea, para que los mensajes nuevos (la tanda,
 // sobre todo) entren entre medias
 let epoch = 0;
+// Dónde está la vista en la imagen (el centro, en píxeles): lo pedido más cerca de ella va primero
+let view = { x: 0, y: 0 };
+const far = (m: Record<string, unknown>) => { const r = m.rect as ScreenRect; return Math.hypot(Math.max(0, r.x0 - view.x, view.x - r.x1), Math.max(0, r.y0 - view.y, view.y - r.y1)); };
 const queue: Array<Record<string, unknown>> = [];
 let scheduled = false;
 const next = () => {
   scheduled = false;
-  const m = queue.shift();
-  if (!m) return;
+  if (!queue.length) return;
+  // (lo de tandas viejas, fuera; de lo demás, lo más cerca de la vista)
+  let best = 0;
+  for (let i = 1; i < queue.length; i++) if (far(queue[i]!) < far(queue[best]!)) best = i;
+  const m = queue.splice(best, 1)[0]!;
   if ((m.epoch as number) < epoch) skipped++;
   else {
     const a = performance.now(), o = renderRect(shell, m.rect as ScreenRect), ms = performance.now() - a;
@@ -45,6 +51,8 @@ self.onmessage = (e: MessageEvent) => {
     const [dcx, dcy] = m.chunks as [number, number], [cx, cy] = m.cells as [number, number];
     store.shift(dcx, dcy);
     grid.shift(cx, cy);
+  } else if (m.kind === 'view') {
+    view = { x: m.x as number, y: m.y as number };
   } else if (m.kind === 'epoch') {
     epoch = m.epoch as number;
   } else if (m.kind === 'rect') {

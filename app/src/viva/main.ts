@@ -51,6 +51,7 @@ void (async () => {
   const WORKER = q.get('worker') === '1', FRENO = Number(q.get('freno') ?? 1);
   const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;
   const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0, skipped: 0 };
+  let lastView: [number, number] = [-1e9, -1e9], viewPending = 0;
   const results = new Map<number, RectOut>();
   if (hornero) {
     hornero.postMessage({ kind: 'init', voxset: ext ? ext.voxset : null, spec: ext ? ext.spec : spec0, chunk: 16, width: NXW * 128, depth: NYW * 128, bake: ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' } });
@@ -189,6 +190,13 @@ void (async () => {
       if (r) ringHoles++; if (out) ringOut++; if (unl) ringUnloaded++;
       const ix = mtx - win.tx0; posHist[ix] = (posHist[ix] ?? 0) + 1; }
     const t4 = performance.now();
+    // (con el worker: dónde está la vista, para que pinte primero lo de cerca; y si lo que se ve tiene algún recuadro
+    // pendiente, la puerta del 6x)
+    if (hornero && (Math.abs(o.vx - lastView[0]) > 8 || Math.abs(o.vy - lastView[1]) > 8)) { lastView = [o.vx, o.vy]; hornero.postMessage({ kind: 'view', x: o.vx + VW / 2, y: o.vy + VH / 2 }); }
+    for (const k of win.baked.rectsBusy?.keys() ?? []) {
+      const [x0, y0, x1, y1] = k.slice(5).split(',').map(Number) as [number, number, number, number];
+      if (x1 >= o.vx && x0 < o.vx + VW && y1 >= o.vy && y0 < o.vy + VH) { viewPending++; break; }
+    }
     compositor.frame(win.view.frame(), win.baked, o);
     const t5 = performance.now();
     // Por fases (el intervalo que acaba en el cuadro siguiente es el de este trabajo): los 8 peores intervalos, con lo de
@@ -217,7 +225,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      worst, ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, worst, ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
