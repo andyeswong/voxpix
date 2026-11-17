@@ -58,7 +58,8 @@ describe('caminos en la ventana viva', () => {
     const win = make([0, 0]);
     const flat = new PathField(win.state, FL), lv = new LevelPathField(win.state, LV);
     // Y uno con la búsqueda repartida (budget, como los bichos de noche): una búsqueda a medias al correrse se tira
-    const slow = new LevelPathField(win.state, { ...LV, budget: 300 });
+    // (tanda pequeña: lo pendiente de rehacer de los avisos sigue pendiente al correrse)
+    const slow = new LevelPathField(win.state, { ...LV, budget: 40 });
     win.attach(flat); win.attach(slow); const off = win.attach(lv);
     const budget = new FrameBudget(1e6);
     const settle = () => { for (let k = 0; k < 2000 && (win.busy || budget.pending); k++) budget.run(); };
@@ -92,7 +93,7 @@ describe('caminos en la ventana viva', () => {
     // Los caminos hacia el objetivo desde varios sitios: los mismos
     const [gx, gy] = win.toLocal(x, y), goal = { x: gx, y: gy };
     slow.dir({ x: 40, y: 40, z: 40 }, { ...goal, z: 40 }, 2);
-    for (let k = 0; k < 1000 && !slow.advance(); k++);
+    for (let k = 0; k < 50000 && !slow.advance(); k++);
     for (const [fx, fy] of [[10, 10], [150, 20], [30, 140], [140, 150], [80, 80]] as const) {
       expect([fx, fy, flat.path({ x: fx, y: fy }, goal, 2)]).toEqual([fx, fy, rflat.path({ x: fx, y: fy }, goal, 2)]);
       expect([fx, fy, slow.path({ x: fx, y: fy, z: 40 }, { ...goal, z: 40 }, 2)]).toEqual([fx, fy, rlv.path({ x: fx, y: fy, z: 40 }, { ...goal, z: 40 }, 2)]);

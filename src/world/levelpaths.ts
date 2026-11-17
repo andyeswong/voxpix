@@ -131,16 +131,30 @@ export class LevelPathField {
     return false;
   }
 
-  private sync(): void {
+  // Pone al día las celdas que tocan lo que cambió: rehace como mucho `cells` celdas de lo pendiente (por filas de cada
+  // caja) y devuelve cuántas le quedaban sin gastar. Sin budget se llama siempre sin tope; con budget, dir() y path()
+  // solo apuntan lo pendiente y lo rehace advance(), con su tanda: escribir un trozo de la ventana viva son ~1.300
+  // celdas, ~2,2 ms de una vez en Bun (5-6 en Edge) en el cuadro de la consulta
+  private redoQ: Array<[number, number, number, number]> = [];
+  private sync(cells = Infinity): number {
     const { boxes } = this.watch.take();
-    if (!boxes.length) return;
     const c = this.cell, m = Math.ceil(this.radius) + 1;
-    for (const b of boxes) this.redo(Math.max(0, Math.floor((b.x0 - m) / c)), Math.max(0, Math.floor((b.y0 - m) / c)),
-      Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), Math.min(this.rows - 1, Math.floor((b.y1 + m) / c)));
+    for (const b of boxes) this.redoQ.push([Math.max(0, Math.floor((b.x0 - m) / c)), Math.max(0, Math.floor((b.y0 - m) / c)),
+      Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), Math.min(this.rows - 1, Math.floor((b.y1 + m) / c))]);
+    if (!this.redoQ.length || cells <= 0) return cells;
+    let left = cells;
+    while (this.redoQ.length && left > 0) {
+      const r = this.redoQ[0]!, w = r[2] - r[0] + 1, rows = Math.max(1, Math.min(r[3] - r[1] + 1, Math.floor(left / w)));
+      this.redo(r[0], r[1], r[2], r[1] + rows - 1);
+      left -= rows * w;
+      r[1] += rows;
+      if (r[1] > r[3]) this.redoQ.shift();
+    }
     this.goal = '';
     // Lo que se estaba buscando era con el mundo de antes: se tira, y la meta se vuelve a pedir en el siguiente dir() o
     // path() (la respuesta que hay se queda hasta que acabe la siguiente)
     if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
+    return Math.max(0, left);
   }
 
   // Rehace los suelos de las celdas [i0, i1] x [j0, j1]; un paso entre dos celdas mira sus suelos, sus techos y las dos
@@ -177,6 +191,9 @@ export class LevelPathField {
     this.goal = '';
     if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
     this.want = null; this.asked = '';
+    // Lo pendiente de rehacer, en las celdas de ahora (lo que queda fuera se tira)
+    this.redoQ = this.redoQ.map(([a, b2, c2, d]) => [Math.max(0, a - i), Math.max(0, b2 - j), Math.min(cols - 1, c2 - i), Math.min(rows - 1, d - j)] as [number, number, number, number])
+      .filter(([a, b2, c2, d]) => a <= c2 && b2 <= d);
   }
 
   private cellOf(p: { x: number; y: number }): number {
@@ -283,7 +300,7 @@ export class LevelPathField {
   }
 
   private toward(to: LevelPoint, near: number): void {
-    this.sync();
+    this.sync(this.budget === undefined ? Infinity : 0);
     const key = `${this.nodeOf(to)}:${near}`;
     if (this.budget === undefined) {
       if (key === this.goal) return;
@@ -313,7 +330,9 @@ export class LevelPathField {
     return idle;
   }
   private advanceSearch(nodes: number): boolean {
-    this.sync();
+    // Lo pendiente de los avisos va primero, con la tanda (una celda por nodo); si gasta algo, la búsqueda sigue la vez
+    // siguiente
+    if (this.sync(nodes) < nodes) return false;
     if (!this.work) {
       const w = this.want;
       if (!w || w.key === this.goal) { this.want = null; return true; }
