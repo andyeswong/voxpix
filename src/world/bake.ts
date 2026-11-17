@@ -783,11 +783,22 @@ function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: nu
   for (const part of parts) {
     const most = warmBatches(b.source, part);
     for (let n = 0; !b.source.warmExposed(part, WARM_ROWS, facesOf(b)); n++) {
-      if (n > most) throw new Error(`lo expuesto no acaba: ${n} tandas en una región que tiene como mucho ${most}`);
+      // Preparar lo expuesto es solo adelantar: forEachExposed hace lo que falte al recorrer. Si la cuenta se pasa del
+      // tope (un fallo: no debería), se apunta y se deja la región así, sin parar el juego
+      if (n > most) { exposureFault(`una franja: ${n} tandas en una región que tiene como mucho ${most}`); break; }
       if (performance.now() >= deadline) return false;
     }
   }
   return true;
+}
+
+// Un fallo de cuenta al preparar lo expuesto: se apunta (una vez por clase de mensaje, en la consola y en
+// exposureFaults) y quien llama sigue sin las máscaras de esa región (forEachExposed las hace al recorrer). Antes era
+// un error que paraba el juego
+export const exposureFaults: string[] = [];
+function exposureFault(msg: string): void {
+  exposureFaults.push(msg);
+  if (exposureFaults.length <= 3) console.warn(`[voxpix] lo expuesto no acaba: ${msg}`);
 }
 
 // Las caras que pinta el render con las opciones del horneado: el rehorneado solo recorre los vóxeles con aire delante
@@ -1182,7 +1193,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
     const d = (c: number) => Math.hypot((c % s.cols) * CHUNK + CHUNK / 2 - near.x, Math.floor(c / s.cols) * CHUNK + CHUNK / 2 - near.y);
     order.sort((p, q) => d(p) - d(q) || p - q);
   }
-  let k = 0, batches = 0;
+  let k = 0, batches = 0, retried = false;
   const most = warmBatches(s, { x0: 0, y0: 0, x1: CHUNK - 1, y1: CHUNK - 1 });
   // La ventana viva: al correrse, las máscaras caducan todas (StaticVoxels.shift / shiftJob) y el orden y las regiones de
   // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
@@ -1198,10 +1209,16 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
         const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;
         const region = { x0, y0, x1: Math.min(s.width - 1, x0 + CHUNK - 1), y1: Math.min(s.depth - 1, y0 + CHUNK - 1) };
         for (; !s.warmExposed(region, WARM_ROWS); batches++) {
-          if (batches > most) throw new Error(`lo expuesto no acaba: ${batches} tandas en un trozo que tiene como mucho ${most}`);
+          // Si la cuenta se pasa del tope (un fallo: no debería), se apunta y se rehace el trozo desde cero una vez; si
+          // vuelve a pasar, se salta (lo que falte lo hace forEachExposed al recorrer). Sin parar el juego ni colgarse
+          if (batches > most) {
+            exposureFault(`el trabajo de lo expuesto: ${batches} tandas en el trozo ${c}, que tiene como mucho ${most}${retried ? '; se salta' : '; se rehace'}`);
+            if (retried) break;
+            retried = true; batches = 0;
+          }
           if (performance.now() >= deadline) return false;
         }
-        k++; batches = 0;
+        k++; batches = 0; retried = false;
         if (performance.now() >= deadline) break;
       }
       return k >= order.length;

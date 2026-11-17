@@ -30,7 +30,7 @@ const SPEC: RegionSpec = {
 };
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
-import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, rebakeChangedJobs, type Baked } from '../src/world/bake';
+import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, rebakeChangedJobs, exposureFaults, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 import { unkey } from '../src/core';
 
@@ -154,6 +154,8 @@ describe('ventana viva: correr lo horneado', () => {
   it('lo expuesto (exposureJob) a medias cuando se corre la ventana: para sin error (las máscaras caducan al correrse)', () => {
     // Llamadas con plazo corto (las tandas se cuentan dentro de una llamada): con plazos distintos, alguna se corta a
     // mitad de un trozo. Solo importa que no dé error: las imágenes, aquí, no se comparan
+    // (y sin apuntar ningún fallo de cuenta: con el tope que ya no para el juego, el fallo se vería solo ahí)
+    const faults = exposureFaults.length;
     for (const ms of [0.02, 0.05, 0.1, 0.2, 0.4, 0.8]) {
       const n = ms;
       const b = fresh(0, 0);
@@ -167,6 +169,7 @@ describe('ventana viva: correr lo horneado', () => {
       for (let k = 0; k < 100000 && !done; k++) done = exp.run(performance.now() + 5);
       expect([n, done]).toEqual([n, true]);
     }
+    expect(exposureFaults.slice(faults)).toEqual([]);
   });
 
   it('el cambio no espera al rehorneado de la cola: lo descarta (uno a medias, otros sin empezar, luces) y lo vuelve a marcar corrido', () => {

@@ -6,7 +6,7 @@ import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView } from '../src/world/view';
-import { bakeWorld, bakeWorldJob, rebakeChanged, rebakeChangedJobs, type Baked } from '../src/world/bake';
+import { bakeWorld, bakeWorldJob, rebakeChanged, rebakeChangedJobs, type Baked , exposureFaults } from '../src/world/bake';
 
 const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#404040', '#606060', '#808080'] }] };
 function world(): StaticVoxels {
@@ -75,5 +75,26 @@ describe('preparar lo expuesto después del horneado', () => {
     expect(Buffer.from(b.rgba.buffer).equals(Buffer.from(ref.rgba.buffer))).toBe(true);
     expect(b.depth).toEqual(ref.depth);
     expect(b.face).toEqual(ref.face);
+  });
+
+  it('un fallo de cuenta no para el juego: se apunta, el trozo se rehace una vez y luego se salta; la franja sigue', () => {
+    const s = world();
+    const b = bakeWorld({ model: s, lights: [], width: 64, depth: 56 }, OPTS);
+    // Un fallo a propósito: lo expuesto no acaba nunca
+    s.warmExposed = () => false;
+    const warn = console.warn; let warned = 0;
+    console.warn = () => { warned++; };
+    try {
+      const before = exposureFaults.length;
+      s.set(30, 24, 5, 0);                                          // (un vóxel lleno: un recuadro con su franja)
+      const jobs = rebakeChangedJobs(b, []);
+      // Todo acaba (con tope: ni se cuelga ni lanza)
+      for (const j of jobs) { let n = 0; while (!j.run(Infinity)) if (++n > 1000) throw new Error('se cuelga'); }
+      const faults = exposureFaults.slice(before);
+      expect(faults.some((f) => f.startsWith('una franja'))).toBe(true);
+      expect(faults.some((f) => f.includes('se rehace'))).toBe(true);
+      expect(faults.some((f) => f.includes('se salta'))).toBe(true);
+      expect(warned).toBeGreaterThan(0);
+    } finally { console.warn = warn; }
   });
 });
