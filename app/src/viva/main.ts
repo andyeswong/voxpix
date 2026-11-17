@@ -21,6 +21,7 @@ import type { RegionSpec } from '../../../src/world/regiongen';
 import type { ViewJob, RectOut } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
+import { SectionPainter, sectionAround } from '../../../src/world/section';
 import type { Baked } from '../../../src/world/bake';
 
 // (todo dentro de una función async: el mundo de ?mundo= se lee con fetch antes de empezar)
@@ -109,6 +110,8 @@ void (async () => {
   const esperas: number[] = [];
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
+  const SECCION = Number(q.get('seccion') ?? 0);
+  let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0;
   const worst: Array<Record<string, number | boolean> & { iv: number }> = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez
   const byKind = new Map<string, { ms: number; calls: number }>();
@@ -206,6 +209,17 @@ void (async () => {
     const [vx, vy] = win.view.camera.pointToView(lx, ly);
     const [px, py] = win.baked.cam.project(vx, vy, ground(x, Y));
     const o: Frame2DOptions = { vx: Math.max(0, Math.min(win.baked.width - VW, Math.round(px) - VW / 2)), vy: Math.max(0, Math.min(win.baked.height - VH, Math.round(py) - VH / 2)), vw: VW, vh: VH, time: (now - start) / 1000, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
+    // ?seccion=N: el corte de una caja de N vóxeles de ancho alrededor de MAIA, desde sus pies (lo de delante, bajo tierra),
+    // pintado por franjas (SectionPainter, uno por horneado) en la cola; se cuentan los cuadros con la caja sin pintar
+    // del todo
+    if (SECCION) {
+      if (!painter || painter.b !== win.baked) painter = new SectionPainter(win.baked);
+      painter.set(sectionAround(win.view.camera, lx, ly, ground(x, Y), SECCION), dir);
+      const pj = painter.job();
+      if (pj) timed.push(pj);
+      o.sectionLayer = painter.layer();
+      if (frames.length > 60) { secFrames++; if (!painter.ready()) secUnready++; }
+    }
     // ¿Algún trozo de lo que cae en la vista sin escribir? Las columnas de la vista (de 32 en 32) por las filas de trozos que
     // se ven: de 2 al sur a 4 al norte del de MAIA
     const ox = win.tx0 * T, tty = win.trozoOf(x, Y)[1];
@@ -273,7 +287,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      viewPending, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0 } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
