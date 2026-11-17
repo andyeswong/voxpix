@@ -5,7 +5,7 @@
 // cuando cambia la meta o el mundo; los cambios del mundo llegan por watchChanges y rehacen solo las celdas tocadas.
 // Solo superficie: una celda tiene un suelo (el de arriba), así que no ve túneles ni cuevas.
 // docs/motor.md, "Caminos".
-import { NO_FOOT, type WorldState } from './state';
+import { NO_FOOT, shiftGrid, type WorldState } from './state';
 import type { ChangeWatch } from './changes';
 
 export interface Point { x: number; y: number }
@@ -58,6 +58,24 @@ export class PathField {
       }
       this.floor[j * this.cols + i] = g;
     }
+  }
+
+  // LA VENTANA VIVA (LiveWindow.attach, o el onShift del juego): el mundo se corrió dx, dy vóxeles (lo que estaba en la x
+  // pasa a x - dx; múltiplos de cell). Las celdas se corren con él; las que entran quedan sin suelo hasta que se escriba
+  // su trozo (el aviso de watchChanges las rellena), y las del borde se vuelven a mirar (su cuerpo ya no tiene vecinas
+  // fuera). La meta se vuelve a buscar en la consulta siguiente (va en coordenadas de antes)
+  shift(dx: number, dy: number): void {
+    const c = this.cell;
+    if (dx % c || dy % c) throw new Error(`PathField.shift: ${dx}, ${dy} no son múltiplos de la celda (${c})`);
+    const i = dx / c, j = dy / c;
+    shiftGrid(this.floor, this.cols, this.rows, 1, i, j, NO_FOOT);
+    shiftGrid(this.dist, this.cols, this.rows, 1, i, j, -1);
+    // El borde nuevo del lado que sale (eran celdas de dentro); el del lado que entra está vacío hasta que se escriba, y
+    // los otros dos no cambian
+    const b = Math.ceil((this.radius + 1) / c);
+    if (i > 0) this.fill(0, 0, b - 1, this.rows - 1); else if (i < 0) this.fill(this.cols - b, 0, this.cols - 1, this.rows - 1);
+    if (j > 0) this.fill(0, 0, this.cols - 1, b - 1); else if (j < 0) this.fill(0, this.rows - b, this.cols - 1, this.rows - 1);
+    this.goal = '';
   }
 
   // Pone al día las celdas que tocan lo que cambió en el mundo desde la última vez (lo llaman las consultas)

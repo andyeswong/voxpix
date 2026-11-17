@@ -13,6 +13,7 @@ import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
 import { FrameBudget } from '../../../src/view/budget';
 import { LiveWindow } from '../../../src/world/live';
+import { LevelPathField } from '../../../src/world/levelpaths';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import { set as SET, SPEC } from '../../../scripts/ventana-mundo';
 import { BlockSet, type VoxsetFile } from '../../../src/world/blocks';
@@ -56,6 +57,13 @@ void (async () => {
   const [lx0, ly0] = win.toLocal(x, Y);
   const id = win.state.entities.add({ model: walk[0]!, x: lx0, y: ly0, z: ground(x, Y), facing: 90 });
   const budget = new FrameBudget(3, undefined, { ms: 8, below: 64 });
+  // ?caminos=1: un campo de caminos por niveles enganchado a la ventana (se corre en el cambio) y un bicho a 40 vóxeles
+  // detrás de MAIA que le pregunta cada cuadro (búsqueda repartida, budget nodos por cuadro): lo que cuesta en el cuadro
+  // del cambio y en los demás
+  const CAMINOS = q.get('caminos') === '1';
+  const field = CAMINOS ? new LevelPathField(win.state, { cell: 4, radius: 2, height: 16, step: 8, maxDrop: 24, budget: Number(q.get('nodos') ?? 400) }) : null;
+  if (field) win.attach(field);
+  const pathMs: number[] = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez
   const byKind = new Map<string, { ms: number; calls: number }>();
   const wrapped = new WeakMap<ViewJob, ViewJob>();
@@ -97,6 +105,12 @@ void (async () => {
     if (turnAt >= 0) { turnFrames++; const f = frames[frames.length - 1]!; if (f > 25) turnOver++; turnWorst = Math.max(turnWorst, f); }
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
     win.update(x, Y, timed);
+    if (field) {
+      const a = performance.now(), [ex, ey] = win.toLocal(x - dir * 40, Y), [mx, my] = win.toLocal(x, Y);
+      field.dir({ x: ex, y: ey, z: ground(x - dir * 40, Y) }, { x: mx, y: my, z: ground(x, Y) }, 4);
+      field.advance();
+      pathMs.push(performance.now() - a);
+    }
     const b0 = performance.now();
     budget.run();
     queueMs.push(performance.now() - b0);
@@ -147,6 +161,7 @@ void (async () => {
     const avg = (a: number[]) => a.length ? a.reduce((u, v) => u + v, 0) / a.length : 0;
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
+      pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),

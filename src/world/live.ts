@@ -146,6 +146,15 @@ export class LiveWindow {
     this.quarter = q;
   }
 
+  // Engancha algo que va en coordenadas locales y sabe correrse (PathField, LevelPathField): en el cambio de cada
+  // corrimiento, x.shift(dx, dy) con los vóxeles que se corrió (lo de x pasa a x - dx), antes de onShift. Devuelve con qué
+  // soltarlo
+  attach(x: { shift(dx: number, dy: number): void }): () => void {
+    this.attached.add(x);
+    return () => { this.attached.delete(x); };
+  }
+  private readonly attached = new Set<{ shift(dx: number, dy: number): void }>();
+
   // Pide girar a q con fundido (ver arriba). Si q se tiene siempre (opts.quarters), es turn(q), sin esperar
   turnTo(q: Quarter): void {
     if (this.turnPrep) { if (this.turnPrep.q === q) return; this.turnPrep = null; }
@@ -422,6 +431,10 @@ export class LiveWindow {
     for (const e of [...this.state.entities]) this.state.entities.move(e.id, e.x - DX, e.y - DY, e.z, e.yaw);
     for (const l of this.state.lights) { l.x -= DX; l.y -= DY; }
     this.tx0 += dx; this.ty0 += dy;
+    // Lo que oye los cambios del mundo (watchChanges: caminos, cachés del juego): lo apuntado sin tomar, corrido; y lo
+    // enganchado (attach: los campos de caminos), corrido en el mismo momento
+    for (const w of this.state.changes.list ?? []) w.shift(DX, DY, CHUNK);
+    for (const a of this.attached) a.shift(DX, DY);
     this.o.onShift?.({ cells: [dx * this.C, dy * this.C], voxels: [DX, DY] });
   }
 

@@ -69,6 +69,28 @@ export class ChangeWatch {
   }
 
   close(): void { this.feed.remove(this); }
+
+  // LA VENTANA VIVA (LiveWindow, en el cambio de cada corrimiento): el mundo se corrió dx, dy vóxeles (lo que estaba en
+  // la x pasa a x - dx). Lo apuntado y aún sin tomar se corre con él, recortado al mundo; lo que queda entero fuera se
+  // tira (ya no está). chunk: el lado del trozo de vóxeles (CHUNK), para la clave de cada caja
+  shift(dx: number, dy: number, chunk: number): void {
+    const w = this.feed.worldBox(), cols = Math.ceil((w.x1 + 1) / chunk);
+    const cut = (b: Box3): boolean => {
+      b.x0 -= dx; b.x1 -= dx; b.y0 -= dy; b.y1 -= dy;
+      if (b.x1 < w.x0 || b.y1 < w.y0 || b.x0 > w.x1 || b.y0 > w.y1) return false;
+      b.x0 = Math.max(w.x0, b.x0); b.y0 = Math.max(w.y0, b.y0); b.x1 = Math.min(w.x1, b.x1); b.y1 = Math.min(w.y1, b.y1);
+      return true;
+    };
+    const old = [...this.chunks.values()];
+    this.chunks.clear();
+    for (const a of old) {
+      const b = { x0: a[0]!, y0: a[1]!, z0: a[2]!, x1: a[3]!, y1: a[4]!, z1: a[5]! };
+      if (!cut(b)) continue;
+      const c = Math.floor(b.y0 / chunk) * cols + Math.floor(b.x0 / chunk);
+      this.voxel(c, b.x0, b.y0, b.z0); this.voxel(c, b.x1, b.y1, b.z1);
+    }
+    for (const [id, b] of [...this.objects]) if (!cut(b)) this.objects.delete(id);
+  }
 }
 
 // Los oyentes de un mundo. `list` es null mientras no hay ninguno: así quien avisa solo mira un null

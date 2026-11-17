@@ -5,7 +5,7 @@
 // meta salen de un BFS hacia atrás, se guardan mientras no cambien la meta ni el mundo, y los cambios del mundo llegan
 // por watchChanges y rehacen solo las celdas tocadas. Con `budget`, la búsqueda se reparte entre ticks (advance). Para
 // cuerpos que se mueven con moveBodyLevels (src/runtime/levels.ts). docs/motor.md, "Caminos por niveles".
-import { NO_FOOT, type WorldState } from './state';
+import { NO_FOOT, shiftGrid, type WorldState } from './state';
 import { materialsOf } from '../core';
 import type { ChangeWatch } from './changes';
 
@@ -46,7 +46,7 @@ export class LevelPathField {
   private goal = '';
   private watch: ChangeWatch;
   private around: number[] = [];
-  private shift: number[] = [];         // desplazamientos del cuerpo que se prueban (el centro primero)
+  private offsets: number[] = [];       // desplazamientos del cuerpo que se prueban (el centro primero)
 
   constructor(readonly state: WorldState, o: LevelPathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
@@ -65,7 +65,7 @@ export class LevelPathField {
     const off: Array<[number, number]> = [];
     for (let dy = -hi; dy <= lo; dy++) for (let dx = -hi; dx <= lo; dx++) off.push([dx, dy]);
     off.sort((p, q) => Math.hypot(p[0], p[1]) - Math.hypot(q[0], q[1]) || p[1] - q[1] || p[0] - q[0]);
-    for (const [dx, dy] of off) this.shift.push(dx, dy);
+    for (const [dx, dy] of off) this.offsets.push(dx, dy);
     this.fill(0, 0, this.cols - 1, this.rows - 1);
     this.watch = state.watchChanges();
   }
@@ -113,7 +113,7 @@ export class LevelPathField {
   // quede de un lado): si no, una celda junto a una pared o a la cara de un escalón no sería nunca suelo y no se
   // podría subir ni un escalón. Con un cuerpo que cabe centrado, no se corre: lo de siempre
   private fits(cx: number, cy: number, f: number): boolean {
-    const a = this.around, sh = this.shift, s = this.state.solid;
+    const a = this.around, sh = this.offsets, s = this.state.solid;
     for (let q = 0; q < sh.length; q += 2) {
       const x = cx + sh[q]!, y = cy + sh[q + 1]!;
       if (x < 0 || y < 0 || x >= s.width || y >= s.depth) continue;
@@ -128,22 +128,48 @@ export class LevelPathField {
     const { boxes } = this.watch.take();
     if (!boxes.length) return;
     const c = this.cell, m = Math.ceil(this.radius) + 1;
-    for (const b of boxes) {
-      const i0 = Math.max(0, Math.floor((b.x0 - m) / c)), j0 = Math.max(0, Math.floor((b.y0 - m) / c));
-      const i1 = Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), j1 = Math.min(this.rows - 1, Math.floor((b.y1 + m) / c));
-      this.fill(i0, j0, i1, j1);
-      // Un paso entre dos celdas mira sus suelos, sus techos y las dos de lado (en diagonal): todas a una celda como
-      // mucho de las que cambiaron. Se borra lo guardado de los pasos que salen de ellas y de sus vecinas
-      const per = 8 * this.L * this.L;
-      for (let j = Math.max(0, j0 - 1); j <= Math.min(this.rows - 1, j1 + 1); j++) {
-        const a = (j * this.cols + Math.max(0, i0 - 1)) * per, z = (j * this.cols + Math.min(this.cols - 1, i1 + 1) + 1) * per;
-        this.moves.fill(0, a, z);
-      }
-    }
+    for (const b of boxes) this.redo(Math.max(0, Math.floor((b.x0 - m) / c)), Math.max(0, Math.floor((b.y0 - m) / c)),
+      Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), Math.min(this.rows - 1, Math.floor((b.y1 + m) / c)));
     this.goal = '';
     // Lo que se estaba buscando era con el mundo de antes: se tira, y la meta se vuelve a pedir en el siguiente dir() o
     // path() (la respuesta que hay se queda hasta que acabe la siguiente)
     if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
+  }
+
+  // Rehace los suelos de las celdas [i0, i1] x [j0, j1]; un paso entre dos celdas mira sus suelos, sus techos y las dos
+  // de lado (en diagonal): todas a una celda como mucho de las rehechas. Se borra lo guardado de los pasos que salen de
+  // ellas y de sus vecinas
+  private redo(i0: number, j0: number, i1: number, j1: number): void {
+    this.fill(i0, j0, i1, j1);
+    const per = 8 * this.L * this.L;
+    for (let j = Math.max(0, j0 - 1); j <= Math.min(this.rows - 1, j1 + 1); j++) {
+      const a = (j * this.cols + Math.max(0, i0 - 1)) * per, z = (j * this.cols + Math.min(this.cols - 1, i1 + 1) + 1) * per;
+      this.moves.fill(0, a, z);
+    }
+  }
+
+  // LA VENTANA VIVA (LiveWindow.attach, o el onShift del juego): el mundo se corrió dx, dy vóxeles (lo que estaba en la x
+  // pasa a x - dx; múltiplos de cell). Las celdas se corren con él (suelos, techos, pasos guardados y distancias); las
+  // que entran quedan sin suelo hasta que se escriba su trozo (el aviso de watchChanges las rellena), y las del borde se
+  // vuelven a mirar (su cuerpo ya no tiene vecinas fuera). La meta se vuelve a buscar en la consulta siguiente (va en
+  // coordenadas de antes); con budget, mientras, contestan las distancias de antes, corridas
+  shift(dx: number, dy: number): void {
+    const c = this.cell, L = this.L, { cols, rows } = this;
+    if (dx % c || dy % c) throw new Error(`LevelPathField.shift: ${dx}, ${dy} no son múltiplos de la celda (${c})`);
+    const i = dx / c, j = dy / c;
+    shiftGrid(this.floor, cols, rows, L, i, j, NO_FOOT);
+    shiftGrid(this.ceil, cols, rows, L, i, j, 0);
+    shiftGrid(this.dist, cols, rows, L, i, j, -1);
+    shiftGrid(this.floors, cols, rows, 1, i, j, 0);
+    shiftGrid(this.moves, cols, rows, 8 * L * L, i, j, 0);
+    // El borde nuevo del lado que sale (eran celdas de dentro); el del lado que entra está vacío hasta que se escriba, y
+    // los otros dos no cambian
+    const b = Math.ceil((this.radius + 1) / c);
+    if (i > 0) this.redo(0, 0, b - 1, rows - 1); else if (i < 0) this.redo(cols - b, 0, cols - 1, rows - 1);
+    if (j > 0) this.redo(0, 0, cols - 1, b - 1); else if (j < 0) this.redo(0, rows - b, cols - 1, rows - 1);
+    this.goal = '';
+    if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
+    this.want = null; this.asked = '';
   }
 
   private cellOf(p: { x: number; y: number }): number {

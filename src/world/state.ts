@@ -66,8 +66,8 @@ function rotChunk(q: number, cx: number, cy: number, cols: number, rows: number,
 
 // Corre en su sitio una rejilla de W x H celdas de `per` elementos (por filas): la celda (x, y) pasa a tener lo de
 // (x + dx, y + dy); lo que queda sin origen, `fill`. Con copyWithin (también en los arrays de referencias): sin crear nada
-type CopyArr = { length: number; copyWithin(t: number, s: number, e: number): unknown; fill(v: never, s: number, e: number): unknown };
-function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: number, dy: number, fill: number | null): void {
+export type CopyArr = { length: number; copyWithin(t: number, s: number, e: number): unknown; fill(v: never, s: number, e: number): unknown };
+export function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: number, dy: number, fill: number | null): void {
   // (los arrays normales, a mano: el copyWithin de V8 en un array normal va elemento a elemento mirando huecos, ~10 veces
   // más lento que un bucle; en los tipados, copyWithin es una copia de memoria)
   if (Array.isArray(a)) { shiftArray(a, W, H, per, dx, dy, fill); return; }
