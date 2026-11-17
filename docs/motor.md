@@ -476,18 +476,21 @@ Coste, en Bun sin freno, con vetas, cuevas, árboles y flores (el spec de `test/
   columnas a cada lado para los árboles y las flores;
 - una región de 96 x 96: 13,5-18 ms; `generateMap` del mismo tamaño, 4,9-13,8 ms (varía mucho entre llamadas).
 
-## La ventana viva, 1: el toro de vóxeles
+## La ventana viva, 1: los vóxeles de la ventana
 
 Un mundo sin bordes se tiene en memoria a trozos: una ventana de nx x ny trozos alrededor del objetivo
-(`src/world/window.ts`). Sus vóxeles van en un `StaticVoxels` de nx x ny ranuras (`store`), y el trozo del mundo
-(tx, ty) vive en la ranura (tx mod nx, ty mod ny): avanzar es escribir los que entran en las ranuras que dejan los que
-salen, sin copiar nada. El juego sigue en coordenadas del mundo (también negativas); la ventana traduce con el módulo.
+(`src/world/window.ts`). Sus vóxeles van en un `StaticVoxels` (`store`) con la esquina de la ventana en (0, 0). Moverla
+es `StaticVoxels.shift(dcx, dcy)`: las losas, las paletas, las versiones y las máscaras de lo expuesto se corren en su
+sitio por referencia (`copyWithin`, sin copiar ningún vóxel), y las alturas y la rejilla de pisar con una copia. Los
+trozos de vóxeles que entran quedan vacíos, con versión nueva y su caja entera cambiada (para rehornearlos); los del borde
+nuevo pierden sus máscaras (su vecino de fuera ahora es aire). `get`, `set` y lo demás no cambian. El juego sigue en
+coordenadas del mundo (también negativas); la ventana resta su esquina.
 
 ```ts
 import { WindowVoxels } from '@voxpix/world/window';
 const win = new WindowVoxels(palette, 8, 13, 128, 0, 191);        // 8 x 13 trozos de 128 vóxeles (16 bloques de 8)
 const grid = new BlockGrid(new WorldState(win.store, [], null), blocks);
-const { entered, left } = win.moveTo(tx0, ty0);                  // los que entran, del centro hacia fuera
+const { entered, left } = win.moveTo(tx0, ty0);                  // corre el store; los que entran, del centro hacia fuera
 for (const [tx, ty] of entered) {
   const [cx, cy] = win.slotCell(tx, ty, 8);
   grid.stampRegion(generateRegion(spec, { x0: tx * 16, y0: ty * 16, z0: 0, width: 16, depth: 16, height: 24 }), [cx, cy, 0]);
@@ -496,14 +499,14 @@ for (const [tx, ty] of entered) {
 win.get(x, y, z);                                                // coordenadas del mundo; fuera, o sin escribir, aire
 ```
 
-- El trozo es múltiplo de `CHUNK`: cada trozo del mundo cae en trozos de vóxeles enteros del store, y `stampRegion` lo
-  escribe de una vez (o `stampRegionJob`, por pasos en la cola).
-- Una ranura que todavía no tiene su trozo no es del mundo: `get` da aire y `set` falla (`holds`, `has`).
-- `test/ventana-voxeles.test.ts`: una ventana de 3 x 3 que se mueve (también en negativo), escribiendo en desorden lo
-  que entra, da los mismos vóxeles que el mundo fijo generado de una vez.
-- Aún no: el horneado de la ventana (la imagen en toro), `LiveWindow` (la ventana alrededor del objetivo, con trabajos
-  y `onUnload`) y el banco de andar. El horneado no puede leer el store tal cual: en su borde de ranuras, los vecinos
-  del mundo están al otro lado del toro.
+- El trozo es múltiplo de `CHUNK` (y el store, de ancho y fondo múltiplos de `CHUNK`).
+- Un trozo que todavía no se escribió no es del mundo: `get` da aire y `set` falla (`holds`, `has`).
+- Coste (`bun scripts/bench-ventana.ts`, Bun sin freno, 2026-11-16): una ventana de 8 x 13 trozos (1024 x 1664 x 192,
+  213 MB de vóxeles); correrla un trozo, p50 1,1 ms, p95 2,1 ms (una vez por trozo que se cruza).
+- Pruebas: `test/ventana-shift.test.ts` (correrse y escribir lo que entra da lo mismo que la ventana hecha de nuevo:
+  vóxeles, alturas, suelo de pisar y lo expuesto, con las máscaras hechas antes de correrla) y
+  `test/ventana-voxeles.test.ts` (la ventana moviéndose, también en negativo, contra el mundo fijo generado de una vez).
+- Aún no: el horneado de la ventana (la imagen en toro), `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles
 

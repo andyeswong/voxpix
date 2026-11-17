@@ -64,6 +64,29 @@ function rotChunk(q: number, cx: number, cy: number, cols: number, rows: number,
   return vy * dcols + vx;
 }
 
+// Corre en su sitio una rejilla de W x H celdas de `per` elementos (por filas): la celda (x, y) pasa a tener lo de
+// (x + dx, y + dy); lo que queda sin origen, `fill`. Con copyWithin (también en los arrays de referencias): sin crear nada
+type CopyArr = { length: number; copyWithin(t: number, s: number, e: number): unknown; fill(v: never, s: number, e: number): unknown };
+function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: number, dy: number, fill: number | null): void {
+  const row = W * per, run = (W - Math.abs(dx)) * per, sx = Math.max(0, dx) * per, tx = Math.max(0, -dx) * per;
+  const f = fill as never;
+  if (run <= 0 || Math.abs(dy) >= H) { a.fill(f, 0, a.length); return; }
+  if (dx === 0) {
+    // Filas enteras: una sola copia
+    if (dy > 0) { a.copyWithin(0, dy * row, H * row); a.fill(f, (H - dy) * row, H * row); }
+    else { a.copyWithin(-dy * row, 0, (H + dy) * row); a.fill(f, 0, -dy * row); }
+    return;
+  }
+  // Fila a fila, en el orden que no pisa lo que falta por copiar
+  const y0 = dy >= 0 ? 0 : H - 1, y1 = dy >= 0 ? H : -1, st = dy >= 0 ? 1 : -1;
+  for (let y = y0; y !== y1; y += st) {
+    const sy = y + dy, o = y * row;
+    if (sy < 0 || sy >= H) { a.fill(f, o, o + row); continue; }
+    a.copyWithin(o + tx, sy * row + sx, sy * row + sx + run);
+    if (dx > 0) a.fill(f, o + run, o + row); else a.fill(f, o, o + tx);
+  }
+}
+
 export class StaticVoxels implements VoxelSource {
   readonly cols: number;
   readonly rows: number;
@@ -188,6 +211,64 @@ export class StaticVoxels implements VoxelSource {
       let t = z - 1;
       while (t >= this.zMin && !this.get(x, y, t)) t--;
       this.height[h] = t >= this.zMin ? t + 1 : this.zMin;
+    }
+  }
+
+  // MOVER LA VENTANA (la ventana viva, window.ts): el contenido se corre dcx, dcy trozos de vóxeles hacia atrás (lo que
+  // estaba en el trozo (cx, cy) pasa al (cx - dcx, cy - dcy)), como si el mundo de dentro se viera desde un origen
+  // dcx * CHUNK, dcy * CHUNK más allá. Las losas se mueven por referencia (no se copia ningún vóxel); se copian las
+  // alturas y la rejilla de pisar. Los trozos que entran quedan vacíos, con versión nueva y su caja entera cambiada (para
+  // rehornearlos); los del borde nuevo pierden las máscaras de lo expuesto (su vecino de fuera ahora es aire). Hace falta
+  // un ancho y un fondo múltiplos de CHUNK. Un get, set o forEachExposed después ve el mundo corrido; nada más cambia
+  shift(dcx: number, dcy: number): void {
+    if (!dcx && !dcy) return;
+    if (this.width % CHUNK || this.depth % CHUNK) throw new Error(`shift: el ancho y el fondo tienen que ser múltiplos de ${CHUNK}`);
+    const C = this.cols, R = this.rows, nz = this.nz, NC = C * R;
+    const src = (cx: number, cy: number) => { const sx = cx + dcx, sy = cy + dcy; return sx >= 0 && sy >= 0 && sx < C && sy < R ? sy * C + sx : -1; };
+    // Por trozo: en su sitio (copyWithin, también en los arrays de referencias), y lo que entra, vacío
+    const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
+    g(this.data, nz, null); g(this.pal, nz, null);
+    g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
+    g(this.expo, nz, null); g(this.expoOk, nz, null); g(this.expoAt, nz, -1);
+    g(this.expoF, nz, null); g(this.expoFOk, nz, null); g(this.expoFAt, nz, -1);
+    g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
+    // Las cajas de lo cambiado van en coordenadas: se corren con el contenido
+    const DX = dcx * CHUNK, DY = dcy * CHUNK, seg = new Int32Array(this.seg.length), segN = new Uint8Array(NC);
+    for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
+      const c = cy * C + cx, s = src(cx, cy);
+      if (s < 0) continue;
+      segN[c] = this.segN[s]!;
+      for (let k = 0; k < segN[c]!; k++) {
+        const fo = (s * SEGS + k) * 7, to = (c * SEGS + k) * 7;
+        seg[to] = this.seg[fo]!;
+        seg[to + 1] = this.seg[fo + 1]! - DX; seg[to + 2] = this.seg[fo + 2]! - DY; seg[to + 3] = this.seg[fo + 3]!;
+        seg[to + 4] = this.seg[fo + 4]! - DX; seg[to + 5] = this.seg[fo + 5]! - DY; seg[to + 6] = this.seg[fo + 6]!;
+      }
+    }
+    this.seg = seg; this.segN = segN;
+    // Por columna: las alturas y la rejilla de pisar
+    const W = this.width, D = this.depth;
+    shiftGrid(this.height, W, D, 1, DX, DY, this.zMin);
+    if (this.fgrid) {
+      const q = this.fgrid;
+      shiftGrid(q.floor, W, D, 1, DX, DY, 0); shiftGrid(q.walk, W, D, 1, DX, DY, 0); shiftGrid(q.noClimb, W, D, 1, DX, DY, 0);
+      shiftGrid(q.dirty, W, D, 1, DX, DY, 1);
+    }
+    // Los que entran: versión nueva y su caja entera; los del borde nuevo, sin máscaras
+    for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
+      const c = cy * C + cx, entered = src(cx, cy) < 0;
+      // (su máscara se hizo con un vecino que estaba dentro y ahora queda fuera, que es aire: hay que rehacerla; un vecino
+      // que entra vacío tiene versión nueva, y eso ya la rehace)
+      const edge = !entered && ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([ex, ey]) => {
+        const nx = cx + ex, ny = cy + ey, ox = nx + dcx, oy = ny + dcy;
+        return (nx < 0 || ny < 0 || nx >= C || ny >= R) && ox >= 0 && oy >= 0 && ox < C && oy < R;
+      });
+      if (entered) {
+        this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
+        const o = c * SEGS * 7;
+        this.seg.set([this.clock, cx * CHUNK, cy * CHUNK, this.zMin, Math.min(W, (cx + 1) * CHUNK) - 1, Math.min(D, (cy + 1) * CHUNK) - 1, this.zMax], o);
+        this.segN[c] = 1;
+      } else if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
     }
   }
 

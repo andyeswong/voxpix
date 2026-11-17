@@ -1,6 +1,6 @@
-// La ventana viva, 1 (src/world/window.ts): el toro de vóxeles. Una ventana de 3 x 3 trozos que se mueve por un mundo
-// por regiones (también en negativo), escribiendo en cualquier orden los trozos que entran en las ranuras que dejan los
-// que salen, da los mismos vóxeles que el mundo fijo generado de una vez; fuera de la ventana, y en un trozo que aún no
+// La ventana viva, 1 (src/world/window.ts): los vóxeles de la ventana. Una ventana de 3 x 3 trozos que se mueve por un mundo
+// por regiones (también en negativo), corriendo el store (StaticVoxels.shift) y escribiendo en cualquier orden los trozos
+// que entran, da los mismos vóxeles que el mundo fijo generado de una vez; fuera de la ventana, y en un trozo que aún no
 // se escribió, aire
 import { describe, it, expect } from 'vitest';
 import { material, type Palette } from '../src/core';
@@ -33,7 +33,7 @@ const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
 const shuffle = <X,>(a: X[], seed: number) => { let s = seed; for (let i = a.length - 1; i > 0; i--) { s = (Math.imul(s, 1103515245) + 12345) >>> 0; const j = s % (i + 1); [a[i], a[j]] = [a[j]!, a[i]!]; } return a; };
 
-describe('ventana viva: el toro de vóxeles', () => {
+describe('ventana viva: los vóxeles de la ventana', () => {
   // El mundo fijo, de una vez (la región entera), en un StaticVoxels con el origen en el trozo T0
   const ref = new StaticVoxels(pal, NT * TV, NT * TV, 0, H * B - 1);
   new BlockGrid(new WorldState(ref, [], null), set).stampRegion(generateRegion(SPEC, { x0: T0 * TB, y0: T0 * TB, z0: 0, width: NT * TB, depth: NT * TB, height: H }));
@@ -76,10 +76,10 @@ describe('ventana viva: el toro de vóxeles', () => {
     expect(m.entered.map(([tx]) => tx)).toEqual([2, 2, 2]);
     expect(m.left.map(([tx]) => tx)).toEqual([-1, -1, -1]);
     fill(m.entered);
-    // set en coordenadas del mundo: se lee igual, y está en la ranura (2 mod 3, -1 mod 3) = (2, 2)
+    // set en coordenadas del mundo: se lee igual, y en el store está a su distancia de la esquina (0, -1) de la ventana
     win.set(2 * TV + 7, -TV + 9, 40, material(0, 1));
     expect(win.get(2 * TV + 7, -TV + 9, 40)).toBe(material(0, 1));
-    expect(win.store.get(2 * TV + 7, 2 * TV + 9, 40)).toBe(material(0, 1));
+    expect(win.store.get(2 * TV + 7, 9, 40)).toBe(material(0, 1));
     expect(() => win.set(5 * TV, 0, 1, 1)).toThrow();
   });
 });
