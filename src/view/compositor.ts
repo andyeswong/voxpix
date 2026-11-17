@@ -7,7 +7,7 @@
 import { frame2D, entitySprite, warmEntity, HEADINGS, type Frame2DOptions } from '../world/frame2d';
 import type { Baked } from '../world/bake';
 import type { RenderState } from '../world/state';
-import { GpuCompositor, type WarmItem, type AtlasStats } from './gpu/compositor';
+import { GpuCompositor, type WarmItem, type AtlasStats, type UploadStats } from './gpu/compositor';
 export type { WarmItem, AtlasStats };
 
 export interface CompositorStats {
@@ -31,6 +31,9 @@ export interface Compositor {
   upload(b: Baked): void;
   // El atlas de sprites de la GPU (sprites distintos en el último cuadro, en el atlas, tope y desalojos); null en la CPU
   atlasStats(): AtlasStats | null;
+  // Lo que subió a la GPU el último cuadro: sprites nuevos, crecimientos del atlas de sprites y de los atlas 3D (cuerpos y
+  // ocupación); null en la CPU. Para saber qué hay en un cuadro largo con el juego y la cola parados
+  uploadStats(): UploadStats | null;
 }
 
 export function createCompositor(canvas: HTMLCanvasElement, opts: { prefer?: 'gpu' | 'cpu' } = {}): Compositor {
@@ -73,6 +76,7 @@ class CpuPath implements Compositor {
   // La CPU no sube nada
   upload(_b: Baked): void { /* nada */ }
   atlasStats(): null { return null; }
+  uploadStats(): null { return null; }
 
   // En la CPU basta con dejar el render de cada sprite en la caché de frame2d
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs = Infinity): number {
@@ -151,6 +155,7 @@ class GpuPath implements Compositor {
 
   upload(b: Baked): void { this.gpu?.upload(b); }
   atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
+  uploadStats(): UploadStats | null { return this.gpu ? { ...this.gpu.lastUploads } : null; }
 
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number {
     this.warm.record(b, o, list);

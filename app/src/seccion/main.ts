@@ -101,7 +101,35 @@ function measure(widths: number[]): unknown {
 
 const live = walker(Number(q.get('ancho') ?? 4));
 const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
-if (q.get('medir')) (window as unknown as { __seccion: unknown }).__seccion = measure(q.get('medir')!.split(',').map(Number));
+// ?objeto=1: el primer cambio de objeto. El modelo de MAIA cambia a uno que la GPU no ha visto nunca (MAIA con un objeto en
+// la mano: unos vóxeles más), y de control, a uno que ya vio. Por cambio: el cuadro (frame + read), el de después, y lo
+// que subió a la GPU (uploadStats). Deja el resultado en window.__objeto
+function measureObject(): unknown {
+  const gc = GpuCompositor.create(document.createElement('canvas'));
+  if (!gc) return { error: 'sin WebGL2' };
+  const o = opts(X0 + 100, 0);
+  state.entities.move(id, X0 + 100, TY, TZ, 90);
+  const frame = () => { const t0 = performance.now(); gc.read(state, baked, o, 'frame'); return +(performance.now() - t0).toFixed(2); };
+  for (let i = 0; i < 30; i++) { state.entities.setModel(id, walk[i % 8]!); frame(); }
+  const base = Array.from({ length: 30 }, () => frame());
+  const out: unknown[] = [];
+  for (let k = 0; k < 6; k++) {
+    // Nuevo: MAIA con un palo de k + 3 vóxeles en la mano (otro modelo cada vez)
+    const m = walk[0]!.clone();
+    for (let z = 0; z < k + 3; z++) m.set(6, -2, 10 + z, m.get(0, 0, 1) || 1);
+    state.entities.setModel(id, m);
+    const nw = frame(), nwUp = gc.lastUploads, nwParts = { ...gc.parts }, after = frame();
+    // Control: uno ya visto
+    state.entities.setModel(id, walk[k % 8]!);
+    const seen = frame(), seenUp = gc.lastUploads;
+    for (let i = 0; i < 10; i++) frame();
+    out.push({ new: nw, after, newUploads: nwUp, newParts: nwParts, seen, seenUploads: seenUp, seenParts: { ...gc.parts } });
+  }
+  const pct = (a: number[], p: number) => { const v = [...a].sort((x, y) => x - y); return v[Math.floor(p * (v.length - 1))]!; };
+  return { base: { p50: pct(base, 0.5), max: Math.max(...base) }, changes: out };
+}
+if (q.get('objeto')) (window as unknown as { __seccion: unknown }).__seccion = measureObject();
+else if (q.get('medir')) (window as unknown as { __seccion: unknown }).__seccion = measure(q.get('medir')!.split(',').map(Number));
 
 let acc = 0, n = 0, avg = 0;
 function loop(): void {

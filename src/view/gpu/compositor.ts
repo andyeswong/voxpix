@@ -30,6 +30,10 @@ export interface WarmItem { model: VoxelSource; yaws?: readonly number[]; casts?
 // Tope del atlas de sprites de entidades (48x72 cada uno, ~40 KB en la GPU y ~60 KB en la CPU)
 export const MAX_SPRITE_LAYERS = 1024;
 export interface AtlasStats { inFrame: number; sprites: number; cap: number; evicted: number }
+// Lo que subió a la GPU el último cuadro (para saber qué hay detrás de un cuadro largo sin trabajo en el juego): sprites
+// nuevos (renderizados y subidos), veces que el atlas de sprites creció (se rehace y se vuelve a subir entero), y los
+// atlas 3D de cuerpos (luz propia) y de ocupación (sombras): subidas enteras (al crecer) y por partes
+export interface UploadStats { sprites: number; spriteGrows: number; bodyFull: number; bodyParts: number; occFull: number; occParts: number; ms: number }
 
 interface Target { fbo: WebGLFramebuffer; color: WebGLTexture; light: WebGLTexture; depth: WebGLTexture; dropsFbo: WebGLFramebuffer }
 // La capa de entidades (con z-buffer) y la de sombras de contacto
@@ -99,6 +103,10 @@ export class GpuCompositor {
   private spriteImgs: Rendered[] = [];
   private spriteEmissive: Array<Uint8Array | null> = [];
   private spriteCap = 0;
+  private up: UploadStats = { sprites: 0, spriteGrows: 0, bodyFull: 0, bodyParts: 0, occFull: 0, occParts: 0, ms: 0 };
+  // Lo subido en el último cuadro (frame/read): sprites nuevos, crecimientos del atlas y de los atlas 3D, y lo que tardó
+  // la CPU en prepararlo y mandarlo (lo que haga la GPU después no se ve aquí)
+  lastUploads: UploadStats = { ...this.up };
   // Cuándo se usó cada capa por última vez (en cuadros): con el atlas lleno, la nueva ocupa la menos usada
   private spriteUse: number[] = [];
   private frameNo = 0;
@@ -248,6 +256,16 @@ export class GpuCompositor {
   // ---- los pasos
 
   private compose(state: RenderState, b: Baked, o: Frame2DOptions): void {
+    this.up = { sprites: 0, spriteGrows: 0, bodyFull: 0, bodyParts: 0, occFull: 0, occParts: 0, ms: 0 };
+    const bs0 = { ...this.bodyAtlas.stats }, os0 = { ...this.occAtlas.stats };
+    try { this.composeInner(state, b, o); } finally {
+      const bs = this.bodyAtlas.stats, os = this.occAtlas.stats;
+      this.up.bodyFull = bs.full - bs0.full; this.up.bodyParts = bs.parts - bs0.parts;
+      this.up.occFull = os.full - os0.full; this.up.occParts = os.parts - os0.parts;
+      this.lastUploads = this.up;
+    }
+  }
+  private composeInner(state: RenderState, b: Baked, o: Frame2DOptions): void {
     state = withEffectLights(state);
     const gl = this.gl;
     let up = performance.now();
@@ -920,6 +938,7 @@ export class GpuCompositor {
       if (layer >= this.spriteCap) {
         // Atlas lleno: uno el doble de grande, y se vuelven a subir los que había (se guardan en la CPU)
         this.spriteCap = Math.min(cap, Math.max(64, this.spriteCap * 2));
+        if (!this.warming) this.up.spriteGrows++;
         for (const t of [this.tSprColor, this.tSprDepth, this.tSprVox]) if (t) gl.deleteTexture(t);
         this.tSprColor = texArray(gl, gl.RGBA8, EW, EH, this.spriteCap);
         this.tSprDepth = texArray(gl, gl.R32F, EW, EH, this.spriteCap);
@@ -941,7 +960,9 @@ export class GpuCompositor {
     this.sprites.set(d.key, layer);
     if (!this.warming) this.usedNow++;
     this.spriteUse[layer] = this.frameNo;
+    const u0 = performance.now();
     this.uploadSprite(d.img, layer, this.spriteEmissive[layer] ?? null);
+    if (!this.warming) { this.up.sprites++; this.up.ms += performance.now() - u0; }
     return layer;
   }
 
