@@ -74,7 +74,6 @@ export interface Baked {
   // Lo cambiado que rebakeChangedJobs con limit dejó para la siguiente llamada (con su caja, null = el trozo entero, y si
   // cambió por el mundo); cancelRebakes lo devuelve con lo de la cola, para marcarlo otra vez tras correrse
   deferred?: Map<number, { box: Box3 | null; world: boolean }>;
-  deferredOrder?: { list: number[]; at: number };
   // Con { sky: true }: cuánto cielo ve la cara de cada píxel, de 0 a SKY_RAYS (los rayos que llegan arriba). Al
   // componer, con Frame2DOptions.cave, la luz ambiente va de la de cueva (0) a la de siempre (todo el cielo)
   sky?: Uint8Array;
@@ -1217,31 +1216,28 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
   // Los trozos que cambiaron por el mundo (no solo por un corte de vista)
   let worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
   if (b.deferred?.size || (opts.limit !== undefined && chunks.length > opts.limit)) {
-    // Lo nuevo se junta con lo que quedaba (en su sitio, sin copiar), y solo entonces se reordena por distancia; sin nada
-    // nuevo se toman los siguientes del orden de antes (reordenar miles de trozos en cada cuadro costaba lo que ahorraba)
-    const all = (b.deferred ??= new Map());
+    const all = new Map<number, { box: Box3 | null; world: boolean }>(b.deferred ?? []);
     const ws = new Set(worldChunks);
     for (const c of chunks) {
       const nb = boxes.get(c) ?? null, old = all.get(c);
-      if (!old) { all.set(c, { box: nb, world: ws.has(c) }); continue; }
-      old.box = old.box && nb ? { x0: Math.min(old.box.x0, nb.x0), y0: Math.min(old.box.y0, nb.y0), z0: Math.min(old.box.z0, nb.z0), x1: Math.max(old.box.x1, nb.x1), y1: Math.max(old.box.y1, nb.y1), z1: Math.max(old.box.z1, nb.z1) } : null;
-      old.world ||= ws.has(c);
+      const box = old === undefined ? nb : old.box && nb ? { x0: Math.min(old.box.x0, nb.x0), y0: Math.min(old.box.y0, nb.y0), z0: Math.min(old.box.z0, nb.z0), x1: Math.max(old.box.x1, nb.x1), y1: Math.max(old.box.y1, nb.y1), z1: Math.max(old.box.z1, nb.z1) } : null;
+      all.set(c, { box, world: ws.has(c) || !!old?.world });
     }
-    if (chunks.length || !b.deferredOrder) {
-      const order = [...all.keys()], at = opts.near ?? opts.order, cols = b.source.cols;
+    let list = [...all.keys()];
+    const at = opts.near ?? opts.order, cols = b.source.cols;
+    if (opts.limit !== undefined && list.length > opts.limit) {
       if (at) {
-        const dist = new Map(order.map((c) => [c, ((c % cols) * CHUNK + CHUNK / 2 - at.x) ** 2 + (Math.floor(c / cols) * CHUNK + CHUNK / 2 - at.y) ** 2] as const));
-        order.sort((p, q) => dist.get(p)! - dist.get(q)!);
+        const d = (c: number) => ((c % cols) * CHUNK + CHUNK / 2 - at.x) ** 2 + (Math.floor(c / cols) * CHUNK + CHUNK / 2 - at.y) ** 2;
+        list.sort((p, q) => d(p) - d(q));
       }
-      b.deferredOrder = { list: order, at: 0 };
-    }
-    const ord = b.deferredOrder!, take: number[] = [], lim = opts.limit ?? Infinity;
-    while (take.length < lim && ord.at < ord.list.length) { const c = ord.list[ord.at++]!; if (all.has(c)) take.push(c); }
-    chunks = take;
+      const rest = list.slice(opts.limit);
+      list = list.slice(0, opts.limit);
+      b.deferred = new Map(rest.map((c) => [c, all.get(c)!] as const));
+    } else b.deferred?.clear();
+    chunks = list;
     boxes = new Map();
-    worldChunks = [];
-    for (const c of take) { const e = all.get(c)!; if (e.box) boxes.set(c, e.box); if (e.world) worldChunks.push(c); all.delete(c); }
-    if (!all.size) b.deferredOrder = undefined;
+    for (const c of list) { const e = all.get(c)!; if (e.box) boxes.set(c, e.box); }
+    worldChunks = list.filter((c) => all.get(c)!.world);
   }
   const jobs = rebakeJobs(b, chunks, lights, boxes, opts.shape);
   const n = opts.near;
@@ -1364,7 +1360,6 @@ export function cancelRebakes(b: Baked): Plan[] {
     }
     b.deferred.clear();
   }
-  b.deferredOrder = undefined;
   b.rebakeEpoch = (b.rebakeEpoch ?? 0) + 1;
   b.rectsBusy?.clear(); b.lightWork?.clear(); b.pendingLights?.clear(); b.pendingPlans?.clear();
   return plans;
