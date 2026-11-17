@@ -470,6 +470,15 @@ export class LiveWindow {
     for (const { view } of this.views.values()) view.markSynced();
     // (lo que quedaba por rehornear se descartó en el cambio y se volvió a marcar: a la cola otra vez)
     this.pendingRebake = true;
+    // Lo que entra está vacío, y la imagen corrida también: no hay nada que rehornear ahí hasta que se escriba cada trozo
+    // (si no, el primer rehorneado era un recuadro de toda la columna que entra, de vacío, y con un worker llegaba siempre
+    // tarde: los trozos se escribían mientras). Se da por horneado lo vacío; lo demás que cambió (el borde nuevo, lo que
+    // se volvió a marcar) sigue marcado
+    for (const { baked } of this.views.values()) {
+      const s = baked.source, keep = s.changedSince(baked.version).filter((c) => !s.chunkEmpty(c));
+      s.cut(); baked.version = s.clock;
+      for (const c of keep) s.touch(c);
+    }
     this.lastSwitchMs = performance.now() - t0;
     this.stats.switchMs.push(this.lastSwitchMs); this.stats.shiftMs.push(this.shiftSpent);
     this.stats.shiftWallMs.push(performance.now() - this.shiftStartAt); this.switchAt = performance.now();

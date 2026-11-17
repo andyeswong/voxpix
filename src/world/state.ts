@@ -745,6 +745,12 @@ export class StaticVoxels implements VoxelSource {
     return n;
   }
 
+  // ¿El trozo c no tiene ningún vóxel? (todas sus losas vacías)
+  chunkEmpty(c: number): boolean {
+    for (let s = 0; s < this.nz; s++) if (this.count[c * this.nz + s]) return false;
+    return true;
+  }
+
   // ¿Hay algún sólido en la columna?
   hasColumn(x: number, y: number): boolean {
     return x >= 0 && y >= 0 && x < this.width && y < this.depth && this.height[y * this.width + x]! > this.zMin;
