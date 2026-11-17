@@ -409,7 +409,9 @@ export class LiveWindow {
   }
 
   // Corre la ventana dx, dy trozos: el juego guarda lo que sale (aún en el store), y el trabajo de la cola hace el resto
+  private readonly prefetch = new Map<string, { result(): PreparedTrozo | null }>();
   private startShift(dx: number, dy: number): void {
+    this.prefetch.clear();
     const { nx, ny } = this.o, ntx = this.tx0 + dx, nty = this.ty0 + dy;
     for (let ty = this.ty0; ty < this.ty0 + ny; ty++) for (let tx = this.tx0; tx < this.tx0 + nx; tx++) {
       if (tx >= ntx && tx < ntx + nx && ty >= nty && ty < nty + ny) continue;
@@ -522,6 +524,9 @@ export class LiveWindow {
     const cx = ntx + (nx - 1) / 2, cy = nty + (ny - 1) / 2;
     entered.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
     this.loading.push(...entered);
+    // (fuera: se piden todos ya, en orden, para que el worker los haga seguidos y no uno por cada recuadro que pinta;
+    // sus sitios valen hasta el próximo corrimiento, que espera a que estén escritos)
+    if (this.o.prepareTrozo) for (const t of entered) this.prefetch.set(`${t[0]},${t[1]}`, this.o.prepareTrozo(t, [(t[0] - this.tx0) * this.C, (t[1] - this.ty0) * this.C]));
   }
 
   // El siguiente trozo por escribir: generarlo, escribirlo por pasos y, al acabar, lo del juego y el rehorneado
@@ -558,7 +563,9 @@ export class LiveWindow {
     }
     let stamp: { run(deadline: number): boolean } | null = null;
     // (fuera, si se puede: se pide y se espera sin gastar; al llegar, las celdas y un trozo de vóxeles por paso)
-    let ticket: { result(): PreparedTrozo | null } | null = this.o.prepareTrozo && remote ? this.o.prepareTrozo(t, [(tx - this.tx0) * C, (ty - this.ty0) * C]) : null;
+    const pre = this.prefetch.get(`${tx},${ty}`);
+    if (pre) this.prefetch.delete(`${tx},${ty}`);
+    let ticket: { result(): PreparedTrozo | null } | null = this.o.prepareTrozo && remote ? pre ?? this.o.prepareTrozo(t, [(tx - this.tx0) * C, (ty - this.ty0) * C]) : null;
     let prep: PreparedTrozo | null = null, k = -1;
     if (ticket) return { run: (deadline: number) => {
       if (!prep) { prep = ticket!.result(); if (!prep) return false; ticket = null; }
