@@ -527,9 +527,17 @@ win.get(x, y, z);                                                // coordenadas 
 - Oráculo: "ventana corrida" (la imagen corrida un trozo, CPU = GPU) y "ventana corrida y vuelta" (vuelve al sitio y la
   vista es byte a byte la de antes, en CPU y en GPU), en dos giros, con antorchas a los dos lados del borde; la GPU se
   corre dentro de sí una vez y dos (`gpuShifts`).
-- Coste en la ventana de 8 x 13 (imagen 1026 x 1036), Bun sin freno (`bench-ventana`): de una vez, p50 9,7 ms. Por pasos
-  con bandas de 32 filas, 34 pasos de p50 0,5 ms (p95 0,7) y el cambio p50 1,5 ms (p95 1,7); con bandas de 64, 18 pasos
-  de 1,0 ms y el cambio 1,4.
+- El cambio va en dos cuadros: primero los vóxeles (`shift`; mientras, lo que escribe en la imagen espera:
+  `b.shiftHold`), luego la imagen y las luces. `shift` no mueve las máscaras de lo expuesto (las da por caducadas: se
+  rehacen donde se rehornea) y solo recorre el borde.
+- Coste en la ventana de 8 x 13 (imagen 1026 x 1036):
+  - Bun sin freno (`bench-ventana`): de una vez, p50 9,7 ms; por pasos con bandas de 32 filas, 34 pasos de p50 0,5 ms;
+    `shift` de los vóxeles, p50 0,4 ms.
+  - Edge con GPU a 6x (`app/ventana.html?medir=1`, cola del juego, un trozo cada 192 cuadros): la copia, 17-19 cuadros;
+    el cuadro de los vóxeles, 10-21 ms (`shift` 7-15 ms: las referencias de las losas ~3, las alturas ~3, las cajas de
+    cambio ~2); el del cambio de imagen (con la copia en la GPU), 4-7 ms (16-17 el primero, que crea las texturas); el
+    resto, p50 2,1 ms y p95 3,6. Pendiente: que el cuadro de los vóxeles baje de ~10 ms (preparar en el otro búfer
+    también las referencias, las alturas y las cajas durante la copia, y en el cambio solo cambiar punteros).
 - Aún no: `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles

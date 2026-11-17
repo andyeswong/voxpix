@@ -71,6 +71,8 @@ export interface Baked {
   // viejo (x + dx, y - rows)) y lo que se restó a la profundidad (dd) y a la y del mundo (dy). Una copia que estaba al
   // día justo antes (serial - 2) puede correrse igual y subir solo los recuadros publicados con él (lo borrado)
   lastShift?: { serial: number; dx: number; rows: number; dd: number; dy: number };
+  // Entre que se corren los vóxeles y se cambia la imagen (shiftBakedJob, dos cuadros): lo que escribe en la imagen espera
+  shiftHold?: boolean;
 }
 
 // Lo mínimo que necesita el horneado de un mundo
@@ -855,6 +857,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     jobs.push({
       key,
       run(deadline) {
+        if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) return true;
         buf ??= rectBuffers(rect);
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
@@ -904,6 +907,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     jobs.push({
       key: `light:${l.id}#${++lightSerial}`,
       run(deadline) {
+        if (b.shiftHold) return false;
         if (work.waits.some((w) => w())) return false;     // espera a los recuadros (de todos los rehorneados que lleva)
         if (zone === undefined) {
           work.started = true;
@@ -1011,7 +1015,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
       run(deadline) {
-        if (waiting()) return false;
+        if (b.shiftHold || waiting()) return false;
         do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
         if (row <= r.y1) return false;
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
@@ -1033,6 +1037,7 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
   return {
     key: `light:${l.id}`,
     run(deadline) {
+      if (b.shiftHold) return false;
       if (zone === undefined) zone = lightZone(b, l);
       const n = zone ? zone.rect.w * zone.rect.h : 0;
       if (zone) do {
@@ -1118,6 +1123,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
   return {
     key: `exposure:${++exposureSerial}`,
     run(deadline) {
+      if (b.shiftHold) return false;
       while (k < order.length) {
         const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;
         const region = { x0, y0, x1: Math.min(s.width - 1, x0 + CHUNK - 1), y1: Math.min(s.depth - 1, y0 + CHUNK - 1) };
@@ -1165,6 +1171,7 @@ export interface ShiftJob {
   merge(dcx: number, dcy: number): void;        // otro corrimiento antes de acabar: se suma
   readonly done: boolean;
   readonly shift: readonly [number, number];      // el corrimiento total (trozos de vóxeles)
+  readonly ms: { voxels: number; recopy: number; swap: number };   // lo que costaron el corrimiento de los vóxeles, la recopia y el cambio
 }
 
 type ImageBuffers = { rgba: Uint8ClampedArray<ArrayBuffer>; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | undefined };
@@ -1172,7 +1179,7 @@ const BACK = new WeakMap<Baked, ImageBuffers>();
 
 export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?: number; priority?: number } = {}): ShiftJob {
   const W = b.width, H = b.height, a = b.options.oblique?.y ?? 1, band = opts.band ?? 64;
-  let tx = dcx, ty = dcy, next = 0, halo = 0, start = b.published.serial, done = false;
+  let tx = dcx, ty = dcy, next = 0, halo = 0, start = b.published.serial, done = false, held = false;
   // El búfer de atrás: el de la imagen de antes del último cambio, si lo hay (se turnan)
   let back = BACK.get(b);
   if (!back || back.rgba.length !== b.rgba.length) {
@@ -1256,7 +1263,13 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     ...(opts.priority !== undefined ? { priority: opts.priority } : {}),
     get done() { return done; },
     get shift() { return [tx, ty] as const; },
-    merge(x: number, y: number) { if (done) throw new Error('shiftBakedJob: ya acabó'); tx += x; ty += y; restart(); },
+    ms: { voxels: 0, recopy: 0, swap: 0 },
+    merge(x: number, y: number) {
+      if (done) throw new Error('shiftBakedJob: ya acabó');
+      // (con los vóxeles ya corridos, otro corrimiento: lo hará otro trabajo después de este)
+      if (held) throw new Error('shiftBakedJob: los vóxeles ya se corrieron; corre la ventana otra vez al acabar');
+      tx += x; ty += y; restart();
+    },
     run(deadline: number): boolean {
       if (done) return true;
       if (!tx && !ty) { done = true; return true; }
@@ -1271,9 +1284,21 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
         }
         if (halo < H) { haloRows(halo, H - 1); halo = H; continue; }
         // Lo rehorneado mientras tanto; y el cambio, cuando no quede rehorneado a medias
-        if (!recopy()) continue;
-        if (b.rectsBusy?.size || b.lightWork?.size || b.pendingLights?.size) return false;
+        // El cambio, en dos cuadros: los vóxeles (lo que escribe en la imagen espera) y, en la llamada siguiente, la imagen
+        if (!held) {
+          const r0 = performance.now();
+          if (!recopy()) continue;
+          job.ms.recopy = performance.now() - r0;
+          if (b.rectsBusy?.size || b.lightWork?.size || b.pendingLights?.size) return false;
+          const v0 = performance.now();
+          s.shift(tx, ty);
+          job.ms.voxels = performance.now() - v0;
+          held = true; b.shiftHold = true;
+          return false;
+        }
+        const w0 = performance.now();
         swap();
+        job.ms.swap = performance.now() - w0;
         return true;
       } while (performance.now() < deadline);
       return false;
@@ -1281,7 +1306,6 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
   };
   const swap = () => {
     const { DX, DY, rows } = P;
-    s.shift(tx, ty);
     const front: ImageBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, sky: b.sky };
     b.rgba = bk.rgba; b.depth = bk.depth; b.face = bk.face; b.pick = bk.pick; if (bk.sky) b.sky = bk.sky;
     BACK.set(b, front);
@@ -1290,6 +1314,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     b.published.rects = gx1 >= 0 ? [{ serial: b.published.serial, x0: gx0, y0: gy0, x1: gx1, y1: gy1 }] : [];
     b.lastShift = { serial: b.published.serial, dx: DX, rows, dd: P.dd, dy: DY };
     b.shifts = (b.shifts ?? 0) + 1;
+    b.shiftHold = false;
     done = true;
   };
   return job;

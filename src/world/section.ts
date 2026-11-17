@@ -347,7 +347,8 @@ export class SectionPainter {
     // (con el mismo ancho siempre: la caja siguiente es esta desplazada una franja, y lo que se adelanta para ella vale)
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((cut.x1 - cut.x0 + 1) / STRIP) * STRIP - 1;
     this.cut = { ...cut, x0, x1 };
-    const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}`;
+    // (y si la ventana se corrió, todo lo pintado está en las coordenadas de antes)
+    const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}:${this.b.shifts ?? 0}`;
     if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
   }
 
@@ -390,6 +391,7 @@ export class SectionPainter {
     // Sin prioridad solo con la caja hecha y AHEAD_MIN franjas pintadas por delante (si no, al andar se ven huecos)
     const boxDone = this.ready() && this.aheadFresh() >= AHEAD_MIN * (STRIP / UNIT);
     const run = (deadline: number) => {
+      if (this.b.shiftHold) return false;                                  // la ventana se está corriendo: espera
       // En el cuadro en que la caja salta de franja (toca componer) y con la caja ya pintada, lo de delante espera: no se
       // suma a la composición
       if (this.ready() && !this.composedBox()) return false;

@@ -539,7 +539,7 @@ export class GpuCompositor {
     // publicado con el corrimiento (lo borrado)
     // (si después se rehorneó algo más, sus recuadros siguen en la lista: se suben abajo)
     const ls = b.lastShift;
-    if (ls && this.bakedSerial === ls.serial - 2 && pub.serial >= ls.serial && (pub.rects[0]?.serial ?? Infinity) <= ls.serial + 1) {
+    if (ls && this.bakedSerial === ls.serial - 2 && pub.serial >= ls.serial && (pub.rects.length ? pub.rects[0]!.serial <= ls.serial + 1 : pub.serial === ls.serial)) {
       this.gpuShift(b, ls);
       for (const r of pub.rects) if (r.serial === ls.serial) this.uploadRect(b, r);
       this.bakedSerial = ls.serial;

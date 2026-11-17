@@ -68,6 +68,9 @@ function rotChunk(q: number, cx: number, cy: number, cols: number, rows: number,
 // (x + dx, y + dy); lo que queda sin origen, `fill`. Con copyWithin (también en los arrays de referencias): sin crear nada
 type CopyArr = { length: number; copyWithin(t: number, s: number, e: number): unknown; fill(v: never, s: number, e: number): unknown };
 function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: number, dy: number, fill: number | null): void {
+  // (los arrays normales, a mano: el copyWithin de V8 en un array normal va elemento a elemento mirando huecos, ~10 veces
+  // más lento que un bucle; en los tipados, copyWithin es una copia de memoria)
+  if (Array.isArray(a)) { shiftArray(a, W, H, per, dx, dy, fill); return; }
   const row = W * per, run = (W - Math.abs(dx)) * per, sx = Math.max(0, dx) * per, tx = Math.max(0, -dx) * per;
   const f = fill as never;
   if (run <= 0 || Math.abs(dy) >= H) { a.fill(f, 0, a.length); return; }
@@ -84,6 +87,23 @@ function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: number, dy
     if (sy < 0 || sy >= H) { a.fill(f, o, o + row); continue; }
     a.copyWithin(o + tx, sy * row + sx, sy * row + sx + run);
     if (dx > 0) a.fill(f, o + run, o + row); else a.fill(f, o, o + tx);
+  }
+}
+
+function shiftArray(a: unknown[], W: number, H: number, per: number, dx: number, dy: number, fill: unknown): void {
+  // Dentro de una fila, la fuente es la misma fila de origen corrida dx * per: a[o + k] = a[sy * row + dx * per + k]
+  const row = W * per, off = dx * per;
+  const fwd = dy > 0 || (dy === 0 && dx > 0);                 // el orden que no pisa lo que falta por leer
+  const y0 = fwd ? 0 : H - 1, y1 = fwd ? H : -1, st = fwd ? 1 : -1;
+  const k0 = Math.max(0, -off), k1 = Math.min(row, row - off);  // las k con fuente dentro de la fila
+  for (let y = y0; y !== y1; y += st) {
+    const sy = y + dy, o = y * row;
+    if (sy < 0 || sy >= H) { for (let k = 0; k < row; k++) a[o + k] = fill; continue; }
+    const base = sy * row + off;
+    if (fwd || dy !== 0) { for (let k = k0; k < k1; k++) a[o + k] = a[base + k]; }
+    else for (let k = k1 - 1; k >= k0; k--) a[o + k] = a[base + k];
+    for (let k = 0; k < k0; k++) a[o + k] = fill;
+    for (let k = k1; k < row; k++) a[o + k] = fill;
   }
 }
 
@@ -225,28 +245,21 @@ export class StaticVoxels implements VoxelSource {
     if (!dcx && !dcy) return;
     if (this.width % CHUNK || this.depth % CHUNK) throw new Error(`shift: el ancho y el fondo tienen que ser múltiplos de ${CHUNK}`);
     const C = this.cols, R = this.rows, nz = this.nz, NC = C * R;
-    const src = (cx: number, cy: number) => { const sx = cx + dcx, sy = cy + dcy; return sx >= 0 && sy >= 0 && sx < C && sy < R ? sy * C + sx : -1; };
     // Por trozo: en su sitio (copyWithin, también en los arrays de referencias), y lo que entra, vacío
     const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
     g(this.data, nz, null); g(this.pal, nz, null);
     g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
-    g(this.expo, nz, null); g(this.expoOk, nz, null); g(this.expoAt, nz, -1);
-    g(this.expoF, nz, null); g(this.expoFOk, nz, null); g(this.expoFAt, nz, -1);
+    // Las máscaras de lo expuesto no se mueven: se dan por caducadas todas (se rehacen al pedirlas, como tras importChunks).
+    // Moverlas eran 4 arrays de referencias más en el cuadro del corrimiento; después solo se piden donde se rehornea
+    this.expoAt.fill(-1); this.expoFAt.fill(-1);
     g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
-    // Las cajas de lo cambiado van en coordenadas: se corren con el contenido
-    const DX = dcx * CHUNK, DY = dcy * CHUNK, seg = new Int32Array(this.seg.length), segN = new Uint8Array(NC);
-    for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
-      const c = cy * C + cx, s = src(cx, cy);
-      if (s < 0) continue;
-      segN[c] = this.segN[s]!;
-      for (let k = 0; k < segN[c]!; k++) {
-        const fo = (s * SEGS + k) * 7, to = (c * SEGS + k) * 7;
-        seg[to] = this.seg[fo]!;
-        seg[to + 1] = this.seg[fo + 1]! - DX; seg[to + 2] = this.seg[fo + 2]! - DY; seg[to + 3] = this.seg[fo + 3]!;
-        seg[to + 4] = this.seg[fo + 4]! - DX; seg[to + 5] = this.seg[fo + 5]! - DY; seg[to + 6] = this.seg[fo + 6]!;
-      }
+    // Las cajas de lo cambiado van en coordenadas: se corren con el contenido (en su sitio, y se restan las coordenadas)
+    const DX = dcx * CHUNK, DY = dcy * CHUNK;
+    g(this.seg, SEGS * 7, 0); g(this.segN, 1, 0);
+    for (let c = 0; c < NC; c++) for (let k = 0, n = this.segN[c]!; k < n; k++) {
+      const o = (c * SEGS + k) * 7;
+      const S = this.seg; S[o + 1] = S[o + 1]! - DX; S[o + 2] = S[o + 2]! - DY; S[o + 4] = S[o + 4]! - DX; S[o + 5] = S[o + 5]! - DY;
     }
-    this.seg = seg; this.segN = segN;
     // Por columna: las alturas y la rejilla de pisar
     const W = this.width, D = this.depth;
     shiftGrid(this.height, W, D, 1, DX, DY, this.zMin);
@@ -255,23 +268,25 @@ export class StaticVoxels implements VoxelSource {
       shiftGrid(q.floor, W, D, 1, DX, DY, 0); shiftGrid(q.walk, W, D, 1, DX, DY, 0); shiftGrid(q.noClimb, W, D, 1, DX, DY, 0);
       shiftGrid(q.dirty, W, D, 1, DX, DY, 1);
     }
-    // Los que entran: versión nueva y su caja entera; los del borde nuevo, sin máscaras
+    // Los que entran: versión nueva y su caja entera; los del borde nuevo (un vecino que estaba dentro ahora queda fuera: su
+    // máscara se hizo con él, y con aire fuera se ven caras que antes no), también cambiados y sin máscaras. Un vecino que
+    // entra vacío tiene versión nueva, y eso ya rehace la máscara
+    const inOld = (x: number, y: number) => x >= 0 && y >= 0 && x < C && y < R;
+    // (solo las filas y columnas del borde: lo que entra es una franja junto al borde, y el borde nuevo es el borde)
+    const ex0 = dcx < 0 ? Math.min(C, -dcx) : 0, ex1 = dcx > 0 ? Math.max(0, C - dcx) : C;   // columnas que no entran: ex0..ex1-1
+    const ey0 = dcy < 0 ? Math.min(R, -dcy) : 0, ey1 = dcy > 0 ? Math.max(0, R - dcy) : R;
     for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
-      const c = cy * C + cx, entered = src(cx, cy) < 0;
-      // (su máscara se hizo con un vecino que estaba dentro y ahora queda fuera, que es aire: hay que rehacerla; un vecino
-      // que entra vacío tiene versión nueva, y eso ya la rehace)
-      const edge = !entered && ([[1, 0], [-1, 0], [0, 1], [0, -1]] as const).some(([ex, ey]) => {
-        const nx = cx + ex, ny = cy + ey, ox = nx + dcx, oy = ny + dcy;
-        return (nx < 0 || ny < 0 || nx >= C || ny >= R) && ox >= 0 && oy >= 0 && ox < C && oy < R;
-      });
-      // (los del borde nuevo también cuentan como cambiados enteros: con el vecino de fuera en aire, se ven caras que antes
-      // no; el horneado los rehace)
-      if (entered || edge) {
-        this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
-        const o = c * SEGS * 7;
-        this.seg.set([this.clock, cx * CHUNK, cy * CHUNK, this.zMin, Math.min(W, (cx + 1) * CHUNK) - 1, Math.min(D, (cy + 1) * CHUNK) - 1, this.zMax], o);
-        this.segN[c] = 1;
-      }
+      // (por dentro, ni entra ni es borde: salta al final de la fila)
+      if (cy > ey0 && cy < ey1 - 1 && cy > 0 && cy < R - 1 && cx > ex0 && cx < ex1 - 1 && cx > 0) { cx = Math.max(cx, Math.min(ex1 - 1, C - 1) - 1); continue; }
+      const c = cy * C + cx, entered = !inOld(cx + dcx, cy + dcy);
+      const edge = !entered && ((cx === 0 && inOld(cx - 1 + dcx, cy + dcy)) || (cx === C - 1 && inOld(cx + 1 + dcx, cy + dcy)) ||
+        (cy === 0 && inOld(cx + dcx, cy - 1 + dcy)) || (cy === R - 1 && inOld(cx + dcx, cy + 1 + dcy)));
+      if (!entered && !edge) continue;
+      this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
+      const o = c * SEGS * 7;
+      this.seg[o] = this.clock; this.seg[o + 1] = cx * CHUNK; this.seg[o + 2] = cy * CHUNK; this.seg[o + 3] = this.zMin;
+      this.seg[o + 4] = Math.min(W, (cx + 1) * CHUNK) - 1; this.seg[o + 5] = Math.min(D, (cy + 1) * CHUNK) - 1; this.seg[o + 6] = this.zMax;
+      this.segN[c] = 1;
       if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
     }
   }
