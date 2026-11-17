@@ -450,6 +450,44 @@ describe('ventana viva', () => {
     expect(steps).toBe(5);
   });
 
+  it('turn suelta la vista de antes si no está en quarters (también a mitad de un corrimiento), y queda igual que una ventana hecha de nuevo en ese giro', () => {
+    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
+    // Quieto: de 0 a 1 sin el 0 en quarters, solo queda la del 1
+    const still = new LiveWindow({ ...opts([0, 0]), quarters: [1] });
+    expect(still.quarters.sort()).toEqual([0, 1]);
+    still.turn(1);
+    expect(still.quarters).toEqual([1]);
+    expect(still.viewOf(0)).toBeUndefined();
+    // Con quarters [0, 1], las dos siguen
+    const both = new LiveWindow({ ...opts([0, 0]), quarters: [0, 1] });
+    both.turn(1);
+    expect(both.quarters.sort()).toEqual([0, 1]);
+    // Andando: girar justo cuando empieza un corrimiento (el 0 llevaba el de los vóxeles del mundo)
+    const win = new LiveWindow({ ...opts([0, 0]), quarters: [1] });
+    const budget = stepBudget();
+    let x = TV / 2, turned = false;
+    const y = TV / 2;
+    const frame = () => {
+      win.update(x, y, budget);
+      if (!turned && win.shifting) { win.turn(1); turned = true; }
+      for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+      budget.run();
+    };
+    for (let s = 0; s < 3 * 8; s++) { x += TV / 8; for (let k = 0; k < 6; k++) frame(); }
+    for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame();
+    expect(turned).toBe(true);
+    expect(win.quarters).toEqual([1]);
+    expect(win.tx0).toBeGreaterThan(-2);
+    const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]), quarters: [1] });
+    ref.turn(1);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+    let nv = 0;
+    for (let z = win.store.zMin; z <= win.store.zMax; z++) for (let y2 = 0; y2 < win.store.depth; y2++) for (let x2 = 0; x2 < win.store.width; x2++) if (win.store.get(x2, y2, z) !== ref.store.get(x2, y2, z)) nv++;
+    expect(nv).toBe(0);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
   it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });

@@ -170,10 +170,34 @@ export class LiveWindow {
     }
   }
 
-  // Cambia al giro q (ya horneado y al día): view y baked pasan a ser los suyos
+  /**
+   * Cambia al giro q, ya horneado y al día (uno de `quarters`, o el 0): view y baked pasan a ser los suyos, sin esperar.
+   *
+   * Qué vistas quedan vivas (con su horneado y su copia, y rehorneadas en cada carga):
+   * - Al construir: la del giro 0 y las de `quarters`.
+   * - Tras turn(q) o turnTo(q): la de q y las de `quarters`; la que se enseñaba, si no está en `quarters`, se suelta (su
+   *   rehorneado en la cola acaba sin hacer nada). Así, sin `quarters` (o sin el 0 en ella) solo vive la del giro de ahora;
+   *   con `quarters: [0, 1, 2, 3]`, las cuatro siempre.
+   * - turnTo(q) con q sin hornear la hace por pasos (núcleo, fundido, lo demás) y suelta la de antes en el cambio.
+   * Antes turn() no soltaba nada: con `quarters: [1]` y turn(1) quedaban vivas la del 0 y la del 1, y cada carga
+   * rehorneaba las dos (el doble de trabajo tras un salto).
+   */
   turn(q: Quarter): void {
     if (!this.views.has(q)) throw new Error(`LiveWindow: el giro ${q} no está horneado (quarters: ${this.quarters.join(', ')})`);
+    const old = this.quarter;
     this.quarter = q;
+    if (old === q || this.live.has(old)) return;
+    const v = this.views.get(old);
+    this.views.delete(old);
+    if (v) cancelRebakes(v.baked);
+    // Un corrimiento a medias: el de la vista que se soltó sobra, y los vóxeles del mundo los corre el giro 0 si sigue o,
+    // si no, aparte (como en el cambio de turnTo)
+    if (this.shiftJobs) {
+      const [dx, dy] = this.shiftDir;
+      this.shiftJobs = this.shiftJobs.filter((sj) => this.views.has(sj.q));
+      if (this.worldViewed()) this.storeShift = null;
+      else if (!this.storeShift) { const k = this.T / CHUNK; this.storeShift = { job: this.store.shiftJob(dx * k, dy * k), ready: false }; }
+    }
   }
 
   // Engancha algo que va en coordenadas locales y sabe correrse (PathField, LevelPathField): en el cambio de cada
