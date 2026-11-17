@@ -317,10 +317,25 @@ export class WorldView implements RenderState {
       // Los trozos del mundo que cambiaron: se copian girados, y se vuelven a vestir los de la vista que tocan
       const changed = src.changedSince(this.synced);
       const touched = new Set<number>();
-      // Sin vestido ni corte, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero
-      // (la ventana viva) no se va vóxel a vóxel
-      if (!this.dress && !this.cut.length && this.quarter !== 0 && StaticVoxels.slabCopyable(src, this.quarter)) {
-        for (const c of changed) this.static.copyRotatedChunk(src, this.quarter, c);
+      // Sin vestido, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero (la ventana
+      // viva) no se va vóxel a vóxel. También en el giro 0 con corte (la ventana viva con view: { cut: true }: antes cada
+      // trozo escrito eran ~1,5 M vóxeles uno a uno, 3,5 s de 4,8 en la carga tras morir en la página de FERN): se copia
+      // el trozo entero y se vuelve a esconder lo que el corte tiene escondido en sus columnas, como lo hace applyCut
+      if (!this.dress && StaticVoxels.slabCopyable(src, this.quarter)) {
+        for (const c of changed) {
+          this.static.copyRotatedChunk(src, this.quarter, c);
+          if (!this.applied) continue;
+          const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
+          this.static.viewWrites = true;
+          try {
+            for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {
+              const cz = this.appliedAt(x, y);
+              if (cz === Infinity) continue;
+              const [vx, vy] = cam.cellToView(x, y);
+              for (let z = Math.max(src.zMin, cz); z <= src.zMax; z++) if (this.static.get(vx, vy, z)) this.static.set(vx, vy, z, 0);
+            }
+          } finally { this.static.viewWrites = false; }
+        }
         this.synced = src.clock;
         changed.length = 0;
       }
