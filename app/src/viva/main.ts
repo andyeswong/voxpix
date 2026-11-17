@@ -22,6 +22,7 @@ import type { ViewJob, RectOut } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
 import { SectionPainter, sectionAround } from '../../../src/world/section';
+import * as bakeMod from '../../../src/world/bake';
 import type { Baked } from '../../../src/world/bake';
 
 // (todo dentro de una función async: el mundo de ?mundo= se lee con fetch antes de empezar)
@@ -110,7 +111,8 @@ void (async () => {
   const esperas: number[] = [];
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
-  const SECCION = Number(q.get('seccion') ?? 0);
+  const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0);
+  let nextBurst = 2000;
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
   let secRun = 0;
@@ -215,6 +217,17 @@ void (async () => {
     // pintado por franjas (SectionPainter, uno por horneado) en la cola; se cuentan los cuadros con la caja sin pintar
     // del todo
     if (SECCION) {
+      // ?rafaga=N: cada 2 s, N recuadros publicados lejos de la caja (200 columnas a la derecha de MAIA, toda la altura),
+      // como los que entrega el worker de golpe (no cambian nada de la imagen: solo cuentan como publicados)
+      if (RAFAGA && now - start >= nextBurst) {
+        nextBurst += 2000;
+        const bk = win.baked, fx = Math.min(bk.width - 5, Math.round(px) + 200);
+        for (let k = 0; k < RAFAGA; k++) {
+          const r = { serial: ++bk.published.serial, x0: fx, y0: 0, x1: fx + 3, y1: bk.height - 1 };
+          const pp = (bakeMod as unknown as { pushPublished?: (b: unknown, r: unknown) => void }).pushPublished;
+          if (pp) pp(bk, r); else { bk.published.rects.push(r); if (bk.published.rects.length > 32) bk.published.rects.shift(); }
+        }
+      }
       if (!painter || painter.b !== win.baked) painter = new SectionPainter(win.baked);
       painter.set(sectionAround(win.view.camera, lx, ly, ground(x, Y), SECCION), dir);
       const pj = painter.job();
