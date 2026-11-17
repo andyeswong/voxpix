@@ -288,6 +288,10 @@ export class WorldView implements RenderState {
     this.dress?.(this, null);
   }
 
+  // La copia girada ya está al día con el mundo (la ventana viva: los dos se corrieron igual en el mismo momento): lo que
+  // cambió de versión al correrse no se vuelve a copiar
+  markSynced(): void { this.synced = this.state.solid.clock; }
+
   // ¿La vista tiene su propia copia de los vóxeles? (girada o vestida)
   get copied(): boolean { return this.static !== this.state.solid; }
 
@@ -313,6 +317,13 @@ export class WorldView implements RenderState {
       // Los trozos del mundo que cambiaron: se copian girados, y se vuelven a vestir los de la vista que tocan
       const changed = src.changedSince(this.synced);
       const touched = new Set<number>();
+      // Sin vestido ni corte, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero
+      // (la ventana viva) no se va vóxel a vóxel
+      if (!this.dress && !this.cut.length && this.quarter !== 0 && StaticVoxels.slabCopyable(src, this.quarter)) {
+        for (const c of changed) this.static.copyRotatedChunk(src, this.quarter, c);
+        this.synced = src.clock;
+        changed.length = 0;
+      }
       for (const c of changed) {
         const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
         for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(src.width, cx + CHUNK); x++) {

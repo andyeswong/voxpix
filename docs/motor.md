@@ -581,7 +581,13 @@ compositor.frame(win.state, win.baked, opts);
 - `test/ventana-viva.test.ts`: un objetivo que anda y vuelve, con lo picado puesto por `onLoad`; y con `fill` (celdas
   guardadas con giro) y `onShift`. Lo horneado y la rejilla quedan como en una ventana hecha de nuevo ahí, y una
   entidad sigue en su sitio del mundo.
-- Aún no: el agua, los giros y los caminos por ventana; el banco de 200 bloques.
+- Giros (`quarters: [0, 1, 2, 3]`): cada giro tiene su vista (`WorldView`, con su copia girada) y su horneado, y
+  todos se tienen al día. Al correrse, cada uno prepara su imagen en sus ejes (`dirToView`) con `shiftBakedJob` en modo
+  `manual` (el que se ve, primero) y el cambio es de todos a la vez (`canCommit` en todos y, si pueden, `commit`). Lo que
+  entra se rehornea en todos; lo que pica el juego, en el giro de ahora lo rehornea él (como siempre) y en los demás
+  `update`. `turn(q)` cambia sin esperar: `win.view` y `win.baked` pasan a ser los de q (hay que volver a subirlo a la
+  GPU). Las copias giradas se ponen al día por losas (`StaticVoxels.copyRotatedChunk`).
+- Aún no: el agua y los caminos por ventana.
 
 ## Caminos por niveles
 

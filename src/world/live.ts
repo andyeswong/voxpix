@@ -20,12 +20,20 @@
 //   coordenadas locales (cuerpos, listas por celda, la cámara, el corte), lo corre él aquí.
 // Todo lo de ctx va en coordenadas del MUNDO (vóxeles y celdas); ctx.grid y ctx.at (la celda local de la esquina del
 // trozo) por si hace falta ir directo a la rejilla.
+//
+// Los giros (opts.quarters): cada giro pedido tiene su vista (WorldView, con su copia girada) y su horneado, y todos se
+// tienen al día: al correrse, cada uno corre su imagen (en sus ejes: dirToView) y el cambio es de todos a la vez; lo que
+// entra se rehornea en todos. turn(q) cambia de giro sin esperar (como la caché de giros del juego): win.view y
+// win.baked pasan a ser los de q (hay que volver a subir el horneado a la GPU). El giro 0 siempre está (su vista es el
+// mundo, sin copia). Lo que cambia el juego (picar) lo rehornea él en el giro de ahora (rebakeChangedJobs con near,
+// como siempre); en los demás lo rehornea update.
 import type { Palette } from '../core';
 import { StaticVoxels, WorldState, CHUNK } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec } from './regiongen';
 import { bakeWorld, shiftBakedJob, rebakeChangedJobs, type Baked, type ShiftJob, type ViewJob } from './bake';
+import { WorldView, type Quarter } from './view';
 
 export type Trozo = readonly [number, number];
 // Lo que se le da al juego por trozo, en coordenadas del MUNDO
@@ -49,6 +57,7 @@ export interface LiveWindowOptions {
   // allí sube a la imagen) que al sur
   margin?: number | { x: number; n: number; s: number };
   band?: number;                       // filas de la imagen por paso al correrla (shiftBakedJob)
+  quarters?: readonly Quarter[];       // los giros que se tienen horneados (el 0 siempre; [0] por defecto)
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
@@ -59,13 +68,20 @@ export class LiveWindow {
   readonly store: StaticVoxels;
   readonly state: WorldState;
   readonly grid: BlockGrid;
-  baked: Baked;
+  // El giro de ahora, y por giro su vista y su horneado
+  quarter: Quarter = 0;
+  private readonly views = new Map<Quarter, { view: WorldView; baked: Baked }>();
+  get view(): WorldView { return this.views.get(this.quarter)!.view; }
+  get baked(): Baked { return this.views.get(this.quarter)!.baked; }
+  get quarters(): Quarter[] { return [...this.views.keys()]; }
+  viewOf(q: Quarter): { view: WorldView; baked: Baked } | undefined { return this.views.get(q); }
   readonly T: number;                  // vóxeles por lado de un trozo
   tx0: number; ty0: number;            // la esquina de la ventana (trozos del mundo)
   private readonly o: Required<Pick<LiveWindowOptions, 'band'>> & LiveWindowOptions;
   private readonly m: { x: number; n: number; s: number };
   private readonly C: number;          // bloques por lado de un trozo
-  private shiftJob: ShiftJob | null = null;
+  private shiftJobs: Array<{ q: Quarter; job: ShiftJob }> | null = null;
+  private shiftJob: ViewJob | null = null;     // el que los lleva en la cola
   private shiftTo: Trozo | null = null;
   private loading: Trozo[] = [];       // los que entraron y faltan por escribir
   private loadJob: ViewJob | null = null;
@@ -90,7 +106,16 @@ export class LiveWindow {
       const job = this.loadTrozoJob([tx, ty]);
       while (!job.run(Infinity));
     }
-    this.baked = bakeWorld({ model: this.store, lights: this.state.lights, width: this.store.width, depth: this.store.depth }, { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) });
+    for (const q of new Set<Quarter>([0, ...(opts.quarters ?? [])])) {
+      const view = new WorldView(this.state, q);
+      this.views.set(q, { view, baked: bakeWorld(view.bakeable(), { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) }) });
+    }
+  }
+
+  // Cambia al giro q (ya horneado y al día): view y baked pasan a ser los suyos
+  turn(q: Quarter): void {
+    if (!this.views.has(q)) throw new Error(`LiveWindow: el giro ${q} no está horneado (quarters: ${this.quarters.join(', ')})`);
+    this.quarter = q;
   }
 
   // Lo del trozo t para el juego (en coordenadas del mundo)
@@ -113,7 +138,7 @@ export class LiveWindow {
   // ¿Está escrito el trozo (y se puede leer)?
   isLoaded(t: Trozo): boolean { return this.loaded.has(`${t[0]},${t[1]}`); }
   // ¿Hay trabajo de la ventana en marcha (corrimiento o trozos por escribir)?
-  get busy(): boolean { return !!this.shiftJob || this.loading.length > 0 || !!this.loadJob; }
+  get busy(): boolean { return !!this.shiftJobs || this.loading.length > 0 || !!this.loadJob; }
 
   // Cada cuadro: con el objetivo en (x, y) del MUNDO, decide si correr la ventana y mete su trabajo en la cola. Se corre un
   // trozo cada vez, hacia donde haga falta para que el del objetivo quede a margin trozos o más del borde
@@ -122,14 +147,20 @@ export class LiveWindow {
     let dx = 0, dy = 0;
     if (tx - this.tx0 < m.x) dx = -1; else if (this.tx0 + nx - 1 - tx < m.x) dx = 1;
     if (ty - this.ty0 < m.s) dy = -1; else if (this.ty0 + ny - 1 - ty < m.n) dy = 1;
-    if ((dx || dy) && !this.shiftJob && !this.loading.length && !this.loadJob) this.startShift(dx, dy);
+    if ((dx || dy) && !this.shiftJobs && !this.loading.length && !this.loadJob) this.startShift(dx, dy);
     if (this.shiftJob) budget.push(this.shiftJob);
-    if (!this.shiftJob && this.loading.length && !this.loadJob) this.nextLoad();
+    if (!this.shiftJobs && this.loading.length && !this.loadJob) this.nextLoad();
     if (this.loadJob) budget.push(this.loadJob);
-    // Lo escrito (los trozos que entraron, con lo del juego), a rehornear
-    if (this.pendingRebake && !this.shiftJob) {
-      this.pendingRebake = false;
-      for (const j of rebakeChangedJobs(this.baked, this.state.lights)) budget.push(j);
+    if (this.shiftJobs) return;
+    // Lo escrito (los trozos que entraron, con lo del juego), a rehornear en todos los giros; en los que no se ven, también
+    // lo que haya cambiado el juego (en el de ahora lo rehornea él, con near)
+    const all = this.pendingRebake;
+    this.pendingRebake = false;
+    for (const [q, { view, baked }] of this.views) {
+      if (q === this.quarter && !all) continue;
+      const lights = view.bakeable().lights;
+      if (!baked.source.changedSince(baked.version).length) continue;
+      for (const j of rebakeChangedJobs(baked, lights)) budget.push(q === 0 ? j : { key: `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(j.priority !== undefined ? { priority: j.priority } : {}) });
     }
   }
 
@@ -141,11 +172,49 @@ export class LiveWindow {
       this.o.onUnload?.([tx, ty], this.ctx([tx, ty]));
       this.loaded.delete(`${tx},${ty}`);
     }
-    // En el cambio (el mismo cuadro que los vóxeles y la imagen): la rejilla, las entidades, las luces y el juego
-    const k = this.T / CHUNK, job = shiftBakedJob(this.baked, dx * k, dy * k, { band: this.o.band, onSwitch: () => this.onSwitch(dx, dy) });
+    // Cada giro, su imagen en sus ejes (el corrimiento es una dirección); el cambio lo hace trySwitch, de todos a la vez
+    const k = this.T / CHUNK;
     this.shiftTo = [ntx, nty];
-    // (envuelto: al acabar, el resto del corrimiento)
-    this.shiftJob = { ...job, key: job.key, run: (deadline: number) => { const done = job.run(deadline); if (done) this.afterShift(dx, dy); return done; }, merge: job.merge, get done() { return job.done; }, get shift() { return job.shift; }, ms: job.ms };
+    this.shiftDir = [dx, dy];
+    this.shiftJobs = [...this.views].map(([q, { view, baked }]) => {
+      const [vx, vy] = view.camera.dirToView(dx, dy);
+      return { q, job: shiftBakedJob(baked, vx * k, vy * k, { band: this.o.band, manual: true, key: `shift:g${q}` }) };
+    });
+    // Un trabajo de la cola: prepara los giros (el que se ve, primero) y, cuando están todos, el cambio
+    this.shiftSpent = 0;
+    this.shiftJob = { key: 'shift', run: (deadline: number) => {
+      const a = performance.now();
+      try {
+        const jobs = [...this.shiftJobs!].sort((a, b) => +(b.q === this.quarter) - +(a.q === this.quarter));
+        for (const s of jobs) if (!s.job.prepared && !s.job.run(deadline)) return false;
+        return this.trySwitch();
+      } finally { this.shiftSpent += performance.now() - a; }
+    } };
+  }
+  private shiftDir: [number, number] = [0, 0];
+  // Lo que pidió el último cambio (para el banco): ms de todo el cambio
+  lastSwitchMs = 0;
+  // Para el banco: ms de CPU por trozo escrito (en sus llamadas), por corrimiento preparado y por cambio, y los que esperan
+  readonly stats = { loadMs: [] as number[], shiftMs: [] as number[], switchMs: [] as number[] };
+  get queued(): number { return this.loading.length + (this.loadJob ? 1 : 0); }
+  private shiftSpent = 0;
+
+  // El cambio, de todos los giros a la vez (y en el mismo momento la rejilla, las entidades, las luces y el juego): si
+  // alguno aún no puede (rehorneado a medias, o hay que volver a prepararlo), se espera
+  private trySwitch(): boolean {
+    const t0 = performance.now();
+    // Las copias giradas, al día con el mundo antes de correrlas
+    for (const { view } of this.views.values()) view.frame();
+    for (const s of this.shiftJobs!) if (!s.job.canCommit()) return false;
+    for (const s of this.shiftJobs!) s.job.commit();
+    const [dx, dy] = this.shiftDir;
+    this.onSwitch(dx, dy);
+    // (los dos se corrieron igual: lo que entra, vacío en los dos)
+    for (const { view } of this.views.values()) view.markSynced();
+    this.lastSwitchMs = performance.now() - t0;
+    this.stats.switchMs.push(this.lastSwitchMs); this.stats.shiftMs.push(this.shiftSpent);
+    this.afterShift(dx, dy);
+    return true;
   }
 
   private onSwitch(dx: number, dy: number): void {
@@ -160,7 +229,7 @@ export class LiveWindow {
 
   private afterShift(dx: number, dy: number): void {
     const [ntx, nty] = this.shiftTo!, { nx, ny } = this.o;
-    this.shiftJob = null; this.shiftTo = null;
+    this.shiftJobs = null; this.shiftJob = null; this.shiftTo = null;
     // Los que entran, del centro hacia fuera
     const old = [ntx - dx, nty - dy], entered: Trozo[] = [];
     for (let ty = nty; ty < nty + ny; ty++) for (let tx = ntx; tx < ntx + nx; tx++) {
@@ -176,8 +245,12 @@ export class LiveWindow {
   private nextLoad(): void {
     const t = this.loading.shift()!;
     const job = this.loadTrozoJob(t);
+    let spent = 0;
     this.loadJob = { key: `trozo:${t[0]},${t[1]}`, priority: 70, run: (deadline: number) => {
-      if (!job.run(deadline)) return false;
+      const a = performance.now(), ok = job.run(deadline);
+      spent += performance.now() - a;
+      if (!ok) return false;
+      this.stats.loadMs.push(spent);
       this.loadJob = null;
       // Rehornear lo escrito (y lo del juego): sus trabajos, a la cola en la próxima update
       this.pendingRebake = true;

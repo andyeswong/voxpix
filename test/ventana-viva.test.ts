@@ -31,7 +31,7 @@ const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget } from '../src/view/budget';
 import { LiveWindow, type Trozo } from '../src/world/live';
-import type { Baked } from '../src/world/bake';
+import { rebakeChangedJobs, type Baked } from '../src/world/bake';
 
 const OPTS = { incline: 0.5, sky: true, outline: 'both' as const };
 // El "juego": lo picado, en coordenadas del mundo; al entrar un trozo se vuelve a poner
@@ -129,5 +129,38 @@ describe('ventana viva', () => {
     const ref = new LiveWindow(opts([win.tx0 + 2, win.ty0 + 2]));
     expect(Array.from(win.grid.exportState().cells)).toEqual(Array.from(ref.grid.exportState().cells));
     expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  it('con los 4 giros: todos se corren a la vez y quedan como en una ventana hecha de nuevo; turn cambia sin esperar', () => {
+    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS, quarters: [0, 1, 2, 3] as const });
+    const win = new LiveWindow({ ...opts([0, 0]) });
+    expect(win.quarters.sort()).toEqual([0, 1, 2, 3]);
+    // Picar en el trozo (1, 0): el giro de ahora (0) lo rehornea el juego; los demás, update
+    for (let z = 20; z < 40; z++) for (let y = 5; y < 15; y++) for (let x = TV + 4; x < TV + 14; x++) { const [lx, ly] = win.toLocal(x, y); win.store.set(lx, ly, z, 0); }
+    const budget = new FrameBudget(1e6);
+    const settle = () => { for (let k = 0; k < 2000 && (win.busy || budget.pending); k++) budget.run(); };
+    let x = TV / 2, y = TV / 2;
+    for (let s = 0; s < 5 * 8; s++) {
+      if (s < 24) x += TV / 8; else y += TV / 8;
+      // Con el giro 1 a la vista a mitad de camino
+      if (s === 12) win.turn(1);
+      win.update(x, y, budget); settle(); win.update(x, y, budget); settle(); win.update(x, y, budget); settle();
+    }
+    for (const j of rebakeChangedJobs(win.viewOf(0)!.baked, win.state.lights)) budget.push(j);
+    win.update(x, y, budget); settle();
+    expect(win.tx0).toBeGreaterThan(-2);
+    // Una ventana hecha de nuevo ahí, con lo mismo picado
+    const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]) });
+    for (let z = 20; z < 40; z++) for (let y2 = 5; y2 < 15; y2++) for (let x2 = TV + 4; x2 < TV + 14; x2++) {
+      const [lx, ly] = ref.toLocal(x2, y2);
+      if (lx >= 0 && ly >= 0 && lx < ref.store.width && ly < ref.store.depth) ref.store.set(lx, ly, z, 0);
+    }
+    for (const q of [0, 1, 2, 3] as const) {
+      const r = ref.viewOf(q)!;
+      for (const j of rebakeChangedJobs(r.baked, r.view.bakeable().lights)) while (!j.run(Infinity));
+      expect([q, diff(win.viewOf(q)!.baked, r.baked)]).toEqual([q, 0]);
+    }
+    win.turn(2);
+    expect(win.baked).toBe(win.viewOf(2)!.baked);
   });
 });

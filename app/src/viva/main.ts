@@ -4,7 +4,7 @@
 // compositor de la GPU, en tiempo real (requestAnimationFrame). Al acabar `segundos`, deja en window.__viva:
 // los intervalos entre cuadros (p50, p95, máx, de más de 25 ms), el montón de JS por segundo (minuto 1 contra minuto 5),
 // los corrimientos, los cuadros con algo de la vista sin hornear (un trozo de la vista sin escribir) y unas capturas.
-//   ?segundos=330&bloques=200&nx=9&ny=11
+//   ?segundos=330&bloques=200&nx=9&ny=11&giros=1 (giros=4: los 4 horneados al día; se ve el 0)
 import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
 import { FrameBudget } from '../../../src/view/budget';
@@ -16,14 +16,14 @@ import type { Frame2DOptions } from '../../../src/world/frame2d';
 
 const VW = 384, VH = 216, B = 8;
 const q = new URLSearchParams(location.search);
-const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11);
+const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11), GIROS = Number(q.get('giros') ?? 1);
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const hud = document.getElementById('hud')!;
 canvas.width = VW; canvas.height = VH;
 
 const spec = { ...SPEC, height: 12, surface: { base: 6, amplitude: 2, scale: 9 }, seaLevel: 5, veins: (SPEC.veins ?? []).map((v) => ({ ...v, z: [1, 4] as [number, number] })), caves: { ...SPEC.caves!, z: [1, 4] as [number, number] } };
 const t0 = performance.now();
-const win = new LiveWindow({ blocks: set, spec, nx: NX, ny: NY, chunk: 16, center: [0, 0], margin: { x: 4, n: 6, s: 4 }, bake: { incline: 0.5, sky: true, outline: 'both' } });
+const win = new LiveWindow({ blocks: set, spec, nx: NX, ny: NY, chunk: 16, center: [0, 0], margin: { x: 4, n: 6, s: 4 }, quarters: GIROS === 4 ? [0, 1, 2, 3] : [0], bake: { incline: 0.5, sky: true, outline: 'both' } });
 const loadMs = performance.now() - t0;
 const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
 compositor.upload(win.baked);
@@ -35,7 +35,7 @@ const [lx0, ly0] = win.toLocal(x, Y);
 const id = win.state.entities.add({ model: walk[0]!, x: lx0, y: ly0, z: ground(x, Y), facing: 90 });
 const budget = new FrameBudget(3, undefined, { ms: 8, below: 64 });
 
-const frames: number[] = [], heap: number[] = [], shots: string[] = [];
+const frames: number[] = [], heap: number[] = [], shots: string[] = [], queueMs: number[] = [], lag: number[] = [];
 let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
 const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
@@ -47,7 +47,11 @@ function loop(now: number): void {
   x += dir * 6 * B * dt;
   if (x > 64 + BLOCKS * B) dir = -1; else if (x < 64) dir = 1;
   win.update(x, Y, budget);
+  const b0 = performance.now();
   budget.run();
+  queueMs.push(performance.now() - b0);
+  // Lo que va detrás: trozos por escribir
+  lag.push(win.queued);
   if (win.tx0 !== lastTx0 || win.ty0 !== lastTy0) { shifts++; lastTx0 = win.tx0; lastTy0 = win.ty0; }
   const [lx, ly] = win.toLocal(x, Y);
   state_move(lx, ly);
@@ -69,10 +73,15 @@ function loop(now: number): void {
   hud.textContent = `ventana viva · ${(now - start) / 1000 | 0} s · trozo ${win.trozoOf(x, Y).join(',')} · corrimientos ${shifts} · huecos ${holes}`;
   if (now - start < SECONDS * 1000) { requestAnimationFrame(loop); return; }
   const f = frames.slice(60), s = [...f].sort((a, b) => a - b), p = (k: number) => +s[Math.floor(k * (s.length - 1))]!.toFixed(1);
+  const pq = (a: number[], k: number) => { if (!a.length) return 0; const s2 = [...a].sort((u, v) => u - v); return +s2[Math.floor(k * (s2.length - 1))]!.toFixed(1); };
   const avg = (a: number[]) => a.length ? a.reduce((u, v) => u + v, 0) / a.length : 0;
   (window as unknown as { __viva: unknown }).__viva = {
     loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
     over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
+    queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
+    trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
+    shiftMs: { n: win.stats.shiftMs.length, p50: pq(win.stats.shiftMs, 0.5), max: pq(win.stats.shiftMs, 1) },
+    switchMs: { p50: pq(win.stats.switchMs, 0.5), max: pq(win.stats.switchMs, 1) },
     heapMB: { min1: +(avg(heap.slice(55, 65)) / 1e6).toFixed(1), min5: +(avg(heap.slice(295, 305)) / 1e6).toFixed(1), max: +(Math.max(...heap) / 1e6).toFixed(1) },
     shots,
   };

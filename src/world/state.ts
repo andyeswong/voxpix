@@ -611,6 +611,14 @@ export class StaticVoxels implements VoxelSource {
     }
   }
 
+  // Vuelve a copiar girado el trozo c de src (con lo que tenga ahora) encima de lo que hubiera en su sitio: sus losas se
+  // vacían antes (copyRotatedSlabs supone el destino vacío). Para poner al día una copia girada por trozos
+  copyRotatedChunk(src: StaticVoxels, quarter: number, c: number): void {
+    const nz = this.nz, cx = c % src.cols, cy = Math.floor(c / src.cols), dc = rotChunk(quarter, cx, cy, src.cols, src.rows, this.cols);
+    for (let s = 0; s < nz; s++) { const di = dc * nz + s; this.data[di] = null; this.pal[di] = null; this.palN[di] = 0; this.uni[di] = 0; this.count[di] = 0; }
+    this.copyRotatedSlabs(src, quarter, c * nz, (c + 1) * nz);
+  }
+
   // Después de copiar las losas del trozo c: la altura de sus columnas (lo más alto lleno), y, si tiene algo, su versión
   // y su caja de cambios
   private finishChunk(c: number): void {
