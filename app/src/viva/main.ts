@@ -68,7 +68,8 @@ void (async () => {
   }
   const win = new LiveWindow({
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
-    ...(hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
+    // (?tile=N: el rehorneado por baldosas de N x N trozos de vóxeles con o sin worker; 0, sin baldosas)
+    ...(q.get('tile') !== null ? (Number(q.get('tile')) ? { rebake: { band: 16, rows: 64, merge: true, tile: Number(q.get('tile')) } } : {}) : hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
     ...(hornero ? {
       // (los que escribió el worker ya están en su copia; los del constructor, no)
       onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => { if (!prepped.delete(`${t[0]},${t[1]}`)) hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }); },
