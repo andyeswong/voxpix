@@ -538,9 +538,12 @@ win.get(x, y, z);                                                // coordenadas 
     que cambió mientras tanto, cambia los búferes y corre lo pequeño en su sitio; la rejilla de pisar queda sucia (se
     rehace al pedirla). La GPU guarda las texturas de antes como repuesto y, la primera vez, las crea de una en una
     mientras se prepara (`b.shifting`).
+  - `compositor.upload(b)` calienta el camino del corrimiento en la GPU (un corrimiento de cero que deja las texturas de
+    repuesto hechas).
   - Edge con GPU a 6x (`app/ventana.html?medir=1`, cola del juego, un trozo cada 192 cuadros), dos tiradas: la copia,
-    19-25 cuadros; el cuadro de los vóxeles, 6-13 ms (`commit` 2,8-5); el del cambio de imagen, 3-9,5 ms, salvo el
-    primero o los dos primeros, 16-18 ms (el primer uso en la GPU de ese camino); el resto, p50 2,0-2,2 ms, p95 3,1-3,4.
+    19-24 cuadros; el cuadro de los vóxeles, 6-12 ms (`commit` 2,7-4,9); el del cambio de imagen, 2,6-4,6 ms, salvo el
+    primero, 15-17 ms (aún sin explicar: ni las texturas ni el primer uso del camino, ya calentados); el resto, p50
+    2,3-2,4 ms, p95 3,8-4,8.
 - Aún no: `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles

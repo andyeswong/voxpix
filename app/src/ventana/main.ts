@@ -29,7 +29,8 @@ function measure(): unknown {
   const gc = GpuCompositor.create(document.createElement('canvas'));
   if (!gc) return { error: 'sin WebGL2' };
   const o: Frame2DOptions = { vx: Math.floor((b.width - VW) / 2), vy: Math.floor((b.height - VH) / 2), vw: VW, vh: VH, time: 0, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
-  gc.read(state, b, o, 'frame');                                      // sube el horneado
+  gc.upload(b);                                                        // sube el horneado (y calienta el corrimiento)
+  gc.read(state, b, o, 'frame');
   const budget = new FrameBudget(3, undefined, { ms: 8, below: 64 });
   const shifts: Array<{ start: number; copyFrames: number; swapFrame: number; swapMs: number; jobMs: { voxels: number; recopy: number; swap: number }; voxelFrameMs: number; voxelRunMs: number; voxelReadMs: number; runMs: number; readMs: number; gpuShiftMs: number; gpuShifted: boolean }> = [];
   const other: number[] = [];

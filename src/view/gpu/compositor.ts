@@ -517,6 +517,14 @@ export class GpuCompositor {
   upload(b: Baked): void {
     this.syncBaked(b);
     this.syncWeights(b);
+    // Si la ventana se puede correr (shiftBaked), su camino en la GPU se calienta aquí con un corrimiento de cero (copia
+    // cada textura a una de repuesto y la deja de repuesto): la primera vez que se usaba costaba ~15 ms a 6x en el cuadro
+    // del cambio
+    if (b.source.width % 16 === 0 && b.source.depth % 16 === 0 && this.baked === b) {
+      const n = this.shiftCount;
+      this.gpuShift(b, { serial: 0, dx: 0, rows: 0, dd: 0, dy: 0 });
+      this.shiftCount = n;
+    }
   }
 
   private syncBaked(b: Baked): void {

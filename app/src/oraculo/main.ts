@@ -80,7 +80,9 @@ interface Scenario {
   // Con un anillo de paredes de piedra alrededor de MAIA (a 12-20 vóxeles, hasta z 28: el de delante es el que se
   // corta, en cualquier giro) y, con torch, una antorcha fija dentro
   // (z: la altura del corte; por defecto, la de los pies)
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number };
+  // (pit: una losa de un vóxel delante de MAIA sobre un pozo en el suelo, dentro de la caja: lo cortado sin nada detrás
+  // lleva el fondo de la sección, no transparente; secHoles cuenta lo sustituido transparente)
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -103,6 +105,9 @@ interface Scenario {
   // (gpuOther pinta un cuadro de la GPU con OTRO horneado: el giro 1 del mismo mundo)
   after?: (s: WorldState, b: Baked, gpuFrame: () => void, view: WorldView, gpuOther: () => void) => void;
 }
+
+// La altura del suelo (la cara de arriba del más alto) bajo un punto
+function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { return state.solid.height[Math.floor(p.y) * state.solid.width + Math.floor(p.x)]!; }
 
 // Vegetación en un mundo generado (spec de KALADIN): hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
@@ -417,6 +422,7 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte al componer por franjas bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, painter: true, z: 1 } });
   SCENARIOS.push({ name: `corte al componer con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true } });
   // Sobre el lago con pisotones: el agua dentro de la caja no se dibuja
+  SCENARIOS.push({ name: `corte al componer con pozo, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, section: { width: 64, painter: true, pit: true, z: 1 } });
   SCENARIOS.push({ name: `corte al componer sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1 } });
   const ent = SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!;
   SCENARIOS.push({ ...ent, name: `corte al componer con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true } });
@@ -439,7 +445,9 @@ interface Result {
   secInfo?: unknown;
   backSame?: { cpu: boolean; gpu: boolean };
   gpuShifts?: number;      // con shift: cuántas veces corrió la GPU sus texturas dentro de sí (sin volver a subirlas)   // con shift 'vuelta': la vista de después, igual byte a byte a la de antes
-  secDiffer?: number;      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
+  secDiffer?: number;
+  secHoles?: number;       // con pit: píxeles sustituidos transparentes en la CPU (0: el fondo)
+  secFill?: number;        // con pit: píxeles sustituidos con el fondo (sin cara)      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
   secMaxFinal?: number;
   waterPxNear?: number;    // y en el recuadro de pantalla de la poza de "picando la orilla" (entre la salida y el lago)
   alphaOff: number;        // píxeles con el alfa del cuadro distinto (cualquiera es fallo)
@@ -536,13 +544,21 @@ async function run(): Promise<void> {
         for (let z = 26; z < 30; z++) state.solid.set(x, y, z, material(0, 1));
     }
     if (sc.section) {
-      for (let dy = -20; dy <= 20; dy++) for (let dx = -20; dx <= 20; dx++) {
+      // (con pit, sin el anillo: lo primero que se ve en la caja es la losa)
+      if (!sc.section.pit) for (let dy = -20; dy <= 20; dy++) for (let dx = -20; dx <= 20; dx++) {
         if (Math.max(Math.abs(dx), Math.abs(dy)) < 12) continue;
         const x = spawn.x + dx, y = spawn.y + dy;
         if (x < 0 || y < 0 || x >= world.width || y >= world.depth) continue;
         for (let z = 1; z < 29; z++) if (!state.solid.get(x, y, z)) state.solid.set(x, y, z, material(0, 1 + ((dx + dy + z) & 1)));
       }
       if (sc.section.torch) state.lights.addFixed({ kind: 'brazier', x: spawn.x + 6.5, y: spawn.y - 5.5, z: 12 });
+      if (sc.section.pit) {
+        const fz = rt0FeetZ(state, spawn);
+        for (let y = spawn.y - 34; y <= spawn.y - 2; y++) for (let x = spawn.x - 10; x <= spawn.x + 10; x++) {
+          state.solid.set(x, y, fz, material(0, 1));                                          // la losa
+          if (y >= spawn.y - 32 && y <= spawn.y - 4 && Math.abs(x - spawn.x) <= 6) for (let z = 0; z < fz; z++) state.solid.set(x, y, z, 0);   // el pozo, largo y hasta abajo
+        }
+      }
     }
     if (sc.shift) for (const x of [8.5, 24.5]) state.lights.addFixed({ kind: 'torch', x, y: spawn.y + 0.5, z: 30 });
     const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
@@ -667,6 +683,11 @@ async function run(): Promise<void> {
         const x = L.x + i - vx, y = L.y + j - vy, m = L.mask[secIdx(L, L.x + i, j)];
         if (x < 0 || y < 0 || x >= VW || y >= VH || !m) continue;
         if (m === 1) n1++; else n2++;
+        if (m === 1) {
+          const qq = secIdx(L, L.x + i, j);
+          if (!L.rgba[qq * 4 + 3]) r.secHoles = (r.secHoles ?? 0) + 1;
+          else if (L.face[qq] === -1) r.secFill = (r.secFill ?? 0) + 1;
+        }
         const q = (y * VW + x) * 4;
         let fd = 0;
         for (let ch = 0; ch < 3; ch++) fd = Math.max(fd, Math.abs(cpuFinal[q + ch]! - gFinal[q + ch]!));

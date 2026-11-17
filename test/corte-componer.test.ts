@@ -127,8 +127,7 @@ describe('corte al componer', () => {
       const x0 = Math.floor(c0.x0 / STRIP) * STRIP, moved = k === 0 ? 0 : (x0 - prevX0) / STRIP;
       expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : moved) * (STRIP / UNIT));
       prevX0 = x0;
-      const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x0 / STRIP) * STRIP + Math.ceil((c0.x1 - c0.x0 + 1) / STRIP) * STRIP - 1,
-        y1: Math.floor((c0.y1 + 1) / STRIP) * STRIP - 1, zMin: Math.floor(c0.zMin / STRIP) * STRIP })!;   // la caja como la lleva el pintor: por franjas en x, por bloques en y y z
+      const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x0 / STRIP) * STRIP + Math.ceil((c0.x1 - c0.x0 + 1) / STRIP) * STRIP - 1 })!;   // la caja como la lleva el pintor: por franjas en x
       sync(L);
       if (moved > 0) expect(L.base).not.toBeNull();                        // al andar se pone al día por columnas
       expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
@@ -143,6 +142,35 @@ describe('corte al componer', () => {
         if (mirror!.depth[m] !== R.depth[q] || mirror!.sky[m] !== R.sky![q]) expect(`copia: profundidad o cielo ${q}`).toBe('igual');
       }
     }
+  });
+
+  it('un pozo bajo el suelo cortado: lo sustituido sin nada detrás lleva el fondo de la sección, no transparente', () => {
+    // Suelo llano a 16, una losa encima delante del objetivo (lo que se corta) y un pozo en el suelo dentro de la caja: el
+    // rayo de lo cortado baja por el pozo, donde no hay nada que pintar. El cielo horneado de la losa es el abierto (la
+    // regla de antes lo dejaba transparente: asomaba el cielo del juego)
+    const s = new StaticVoxels(pal, 64, 64, 0, 47);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) for (let z = 0; z < 16; z++) s.set(x, y, z, material(1, 1));
+    // (una losa de un vóxel sobre el suelo y el pozo: lo que se corta son sus caras de arriba, con todo el cielo)
+    for (let y = 20; y < 36; y++) for (let x = 8; x < 56; x++) s.set(x, y, 16, material(0, 2));
+    for (let y = 26; y < 36; y++) for (let x = 24; x < 40; x++) for (let z = 0; z < 16; z++) s.set(x, y, z, 0);   // el pozo, cerrado dentro de la caja
+    const bf = bakeWorld({ model: s, lights: [], width: 64, depth: 64 }, { topZ: 48, incline: 0.5, outline: 'both', sky: true });
+    const L = sectionLayer(bf, { x0: 4, x1: 59, y0: 0, y1: 39, zMin: 16 })!;
+    let holes = 0, filled = 0;
+    for (let q = 0; q < L.w * L.h; q++) {
+      if (L.mask[q] !== 1) continue;
+      if (!L.rgba[q * 4 + 3]) holes++;
+      else if (L.face[q] === -1) filled++;                                 // sin cara: el fondo
+    }
+    expect(filled).toBeGreaterThan(20);                                      // el pozo se ve, con el fondo
+    expect(holes).toBe(0);                                                    // y nada transparente
+    // Al aire libre (una pared sin suelo detrás: lo de detrás es cielo), sí transparente
+    const s2 = new StaticVoxels(pal, 64, 64, 0, 47);
+    for (let y = 20; y < 26; y++) for (let x = 8; x < 56; x++) for (let z = 16; z < 34; z++) s2.set(x, y, z, material(0, 2));
+    const b2 = bakeWorld({ model: s2, lights: [], width: 64, depth: 64 }, { topZ: 48, incline: 0.5, outline: 'both', sky: true });
+    const L2 = sectionLayer(b2, { x0: 4, x1: 59, y0: 0, y1: 39, zMin: 16 })!;
+    let open = 0;
+    for (let q = 0; q < L2.w * L2.h; q++) if (L2.mask[q] === 1 && !L2.rgba[q * 4 + 3]) open++;
+    expect(open).toBeGreaterThan(20);
   });
 
   it('sin sección, el cuadro de siempre', () => {

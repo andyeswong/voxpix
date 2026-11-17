@@ -346,21 +346,20 @@ export class SectionPainter {
   }
 
   // La caja de este cuadro (o null: sin corte) y hacia dónde anda en x de la vista (-1, 0, 1). La caja se lleva a
-  // franjas enteras en x (las que toca) y a bloques en y y en z
+  // franjas enteras en x (las que toca), y en y y en z se queda con holgura
   set(cut: SectionCut | null, dir = 0): void {
     this.dir = dir;
     if (!cut) { this.cut = null; return; }
     // (con el mismo ancho siempre: la caja siguiente es esta desplazada una franja, y lo que se adelanta para ella vale)
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((cut.x1 - cut.x0 + 1) / STRIP) * STRIP - 1;
-    // También en y y en z, por bloques (STRIP): la caja acaba en la última fila de bloques antes de la de los pies y corta
-    // desde el bloque de los pies. Así lo pintado sigue valiendo mientras el objetivo se mueve dentro de su bloque (si no,
-    // cada vóxel que se mueve en y o en z lo repinta todo)
-    // (con holgura: mientras el objetivo no se aleje del bloque de antes más de medio bloque, se queda; si no, en la frontera
-    // entre dos bloques la caja saltaría de uno a otro)
-    const prev = this.cut, H2 = STRIP / 2;
-    let y1 = Math.floor((cut.y1 + 1) / STRIP) * STRIP - 1, zMin = Math.floor(cut.zMin / STRIP) * STRIP;
-    if (prev && cut.y1 >= prev.y1 + 1 - H2 && cut.y1 <= prev.y1 + STRIP + H2) y1 = prev.y1;
-    if (prev && cut.zMin >= prev.zMin - H2 && cut.zMin < prev.zMin + STRIP + H2) zMin = prev.zMin;
+    // En y y en z, con holgura: lo pintado sigue valiendo mientras el objetivo se mueve un poco (si no, cada vóxel que se
+    // mueve en y o en z lo repinta todo). La caja nunca acaba más de una fila antes de los pies (siempre corta lo de
+    // delante) y puede acabar hasta STRIP filas detrás; nunca corta más de un vóxel por debajo de los pies (el suelo) y
+    // puede empezar hasta 4 por encima. Fuera de eso, a los pies de ahora. (Redondear a bloques de 8 no vale: en un mundo
+    // cuyos pies no caen en múltiplos de 8, cortaba el suelo)
+    const prev = this.cut;
+    const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + STRIP ? prev.y1 : cut.y1;
+    const zMin = prev && prev.zMin >= cut.zMin - 1 && prev.zMin <= cut.zMin + 4 ? prev.zMin : cut.zMin;
     this.cut = { ...cut, x0, x1, y1, zMin };
     // (y si la ventana se corrió, todo lo pintado está en las coordenadas de antes)
     const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}:${this.b.shifts ?? 0}`;
