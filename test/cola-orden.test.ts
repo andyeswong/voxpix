@@ -56,4 +56,26 @@ describe('cola: el orden de push', () => {
     expect(calls).toBe(1);
     expect(budget.pending).toBe(0);
   });
+
+  it('la salvaguarda contra el hambre cuenta también los cuadros en que el bucle para en el plazo antes de llegar: un recuadro detrás de algo que se come el plazo en cada llamada corre en pocos cuadros', () => {
+    // Un reloj que avanza lo que cuesta cada llamada; lo cercano (la sección) se lleva 7 de sus 8 ms, lo normal tiene 3
+    let t = 0;
+    const budget = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    // (las clases con su estimación: un recuadro cuesta 9 ms; el cielo, 4 por llamada)
+    for (let k = 0; k < 8; k++) { budget.push({ key: `rect:a${k}`, run: () => { t += 9; return true; } }); budget.run(); t += 16; }
+    for (let k = 0; k < 8; k++) { budget.push({ key: `sky:a${k}`, priority: 100, run: () => { t += 4; return true; } }); budget.run(); t += 16; }
+    budget.push({ key: 'section', priority: 0, run: () => { t += 7; return false; } });
+    // Delante: un cielo con prioridad de 60 llamadas de 4 ms (más que el plazo de lo normal en cada una)
+    let left = 60;
+    budget.push({ key: 'sky:largo', priority: 100, run: () => { t += 4; return --left <= 0; } });
+    // Detrás, sin prioridad: el recuadro cercano
+    let ran = -1;
+    budget.push({ key: 'rect:cerca', run: () => { t += 9; ran = f; return true; } });
+    let f = 0;
+    for (; f < 200 && ran < 0; f++) { budget.run(); t += 16; }
+    // (antes de contar esos cuadros, corría en el 60: cuando el cielo acababa)
+    expect(ran).toBeGreaterThanOrEqual(0);
+    expect(ran).toBeLessThanOrEqual(6);
+    expect(left).toBeGreaterThan(40);
+  });
 });

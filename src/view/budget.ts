@@ -103,6 +103,8 @@ export class FrameBudget {
   private skipped = new WeakMap<ViewJob, number>();
   private skippedFrame = new WeakMap<ViewJob, number>();
   private frameNo = 0;
+  // (para medir) veces que la salvaguarda adelantó a uno que llevaba STARVE_FRAMES cuadros saltado
+  starvedRuns = 0;
   private record(k: string, ms: number): void {
     if (!(ms >= MIN_SAMPLE_MS)) return;
     let c = this.costs.get(k);
@@ -127,6 +129,7 @@ export class FrameBudget {
       const job = this.queue[k]!;
       if ((this.skipped.get(job) ?? 0) < STARVE_FRAMES || this.skippedFrame.get(job) !== this.frameNo - 1) continue;
       const t = this.now(), r = this.call(job, deadline, t);
+      this.starvedRuns++;
       if (r.done) this.removeAt(k);
       if (r.ms >= MIN_SAMPLE_MS) ran++;
       break;
@@ -137,17 +140,23 @@ export class FrameBudget {
       if (!inPhase(job)) break;
       if (job.waiting?.()) { i++; continue; }
       const t = this.now();
-      if (ran > 0 && t >= deadline) break;
+      if (ran > 0 && t >= deadline) {
+        // Lo que queda de la fase y podía correr (no espera) también se salta este cuadro: cuenta para la salvaguarda. Si
+        // no, detrás de algo que se come el plazo en cada llamada, el bucle no llegaba nunca y la racha se rompía: un
+        // recuadro cercano esperaba a que lo de delante acabara entero (1,1 s en el juego de FERN con el worker)
+        for (let k = i; k < this.queue.length; k++) {
+          const q = this.queue[k]!;
+          if (!inPhase(q)) break;
+          if (!q.waiting?.()) this.noteSkip(q);
+        }
+        break;
+      }
       // Una clase que todavía no ha corrido nunca no tiene estimación: solo empieza como primera llamada de la fase
       // (si no, empezaría sin sitio y se pasaría una unidad entera). Si no cabe se salta, y se cuentan los cuadros
       // seguidos que lleva saltado
       const cost = this.costs.get(this.costKey(job));
       if (ran > 0 && (!cost || t + cost.p95 > deadline)) {
-        const last = this.skippedFrame.get(job);
-        if (last !== this.frameNo) {
-          this.skipped.set(job, (last === this.frameNo - 1 ? this.skipped.get(job) ?? 0 : 0) + 1);
-          this.skippedFrame.set(job, this.frameNo);
-        }
+        this.noteSkip(job);
         i++;
         continue;
       }
@@ -159,6 +168,13 @@ export class FrameBudget {
       if (r.done) this.removeAt(i);
       else i++;
     }
+  }
+  // Un cuadro más saltado (una vez por cuadro; la racha sigue si también se saltó el anterior)
+  private noteSkip(job: ViewJob): void {
+    const last = this.skippedFrame.get(job);
+    if (last === this.frameNo) return;
+    this.skipped.set(job, (last === this.frameNo - 1 ? this.skipped.get(job) ?? 0 : 0) + 1);
+    this.skippedFrame.set(job, this.frameNo);
   }
   private costKey(job: ViewJob): string { return FrameBudget.kind(job.key) + (this.started.has(job) ? '' : FIRST); }
   // Una llamada: corre, apunta lo que costó (en su clase y posición) y deja de contarla como saltada
