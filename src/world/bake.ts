@@ -853,7 +853,9 @@ function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8A
   const pub = b.published;
   pushPublished(b, { serial: ++pub.serial, ...r });
 }
-const PUBLISHED_KEEP = 32, FORGOTTEN_KEEP = 16;
+// (256: el worker entrega en ráfagas, y con 32 una de recuadros lejanos dejaba sin saber qué había cambiado cerca: en
+// viva ?seccion=48&rafaga=40, 48-57 cuadros con franjas viejas estando quieta y ~2200 franjas pintadas, contra 1 y ~1700)
+export const PUBLISHED_KEEP = 256, FORGOTTEN_KEEP = 16;
 // Publica un recuadro; lo que sale de los PUBLISHED_KEEP se une en la tanda olvidada de ahora (cada tanda, como mucho
 // PUBLISHED_KEEP recuadros; como mucho FORGOTTEN_KEEP tandas)
 export function pushPublished(b: Baked, r: { serial: number; x0: number; y0: number; x1: number; y1: number; sky?: true }): void {
@@ -1214,8 +1216,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           const moved = b.source.changedSince(skyStarted);
           // (y lo que lee de la imagen: la cara y el vóxel de cada píxel, que pone un recuadro; uno de otro rehorneado
           // publicado mientras sobre lo suyo cambia el cielo de esos píxeles, y el cielo de ese rehorneado puede acabar antes)
-          const pub = b.published, oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
-          const repainted = pub.serial !== skySerial && (skySerial < oldest - 1 || pub.rects.some((q) => q.serial > skySerial && !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1));
+          const since = publishedSince(b, skySerial);
+          const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
           if (repainted || (moved.length && reads.some((c) => moved.includes(c)))) { skyRestarts++; row = r.y0; skyStarted = -1; return false; }
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
