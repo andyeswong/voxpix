@@ -76,6 +76,16 @@ compositor.frame(rs, baked, { ...opts, ambient: day.ambient(tick), cave: [0.08, 
 - Al componer, cada píxel va de `cave` (sin cielo) a `ambient` en 6 niveles (`skyAmbient`, la misma tabla en CPU y GPU).
 - Lo que cambia el cielo de un píxel está a 8 columnas como mucho: al picar o cortar se rehace por caja, un trabajo
   `sky:` que va detrás de todo (`LIGHT_PRIORITY`, 10000).
+- El cielo de un píxel lee los vóxeles a su alrededor y también la cara y el vóxel que se ven en él, que pone un
+  recuadro. Un trabajo `sky:` calcula por filas en varias llamadas y publica al acabar; se vuelve a calcular (dos veces
+  como mucho) si mientras tanto se publicó un recuadro sobre lo suyo (`57ad404`) o cambió un trozo de vóxeles que lee
+  (`1be7c4b`). La causa real de las franjas con cielo de más junto a un trozo recién escrito en la ventana viva era la
+  primera: un recuadro de otro rehorneado publicado entre dos llamadas, con el cielo de ese otro acabando antes. El
+  mensaje de `1be7c4b` dice que arreglaba eso; no lo arreglaba.
+- No hay test determinista de esa carrera (un reloj falso aleatorio no la provoca). La prueba fue estadística: el test
+  del corte "puesto una vez" de `test/ventana-viva.test.ts` con `new FrameBudget(0.3, undefined, { ms: 0.3, below: 64 })`
+  en vez de `stepBudget()`, 32 tiradas de 4 en 4 a la vez (la carga es lo que la saca): 1-4 de 32 fallaban antes, 0 de
+  96 después (y 0 de 64 con la copia por losas del corte forzada).
 - Sin `sky` al hornear o sin `cave` al componer, las huellas de siempre.
 
 ## La cola de la vista: FrameBudget
