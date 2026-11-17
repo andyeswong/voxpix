@@ -130,7 +130,7 @@ void (async () => {
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
-  const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[] } = {};
+  const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[]; seccionMs?: number } = {};
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
   let secRun = 0;
@@ -244,7 +244,8 @@ void (async () => {
     // ?seccion=N: el corte de una caja de N vóxeles de ancho alrededor de MAIA, desde sus pies (lo de delante, bajo tierra),
     // pintado por franjas (SectionPainter, uno por horneado) en la cola; se cuentan los cuadros con la caja sin pintar
     // del todo
-    if (SECCION) {
+    // (con ?entrar, la sección empieza al entrar, como en el juego al quedar bajo la superficie)
+    if (SECCION && (!ENTRAR || entrada.a !== undefined)) {
       // ?rafaga=N: cada 2 s, N recuadros publicados lejos de la caja (200 columnas a la derecha de MAIA, toda la altura),
       // como los que entrega el worker de golpe (no cambian nada de la imagen: solo cuentan como publicados)
       if (RAFAGA && now - start >= nextBurst) {
@@ -326,6 +327,7 @@ void (async () => {
       const changed = win.baked.source.changedSince(win.baked.version).length;
       const ms = now - entrada.a;
       if (entrada.corteMs === undefined && !qk.includes('view-cut')) entrada.corteMs = Math.round(ms);
+      if (SECCION && entrada.seccionMs === undefined && painter?.ready()) entrada.seccionMs = Math.round(ms);
       if (entrada.abiertoMs === undefined && !left.length && !changed) entrada.abiertoMs = Math.round(ms);
       if (!entrada.c800 && ms >= 800) { entrada.c800 = canvas.toDataURL('image/png'); entrada.rects800 = left.length + changed; entrada.pendientes800 = qk.slice(0, 30); }
       else if (entrada.c800 && !entrada.final && !win.busy && !budget.pending) { entrada.final = canvas.toDataURL('image/png'); entrada.finalMs = Math.round(ms); }
@@ -377,7 +379,7 @@ void (async () => {
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
-      entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
+      entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
