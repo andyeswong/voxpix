@@ -945,6 +945,13 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const ROWS = shape.rows ?? Infinity;
     // (EXPERIMENTO worker-exp: el recuadro pedido fuera, y el reloj de cuando se pidió)
     let ticket: { result(): RectOut | null } | null | undefined, askedAt = 0;
+    // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
+    // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
+    // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
+    // como mucho: con cambios en cada cuadro, se publica y lo arregla el rehorneado de esos cambios, que va detrás)
+    const planChunks: number[] = [];
+    { const s = b.source; for (let cy = Math.max(0, Math.floor(plan.Y0 / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor(plan.Y1 / CHUNK)); cy++) for (let cx = Math.max(0, Math.floor(plan.X0 / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor(plan.X1 / CHUNK)); cx++) planChunks.push(cy * s.cols + cx); }
+    let started = -1, restarts = 0;
     jobs.push({
       key,
       run(deadline) {
@@ -970,7 +977,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // (algo suyo cambió mientras: se pinta aquí)
           st.stale++;
         }
-        buf ??= rectBuffers(rect);
+        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; }
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
         // última se pasaba del plazo entera)
         let t = performance.now();
@@ -985,6 +992,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           est = now - t; t = now;
         } while (col <= rect.x1 && t + est < deadline);
         if (col <= rect.x1) return false;
+        if (restarts < 2) {
+          const moved = b.source.changedSince(started);
+          if (moved.length && planChunks.some((c) => moved.includes(c))) { restarts++; col = rect.x0; row = rect.y0; buf = null; return false; }
+        }
         const mask = new Uint8Array(buf.w * buf.h);
         publishRect(b, rect, buf, mask);
         masks.set(rect, mask);
@@ -1242,7 +1253,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
     const d = (c: number) => Math.hypot((c % s.cols) * CHUNK + CHUNK / 2 - near.x, Math.floor(c / s.cols) * CHUNK + CHUNK / 2 - near.y);
     order.sort((p, q) => d(p) - d(q) || p - q);
   }
-  let k = 0, batches = 0, retried = false;
+  let k = 0, batches = 0, retried = false, since = s.clock, moved = 0;
   const most = warmBatches(s, { x0: 0, y0: 0, x1: CHUNK - 1, y1: CHUNK - 1 });
   // La ventana viva: al correrse, las máscaras caducan todas (StaticVoxels.shift / shiftJob) y el orden y las regiones de
   // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
@@ -1261,13 +1272,21 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
           // Si la cuenta se pasa del tope (un fallo: no debería), se apunta y se rehace el trozo desde cero una vez; si
           // vuelve a pasar, se salta (lo que falte lo hace forEachExposed al recorrer). Sin parar el juego ni colgarse
           if (batches > most) {
-            exposureFault(`el trabajo de lo expuesto: ${batches} tandas en el trozo ${c}, que tiene como mucho ${most}${retried ? '; se salta' : '; se rehace'}`);
-            if (retried) break;
-            retried = true; batches = 0;
+            // Si el trozo o un vecino cambió desde que se empezó (se escribió un trozo de la ventana, un corte, un golpe),
+            // sus máscaras caducaron a mitad: no es un fallo, se vuelve a empezar con él sin apuntar nada (tres veces
+            // como mucho; FERN veía 0-2 avisos por carga tras morir lejos con la casa de muñecas)
+            const ch = s.changedSince(since), cx = c % s.cols, cy = Math.floor(c / s.cols);
+            const near = (q: number) => Math.abs((q % s.cols) - cx) + Math.abs(Math.floor(q / s.cols) - cy) <= 1;
+            if (moved < 3 && ch.some(near)) { moved++; batches = 0; since = s.clock; }
+            else {
+              exposureFault(`el trabajo de lo expuesto: ${batches} tandas en el trozo ${c}, que tiene como mucho ${most}${retried ? '; se salta' : '; se rehace'}`);
+              if (retried) break;
+              retried = true; batches = 0;
+            }
           }
           if (performance.now() >= deadline) return false;
         }
-        k++; batches = 0; retried = false;
+        k++; batches = 0; retried = false; moved = 0; since = s.clock;
         if (performance.now() >= deadline) break;
       }
       return k >= order.length;

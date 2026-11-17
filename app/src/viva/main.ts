@@ -21,6 +21,7 @@ import type { RegionSpec } from '../../../src/world/regiongen';
 import type { ViewJob, RectOut } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
+import type { Baked } from '../../../src/world/bake';
 
 // (todo dentro de una función async: el mundo de ?mundo= se lee con fetch antes de empezar)
 void (async () => {
@@ -76,7 +77,7 @@ void (async () => {
       },
       // (la tanda nueva antes que el corrimiento: lo pedido antes se salta en el worker)
       onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => { hornero.postMessage({ kind: 'epoch', epoch: win.baked.rebakeEpoch ?? 0 }); hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }); },
-    } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
+    } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
   let rid = 0;
   if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; } }; } };
@@ -128,6 +129,7 @@ void (async () => {
   let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
   const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
   let heapBefore = -1;
+  const HEAPGIRO = q.get('heapgiro') === '1', turnHeap: number[] = [];
   const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
   // Un error en un cuadro para el banco y queda en window.__viva (si no, el que mide espera hasta su tope)
@@ -147,6 +149,8 @@ void (async () => {
     // Girar: Q cada GIRAR segundos; mientras dura el núcleo, el presupuesto cercano es PRESU
     // El montón antes del primer giro (con el recolector forzado si Edge lo da: --js-flags=--expose-gc)
     if (GIRAR && heapBefore < 0 && now - start >= nextTurn) heapBefore = gcHeap();
+    // ?heapgiro=1: el montón (con el recolector forzado) antes de cada giro, para ver si crece de giro en giro
+    if (GIRAR && HEAPGIRO && now - start >= nextTurn) turnHeap.push(gcHeap());
     if (GIRAR && now - start >= nextTurn) { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
     if (turnAt >= 0) { turnFrames++; const f = frames[frames.length - 1]!; if (f > 25) turnOver++; turnWorst = Math.max(turnWorst, f); }
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
@@ -257,7 +261,7 @@ void (async () => {
       switchMs: { p50: pq(win.stats.switchMs, 0.5), max: pq(win.stats.switchMs, 1) },
       shiftWallMs: { p50: pq(win.stats.shiftWallMs, 0.5), p95: pq(win.stats.shiftWallMs, 0.95), max: pq(win.stats.shiftWallMs, 1) },
       loadWallMs: { p50: pq(win.stats.loadWallMs, 0.5), p95: pq(win.stats.loadWallMs, 0.95), max: pq(win.stats.loadWallMs, 1) },
-      heapGc: { before: heapBefore, after: gcHeap(), forced: typeof (window as unknown as { gc?: unknown }).gc === 'function' },
+      turnHeap, heapGc: { before: heapBefore, after: gcHeap(), forced: typeof (window as unknown as { gc?: unknown }).gc === 'function' },
       turns, turnMs: { p50: pq(turns.map((t) => t.ms), 0.5), max: pq(turns.map((t) => t.ms), 1) }, turnOver25: turns.reduce((n, t) => n + t.over25, 0), turnCpuMs: win.stats.turnMs.map((v) => +v.toFixed(0)), quarter: win.quarter,
       heapMB: { min1: +(avg(heap.slice(55, 65)) / 1e6).toFixed(1), min5: +(avg(heap.slice(295, 305)) / 1e6).toFixed(1), max: +(Math.max(...heap) / 1e6).toFixed(1) },
       shots,

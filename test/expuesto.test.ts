@@ -97,4 +97,21 @@ describe('preparar lo expuesto después del horneado', () => {
       expect(warned).toBeGreaterThan(0);
     } finally { console.warn = warn; }
   });
+
+  it('un trozo que se reescribe mientras se prepara su máscara no es un fallo: se vuelve a empezar con él sin apuntar nada', () => {
+    const before = exposureFaults.length;
+    for (const ms of [0.02, 0.05, 0.1, 0.2]) {
+      const s = world();
+      const b = bakeWorld({ model: s, lights: [], width: 64, depth: 56 }, OPTS);
+      const job = rebakeChangedJobs(b, []).find((j) => j.key.startsWith('exposure:'))!;
+      // Reescribir un vóxel de cada trozo cada pocas llamadas (como escribir trozos de la ventana viva mientras tanto)
+      let calls = 0, done = false;
+      for (; calls < 20000 && !done; calls++) {
+        if (calls < 40 && calls % 4 === 1) for (let cy = 0; cy < 56; cy += 16) for (let cx = 0; cx < 64; cx += 16) { const v = s.get(cx + 3, cy + 3, 5); s.set(cx + 3, cy + 3, 5, v ? 0 : material(0, 1)); }
+        done = job.run(performance.now() + ms);
+      }
+      expect([ms, done]).toEqual([ms, true]);
+    }
+    expect(exposureFaults.slice(before)).toEqual([]);
+  });
 });

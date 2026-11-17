@@ -317,12 +317,20 @@ export class WorldView implements RenderState {
       // Los trozos del mundo que cambiaron: se copian girados, y se vuelven a vestir los de la vista que tocan
       const changed = src.changedSince(this.synced);
       const touched = new Set<number>();
-      // Sin vestido ni corte, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero
-      // (la ventana viva) no se va vóxel a vóxel
-      if (!this.dress && !this.cut.length && this.quarter !== 0 && StaticVoxels.slabCopyable(src, this.quarter)) {
-        for (const c of changed) this.static.copyRotatedChunk(src, this.quarter, c);
-        this.synced = src.clock;
+      // Sin vestido, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero (la ventana
+      // viva) no se va vóxel a vóxel. También en el giro 0 y con corte (la ventana viva con view: { cut: true }: antes cada
+      // trozo escrito eran ~1,5 M vóxeles uno a uno, 3,5 s de 4,8 en la carga tras morir en la página de FERN), pero solo
+      // los trozos en los que el corte no tiene nada escondido: los demás, vóxel a vóxel como siempre. (Copiar por losas y
+      // volver a esconder lo cortado daba, de vez en cuando, una imagen distinta que no he encontrado: 3 de 30 tiradas)
+      if (!this.dress && StaticVoxels.slabCopyable(src, this.quarter)) {
+        const rest: number[] = [];
+        for (const c of changed) {
+          if (this.applied && !this.uncut(c)) { rest.push(c); continue; }
+          this.static.copyRotatedChunk(src, this.quarter, c);
+        }
         changed.length = 0;
+        changed.push(...rest);
+        if (!rest.length) this.synced = src.clock;
       }
       for (const c of changed) {
         const cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK;
@@ -393,6 +401,13 @@ export class WorldView implements RenderState {
     // (lo pendiente, desde el principio de su caja: repasar una columna que ya tiene su corte no hace nada)
     this.pending = this.pending.map((b) => clip(mv(b))).filter(inside);
     this.cursor = 0; this.pendingAt = 0;
+  }
+
+  // ¿Ninguna columna del trozo c del mundo está escondida en la copia?
+  private uncut(c: number): boolean {
+    const src = this.state.solid, cx = (c % src.cols) * CHUNK, cy = Math.floor(c / src.cols) * CHUNK, W = src.width;
+    for (let y = cy; y < Math.min(src.depth, cy + CHUNK); y++) for (let x = cx; x < Math.min(W, cx + CHUNK); x++) if (this.applied![y * W + x] !== Infinity) return false;
+    return true;
   }
 
   // Desde qué z está escondida ya en la copia
