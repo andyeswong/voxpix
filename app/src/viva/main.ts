@@ -37,6 +37,10 @@ void (async () => {
   const GIRAR = Number(q.get('girar') ?? 0), PRESU = Number(q.get('presu') ?? 8);
   // ?nucleo=1: la ventana hornea primero solo lo que se ve (bakeFirst: 'view'); ?quieto=1: MAIA no anda
   const NUCLEO = q.get('nucleo') === '1', QUIETO = q.get('quieto') === '1';
+  // ?entrar=T: a los T segundos, entrar bajo tierra: un corte (win.view.cutJob) de una caja de 2 x ?corte=N vóxeles
+  // alrededor de MAIA, que esconde desde ?cortez=Z vóxeles por debajo de sus pies, y su rehorneado sin prioridad en cada
+  // cuadro (rebakeChangedJobs sin near); una captura a los 800 ms y otra con la cola vacía, y cuándo se abrió
+  const ENTRAR = Number(q.get('entrar') ?? 0), CORTE = Number(q.get('corte') ?? 48), CORTEZ = Number(q.get('cortez') ?? 8);
   // ?hz=60: un cuadro cada 1000/hz ms como mucho, como una pantalla con vsync. Edge sin ventana no tiene vsync y da ~180
   // cuadros por segundo: la cola (~6 ms por cuadro) avanzaba 3 veces más por segundo que en el juego
   const HZ = Number(q.get('hz') ?? 0);
@@ -73,6 +77,7 @@ void (async () => {
     };
   }
   const win = new LiveWindow({
+    ...(ENTRAR ? { view: { cut: true } } : {}),
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
     // (?tile=N: el rehorneado por baldosas de N x N trozos de vóxeles con o sin worker; 0, sin baldosas)
     ...(q.get('tile') !== null ? (Number(q.get('tile')) ? { rebake: { band: 16, rows: 64, merge: true, tile: Number(q.get('tile')) } } : {}) : hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
@@ -125,6 +130,7 @@ void (async () => {
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
+  const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[] } = {};
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
   let secRun = 0;
@@ -185,6 +191,14 @@ void (async () => {
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
     const t0 = performance.now();
     win.update(x, Y, timed);
+    if (ENTRAR && entrada.a === undefined && now - start >= ENTRAR * 1000) {
+      const [ex, ey] = win.toLocal(x, Y);
+      timed.push(win.view.cutJob({ x0: Math.floor(ex) - CORTE, y0: Math.floor(ey) - CORTE, x1: Math.floor(ex) + CORTE, y1: Math.floor(ey) + CORTE, zTop: ground(x, Y) - CORTEZ }));
+      entrada.a = now;
+    }
+    if (ENTRAR && entrada.a !== undefined && win.baked.source.changedSince(win.baked.version).length) {
+      for (const j of bakeMod.rebakeChangedJobs(win.baked, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } })) timed.push(j);
+    }
     espera('update');
     const t1 = performance.now();
     if (field) {
@@ -226,7 +240,7 @@ void (async () => {
     // La vista, centrada en MAIA (en los ejes del giro de ahora)
     const [vx, vy] = win.view.camera.pointToView(lx, ly);
     const [px, py] = win.baked.cam.project(vx, vy, ground(x, Y));
-    const o: Frame2DOptions = { vx: Math.max(0, Math.min(win.baked.width - VW, Math.round(px) - VW / 2)), vy: Math.max(0, Math.min(win.baked.height - VH, Math.round(py) - VH / 2)), vw: VW, vh: VH, time: CAPTURA ? 0 : (now - start) / 1000, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
+    const o: Frame2DOptions = { vx: Math.max(0, Math.min(win.baked.width - VW, Math.round(px) - VW / 2)), vy: Math.max(0, Math.min(win.baked.height - VH, Math.round(py) - VH / 2)), vw: VW, vh: VH, time: CAPTURA || ENTRAR ? 0 : (now - start) / 1000, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
     // ?seccion=N: el corte de una caja de N vóxeles de ancho alrededor de MAIA, desde sus pies (lo de delante, bajo tierra),
     // pintado por franjas (SectionPainter, uno por horneado) en la cola; se cuentan los cuadros con la caja sin pintar
     // del todo
@@ -305,6 +319,17 @@ void (async () => {
         muestras++;
       } else muestras++;
     }
+    if (ENTRAR && entrada.a !== undefined) {
+      // (lo que queda en la cola del corte y de su rehorneado)
+      const qk = (budget as unknown as { queue: ViewJob[] }).queue.map((j) => j.key);
+      const left = qk.filter((k) => k === 'view-cut' || k.startsWith('rect:') || k.startsWith('sky:'));
+      const changed = win.baked.source.changedSince(win.baked.version).length;
+      const ms = now - entrada.a;
+      if (entrada.corteMs === undefined && !qk.includes('view-cut')) entrada.corteMs = Math.round(ms);
+      if (entrada.abiertoMs === undefined && !left.length && !changed) entrada.abiertoMs = Math.round(ms);
+      if (!entrada.c800 && ms >= 800) { entrada.c800 = canvas.toDataURL('image/png'); entrada.rects800 = left.length + changed; entrada.pendientes800 = qk.slice(0, 30); }
+      else if (entrada.c800 && !entrada.final && !win.busy && !budget.pending) { entrada.final = canvas.toDataURL('image/png'); entrada.finalMs = Math.round(ms); }
+    }
     // ?nucleo=1 (con ?quieto=1): el primer cuadro y el mismo cuadro con la cola vacía (todo horneado), para compararlos
     if (CAPTURA) {
       if (!captura.primero) captura.primero = canvas.toDataURL('image/png');
@@ -352,6 +377,7 @@ void (async () => {
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
+      entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
