@@ -109,6 +109,7 @@ void (async () => {
   const esperas: number[] = [];
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
+  let deferredFrames = 0, deferredMax = 0; const slowUpd: Array<Record<string, number>> = [];
   const worst: Array<Record<string, number | boolean> & { iv: number }> = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez
   const byKind = new Map<string, { ms: number; calls: number }>();
@@ -162,6 +163,7 @@ void (async () => {
     win.update(x, Y, timed);
     espera('update');
     const t1 = performance.now();
+    { const dz = win.baked.deferred?.size ?? 0; if (dz) { deferredFrames++; deferredMax = Math.max(deferredMax, dz); if (t1 - t0 > 20 && slowUpd.length < 12) slowUpd.push({ at: +((now - start) / 1000).toFixed(1), ms: +(t1 - t0).toFixed(1), deferred: dz, changed: win.baked.source.changedSince(win.baked.version).length }); } }
     if (field) {
       // BICHOS bichos alrededor de MAIA (a 16..112 vóxeles, repartidos en círculo), todos hacia ella: una búsqueda
       // compartida (la misma meta) y un advance por cuadro
@@ -269,7 +271,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      viewPending, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, deferred: { frames: deferredFrames, max: deferredMax, slowUpd }, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
