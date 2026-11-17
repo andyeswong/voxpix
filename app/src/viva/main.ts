@@ -98,7 +98,12 @@ void (async () => {
   if (field) win.attach(field);
   const pathMs: number[] = [];
   const BICHOS = Number(q.get('bichos') ?? 1);
-  let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0;
+  // ?espera=fase:ms:cada: para comprobar el reparto por fases, una espera activa de ms en esa fase cada `cada` cuadros
+  // (tiene que salir en esa fase y en ese cuadro de los peores)
+  const [EF, EMS, ECADA] = (q.get('espera') ?? '::').split(':') as [string, string, string];
+  const espera = (fase: string) => { if (EF === fase && frameNo % Number(ECADA) === 0) { const u = performance.now() + Number(EMS); while (performance.now() < u); esperas.push(frameNo); } };
+  const esperas: number[] = [];
+  let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const worst: Array<Record<string, number | boolean> & { iv: number }> = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez
   const byKind = new Map<string, { ms: number; calls: number }>();
@@ -132,6 +137,7 @@ void (async () => {
   function step(now: number): void {
     // (medio milisegundo de holgura: los rAF no caen exactos)
     if (HZ && last > 0 && now - last < 1000 / HZ - 0.5) { requestAnimationFrame(loop); return; }
+    const tPaso = performance.now();
     if (start < 0) start = now;
     const dt = Math.min(0.1, (now - last) / 1000);
     frames.push(now - last); last = now; frameNo++;
@@ -146,6 +152,7 @@ void (async () => {
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
     const t0 = performance.now();
     win.update(x, Y, timed);
+    espera('update');
     const t1 = performance.now();
     if (field) {
       // BICHOS bichos alrededor de MAIA (a 16..112 vóxeles, repartidos en círculo), todos hacia ella: una búsqueda
@@ -161,6 +168,7 @@ void (async () => {
     }
     const b0 = performance.now();
     budget.run();
+    espera('cola');
     queueMs.push(performance.now() - b0);
     const t2 = performance.now();
     // Lo que va detrás: trozos por escribir
@@ -210,14 +218,17 @@ void (async () => {
       if (x1 >= o.vx && x0 < o.vx + VW && y1 >= o.vy && y0 < o.vy + VH) { viewPending++; break; }
     }
     compositor.frame(win.view.frame(), win.baked, o);
+    espera('componer');
     const t5 = performance.now();
     // Por fases (el intervalo que acaba en el cuadro siguiente es el de este trabajo): los 8 peores intervalos, con lo de
     // cada fase del cuadro de antes y lo que queda fuera de nuestro JS (el recolector, el navegador, la GPU)
+    // (el paso entero del cuadro de antes, prevPaso: lo que no cae en ninguna fase es "sinMedir", y lo que queda del
+    // intervalo fuera del paso, "fuera" de verdad)
     if (prevPhases && frames.length > 60) {
       const iv = frames[frames.length - 1]!;
       if (worst.length < 8 || iv > worst[worst.length - 1]!.iv) {
         const ours = Object.values(prevPhases).reduce((u, v) => u + v, 0);
-        worst.push({ iv: +iv.toFixed(1), at: +((now - start) / 1000).toFixed(1), ...prevPhases, fuera: +(iv - ours).toFixed(1), shift: prevShift });
+        worst.push({ iv: +iv.toFixed(1), at: +((now - start) / 1000).toFixed(1), cuadro: frameNo - 1, ...prevPhases, paso: +prevPaso.toFixed(1), sinMedir: +(prevPaso - ours).toFixed(1), fuera: +(iv - prevPaso).toFixed(1), shift: prevShift });
         worst.sort((u, v) => v.iv - u.iv); worst.length = Math.min(8, worst.length);
       }
     }
@@ -229,6 +240,7 @@ void (async () => {
     prevPhases = { update: +(t1 - t0).toFixed(1), caminos: +(b0 - t1).toFixed(1), cola: +(t2 - b0).toFixed(1), mover: +(t3 - t2).toFixed(1), resto: +(t4 - t3).toFixed(1), componer: +(t5 - t4).toFixed(1), captura: +(t7 - t6).toFixed(1) };
     prevShift = shifts !== shiftsSeen; shiftsSeen = shifts;
     hud.textContent = `ventana viva · ${(now - start) / 1000 | 0} s · giro ${win.quarter}${win.turning ? ' (' + win.turning.phase + ')' : ''} · trozo ${win.trozoOf(x, Y).join(',')} · corrimientos ${shifts} · huecos ${holes}`;
+    prevPaso = performance.now() - tPaso;
     if (now - start < SECONDS * 1000) { requestAnimationFrame(loop); return; }
     const f = frames.slice(60), s = [...f].sort((a, b) => a - b), p = (k: number) => +s[Math.floor(k * (s.length - 1))]!.toFixed(1);
     const pq = (a: number[], k: number) => { if (!a.length) return 0; const s2 = [...a].sort((u, v) => u - v); return +s2[Math.floor(k * (s2.length - 1))]!.toFixed(1); };
@@ -237,7 +249,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      viewPending, worst, ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
