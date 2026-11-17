@@ -8,7 +8,27 @@ import { generateRegion, type RegionSpec } from '../../../src/world/regiongen';
 import { bakeWorldJob, renderRect, type Baked, type ScreenRect } from '../../../src/world/bake';
 
 let store: StaticVoxels, grid: BlockGrid, shell: Baked, spec: RegionSpec, C = 16;
-let busyMs = 0;
+let busyMs = 0, skipped = 0;
+// La tanda de rehorneado de ahora (Baked.rebakeEpoch del principal): lo pedido en una tanda vieja ya no vale (un
+// corrimiento lo descartó) y se salta. Se pinta de la cola propia, uno por tarea, para que los mensajes nuevos (la tanda,
+// sobre todo) entren entre medias
+let epoch = 0;
+const queue: Array<Record<string, unknown>> = [];
+let scheduled = false;
+const next = () => {
+  scheduled = false;
+  const m = queue.shift();
+  if (!m) return;
+  if ((m.epoch as number) < epoch) skipped++;
+  else {
+    const a = performance.now(), o = renderRect(shell, m.rect as ScreenRect), ms = performance.now() - a;
+    const brake = (m.brake as number) || 1;
+    if (brake > 1) { const until = performance.now() + ms * (brake - 1); while (performance.now() < until); }
+    busyMs += performance.now() - a;
+    (self as unknown as { postMessage(x: unknown, t: Transferable[]): void }).postMessage({ kind: 'rect', id: m.id, ms, busyMs, skipped, o }, [o.rgba.buffer, o.depth.buffer, o.face.buffer, o.pick.buffer]);
+  }
+  if (queue.length && !scheduled) { scheduled = true; setTimeout(next, 0); }
+};
 self.onmessage = (e: MessageEvent) => {
   const m = e.data as Record<string, unknown>;
   if (m.kind === 'init') {
@@ -25,11 +45,12 @@ self.onmessage = (e: MessageEvent) => {
     const [dcx, dcy] = m.chunks as [number, number], [cx, cy] = m.cells as [number, number];
     store.shift(dcx, dcy);
     grid.shift(cx, cy);
+  } else if (m.kind === 'epoch') {
+    epoch = m.epoch as number;
   } else if (m.kind === 'rect') {
-    const a = performance.now(), o = renderRect(shell, m.rect as ScreenRect), ms = performance.now() - a;
-    const brake = (m.brake as number) || 1;
-    if (brake > 1) { const until = performance.now() + ms * (brake - 1); while (performance.now() < until); }
-    busyMs += performance.now() - a;
-    (self as unknown as { postMessage(x: unknown, t: Transferable[]): void }).postMessage({ kind: 'rect', id: m.id, ms, busyMs, o }, [o.rgba.buffer, o.depth.buffer, o.face.buffer, o.pick.buffer]);
+    // (lo que se pide va con el estado de ahora: un gen o un shift que llegue después se aplica antes de pintarlo; un
+    // shift viene detrás de su tanda nueva, y entonces lo pedido antes se salta)
+    queue.push(m);
+    if (!scheduled) { scheduled = true; setTimeout(next, 0); }
   }
 };
