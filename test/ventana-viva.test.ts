@@ -214,7 +214,8 @@ describe('ventana viva', () => {
     for (let s = 0; s < 2 * 8; s++) { y += TV / 8; frame(x, y); for (let k = 0; k < 6; k++) frame(x, y); }
     expect(win.ty0).toBeGreaterThan(ty);
     check(x, y, 1);
-  });
+    // (4,8 s en la batería en paralelo, con el tope de 5 s de vitest: a veces se pasaba)
+  }, 30000);
 
   it('capa de sección (SectionPainter) con la ventana: pintando a mitad de los corrimientos, y tras girar con un pintor nuevo; igual que abrirla de nuevo ahí', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
