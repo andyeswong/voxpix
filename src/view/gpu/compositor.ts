@@ -535,6 +535,45 @@ export class GpuCompositor {
     this.bakedCache.delete(b);
   }
 
+  // Sube un horneado que aún no se enseña, por partes, para que el cuadro en que pase a enseñarse no lo pague entero (el
+  // giro con fundido de la ventana viva: con una imagen de 1410 x 948, preparar la cara y la y del mundo y subir las
+  // texturas eran ~100 ms en ese cuadro). Primero reserva las texturas; después, por bandas de filas, la cara y la y del
+  // mundo y la subida de cada textura. Al acabar queda guardado como los horneados de antes (bakedCache) con el serial de
+  // cuando empezó: al enseñarse, syncBaked lo recupera y sube solo lo publicado después
+  prepareJob(b: Baked): { run(deadline: number): boolean } {
+    const gl = this.gl, W = b.width, H = b.height, BAND = 32;
+    if (this.baked === b || this.bakedCache.has(b)) return { run: () => true };
+    let e: BakedGpu | null = null, row = 0;
+    const serial = b.published.serial;
+    return { run: (deadline: number) => {
+      if (this.baked === b || this.bakedCache.has(b)) return true;
+      if (!e) {
+        const backVals = backlitCodes(b), faceUp = backVals.some((v) => v > 0) ? new Int8Array(W * H) : null;
+        e = { serial, tColor: tex2D(gl, gl.RGBA8, W, H, gl.RGBA, gl.UNSIGNED_BYTE, null), tDepth: tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null),
+          tFace: tex2D(gl, gl.R8I, W, H, gl.RED_INTEGER, gl.BYTE, null), tWorldY: tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null),
+          worldY: new Float32Array(W * H), faceUp, backVals, tWeights: null, weightZones: [], weightW: 0, weightH: 0,
+          tSky: b.sky ? tex2D(gl, gl.R8UI, W, H, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null) : null };
+        if (performance.now() >= deadline) return false;
+      }
+      const g = e;
+      do {
+        const y0 = row, y1 = Math.min(H - 1, row + BAND - 1), h = y1 - y0 + 1;
+        subImage(gl, g.tColor, 0, y0, W, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, W, 4);
+        subImage(gl, g.tDepth, 0, y0, W, h, gl.RED, gl.FLOAT, b.depth, W, 1);
+        if (g.faceUp) fillFace(b, g.faceUp, g.backVals, 0, y0, W - 1, y1);
+        subImage(gl, g.tFace, 0, y0, W, h, gl.RED_INTEGER, gl.BYTE, g.faceUp ?? b.face, W, 1);
+        fillWorldY(b, g.worldY, 0, y0, W - 1, y1);
+        subImage(gl, g.tWorldY, 0, y0, W, h, gl.RED, gl.FLOAT, g.worldY, W, 1);
+        if (g.tSky && b.sky) subImage(gl, g.tSky, 0, y0, W, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, W, 1);
+        row = y1 + 1;
+      } while (row < H && performance.now() < deadline);
+      if (row < H) return false;
+      // (si mientras se publicó algo, el serial de cuando empezó hace que se suba al enseñarse)
+      this.bakedCache.set(b, g);
+      return true;
+    } };
+  }
+
   private syncBaked(b: Baked): void {
     const gl = this.gl;
     const pub = b.published;

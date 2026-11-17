@@ -83,6 +83,10 @@ export interface LiveWindowOptions {
   // cercano, hasta que estén todos (ready() dice cuándo está lo de alrededor del objetivo: para una pantalla de carga que
   // avanza y un juego que empieza antes de tenerlo todo)
   preload?: 'block' | 'queue';
+  // Lo que el juego hace con el horneado del giro nuevo antes de enseñarlo (turnTo), como trabajo por pasos que corre el
+  // núcleo del giro tras sus recuadros y antes del cambio: subirlo a la GPU por partes (compositor.prepare). Así el
+  // cuadro del cambio no lo sube entero (~100 ms con 11 x 13)
+  beforeTurnSwap?(baked: Baked): { run(deadline: number): boolean } | null;
   // Las opciones de sus vistas (WorldView): { cut: true } para el corte de casa de muñecas (setCut / cutJob en win.view).
   // El corte se corre con la ventana (WorldView.shift, antes de onShift); un cutJob a medias sigue en la cola
   view?: WorldViewOptions;
@@ -245,7 +249,8 @@ export class LiveWindow {
     }
     const copyFirst = rotated ? [...first] : [];
     this.lastTurn = { core: core.length, copied: copyFirst.length, of: n, copyMs: 0, jobMs: {} };
-    let k = 0, jobs: ViewJob[] | null = null, j = 0, V1 = 0, spent = 0;
+    let k = 0, jobs: ViewJob[] | null = null, j = 0, V1 = 0, spent = 0, prepDone = false;
+    let prep: { run(deadline: number): boolean } | null | undefined;
     const job: ViewJob = { key: `turn:g${q}`, priority: 0, run: (deadline: number) => {
       // (se cambió de destino: este se deja)
       if (this.turnPrep?.job !== job) return true;
@@ -275,6 +280,12 @@ export class LiveWindow {
           const t = performance.now(), ok = jobs[j]!.run(deadline), kind = jobs[j]!.key.split(/[:#]/)[0]!;
           this.lastTurn.jobMs[kind] = (this.lastTurn.jobMs[kind] ?? 0) + performance.now() - t;
           if (!ok) return false;
+        }
+        // Lo del juego antes del cambio (subirlo a la GPU por partes)
+        if (!prepDone) {
+          if (prep === undefined) prep = this.o.beforeTurnSwap?.(baked) ?? null;
+          if (prep && !prep.run(deadline)) return false;
+          prepDone = true;
         }
       } finally { spent += performance.now() - a; }
       // El cambio

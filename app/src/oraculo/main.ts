@@ -69,7 +69,9 @@ interface Scenario {
   look?: (base: WorldLook) => WorldLook;     // otro aspecto del mundo (el agua emisiva)
   shape?: ShapeSpec;                         // la forma de la sala (paredes que siguen el contorno y el vacío fuera)
   xray?: boolean;                            // la silueta de las entidades tapadas (Frame2DOptions.xray)
-  highWater?: { cut?: boolean; dig?: boolean; gpuFirst?: boolean };   // un mundo alto con lagos (mapgen + WaterLayer con wallAbove), con corte o picando la orilla (gpuFirst: la GPU ya dibujó un cuadro antes de picar)
+  highWater?: { cut?: boolean; dig?: boolean; gpuFirst?: boolean; prepHalf?: boolean };   // (prepHalf: la mitad de la subida por partes antes de picar, el resto después)
+  // El horneado se sube por partes (GpuCompositor.prepareJob, el giro con fundido) antes del primer cuadro, en bandas
+  prepared?: boolean;   // un mundo alto con lagos (mapgen + WaterLayer con wallAbove), con corte o picando la orilla (gpuFirst: la GPU ya dibujó un cuadro antes de picar)
   clearBg?: boolean;                         // fondo transparente (Frame2DOptions.background = 'transparent')
   fog?: boolean;                             // niebla por altura (Frame2DOptions.fog) con el foco sobre los pies de MAIA
   cave?: boolean;                            // un tejado sobre la salida, el cielo horneado y la luz de cueva (Frame2DOptions.cave)
@@ -407,6 +409,10 @@ function highWaterWorld(bigLake = false): { world: World; state: WorldState; spa
   return { world, state, spawn: best ?? { x: 200, y: 200 }, lake };
 }
 for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, stompEvery: 40, highWater: {} });
+// La subida por partes del giro con fundido (prepareJob): byte a byte lo de subirlo entero
+for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `medieval lago con pisotones, subido por partes, giro ${q}`, theme: 'medieval', pos: [172, 170], ticks: 300, stompEvery: 42, quarter: q, prepared: true });
+SCENARIOS.push({ name: 'oficina vidrio, subido por partes', theme: 'oficina', ticks: 60, glass: true, prepared: true });
+SCENARIOS.push({ name: 'agua en mundo alto picando, subido por partes a medias', theme: 'medieval', ticks: 240, highWater: { dig: true, prepHalf: true } });
 SCENARIOS.push({ name: 'agua en mundo alto con corte', theme: 'medieval', ticks: 60, highWater: { cut: true } });
 SCENARIOS.push({ name: 'agua en mundo alto picando la orilla', theme: 'medieval', ticks: 240, highWater: { dig: true } });
 // La ventana viva: la imagen corrida un trozo (la GPU la corre dentro de sí), y corrida y vuelta
@@ -564,6 +570,8 @@ async function run(): Promise<void> {
     const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
     const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
     if (sc.highWater?.dig) (state.water as WaterLayer).follow(state.watchChanges());
+    // (la subida por partes: run(-Infinity) hace una banda por llamada)
+    let prep: { run(deadline: number): boolean } | null = null;
     const rt = new Runtime(state, spawn, { radius: 4, speed: 70, model: maiaModel });
     sc.setup?.(state, rt);
     for (let t = 1; t <= sc.ticks; t++) rt.step(sc.stompEvery && t % sc.stompEvery === 0 ? { ...NO_INPUT, stomp: true } : NO_INPUT);
@@ -573,6 +581,7 @@ async function run(): Promise<void> {
       rebakeChanged(b, view.frame().lights);
     }
     if (sc.highWater?.dig) {
+      if (sc.highWater.prepHalf) { prep = gpu.prepareJob(b); for (let i = 0; i < 20; i++) prep.run(-Infinity); }
       if (sc.highWater.gpuFirst) {
         const m = view.frame().entities.find((e) => e.id === rt.entityId)!, p = viewOf(view.camera.viewDepth, b, m.x, m.y, m.z);
         gpu.read(view.frame(), b, { vx: p.vx, vy: p.vy, vw: VW, vh: VH, time: 0, lights: true, ambient: THEMES[sc.theme].ambient }, 'frame');
@@ -591,6 +600,8 @@ async function run(): Promise<void> {
       ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}),
       ...(sc.clearBg ? { background: 'transparent' as const } : {}),
       ...(sc.fog ? { fog: { focusZ: maia.z + 8, start: 2, full: 10, color: [40, 44, 70] as const, strength: 0.75 } } : {}) };
+    if (sc.prepared && !prep) prep = gpu.prepareJob(b);
+    if (prep) { let n = 0; while (!prep.run(-Infinity)) if (++n > 100000) throw new Error('la subida por partes no acaba'); }
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.section) {
       const p = rt.player, at = (dx: number) => sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);

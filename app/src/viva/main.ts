@@ -21,6 +21,7 @@ import type { RegionSpec } from '../../../src/world/regiongen';
 import type { ViewJob } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
+import type { Baked } from '../../../src/world/bake';
 
 // (todo dentro de una función async: el mundo de ?mundo= se lee con fetch antes de empezar)
 void (async () => {
@@ -46,7 +47,7 @@ void (async () => {
   const spec = ext ? ext.spec : spec0;
   const CENTER: [number, number] = ext?.center ?? [0, 0];
   const NXW = ext?.nx ?? NX, NYW = ext?.ny ?? NY;
-  const win = new LiveWindow({ blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
+  const win = new LiveWindow({ blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
   compositor.upload(win.baked);

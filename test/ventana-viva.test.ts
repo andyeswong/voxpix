@@ -365,6 +365,30 @@ describe('ventana viva', () => {
     expect(Buffer.compare(Buffer.from(old.rgba.buffer), Buffer.from(before.buffer))).toBe(0);
   });
 
+  it('girar con fundido: beforeTurnSwap corre por pasos tras los recuadros del núcleo, con el horneado nuevo, y el cambio lo espera', () => {
+    const calls: Baked[] = [];
+    let steps = 0, done = false, sawVisible = false;
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40],
+      beforeTurnSwap: (b) => {
+        calls.push(b);
+        // Se pide con el núcleo ya pintado: es el horneado del giro nuevo, no el que se enseña
+        expect(b).not.toBe(win.baked);
+        return { run: () => { if (win.quarter !== 0) throw new Error('cambió antes de acabar'); sawVisible = true; return (done = ++steps >= 5); } };
+      } });
+    const budget = stepBudget();
+    const frame = () => { win.update(TV / 2, TV / 2, budget); budget.run(); };
+    frame();
+    for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame();
+    win.turnTo(1);
+    let n = 0;
+    for (; win.turning?.phase === 'core' && n < 200000; n++) frame();
+    expect(win.quarter).toBe(1);
+    expect(calls.length).toBe(1);
+    expect(calls[0]).toBe(win.baked);
+    expect(sawVisible && done).toBe(true);
+    expect(steps).toBe(5);
+  });
+
   it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });

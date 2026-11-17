@@ -29,6 +29,9 @@ export interface Compositor {
   // Sube un horneado sin pintar (en la GPU: sus texturas y los pesos de sus luces), para hacerlo fuera de la partida.
   // La GPU guarda los últimos 4 horneados subidos: volver a uno (otro giro de la cámara) no lo vuelve a subir.
   upload(b: Baked): void;
+  // Sube por partes un horneado que aún no se enseña (el giro con fundido: LiveWindow beforeTurnSwap), para que el cuadro
+  // en que pase a enseñarse no lo pague entero. null si no hay nada que subir (la CPU)
+  prepare(b: Baked): { run(deadline: number): boolean } | null;
   // Suelta lo que guarda de un horneado que ya no se va a pintar (sus texturas en la GPU y la referencia): la ventana viva
   // que gira con fundido (LiveWindow.turnTo) hace uno nuevo por giro, y la caché de 4 retendría sus copias giradas. El
   // de este cuadro no se suelta
@@ -79,6 +82,7 @@ class CpuPath implements Compositor {
 
   // La CPU no sube nada (ni guarda nada)
   upload(_b: Baked): void { /* nada */ }
+  prepare(_b: Baked): null { return null; }
   release(_b: Baked): void { /* nada */ }
   atlasStats(): null { return null; }
   uploadStats(): null { return null; }
@@ -165,6 +169,7 @@ class GpuPath implements Compositor {
   get canvas(): HTMLCanvasElement { return this.cpu?.canvas ?? this.glCanvas; }
 
   upload(b: Baked): void { this.gpu?.upload(b); }
+  prepare(b: Baked): { run(deadline: number): boolean } | null { return this.gpu ? this.gpu.prepareJob(b) : null; }
   release(b: Baked): void { this.warm.forget(b); this.gpu?.release(b); }
   atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
   uploadStats(): UploadStats | null { return this.gpu ? { ...this.gpu.lastUploads } : null; }
