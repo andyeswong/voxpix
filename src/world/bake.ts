@@ -1204,7 +1204,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
     const d = (c: number) => Math.hypot((c % s.cols) * CHUNK + CHUNK / 2 - near.x, Math.floor(c / s.cols) * CHUNK + CHUNK / 2 - near.y);
     order.sort((p, q) => d(p) - d(q) || p - q);
   }
-  let k = 0, batches = 0, retried = false;
+  let k = 0, batches = 0, retried = false, since = s.clock, moved = 0;
   const most = warmBatches(s, { x0: 0, y0: 0, x1: CHUNK - 1, y1: CHUNK - 1 });
   // La ventana viva: al correrse, las máscaras caducan todas (StaticVoxels.shift / shiftJob) y el orden y las regiones de
   // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
@@ -1223,13 +1223,21 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
           // Si la cuenta se pasa del tope (un fallo: no debería), se apunta y se rehace el trozo desde cero una vez; si
           // vuelve a pasar, se salta (lo que falte lo hace forEachExposed al recorrer). Sin parar el juego ni colgarse
           if (batches > most) {
-            exposureFault(`el trabajo de lo expuesto: ${batches} tandas en el trozo ${c}, que tiene como mucho ${most}${retried ? '; se salta' : '; se rehace'}`);
-            if (retried) break;
-            retried = true; batches = 0;
+            // Si el trozo o un vecino cambió desde que se empezó (se escribió un trozo de la ventana, un corte, un golpe),
+            // sus máscaras caducaron a mitad: no es un fallo, se vuelve a empezar con él sin apuntar nada (tres veces
+            // como mucho; FERN veía 0-2 avisos por carga tras morir lejos con la casa de muñecas)
+            const ch = s.changedSince(since), cx = c % s.cols, cy = Math.floor(c / s.cols);
+            const near = (q: number) => Math.abs((q % s.cols) - cx) + Math.abs(Math.floor(q / s.cols) - cy) <= 1;
+            if (moved < 3 && ch.some(near)) { moved++; batches = 0; since = s.clock; }
+            else {
+              exposureFault(`el trabajo de lo expuesto: ${batches} tandas en el trozo ${c}, que tiene como mucho ${most}${retried ? '; se salta' : '; se rehace'}`);
+              if (retried) break;
+              retried = true; batches = 0;
+            }
           }
           if (performance.now() >= deadline) return false;
         }
-        k++; batches = 0; retried = false;
+        k++; batches = 0; retried = false; moved = 0; since = s.clock;
         if (performance.now() >= deadline) break;
       }
       return k >= order.length;
