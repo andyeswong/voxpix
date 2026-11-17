@@ -63,6 +63,8 @@ export interface Baked {
   // vale (o null: se pinta aquí) y result() el recuadro cuando llega; se publica si ningún trozo suyo cambió desde que se
   // pidió, y si no, se pinta aquí
   remote?: RemoteRects;
+  // (para el banco: recuadros publicados de fuera, pintados aquí por haber cambiado mientras, y pintados aquí sin pedirse)
+  remoteStats?: { published: number; stale: number; local: number; localMs: number };
   // El rehorneado que está en la cola sin publicar (recuadros, cielo y luces), con las cajas de lo que rehace; y el número
   // de tanda: al correrse la ventana (shiftBakedJob), lo de la cola se descarta (cancelRebakes: sus trabajos acaban sin
   // hacer nada) y sus trozos se vuelven a marcar como cambiados ya corridos. Antes el cambio esperaba a que se vaciara
@@ -950,7 +952,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           if (!r) return false;                                            // espera (sin gastar)
           ticket = null;
           const moved = b.source.changedSince(askedAt);
+          const st = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 });
           if (!g.some((c) => moved.includes(c))) {
+            st.published++;
             const mask = new Uint8Array(r.w * r.h);
             publishRect(b, rect, r, mask);
             masks.set(rect, mask);
@@ -959,6 +963,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             return true;
           }
           // (algo suyo cambió mientras: se pinta aquí)
+          st.stale++;
         }
         buf ??= rectBuffers(rect);
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
