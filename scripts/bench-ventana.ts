@@ -64,3 +64,23 @@ if (process.env.IMAGEN !== '0') {
   }
   console.log(`shiftBaked de un trozo (vóxeles e imagen, ${sb.length}): p50 ${f(p(sb, 0.5))} ms, p95 ${f(p(sb, 0.95))} ms, máx ${f(p(sb, 1))} ms`);
 }
+
+// Por pasos (shiftBakedJob): lo que cuesta cada paso (una banda de BANDA filas) y el del cambio (vóxeles, búferes, luces)
+if (process.env.IMAGEN !== '0') {
+  const { bakeWorld, shiftBakedJob } = await import('../src/world/bake');
+  const b = bakeWorld({ model: s, lights: [], width: s.width, depth: s.depth }, { topZ: H * B, incline: 0.5, sky: true, outline: 'both' });
+  const band = Number(process.env.BANDA ?? 64), stepMs: number[] = [], swapMs: number[] = [], nSteps: number[] = [];
+  for (let i = 0; i < TIMES; i++) for (const [dx, dy] of [[k, 0], [0, k], [-k, 0], [0, -k]] as const) {
+    const job = shiftBakedJob(b, dx, dy, { band });
+    let n = 0;
+    for (;;) {
+      a = performance.now();
+      const done = job.run(-Infinity);
+      const ms = performance.now() - a;
+      if (done) { swapMs.push(ms); break; }
+      stepMs.push(ms); n++;
+    }
+    nSteps.push(n);
+  }
+  console.log(`shiftBakedJob (bandas de ${band} filas): ${p(nSteps, 0.5)} pasos; paso p50 ${f(p(stepMs, 0.5))} ms, p95 ${f(p(stepMs, 0.95))} ms, máx ${f(p(stepMs, 1))} ms; el cambio p50 ${f(p(swapMs, 0.5))} ms, p95 ${f(p(swapMs, 0.95))} ms, máx ${f(p(swapMs, 1))} ms`);
+}

@@ -13,7 +13,7 @@ import { THEMES, type ThemeId } from '../../../src/samples/themes';
 import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
-import { bakeWorld, rebakeChanged, type Baked } from '../../../src/world/bake';
+import { bakeWorld, rebakeChanged, shiftBaked, type Baked } from '../../../src/world/bake';
 import { frame2DParts, shadeLayers, applyFog, clearTransparent, sectionFor, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
@@ -81,6 +81,11 @@ interface Scenario {
   // corta, en cualquier giro) y, con torch, una antorcha fija dentro
   // (z: la altura del corte; por defecto, la de los pies)
   section?: { width: number; painter?: boolean; torch?: boolean; z?: number };
+  // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
+  // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
+  // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
+  // de antes, en CPU y en GPU
+  shift?: 'ida' | 'vuelta';
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
@@ -399,6 +404,11 @@ function highWaterWorld(bigLake = false): { world: World; state: WorldState; spa
 for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, stompEvery: 40, highWater: {} });
 SCENARIOS.push({ name: 'agua en mundo alto con corte', theme: 'medieval', ticks: 60, highWater: { cut: true } });
 SCENARIOS.push({ name: 'agua en mundo alto picando la orilla', theme: 'medieval', ticks: 240, highWater: { dig: true } });
+// La ventana viva: la imagen corrida un trozo (la GPU la corre dentro de sí), y corrida y vuelta
+for (const q of [0, 1] as Quarter[]) {
+  SCENARIOS.push({ name: `ventana corrida, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 60, shift: 'ida' });
+  SCENARIOS.push({ name: `ventana corrida y vuelta, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 60, shift: 'vuelta' });
+}
 // El corte al componer, moviéndose, en los 4 giros: bajo el tejado (el cielo con el corte), con las antorchas fijas
 // (fijas como dinámicas en lo sustituido), y con entidades y una luz dinámica (sus sombras sobre la sección); con la
 // caja de cada cuadro (section) y con SectionPainter (sectionLayer)
@@ -427,6 +437,8 @@ interface Result {
   secPx?: number;          // con corte al componer: píxeles de la vista sustituidos (máscara 1) y de borde (2)
   secBorder?: number;
   secInfo?: unknown;
+  backSame?: { cpu: boolean; gpu: boolean };
+  gpuShifts?: number;      // con shift: cuántas veces corrió la GPU sus texturas dentro de sí (sin volver a subirlas)   // con shift 'vuelta': la vista de después, igual byte a byte a la de antes
   secDiffer?: number;      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
   secMaxFinal?: number;
   waterPxNear?: number;    // y en el recuadro de pantalla de la poza de "picando la orilla" (entre la salida y el lago)
@@ -532,6 +544,7 @@ async function run(): Promise<void> {
       }
       if (sc.section.torch) state.lights.addFixed({ kind: 'brazier', x: spawn.x + 6.5, y: spawn.y - 5.5, z: 12 });
     }
+    if (sc.shift) for (const x of [8.5, 24.5]) state.lights.addFixed({ kind: 'torch', x, y: spawn.y + 0.5, z: 30 });
     const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
     const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
     if (sc.highWater?.dig) (state.water as WaterLayer).follow(state.watchChanges());
@@ -575,6 +588,26 @@ async function run(): Promise<void> {
       for (const dx of [-16, -8]) gpu.read(view.frame(), b, step(dx), 'color');
       o = step(0);
     }
+    let before: { cpu: Uint8ClampedArray; gpu: Uint8Array } | null = null;
+    if (sc.shift) {
+      const s0 = b.source, lights0 = view.frame().lights;
+      const clone = new StaticVoxels(s0.palette, s0.width, s0.depth, s0.zMin, s0.zMax);
+      clone.importChunks(s0.exportChunks());
+      const cpuFinalOf = (rs: RenderState) => { const pp = frame2DParts(rs, b, o), ll = pp.total ? shadeLayers(pp.total, o, b) : null; return ll ? applyLayers(pp.view, ll) : pp.view.slice(); };
+      if (sc.shift === 'vuelta') before = { cpu: cpuFinalOf(view.frame()), gpu: gpu.read(view.frame(), b, o, 'frame').slice() };
+      else gpu.read(view.frame(), b, o, 'color');
+      const c0 = gpu.shiftCount;
+      shiftBaked(b, 1, 0);
+      rebakeChanged(b, lights0.map((l) => ({ ...l, x: l.x - 16 })));
+      (window as unknown as { __gpuShifts: () => number }).__gpuShifts = () => gpu.shiftCount - c0;
+      if (sc.shift === 'ida') o = { ...o, vx: Math.max(0, o.vx - 16) };
+      else {
+        gpu.read(view.frame(), b, o, 'color');                        // la GPU sigue el corrimiento
+        shiftBaked(b, -1, 0);
+        for (let z = s0.zMin; z <= s0.zMax; z++) for (let y = 0; y < s0.depth; y++) for (let x = 0; x < 16; x++) { const v = clone.get(x, y, z); if (v) b.source.set(x, y, z, v); }
+        rebakeChanged(b, lights0);
+      }
+    }
     if (sc.after) {
       gpu.read(view.frame(), b, o, 'color');
       let other: { v: WorldView; b: Baked } | null = null;
@@ -605,6 +638,12 @@ async function run(): Promise<void> {
     const r = compare(sc.name, { color: parts.view, mul: layers?.multiply ?? empty, add: layers?.add ?? empty, final: cpuFinal },
       { color: gColor, mul: gMul, add: gAdd, final: gFinal }, ambient, o.lights, [c1 - c0, c2 - c1], parts.total);
     if (glErrors.length) { r.glErrors = glErrors; r.pass = false; }
+    if (sc.shift) r.gpuShifts = (window as unknown as { __gpuShifts: () => number }).__gpuShifts();
+    if (before) {
+      const same = (u: ArrayLike<number>, v: ArrayLike<number>) => { for (let i = 0; i < u.length; i++) if (u[i] !== v[i]) return false; return true; };
+      r.backSame = { cpu: same(cpuFinal, before.cpu), gpu: same(gFinal, before.gpu) };
+      if (!r.backSame.cpu || !r.backSame.gpu) r.pass = false;
+    }
     // Con agua en un mundo alto: cuántos píxeles salen con un tono del agua (antes de la luz), para saber que se ve
     if (sc.highWater) {
       const tones = (state.water as WaterLayer).toneColors;

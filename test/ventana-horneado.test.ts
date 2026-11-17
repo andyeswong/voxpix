@@ -30,7 +30,7 @@ const SPEC: RegionSpec = {
 };
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
-import { bakeWorld, shiftBaked, rebakeChanged, type Baked } from '../src/world/bake';
+import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 import { unkey } from '../src/core';
 
@@ -43,10 +43,31 @@ for (let k = 0; k < 14; k++) LIGHTS.push({ id: `t${k}`, kind: 'torch', x: -100 +
 const local = (tx0: number, ty0: number): WorldLight[] => LIGHTS.filter((l) => l.x >= tx0 * TV && l.x < (tx0 + N) * TV && l.y >= ty0 * TV && l.y < (ty0 + N) * TV)
   .map((l) => ({ ...l, x: l.x - tx0 * TV, y: l.y - ty0 * TV }));
 const OPTS = { topZ: ZT + 1, incline: 0.5, sky: true, outline: 'both' as const };
-const fresh = (tx0: number, ty0: number): Baked => {
+// (dig: un hueco en coordenadas del mundo, x0..x1 y0..y1 z0..z1)
+type Box = [number, number, number, number, number, number];
+const dig = (s: StaticVoxels, tx0: number, ty0: number, [x0, y0, z0, x1, y1, z1]: Box) => {
+  for (let z = z0; z <= z1; z++) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const lx = x - tx0 * TV, ly = y - ty0 * TV;
+    if (lx >= 0 && ly >= 0 && lx < WV && ly < WV) s.set(lx, ly, z, 0);
+  }
+};
+const fresh = (tx0: number, ty0: number, holes: Box[] = []): Baked => {
   const s = new StaticVoxels(pal, WV, WV, 0, ZT);
   for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) stamp(s, tx0 + i, ty0 + j, i, j);
+  for (const h of holes) dig(s, tx0, ty0, h);
   return bakeWorld({ model: s, lights: local(tx0, ty0), width: WV, depth: WV }, OPTS);
+};
+// Las diferencias entre dos horneados (0 en todo si son iguales)
+const diff = (b: Baked, r: Baked) => {
+  let rgba = 0, face = 0, pick = 0, sky = 0, depth = 0;
+  for (let i = 0; i < r.width * r.height; i++) {
+    for (let c = 0; c < 4; c++) if (b.rgba[i * 4 + c] !== r.rgba[i * 4 + c]) { rgba++; break; }
+    if (b.face[i] !== r.face[i]) face++;
+    if (!(b.pick[i] === r.pick[i] || (Number.isNaN(b.pick[i]!) && Number.isNaN(r.pick[i]!)))) pick++;
+    if (b.sky![i] !== r.sky![i]) sky++;
+    if (!(b.depth[i] === r.depth[i] || Math.abs(b.depth[i]! - r.depth[i]!) <= 1e-3)) depth++;
+  }
+  return { rgba, face, pick, sky, depth };
 };
 const K = TV / 16;                                // trozos de vóxeles por trozo del mundo
 
@@ -89,5 +110,26 @@ describe('ventana viva: correr lo horneado', () => {
       const i = r.pick.findIndex((k) => !Number.isNaN(k));
       expect(unkey(b.pick[i]!)).toEqual(unkey(r.pick[i]!));
     }
+  });
+
+  it('por pasos: con un rehorneado en la imagen vieja a mitad de la copia y otro borde cruzado antes de acabar (se suman)', () => {
+    const b = fresh(0, 0);
+    const job = shiftBakedJob(b, K, 0, { band: 8 });
+    for (let k = 0; k < 4; k++) expect(job.run(-Infinity)).toBe(false);        // un paso por llamada (sin plazo)
+    // Picar en el mundo de antes de correr (en la imagen vieja) y rehornearlo
+    const hole: Box = [40, 30, 20, 55, 45, 63];
+    dig(b.source, 0, 0, hole);
+    rebakeChanged(b, local(0, 0));
+    // Otro borde: hacia el norte también
+    job.merge(0, K);
+    expect(job.shift).toEqual([K, K]);
+    let steps = 0;
+    while (!job.run(-Infinity)) steps++;
+    expect(steps).toBeGreaterThan(5);
+    expect(job.done).toBe(true);
+    // Lo que entra (la ventana está ahora en el trozo 1, 1)
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (i === N - 1 || j === N - 1) stamp(b.source, 1 + i, 1 + j, i, j);
+    rebakeChanged(b, local(1, 1));
+    expect(diff(b, fresh(1, 1, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
   });
 });

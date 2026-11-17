@@ -16,13 +16,13 @@ import { resolveLight } from '../../world/lightutil';
 import { sectionFor } from '../../world/frame2d';
 import { secIdx, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
-import { worldPointAt, skyAmbient, unprojector, type Baked, type BakedLight } from '../../world/bake';
+import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
-import { FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
+import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 // Un modelo para precalentar: en qué giros (por defecto los 8 rumbos) y si da sombra de verdad
@@ -49,6 +49,7 @@ export class GpuCompositor {
   private readonly fxBuf: WebGLBuffer;
   private fxData = new Float32Array(0);
   private readonly shade: Program;
+  private readonly shiftF: Program;
   private readonly ent: Program;
   private readonly contact: Program;
   private readonly entVao: WebGLVertexArrayObject;
@@ -150,6 +151,7 @@ export class GpuCompositor {
     this.drops = program(gl, VERT_DROPS, FRAG_DROPS);
     this.fx = program(gl, VERT_FX, FRAG_FX);
     this.shade = program(gl, VERT_FULLSCREEN, FRAG_SHADE);
+    this.shiftF = program(gl, VERT_FULLSCREEN, FRAG_SHIFT);
     this.ent = program(gl, VERT_ENTITY, FRAG_ENTITY);
     this.contact = program(gl, VERT_CONTACT, FRAG_CONTACT);
     // Un quad (dos triángulos) que se repite por entidad; los datos de cada una van en un búfer por instancia
@@ -533,6 +535,16 @@ export class GpuCompositor {
       }
     }
     if (pub.serial === this.bakedSerial) return;
+    // La ventana se corrió (shiftBaked) y esto estaba al día justo antes: se corre dentro de la GPU, y abajo se sube solo lo
+    // publicado con el corrimiento (lo borrado)
+    // (si después se rehorneó algo más, sus recuadros siguen en la lista: se suben abajo)
+    const ls = b.lastShift;
+    if (ls && this.bakedSerial === ls.serial - 2 && pub.serial >= ls.serial && (pub.rects[0]?.serial ?? Infinity) <= ls.serial + 1) {
+      this.gpuShift(b, ls);
+      for (const r of pub.rects) if (r.serial === ls.serial) this.uploadRect(b, r);
+      this.bakedSerial = ls.serial;
+      if (pub.serial === this.bakedSerial) return;
+    }
     const tColor = this.tColor!;
     const oldest = pub.rects[0]?.serial ?? Infinity;
     if (oldest > this.bakedSerial + 1) {
@@ -546,14 +558,7 @@ export class GpuCompositor {
       if (this.tSky && b.sky) subImage(gl, this.tSky, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
     } else for (const r of pub.rects) {
       if (r.serial <= this.bakedSerial) continue;
-      const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
-      subImage(gl, tColor, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
-      subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
-      if (this.faceUp) fillFace(b, this.faceUp, this.backVals, r.x0, r.y0, r.x1, r.y1);
-      subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
-      fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
-      subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
-      if (this.tSky && b.sky) subImage(gl, this.tSky, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
+      this.uploadRect(b, r);
     }
     this.bakedSerial = pub.serial;
   }
@@ -626,6 +631,72 @@ export class GpuCompositor {
     gl.uniform1i(p.u.uSecTW, this.secSize[0] || 1);
     bindTex(gl, 14, gl.TEXTURE_2D, sec ? this.tSecGeo : null, p.u.uSecGeo);
     if (all) bindTex(gl, 11, gl.TEXTURE_2D, sec ? this.tSecColor : null, p.u.uSecColor);
+  }
+
+  // Sube un recuadro de la imagen horneada a sus texturas
+  private uploadRect(b: Baked, r: { x0: number; y0: number; x1: number; y1: number }): void {
+    const gl = this.gl, w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1;
+    subImage(gl, this.tColor!, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
+    subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
+    if (this.faceUp) fillFace(b, this.faceUp, this.backVals, r.x0, r.y0, r.x1, r.y1);
+    subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
+    fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
+    subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
+    if (this.tSky && b.sky) subImage(gl, this.tSky, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
+  }
+
+  // Corre las texturas de la imagen horneada como shiftBaked corrió la imagen (píxel nuevo (x, y) = viejo (x + dx, y - rows)):
+  // color, cara y cielo con blitFramebuffer (lo que entra, vacío), profundidad e y del mundo con un paso que les resta lo
+  // suyo. Cada una a una textura nueva (no se puede leer y escribir la misma)
+  shiftMs = 0;
+  shiftCount = 0;          // cuántas veces se corrieron las texturas dentro de la GPU (para probar)
+  private gpuShift(b: Baked, ls: NonNullable<Baked['lastShift']>): void {
+    const t0 = performance.now(), gl = this.gl, W = b.width, H = b.height, { dx, rows } = ls;
+    const rd = gl.createFramebuffer()!, dr = gl.createFramebuffer()!;
+    const dx0 = Math.max(0, -dx), dx1 = W - Math.max(0, dx), dy0 = Math.max(0, rows), dy1 = H + Math.min(0, rows);
+    const blit = (src: WebGLTexture, internal: number, format: number, type: number, clear: () => void): WebGLTexture => {
+      const dst = tex2D(gl, internal, W, H, format, type, null);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dr);
+      gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+      clear();
+      if (dx0 < dx1 && dy0 < dy1) {
+        gl.bindFramebuffer(gl.READ_FRAMEBUFFER, rd);
+        gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, src, 0);
+        gl.readBuffer(gl.COLOR_ATTACHMENT0);
+        gl.blitFramebuffer(dx0 + dx, dy0 - rows, dx1 + dx, dy1 - rows, dx0, dy0, dx1, dy1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      }
+      gl.deleteTexture(src);
+      return dst;
+    };
+    this.tColor = blit(this.tColor!, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, () => gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]));
+    this.tFace = blit(this.tFace!, gl.R8I, gl.RED_INTEGER, gl.BYTE, () => gl.clearBufferiv(gl.COLOR, 0, [-1, 0, 0, 0]));
+    if (this.tSky) this.tSky = blit(this.tSky, gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE, () => gl.clearBufferuiv(gl.COLOR, 0, [SKY_RAYS, 0, 0, 0]));
+    const p = this.shiftF;
+    const pass = (src: WebGLTexture, delta: number, empty: number): WebGLTexture => {
+      const dst = tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, dr);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+      gl.viewport(0, 0, W, H);
+      gl.disable(gl.BLEND);
+      gl.useProgram(p.prog);
+      bindTex(gl, 0, gl.TEXTURE_2D, src, p.u.uSrc);
+      gl.uniform2i(p.u.uOff, dx, -rows);
+      gl.uniform2i(p.u.uSize, W, H);
+      gl.uniform1f(p.u.uDelta, delta);
+      gl.uniform1f(p.u.uEmpty, empty);
+      gl.bindVertexArray(this.vao);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      gl.deleteTexture(src);
+      return dst;
+    };
+    this.tDepth = pass(this.tDepth!, ls.dd, Infinity);
+    this.tWorldY = pass(this.tWorldY!, ls.dy, 0);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(rd); gl.deleteFramebuffer(dr);
+    this.shiftMs = performance.now() - t0;
+    this.shiftCount++;
   }
 
   // Los pesos de las luces fijas: una capa por luz elegida. Se eligen las que tocan la vista (todas, si no se dice) y,

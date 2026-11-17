@@ -704,3 +704,20 @@ void main() {
   if (ex * ex + ey * ey > 1.0) discard;
   oFactor = vec4(0.7, 0.7, 0.72, 1.0);
 }`;
+
+// ---- La ventana viva: correr una textura de un canal float de la imagen horneada (profundidad, y del mundo) dentro de la
+// GPU (bake.ts, shiftBaked): el píxel nuevo es el viejo en p + uOff, menos uDelta (lo de fuera, uEmpty)
+export const FRAG_SHIFT = `${HEADER}
+uniform sampler2D uSrc;
+uniform ivec2 uOff;
+uniform ivec2 uSize;
+uniform float uDelta;
+uniform float uEmpty;
+out vec4 oVal;
+void main() {
+  ivec2 p = ivec2(gl_FragCoord.xy) + uOff;
+  if (p.x < 0 || p.y < 0 || p.x >= uSize.x || p.y >= uSize.y) { oVal = vec4(uEmpty); return; }
+  float v = texelFetch(uSrc, p, 0).r;
+  oVal = vec4(isinf(v) ? v : v - uDelta);
+}`;
+

@@ -516,9 +516,20 @@ win.get(x, y, z);                                                // coordenadas 
   pesos de las luces, con antorchas a los dos lados del borde.
 - Las claves de vóxel (`key`) cubren -2048..2047 por eje (`KEY_OFF`, `KEY_SPAN`; antes -1024..1023, que no llegaba a
   una ventana de 13 trozos de 128).
-- Coste en la ventana de 8 x 13 (imagen 1026 x 1036): `shiftBaked` de un trozo, p50 9,7 ms y p95 17 ms en Bun sin freno.
-  A 6x no cabe en un cuadro: pendiente repartirlo (doble búfer copiado por bandas en varios cuadros, cambiando de golpe
-  al acabar), y la copia en la GPU sin volver a subir.
+- Por pasos: `shiftBakedJob(b, dcx, dcy, { band })` hace la imagen nueva en otro búfer (se turnan) por bandas de filas,
+  como trabajo de la cola, mientras se sigue componiendo y rehorneando la vieja. Antes de cambiar vuelve a copiar lo
+  rehorneado mientras tanto, y el cambio (vóxeles, búferes y luces, de golpe) espera a que no quede rehorneado a medias.
+  Cruzar otro borde antes de acabar: `job.merge(dcx, dcy)` suma el corrimiento y empieza la copia otra vez (desde la
+  imagen de ahora, que sigue siendo la vieja). `shiftBaked` es el mismo trabajo de una vez.
+- Tras el cambio, la GPU corre sus texturas dentro de sí (`b.lastShift`): color, cara y cielo con `blitFramebuffer`,
+  profundidad e y del mundo con un paso que les resta lo suyo, y sube solo lo publicado con el corrimiento (lo borrado);
+  si no estaba al día justo antes, lo vuelve a subir todo.
+- Oráculo: "ventana corrida" (la imagen corrida un trozo, CPU = GPU) y "ventana corrida y vuelta" (vuelve al sitio y la
+  vista es byte a byte la de antes, en CPU y en GPU), en dos giros, con antorchas a los dos lados del borde; la GPU se
+  corre dentro de sí una vez y dos (`gpuShifts`).
+- Coste en la ventana de 8 x 13 (imagen 1026 x 1036), Bun sin freno (`bench-ventana`): de una vez, p50 9,7 ms. Por pasos
+  con bandas de 32 filas, 34 pasos de p50 0,5 ms (p95 0,7) y el cambio p50 1,5 ms (p95 1,7); con bandas de 64, 18 pasos
+  de 1,0 ms y el cambio 1,4.
 - Aún no: `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles
