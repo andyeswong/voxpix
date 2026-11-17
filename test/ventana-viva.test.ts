@@ -165,6 +165,33 @@ describe('ventana viva', () => {
     expect(win.baked).toBe(win.viewOf(2)!.baked);
   });
 
+  it("carga del principio por la cola (preload: 'queue'): el anillo listo antes que todo, y al final igual que cargada en el constructor", () => {
+    const opts = { blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0] as Trozo, margin: 1, bake: OPTS };
+    const win = new LiveWindow({ ...opts, preload: 'queue' });
+    expect(win.preloadingNow).toBe(true);
+    expect(win.isLoaded([0, 0])).toBe(false);
+    // (el anillo, el trozo del objetivo solo: con 5 x 5, uno de 3 x 3 toca todos los de fuera con el margen del rehorneado)
+    const x = TV / 2, y = TV / 2, ring = { x: 0, n: 0, s: 0 };
+    expect(win.ready(x, y, ring)).toBe(false);
+    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    let ringAt = -1, allAt = -1, k = 0;
+    for (; k < 20000 && (win.busy || budget.pending || win.preloadingNow); k++) {
+      win.update(x, y, budget); budget.run();
+      if (ringAt < 0 && win.ready(x, y, ring)) ringAt = k;
+      if (allAt < 0 && win.ready(x, y, { x: 2, n: 2, s: 2 })) allAt = k;
+    }
+    // El trozo del objetivo escrito y horneado antes que la ventana entera (5 x 5); y todo acaba
+    expect(ringAt).toBeGreaterThan(0);
+    expect(allAt).toBeGreaterThan(ringAt);
+    expect(k).toBeLessThan(20000);
+    expect(win.preloadingNow).toBe(false);
+    expect(win.ready(x, y, { x: 2, n: 2, s: 2 })).toBe(true);
+    const ref = new LiveWindow(opts);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
   it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });

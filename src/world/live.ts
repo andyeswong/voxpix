@@ -78,6 +78,11 @@ export interface LiveWindowOptions {
   // Lo que se ve de la imagen (píxeles, ancho y alto, centrado en el objetivo como la cámara del juego): lo que turnTo
   // hornea antes del cambio. Sin él, la imagen entera
   viewport?: readonly [number, number];
+  // La carga del principio: 'block' (por defecto), todos los trozos en el constructor; 'queue', la ventana vacía y los
+  // trozos por la cola del centro hacia fuera, con prioridad 0 (el presupuesto cercano) y su rehorneado detrás, también
+  // cercano, hasta que estén todos (ready() dice cuándo está lo de alrededor del objetivo: para una pantalla de carga que
+  // avanza y un juego que empieza antes de tenerlo todo)
+  preload?: 'block' | 'queue';
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
@@ -130,7 +135,15 @@ export class LiveWindow {
     this.store = new StaticVoxels(opts.blocks.palette as Palette, opts.nx * this.T, opts.ny * this.T, 0, opts.spec.height * B - 1);
     this.state = new WorldState(this.store, [], null);
     this.grid = new BlockGrid(this.state, opts.blocks);
-    for (let ty = this.ty0; ty < this.ty0 + opts.ny; ty++) for (let tx = this.tx0; tx < this.tx0 + opts.nx; tx++) {
+    if (opts.preload === 'queue') {
+      // Del trozo del objetivo hacia fuera (por la cola, en update)
+      const all: Trozo[] = [];
+      for (let ty = this.ty0; ty < this.ty0 + opts.ny; ty++) for (let tx = this.tx0; tx < this.tx0 + opts.nx; tx++) all.push([tx, ty]);
+      all.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy) || a[1] - b[1] || a[0] - b[0]);
+      this.loading.push(...all);
+      this.preloading = true;
+      this.at = [(cx + 0.5) * this.T, (cy + 0.5) * this.T];
+    } else for (let ty = this.ty0; ty < this.ty0 + opts.ny; ty++) for (let tx = this.tx0; tx < this.tx0 + opts.nx; tx++) {
       const job = this.loadTrozoJob([tx, ty]);
       while (!job.run(Infinity));
     }
@@ -315,6 +328,27 @@ export class LiveWindow {
   trozoOf(x: number, y: number): Trozo { return [Math.floor(x / this.T), Math.floor(y / this.T)]; }
   // ¿Está escrito el trozo (y se puede leer)?
   isLoaded(t: Trozo): boolean { return this.loaded.has(`${t[0]},${t[1]}`); }
+  // ¿Sigue la carga del principio (preload: 'queue')?
+  get preloadingNow(): boolean { return this.preloading; }
+  private preloading = false;
+  // ¿Está listo lo de alrededor del punto (x, y) del MUNDO: los trozos tx - ring.x .. tx + ring.x, ty - ring.s .. ty +
+  // ring.n escritos, y su imagen en el giro de ahora sin nada por rehornear (ni en la cola ni sin encolar)? Para la
+  // pantalla de carga con preload: 'queue', o para saber si lo que se ve ya está
+  ready(x: number, y: number, ring: { x: number; n: number; s: number } = { x: 3, n: 5, s: 3 }): boolean {
+    const [tx, ty] = this.trozoOf(x, y);
+    for (let j = ty - ring.s; j <= ty + ring.n; j++) for (let i = tx - ring.x; i <= tx + ring.x; i++) if (!this.isLoaded([i, j])) return false;
+    // Los trozos de vóxeles de la imagen de ahora que caen en el anillo (en ejes de la vista)
+    const { view, baked } = this.views.get(this.quarter)!, src = baked.source, cam = view.camera;
+    const [ax, ay] = this.toLocal((tx - ring.x) * this.T, (ty - ring.s) * this.T), [bx, by] = this.toLocal((tx + ring.x + 1) * this.T - 1, (ty + ring.n + 1) * this.T - 1);
+    const [p0x, p0y] = cam.cellToView(Math.max(0, ax), Math.max(0, ay)), [p1x, p1y] = cam.cellToView(Math.min(this.store.width - 1, bx), Math.min(this.store.depth - 1, by));
+    const X0 = Math.floor(Math.min(p0x, p1x) / CHUNK), X1 = Math.floor(Math.max(p0x, p1x) / CHUNK), Y0 = Math.floor(Math.min(p0y, p1y) / CHUNK), Y1 = Math.floor(Math.max(p0y, p1y) / CHUNK);
+    const inRing = (c: number) => { const x = c % src.cols, y = Math.floor(c / src.cols); return x >= X0 && x <= X1 && y >= Y0 && y <= Y1; };
+    if (src.changedSince(baked.version).some(inRing)) return false;
+    for (const plans of baked.pendingPlans?.values() ?? []) for (const p of plans) {
+      if (!(p.X1 < X0 * CHUNK || p.X0 > (X1 + 1) * CHUNK - 1 || p.Y1 < Y0 * CHUNK || p.Y0 > (Y1 + 1) * CHUNK - 1)) return false;
+    }
+    return true;
+  }
   // ¿Hay trabajo de la ventana en marcha (corrimiento o trozos por escribir)?
   // ¿Hay un corrimiento empezado (sin cambiar aún)?
   get shifting(): boolean { return !!this.shiftJobs; }
@@ -337,6 +371,8 @@ export class LiveWindow {
     if (this.turnPrep) budget.push(this.turnPrep.job ??= this.turnCoreJob(this.turnPrep.q));
     if (this.turnRest) budget.push(this.turnRest.job);
     if (!this.shiftJobs && !this.turnPrep && this.loading.length && !this.loadJob) this.nextLoad();
+    // La carga del principio acaba con el último trozo escrito (su rehorneado, que se encola abajo, aún va cercano)
+    const lastPreload = this.preloading && !this.loading.length && !this.loadJob;
     if (this.loadJob) budget.push(this.loadJob);
     if (this.shiftJobs) return;
     // Lo escrito (los trozos que entraron, con lo del juego), a rehornear en todos los giros; en los que no se ven, también
@@ -347,8 +383,14 @@ export class LiveWindow {
       if (q === this.quarter && !all) continue;
       const lights = view.bakeable().lights;
       if (!baked.source.changedSince(baked.version).length) continue;
-      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true } })) budget.push(q === 0 ? j : { key: `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(j.priority !== undefined ? { priority: j.priority } : {}) });
+      // (en la carga del principio, el rehorneado va cercano, detrás de los trozos; lo expuesto, detrás de todo)
+      const pri = (j: ViewJob) => this.preloading && !j.key.startsWith('exposure:') ? 1 : j.priority;
+      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true } })) {
+        const p = pri(j);
+        budget.push(q === 0 && p === j.priority ? j : { key: q === 0 ? j.key : `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(p !== undefined ? { priority: p } : {}) });
+      }
     }
+    if (lastPreload && !this.pendingRebake) this.preloading = false;
   }
 
   // Corre la ventana dx, dy trozos: el juego guarda lo que sale (aún en el store), y el trabajo de la cola hace el resto
@@ -457,7 +499,7 @@ export class LiveWindow {
     const t = this.loading.shift()!;
     const job = this.loadTrozoJob(t);
     let spent = 0;
-    this.loadJob = { key: `trozo:${t[0]},${t[1]}`, priority: 70, run: (deadline: number) => {
+    this.loadJob = { key: `trozo:${t[0]},${t[1]}`, priority: this.preloading ? 0 : 70, run: (deadline: number) => {
       const a = performance.now(), ok = job.run(deadline);
       spent += performance.now() - a;
       if (!ok) return false;
