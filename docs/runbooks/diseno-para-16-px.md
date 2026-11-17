@@ -45,6 +45,15 @@ Un bloque de 8 vóxeles queda a unos 1-1,5 px por vóxel. A ese tamaño:
 6. La media RGB del icono, lejos de las de los iconos que se parecen en la misma barra. La mochila (142, 86, 50) se
    comparó con la mesa y el cofre.
 
+## Un icono que se mira de frente (los corazones)
+
+El ángulo de la barra de objetos (giro -30°) tuerce lo simétrico: un corazón sale con un lóbulo más bajo, y uno de 8 de
+ancho mide 10 x 10 con el contorno. Para algo que es un dibujo de frente (la barra de vida), el icono va de frente:
+`iconSheet(items, { yaw: 0, elevation: 20, cell: 8, outline: 'both', outlineColor })`, y `scale: 2` para 16 px (el mismo
+icono, cada píxel doble). Con el contorno, el ancho es el de la silueta más 2: para 8 px, 6 de ancho. Ejemplo:
+`scripts/corazones.js` (lleno, medio y vacío), y su prueba `test/corazones.test.ts` mide en cada mitad del icono los
+píxeles rojos y los del hueco: el medio no tiene nada rojo a la derecha.
+
 ## Medirlo sin verlo
 
 Los agentes de la Alienware no pueden abrir imágenes, así que el icono se mide sobre sus píxeles. Antes de entregar:

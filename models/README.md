@@ -12,6 +12,7 @@ the same file, byte for byte.
 | `flores/flores.voxset.json` | Three flower blocks: red, yellow, white | A block set (`newSet`, `addBlock`, `saveSet`) with ramps of material `follaje`: blocks that are not solid and let light through | 3 blocks of 8 x 8 x 8 | `scripts/flores.js` |
 | `medieval/medieval.voxset.json` | Twelve medieval blocks: iron and gold ore, cobblestone, planks, sand, workbench, furnace (off and lit), chest (closed and open), ladder, bone | Block textures painted with a deterministic hash (ore specks, plank seams, cobblestone courses), an emissive ramp (the lit furnace), non-solid blocks (ladder, bone), and ramps meant to be appended to another set's palette | 12 blocks of 8 x 8 x 8 | `scripts/bloques-medievales.js` |
 | `objetos/objetos.voxset.json` | Hand-held items: a stick, wooden/stone/iron pickaxes and swords, iron and gold ingots | Items kept in a block set so their icons come from `iconSheet`, with a grip point per item (`OBJETOS_GRIP`) for holding them in a hand | 9 items in cubes of 8 x 8 x 8 | `scripts/objetos.js` |
+| `corazones/corazones.voxset.json` | Life hearts for a health bar: full, half and empty | A 6 x 5 heart on a thin slab, red with a highlight at the top left; the half one red on the left and the dark hollow on the right; the empty one all hollow (the set's outline draws it). Seen from the front (`iconSheet` with `yaw: 0, elevation: 20, cell: 8`, and `scale: 2` for 16 px), so it fits 8 px with its outline and the half one reads apart from the full one at 8 px; measured on the icons | 6 x 2 x 5 in a cube of 8 | `scripts/corazones.js` |
 | `mochila/mochila.voxset.json` | A leather backpack, for an inventory icon | A model designed so that its oblique 16 px icon looks like a flat drawing: a thin slab (the top face barely shows), big blocks of colour, no overhangs, tones chosen for how the renderer shades each face; measured on the icon itself | 8 x 2 x 8 in a cube of 8 | `scripts/mochila.js` |
 | `luces/linterna.json`, `luces/antorcha.json`, `luces/linterna-neon.json` | Hand-held lights: a slate flashlight, a torch, a neon flashlight | A layer file with three stacks (`linterna_zNN`, `antorcha_zNN`, `linterna-neon_zNN`) and emissive ramps, grip at the origin | 3 x 9 x 3, 3 x 3 x 11, 3 x 9 x 3 | `luces/luces_capas.px.js` |
 | `maia/maia.json`, `maia/walk/maia_walk_0..7.json` | A character turned into voxels from approved 2D art (front and back), and her 8 walk frames | Giving volume to pixel art layer by layer (each layer a horizontal cut); walk frames generated from the model (`walkFrames`) | 19 x 17 x 32 | `maia/maia_capas.px.js`, `scripts/maia-walk.ts` |
@@ -41,9 +42,10 @@ The scripts run in the editor page and return the file as an object.
 | `scripts/bloques-medievales.js` | `medieval/medieval.voxset.json` |
 | `scripts/objetos.js` | `objetos/objetos.voxset.json` |
 | `scripts/mochila.js` | `mochila/mochila.voxset.json` |
+| `scripts/corazones.js` | `corazones/corazones.voxset.json` |
 
 The block scripts also export their palette ramps and a function that adds their blocks to a set that is already
-open (`floresBlocks`, `medievalBlocks`, `objetosBlocks`, `mochilaBlocks`), to merge them into another set. Their
+open (`floresBlocks`, `medievalBlocks`, `objetosBlocks`, `mochilaBlocks`, `corazonesBlocks`), to merge them into another set. Their
 ramps go at the end of that set's palette, so no existing index moves.
 
 ### From a layer file (`.px.js`)
@@ -64,6 +66,6 @@ Checked on 2026-11-16: every file above regenerates byte for byte.
 
 ## Tests
 
-`test/enano.test.ts`, `test/flores.test.ts`, `test/bloques-medievales.test.ts`, `test/objetos-mano.test.ts` and
-`test/mochila.test.ts` load these files and check what each example promises (ids, which blocks are solid or emissive,
-boxes, clips, grips, the backpack's flap and buckle).
+`test/enano.test.ts`, `test/flores.test.ts`, `test/bloques-medievales.test.ts`, `test/objetos-mano.test.ts`,
+`test/mochila.test.ts` and `test/corazones.test.ts` load these files and check what each example promises (ids, which
+blocks are solid or emissive, boxes, clips, grips, the backpack's flap and buckle, the hearts' halves read at 8 px).
