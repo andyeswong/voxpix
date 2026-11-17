@@ -71,6 +71,9 @@ export interface Baked {
   // toda la cola, y a 60 cuadros por segundo eso tardaba más que cruzar un trozo
   pendingPlans?: Map<object, Plan[]>;
   rebakeEpoch?: number;
+  // Lo cambiado que rebakeChangedJobs con limit dejó para la siguiente llamada (con su caja, null = el trozo entero, y si
+  // cambió por el mundo); cancelRebakes lo devuelve con lo de la cola, para marcarlo otra vez tras correrse
+  deferred?: Map<number, { box: Box3 | null; world: boolean }>;
   // Con { sky: true }: cuánto cielo ve la cara de cada píxel, de 0 a SKY_RAYS (los rayos que llegan arriba). Al
   // componer, con Frame2DOptions.cave, la luz ambiente va de la de cueva (0) a la de siempre (todo el cielo)
   sky?: Uint8Array;
@@ -1203,11 +1206,39 @@ export const LIGHT_PRIORITY = 10000;
 // se ve encendida en pocos cuadros. No se adelantan a sus recuadros: esperan a que se publiquen sin gastar nada. Las que
 // solo toca de rebote un corte de vista (escrituras de vista: StaticVoxels.viewWrites) van detrás, como el cielo: un
 // corte bajo unas antorchas no tiene que quitarle el cercano a sus recuadros. nearLights: false, todas detrás
-export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean; shape?: RebakeShape } = {}): ViewJob[] {
+// limit: como mucho tantos trozos por llamada (los más cercanos a near u order, en el plano de la vista); los demás
+// quedan apuntados (Baked.deferred, con sus cajas) para las siguientes, que los toman antes que lo nuevo si están más
+// cerca. Hacer los trabajos de miles de trozos de una vez (lo que se juntó durante un corrimiento) costaba un cuadro
+// entero a 6x
+export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean; shape?: RebakeShape; limit?: number; order?: { x: number; y: number } } = {}): ViewJob[] {
   const since = b.version;
-  const { chunks, boxes } = changedBoxes(b);
+  let { chunks, boxes } = changedBoxes(b);
   // Los trozos que cambiaron por el mundo (no solo por un corte de vista)
-  const worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
+  let worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
+  if (b.deferred?.size || (opts.limit !== undefined && chunks.length > opts.limit)) {
+    const all = new Map<number, { box: Box3 | null; world: boolean }>(b.deferred ?? []);
+    const ws = new Set(worldChunks);
+    for (const c of chunks) {
+      const nb = boxes.get(c) ?? null, old = all.get(c);
+      const box = old === undefined ? nb : old.box && nb ? { x0: Math.min(old.box.x0, nb.x0), y0: Math.min(old.box.y0, nb.y0), z0: Math.min(old.box.z0, nb.z0), x1: Math.max(old.box.x1, nb.x1), y1: Math.max(old.box.y1, nb.y1), z1: Math.max(old.box.z1, nb.z1) } : null;
+      all.set(c, { box, world: ws.has(c) || !!old?.world });
+    }
+    let list = [...all.keys()];
+    const at = opts.near ?? opts.order, cols = b.source.cols;
+    if (opts.limit !== undefined && list.length > opts.limit) {
+      if (at) {
+        const d = (c: number) => ((c % cols) * CHUNK + CHUNK / 2 - at.x) ** 2 + (Math.floor(c / cols) * CHUNK + CHUNK / 2 - at.y) ** 2;
+        list.sort((p, q) => d(p) - d(q));
+      }
+      const rest = list.slice(opts.limit);
+      list = list.slice(0, opts.limit);
+      b.deferred = new Map(rest.map((c) => [c, all.get(c)!] as const));
+    } else b.deferred?.clear();
+    chunks = list;
+    boxes = new Map();
+    for (const c of list) { const e = all.get(c)!; if (e.box) boxes.set(c, e.box); }
+    worldChunks = list.filter((c) => all.get(c)!.world);
+  }
   const jobs = rebakeJobs(b, chunks, lights, boxes, opts.shape);
   const n = opts.near;
   // Lo expuesto que el horneado inicial no preparó: una vez, sin prioridad (detrás de todo)
@@ -1295,6 +1326,9 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
 }
 
 // Los trozos cambiados desde el último horneado y la caja de lo cambiado en cada uno; pone b.version al día
+// ¿Queda algo por rehornear? (lo cambiado desde la versión del horneado, o lo que rebakeChangedJobs dejó para después)
+export function rebakePending(b: Baked): boolean { return !!b.deferred?.size || b.source.changedSince(b.version).length > 0; }
+
 function changedBoxes(b: Baked): { chunks: number[]; boxes: Map<number, Box3> } {
   const s = b.source, chunks = s.changedSince(b.version), boxes = new Map<number, Box3>();
   for (const c of chunks) { const k = s.changedBox(c, b.version); if (k) boxes.set(c, k); }
@@ -1317,6 +1351,15 @@ function changedBoxes(b: Baked): { chunks: number[]; boxes: Map<number, Box3> } 
 // Descarta el rehorneado de la cola (sus trabajos acaban sin hacer nada) y devuelve las cajas de lo que iba a rehacer
 export function cancelRebakes(b: Baked): Plan[] {
   const plans = [...(b.pendingPlans?.values() ?? [])].flat();
+  // (y lo que rebakeChangedJobs dejó para después)
+  if (b.deferred?.size) {
+    const s = b.source;
+    for (const [c, { box }] of b.deferred) {
+      const X = (c % s.cols) * CHUNK, Y = Math.floor(c / s.cols) * CHUNK;
+      plans.push(box ? { X0: box.x0, Y0: box.y0, X1: box.x1, Y1: box.y1, Z0: box.z0, Z1: box.z1 } : { X0: X, Y0: Y, X1: Math.min(s.width, X + CHUNK) - 1, Y1: Math.min(s.depth, Y + CHUNK) - 1, Z0: s.zMin, Z1: s.zMax });
+    }
+    b.deferred.clear();
+  }
   b.rebakeEpoch = (b.rebakeEpoch ?? 0) + 1;
   b.rectsBusy?.clear(); b.lightWork?.clear(); b.pendingLights?.clear(); b.pendingPlans?.clear();
   return plans;

@@ -172,6 +172,23 @@ describe('ventana viva: correr lo horneado', () => {
     expect(exposureFaults.slice(faults)).toEqual([]);
   });
 
+  it('rebakeChangedJobs con limit: lo que deja para después (Baked.deferred) se vuelve a marcar corrido al correrse, y queda igual que hornear de nuevo', () => {
+    const b = fresh(0, 0);
+    const job = shiftBakedJob(b, K, 0, { band: 8, manual: true });
+    while (!job.run(-Infinity));
+    const holes: Box[] = [[40, 30, 20, 55, 45, 63], [70, 60, 16, 80, 75, 63]];
+    for (const h of holes) dig(b.source, 0, 0, h);
+    // Un trozo de vóxeles por llamada: los demás quedan para después
+    const jobs = rebakeChangedJobs(b, local(0, 0), { limit: 1, order: { x: 0, y: 0 } });
+    expect(b.deferred?.size ?? 0).toBeGreaterThan(1);
+    for (const j of jobs) while (!j.run(Infinity));
+    job.commit();
+    expect(b.deferred?.size ?? 0).toBe(0);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (i === N - 1) stamp(b.source, 1 + i, j, i, j);
+    rebakeChanged(b, local(1, 0));
+    expect(diff(b, fresh(1, 0, holes))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+  });
+
   it('el cambio no espera al rehorneado de la cola: lo descarta (uno a medias, otros sin empezar, luces) y lo vuelve a marcar corrido', () => {
     const b = fresh(0, 0);
     const job = shiftBakedJob(b, K, 0, { band: 8, manual: true });
