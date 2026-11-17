@@ -119,7 +119,7 @@ void (async () => {
   const esperas: number[] = [];
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
-  const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0);
+  const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0), SECZ = Number(q.get('seccionz') ?? 0);
   let nextBurst = 2000;
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
@@ -239,7 +239,8 @@ void (async () => {
         }
       }
       if (!painter || painter.b !== win.baked) painter = new SectionPainter(win.baked);
-      painter.set(sectionAround(win.view.camera, lx, ly, ground(x, Y), SECCION), dir);
+      // (?seccionz=N: el suelo de la caja N vóxeles por debajo de los pies, como un corte bajo tierra)
+      painter.set(sectionAround(win.view.camera, lx, ly, ground(x, Y) - SECZ, SECCION), dir);
       const pj = painter.job();
       if (pj) timed.push(pj);
       o.sectionLayer = painter.layer();
