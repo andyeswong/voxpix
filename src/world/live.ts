@@ -110,7 +110,7 @@ export interface PreparedTrozo {
 
 // Trozos de vóxeles cambiados que se convierten en trabajos de rehorneado por cuadro (rebakeChangedJobs limit): lo que se
 // junta durante un corrimiento (miles) costaba un cuadro entero a 6x
-const REBAKE_LIMIT = 512;
+const REBAKE_LIMIT = 128;
 
 export class LiveWindow {
   readonly store: StaticVoxels;
@@ -559,7 +559,7 @@ export class LiveWindow {
     // detrás); lo que se escriba se rehornea trozo a trozo, del centro hacia fuera
     if (this.jumping) {
       this.jumping = false;
-      for (const { baked } of this.views.values()) { baked.source.cut(); baked.version = baked.source.clock; baked.deferred?.clear(); }
+      for (const { baked } of this.views.values()) { baked.source.cut(); baked.version = baked.source.clock; baked.deferred?.clear(); baked.deferredOrder = undefined; }
     } else for (const { baked } of this.views.values()) {
       // Al correrse, lo que entra está vacío, y la imagen corrida también: no hay nada que rehornear ahí hasta que se
       // escriba cada trozo (si no, el primer rehorneado era un recuadro de toda la columna que entra, de vacío, y con un
