@@ -1009,7 +1009,7 @@ export interface WaterSurface {
   readonly groundVersion?: number;
   isBasin(i: number): boolean;
   draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
-    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean): void;
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean, cut?: { x0: number; x1: number; y0: number; y1: number; zMin: number } | null): void;
 }
 export interface DropSource {
   readonly count: number;

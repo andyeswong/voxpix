@@ -43,6 +43,8 @@ export interface SectionLayer {
   // Solo en las de SectionPainter: la capa anterior y las columnas de píxeles (de la imagen) que cambiaron desde ella;
   // lo demás de las columnas que comparten es igual. Para subir solo eso (el compositor de la GPU)
   readonly base?: SectionLayer | null;
+  // La caja del corte (en vóxeles de la vista): lo que se dibuja encima de la imagen (el agua) la respeta
+  readonly box?: SectionCut;
   readonly dirty?: ReadonlyArray<readonly [number, number]>;
 }
 
@@ -211,7 +213,7 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
     if (k >= SKY_RAYS) continue;
     rgba[q * 4] = fill[0]; rgba[q * 4 + 1] = fill[1]; rgba[q * 4 + 2] = fill[2]; rgba[q * 4 + 3] = 255;
   }
-  if (oy0 === ry && oy1 === ry1) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count };
+  if (oy0 === ry && oy1 === ry1) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut };
   // Solo las filas pedidas (sin el margen)
   const j0 = oy0 - ry, n = (oy1 - oy0 + 1) * w, a0 = j0 * w;
   let cnt = 0;
@@ -240,6 +242,7 @@ export function sectionAround(camera: { pointToView(x: number, y: number): [numb
 // contorno de la costura en los bordes sí es el del corte. Una franja caduca si se rehornea algo en sus columnas, y
 // todas si cambian la fila del objetivo, sus pies o y0.
 export const STRIP = 8;     // la caja se mueve por franjas de STRIP columnas
+const AHEAD_MIN = 3;        // franjas por delante que se pintan con prioridad (lo que cuesta llegar a andar un poco)
 const STARVE = 30;          // llamadas seguidas sin sitio antes de pintar un paso de la caja igualmente
 export const BAND = 48;     // y cada unidad, por bandas de BAND filas de la imagen (un paso de la cola)
 export const UNIT = 4;      // y se pinta de UNIT en UNIT (un paso de la cola: unos 1,6 ms sin freno)
@@ -341,7 +344,8 @@ export class SectionPainter {
   set(cut: SectionCut | null, dir = 0): void {
     this.dir = dir;
     if (!cut) { this.cut = null; return; }
-    const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = Math.floor(cut.x1 / STRIP) * STRIP + STRIP - 1;
+    // (con el mismo ancho siempre: la caja siguiente es esta desplazada una franja, y lo que se adelanta para ella vale)
+    const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((cut.x1 - cut.x0 + 1) / STRIP) * STRIP - 1;
     this.cut = { ...cut, x0, x1 };
     const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}`;
     if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
@@ -383,7 +387,8 @@ export class SectionPainter {
   job(): { key: string; priority?: number; run(deadline: number): boolean } | null {
     const w = this.wanted();
     if (!w.length && !this.nextEdge()) return null;
-    const boxDone = this.ready();
+    // Sin prioridad solo con la caja hecha y AHEAD_MIN franjas pintadas por delante (si no, al andar se ven huecos)
+    const boxDone = this.ready() && this.aheadFresh() >= AHEAD_MIN * (STRIP / UNIT);
     const run = (deadline: number) => {
       // En el cuadro en que la caja salta de franja (toca componer) y con la caja ya pintada, lo de delante espera: no se
       // suma a la composición
@@ -391,7 +396,9 @@ export class SectionPainter {
       for (;;) {
         const now = performance.now();
         // Sin sitio, nada; salvo si la caja lleva STARVE llamadas sin avanzar (que acabe apareciendo aunque no sobre)
-        if (now + this.stepEstimate() > deadline && !(this.declined >= STARVE && !this.ready())) { this.declined++; return false; }
+        // (al no caber se olvida la muestra más vieja: unos pasos lentos sueltos, los primeros sin compilar, no lo paran;
+        // a los pocos cuadros vuelve a probar con un paso de verdad)
+        if (now + this.stepEstimate() > deadline && !(this.declined >= STARVE && !this.ready())) { this.declined++; this.steps.shift(); return false; }
         this.declined = 0;
         // En orden: lo de la caja, el cielo de los bordes de la caja siguiente (para que componer al saltar no lo pague) y
         // lo de delante
@@ -404,6 +411,17 @@ export class SectionPainter {
       }
     };
     return boxDone ? { key: 'section', run } : { key: 'section', priority: 0, run };
+  }
+
+  // Las unidades seguidas ya pintadas por delante de la caja (en la dirección en que anda)
+  private aheadFresh(): number {
+    const c = this.cut;
+    if (!c) return 0;
+    const i0 = c.x0 / UNIT, i1 = (c.x1 + 1) / UNIT - 1, fwd = this.dir >= 0 ? 1 : -1, maxI = Math.floor((this.b.source.width - 1) / UNIT);
+    let n = 0;
+    for (let i = fwd > 0 ? i1 + 1 : i0 - 1; i >= 0 && i <= maxI && this.fresh(i); i += fwd) n++;
+    if (fwd > 0 ? i1 + n + 1 > maxI : i0 - n - 1 < 0) return Infinity;   // hasta el borde del mundo: no falta nada
+    return n;
   }
 
   // Lo que suelen costar los pasos: el tercero mayor de los últimos 8 (ms, sin freno; uno suelto lento no lo para todo)
@@ -637,7 +655,7 @@ export class SectionPainter {
         }
       }
     }
-    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, base, dirty, stride: RW, ring: RW };
+    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, base, dirty, stride: RW, ring: RW, box: c };
     this.last = layer;
     return layer;
   }

@@ -379,6 +379,10 @@ export class GpuCompositor {
     bindTex(gl, 3, gl.TEXTURE_2D, this.tWDepth, w.u.uWDepth);
     bindTex(gl, 4, gl.TEXTURE_2D, this.tWStatic, w.u.uWStatic);
     gl.uniform1i(w.u.uHasWater, hasWater ? 1 : 0);
+    const cut = this.secLayer?.box ?? null;
+    gl.uniform1i(w.u.uCut, cut ? 1 : 0);
+    gl.uniform4i(w.u.uCutBox, cut?.x0 ?? 0, cut?.x1 ?? 0, cut?.y0 ?? 0, cut?.y1 ?? 0);
+    gl.uniform1f(w.u.uCutZ, cut?.zMin ?? 0);
     gl.uniform1i(w.u.uLights, o.lights ? 1 : 0);
     gl.uniform2i(w.u.uView, o.vx, o.vy);
     gl.uniform2i(w.u.uViewSize, o.vw, o.vh);

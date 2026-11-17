@@ -116,16 +116,20 @@ describe('corte al componer', () => {
       }
       seen = L;
     };
+    let prevX0 = 0;
     for (const [k, gx] of [40, 44, 52, 60, 68].entries()) {
       const c0 = sectionAround(view.camera, gx, 59, TZ0, 32);
       p.set(c0, 1);
       sync(p.layer());                                                     // compone (en el cuadro del salto, lo de delante espera)
       const before = p.painted;
       p.job()?.run(Infinity);                                              // por la cola: también el cielo de los bordes de la caja siguiente
-      expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : 1) * (STRIP / UNIT));   // la caja, 4 franjas por delante y 1 por detrás; luego, una (de UNIT en UNIT)
-      const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x1 / STRIP) * STRIP + STRIP - 1 })!;
+      // La caja, 4 franjas por delante y 1 por detrás; luego, las franjas que avanza (de UNIT en UNIT)
+      const x0 = Math.floor(c0.x0 / STRIP) * STRIP, moved = k === 0 ? 0 : (x0 - prevX0) / STRIP;
+      expect(p.painted - before).toBe((k === 0 ? 4 + 4 + 1 : moved) * (STRIP / UNIT));
+      prevX0 = x0;
+      const L = p.layer()!, R = sectionLayer(bf, { ...c0, x0: Math.floor(c0.x0 / STRIP) * STRIP, x1: Math.floor(c0.x0 / STRIP) * STRIP + Math.ceil((c0.x1 - c0.x0 + 1) / STRIP) * STRIP - 1 })!;
       sync(L);
-      if (k > 0) expect(L.base).not.toBeNull();                            // al andar se pone al día por columnas
+      if (moved > 0) expect(L.base).not.toBeNull();                        // al andar se pone al día por columnas
       expect([L.x, L.y, L.w, L.h, L.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
       for (let q = 0; q < R.w * R.h; q++) {
         const gx = R.x + (q % R.w), j = Math.floor(q / R.w), l = secIdx(L, gx, j), m = j * BW + gx;

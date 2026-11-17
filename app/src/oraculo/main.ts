@@ -406,6 +406,8 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte al componer bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1 } });
   SCENARIOS.push({ name: `corte al componer por franjas bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, painter: true, z: 1 } });
   SCENARIOS.push({ name: `corte al componer con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true } });
+  // Sobre el lago con pisotones: el agua dentro de la caja no se dibuja
+  SCENARIOS.push({ name: `corte al componer sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1 } });
   const ent = SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!;
   SCENARIOS.push({ ...ent, name: `corte al componer con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true } });
 }

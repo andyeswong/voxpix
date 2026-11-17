@@ -396,8 +396,8 @@ export class WaterLayer {
   }
 
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
-    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true): void {
-    drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect);
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
+    drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect, cut);
   }
 }
 
@@ -440,8 +440,11 @@ export interface WaterGrid {
 // Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
 // (mundo + personajes); `total` (opcional) es la luz por píxel de la vista, que aquí se completa.
 // `worldLights`: todas las luces del mundo (fijas y dinámicas)
+// El corte al componer (section.ts): el agua dentro de la caja, desde zMin, no se dibuja
+export interface CutBox { x0: number; x1: number; y0: number; y1: number; zMin: number }
+
 export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
-    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true): void {
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
   const { sim, gw, gh } = w;
   const a = b.options.oblique?.y ?? 1;
   const originY = b.options.originY;
@@ -467,6 +470,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     const d = sim.depth[i]!;
     if (sim.solid[i] || d < 0.04) continue;
     const zs = sim.ground[i]! + d;
+    if (cut && gx * CELL >= cut.x0 && gx * CELL <= cut.x1 && gy * CELL >= cut.y0 && gy * CELL <= cut.y1 && zs >= cut.zMin) continue;
     const north = gy * CELL + CELL, south = gy * CELL;
     const sy0 = Math.round(originY - a * north - zs), sy1 = Math.max(sy0 + 1, Math.round(originY - a * south - zs));
     const ymid = (north + south) / 2;

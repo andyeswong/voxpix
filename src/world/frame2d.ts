@@ -367,7 +367,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
 
   // El agua (tapa lo sumergido), los efectos y las gotas
-  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo');
+  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null);
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con

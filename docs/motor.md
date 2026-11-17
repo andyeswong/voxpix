@@ -1059,6 +1059,33 @@ compositor.frame(state, baked, { ...opts, section });                         //
 
   Componer y subir solo cuestan en el cuadro en que la caja salta de franja (p95 de componer ~8 ms a 6x). Con unidades
   de 8 columnas aparece antes, pero hay 6-11 cuadros de más de 25 ms.
+- Lo que cambió tras medirlo en el juego (FERN: con pasos de ~11 ms a 6x, 162-460 cuadros de más de 25 ms contra 22-23):
+  - cada unidad se pinta por bandas de `BAND` = 48 filas de la imagen (`sectionLayer` con `rows`: una fila de margen y
+    solo lo que puede caer en ellas): un paso, ~0,4 ms sin freno (~3 ms a 6x); unidas, lo mismo que la unidad entera;
+  - el trabajo puede no dar ningún paso si el siguiente no cabe (lo que suelen costar: el tercero mayor de los últimos
+    8; al no caber se olvida el más viejo, y vuelve a probar a los pocos cuadros). Con la caja sin acabar o menos de
+    `AHEAD_MIN` = 3 franjas pintadas por delante va con priority 0; si no, sin prioridad (solo con lo que sobre). A las
+    30 llamadas sin sitio, un paso de la caja igualmente;
+  - el orden: la caja, el cielo de los bordes de la caja siguiente, lo de delante. La caja tiene siempre el mismo ancho
+    (en franjas), así lo adelantado vale;
+  - la capa no depende del serial de la imagen (un rehorneado lejos no la recompone) y los arreglos de los bordes se
+    deshacen desde lo guardado;
+  - lo sustituido sin nada detrás, bajo tierra (su cielo horneado no es el abierto), lleva `SECTION_FILL`
+    (`SectionCut.fill`; `null`, transparente);
+  - el agua dentro de la caja, desde `zMin`, no se dibuja (`SectionLayer.box`; CPU y GPU).
+
+  Edge con GPU, `app/seccion.html` con la cola del juego (3 ms y 8 de lo cercano), dos tiradas:
+
+  | | Sin corte | 4 bloques | 16 | 24 |
+  |---|---|---|---|---|
+  | Cuadros > 25 ms, toda la tirada (6x) | 4-5 | 0-1 | 2-3 | 3-7 |
+  | Aparece a 6x (cuadros) | | 32-41 | 66-74 | 99-106 |
+  | Aparece a 1x (cuadros) | | 3 | 5 | 7 |
+  | Llamada a la cola más larga (6x) | | 11-19 ms | 10-18 | 13-24 |
+  | Componer al saltar, p95 (6x) | | 6-7 ms | 5-6 | 5-6 |
+
+  Huecos después de aparecer: 0-4 por tirada a 6x, 0 a 1x. Oráculo: 101/101 (4 escenas nuevas con el lago); las 81
+  de antes, iguales byte a byte.
 - La composición es un anillo: la columna de imagen gx está en gx mod `ring` de los arrays (`secIdx` da el índice), y al
   mover la caja solo se escriben las columnas nuevas y las de los bordes. La capa devuelta vale hasta la composición
   siguiente. La y del mundo (`wy`) y la luz por detrás (`back`) de cada píxel se calculan al pintar la unidad, no al

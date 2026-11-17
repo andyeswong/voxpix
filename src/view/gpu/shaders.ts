@@ -271,6 +271,9 @@ uniform ivec2 uGrid;                // gw, gh
 uniform ivec4 uCells;               // gx0, gx1, gy0, gy1
 uniform float uA, uOriginY, uF1, uF2, uVy, uVz, uTPerPx, uDPerT;
 uniform vec2 uWZ;                   // las alturas con agua posible (WaterLayer.zRange): mínima y máxima
+uniform bool uCut;                  // el corte al componer: el agua dentro de la caja (x0, x1, y0, y1), desde uCutZ, no
+uniform ivec4 uCutBox;
+uniform float uCutZ;
 uniform vec3 uAmbient;
 uniform vec3 uTones[5];             // 0..255
 uniform float uGlow;                // luz mínima de la superficie (agua emisiva)
@@ -314,6 +317,7 @@ void main() {
     float dd = wDepth(c);
     if (st.g != 0.0 || dd < 0.04) continue;
     float z = st.r + dd;
+    if (uCut && gx * CELL >= uCutBox.x && gx * CELL <= uCutBox.y && g * CELL >= uCutBox.z && g * CELL <= uCutBox.w && z >= uCutZ) continue;
     float north = float(g * CELL + CELL), south = float(g * CELL);
     int sy0 = int(jsRound(uOriginY - uA * north - z));
     int sy1 = max(sy0 + 1, int(jsRound(uOriginY - uA * south - z)));
