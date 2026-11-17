@@ -836,11 +836,15 @@ function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1
 
 // changed (opcional, buf.w x buf.h): se marca 1 donde cambió qué vóxel o qué cara se ve
 function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8Array): void {
-  for (let j = 0; j < buf.h; j++) for (let i = 0; i < buf.w; i++) {
-    const src = j * buf.w + i, dst = (r.y0 + j) * b.width + r.x0 + i;
-    if (changed && (b.face[dst] !== buf.face[src] || !Object.is(b.pick[dst], buf.pick[src]))) changed[src] = 1;
-    b.depth[dst] = buf.depth[src]!; b.face[dst] = buf.face[src]!; b.pick[dst] = buf.pick[src]!;
-    for (let ch = 0; ch < 4; ch++) b.rgba[dst * 4 + ch] = buf.rgba[src * 4 + ch]!;
+  // Fila a fila con set (una copia de memoria por array y fila; antes, píxel a píxel: ~8 ms a 6x por recuadro del worker)
+  const w = buf.w;
+  for (let j = 0; j < buf.h; j++) {
+    const src = j * w, dst = (r.y0 + j) * b.width + r.x0;
+    if (changed) for (let i = 0; i < w; i++) if (b.face[dst + i] !== buf.face[src + i] || !Object.is(b.pick[dst + i], buf.pick[src + i])) changed[src + i] = 1;
+    b.depth.set(buf.depth.subarray(src, src + w), dst);
+    b.face.set(buf.face.subarray(src, src + w), dst);
+    b.pick.set(buf.pick.subarray(src, src + w), dst);
+    b.rgba.set(buf.rgba.subarray(src * 4, (src + w) * 4), dst * 4);
   }
   const pub = b.published;
   pub.rects.push({ serial: ++pub.serial, ...r });
