@@ -89,7 +89,11 @@ void (async () => {
   let heapBefore = -1;
   const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
+  // Un error en un cuadro para el banco y queda en window.__viva (si no, el que mide espera hasta su tope)
   function loop(now: number): void {
+    try { step(now); } catch (e) { (window as unknown as { __viva: unknown }).__viva = { error: String((e as Error)?.stack ?? e), frames: frames.length }; }
+  }
+  function step(now: number): void {
     // (medio milisegundo de holgura: los rAF no caen exactos)
     if (HZ && last > 0 && now - last < 1000 / HZ - 0.5) { requestAnimationFrame(loop); return; }
     if (start < 0) start = now;
