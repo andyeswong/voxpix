@@ -113,7 +113,7 @@ describe('rehorneado como trabajos (para la cola con presupuesto)', () => {
   });
 
   it('con forma (franjas de 16 x 16 filas, recuadros juntados, contorno): da lo mismo que hornear de cero', () => {
-    for (const shape of [{ band: 16, rows: 16, merge: true }, { band: 3, rows: 7 }, { band: 64, merge: true }]) {
+    for (const shape of [{ band: 16, rows: 16, merge: true }, { band: 3, rows: 7 }, { band: 64, merge: true }, { band: 16, rows: 64, merge: true, tile: 2 }]) {
       const { s, lights } = yard();
       const o = { topZ: 30, incline: 0.5, outline: 'both' as const, sky: true };
       const b = bakeWorld({ model: s, lights, width: 80, depth: 64 }, o);

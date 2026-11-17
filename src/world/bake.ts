@@ -892,7 +892,9 @@ const LIGHT_CHECK = 4;    // píxeles entre dos miradas al reloj dentro de un pa
 //   en vez de un recuadro por columna de 16 con su margen de 3 por lado)
 // - rows: filas por paso (en pasos de band columnas x rows filas). Sin rows, la franja entera: en un recuadro alto (una
 //   columna de la ventana viva, cientos de filas) un paso de 4 columnas costaba 13 ms sin freno
-export interface RebakeShape { band?: number; merge?: boolean; rows?: number }
+// tile (EXPERIMENTO worker-exp): los trozos cambiados se agrupan antes por baldosas de tile x tile trozos de vóxeles (un
+// trozo de la ventana viva: T / 16), y cada baldosa da sus recuadros: trabajo acotado (y poco que tirar al cancelar)
+export interface RebakeShape { band?: number; merge?: boolean; rows?: number; tile?: number }
 
 // clip: solo los píxeles de ese recuadro de la imagen (LiveWindow.turnTo: lo que se ve). Lo de su borde (1 píxel) puede
 // quedar sin contorno bien hecho: quien recorta rehornea después los trozos que se salen de él
@@ -928,7 +930,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   const stale = () => (b.rebakeEpoch ?? 0) !== epoch;
   // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
   const waiting = () => myKeys.some((k) => busy.has(k));
-  for (const g of chunkGroups(b, chunks, shape.merge)) {
+  const tiles = new Map<string, number[]>();
+  if (shape.tile) for (const c of chunks) { const k = `${Math.floor((c % b.source.cols) / shape.tile)},${Math.floor(Math.floor(c / b.source.cols) / shape.tile)}`; const l = tiles.get(k); if (l) l.push(c); else tiles.set(k, [c]); }
+  const groupsAll = shape.tile ? [...tiles.values()].flatMap((cs) => chunkGroups(b, cs, shape.merge)) : chunkGroups(b, chunks, shape.merge);
+  for (const g of groupsAll) {
     const { rect: whole, plan } = chunkRect(b, g, boxes);
     const rect = clip ? { x0: Math.max(whole.x0, clip.x0), y0: Math.max(whole.y0, clip.y0), x1: Math.min(whole.x1, clip.x1), y1: Math.min(whole.y1, clip.y1) } : whole;
     if (rect.x0 > rect.x1 || rect.y0 > rect.y1) continue;

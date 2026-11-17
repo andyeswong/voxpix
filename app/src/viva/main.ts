@@ -57,6 +57,8 @@ void (async () => {
     hornero.onmessage = (e) => { const d = e.data as { id: number; ms: number; busyMs: number; skipped: number; o: RectOut }; results.set(d.id, d.o); remote.got++; remote.workerMs += d.ms; remote.busyMs = d.busyMs; remote.skipped = d.skipped; };
   }
   const win = new LiveWindow({
+    // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
+    ...(hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
     ...(hornero ? {
       onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }),
       // (la tanda nueva antes que el corrimiento: lo pedido antes se salta en el worker)
