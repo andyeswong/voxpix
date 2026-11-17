@@ -842,6 +842,22 @@ function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8A
 }
 const PUBLISHED_KEEP = 32;
 
+// EXPERIMENTO (rama worker-exp): el recuadro de unos trozos pintado aparte (en un worker con su copia de la ventana) y
+// publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
+// rebakeJobs, de una vez); publishRectBuffers: lo que hace el hilo principal con lo que le llega
+export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
+export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut {
+  const { rect } = chunkRect(b, chunks);
+  const buf = rectBuffers(rect);
+  for (let col = rect.x0; col <= rect.x1; col += band) {
+    const c1 = Math.min(rect.x1, col + band - 1);
+    warmStrip(b, rect, col, c1, Infinity);
+    renderColumns(b, rect, buf, col, c1);
+  }
+  return { rect, ...buf };
+}
+export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, o.rect, o); }
+
 // ---- rehorneado como trabajos que se reanudan (para la cola con presupuesto de la vista)
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
