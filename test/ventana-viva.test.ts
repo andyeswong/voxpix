@@ -31,8 +31,8 @@ const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget } from '../src/view/budget';
 import { LiveWindow, type Trozo } from '../src/world/live';
-import { rebakeChangedJobs, type Baked } from '../src/world/bake';
-import { sectionAround, sectionLayer, SectionPainter, STRIP, secIdx, type SectionLayer } from '../src/world/section';
+import { rebakeChangedJobs, SKY_REACH, type Baked } from '../src/world/bake';
+import { sectionAround, sectionLayer, sectionRows, SectionPainter, STRIP, secIdx, type SectionLayer } from '../src/world/section';
 
 const OPTS = { incline: 0.5, sky: true, outline: 'both' as const };
 // El "juego": lo picado, en coordenadas del mundo; al entrar un trozo se vuelve a poner
@@ -334,6 +334,25 @@ describe('ventana viva', () => {
       for (let k = 0; k < 20000 && (win.busy || budget.pending || !painter.ready()); k++) frame(true);
     }
     expect(kept).toBe(3);
+  });
+
+  it('capa de sección: un recuadro publicado en sus columnas pero lejos de sus filas no tira lo pintado; uno en sus filas, sí', () => {
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
+    const b = win.baked, painter = new SectionPainter(b, { ahead: 0, behind: 0 });
+    // Una caja poco honda (sus filas acaban mucho antes del pie de la imagen)
+    const [lx, ly] = win.toLocal(TV / 2, TV / 2), cut = { ...sectionAround(win.view.camera, lx, ly, win.store.height[ly * win.store.width + lx]! - 12, 24), y0: ly - 4 };
+    painter.set(cut, 0);
+    painter.paintAll();
+    expect(painter.ready()).toBe(true);
+    const [, fy1] = sectionRows(b, { ...cut, x0: -1e9, x1: 1e9 }), a = b.options.oblique?.y ?? 1, mr = Math.ceil((a + 1) * (SKY_REACH + 1)) + 1;
+    expect(fy1 + mr + 4).toBeLessThan(b.height - 1);
+    const pub = b.published, cx = (b.options.originX ?? 0) + cut.x0 + 8;
+    // Al sur, en las mismas columnas y por debajo de sus filas (más el margen del cielo): sigue al día
+    pub.rects.push({ serial: ++pub.serial, x0: cx, y0: fy1 + mr + 1, x1: cx + 3, y1: b.height - 1 });
+    expect(painter.ready()).toBe(true);
+    // En sus filas: ya no
+    pub.rects.push({ serial: ++pub.serial, x0: cx, y0: fy1 - 2, x1: cx + 3, y1: fy1 });
+    expect(painter.ready()).toBe(false);
   });
 
   it('el salto (el objetivo aparece fuera de la ventana, a mitad de escribir): un solo cambio, onUnload solo de lo escrito, lo de alrededor antes que todo, e igual que hecha de nuevo ahí', () => {

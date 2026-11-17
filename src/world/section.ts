@@ -324,7 +324,8 @@ function copyCols(from: SectionLayer, to: Raw, gx0: number, gx1: number): void {
 }
 
 export class SectionPainter {
-  private strips = new Map<number, { layer: SectionLayer | null; serial: number; id: number }>();
+  // (rows: las filas de la imagen que pintó, fy0..fy1 de sectionRows: lo que la invalida tiene que caer cerca de ellas)
+  private strips = new Map<number, { layer: SectionLayer | null; serial: number; id: number; rows: readonly [number, number] }>();
   private track = '';
   private cut: SectionCut | null = null;
   private dir = 0;
@@ -412,7 +413,7 @@ export class SectionPainter {
       const ni = i - DX / UNIT;
       if (st.serial !== before || ni < 0 || ni > maxI) continue;
       const L = st.layer;
-      if (!L) { this.strips.set(ni, { layer: null, serial: ls.serial - 1, id: st.id }); continue; }
+      if (!L) { this.strips.set(ni, { layer: null, serial: ls.serial - 1, id: st.id, rows: st.rows }); continue; }
       // (la profundidad, la y del mundo y lo demás no cambian: misma fila, misma profundidad)
       const pick = new Float64Array(L.w * L.h);
       let out = false;
@@ -426,7 +427,7 @@ export class SectionPainter {
       }
       // (un vóxel suyo salió de la ventana: se repinta)
       if (out) continue;
-      this.strips.set(ni, { layer: { ...L, x: L.x - DX, pick }, serial: ls.serial - 1, id: st.id });
+      this.strips.set(ni, { layer: { ...L, x: L.x - DX, pick }, serial: ls.serial - 1, id: st.id, rows: st.rows });
     }
     const c = this.cut!;
     this.cut = { ...c, x0: c.x0 - DX, x1: c.x1 - DX };
@@ -440,9 +441,7 @@ export class SectionPainter {
     if (pub.serial === st.serial) return true;
     const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
     if (st.serial < oldest - 1) return false;                             // ya no se sabe qué cambió
-    // Lo que pinta una unidad depende de sus columnas y, por el tono y el cielo, de SKY_REACH + 1 a cada lado
-    const ox = this.b.options.originX ?? 0, m = SKY_REACH + 1, x0 = ox + i * UNIT, x1 = x0 + UNIT - 1;
-    for (const r of pub.rects) if (r.serial > st.serial && r.x1 >= x0 - m && r.x0 <= x1 + m) return false;
+    for (const r of pub.rects) if (r.serial > st.serial && this.touches(r, i, st.rows[0], st.rows[1])) return false;
     st.serial = pub.serial;
     return true;
   }
@@ -602,7 +601,7 @@ export class SectionPainter {
     p.next = y1 + 1;
     if (p.next <= fy1) return;
     this.pending.delete(i);
-    this.strips.set(i, { layer: joinRows(p.parts, fy0, fy1), serial: p.serial, id: this.painted + 1 });
+    this.strips.set(i, { layer: joinRows(p.parts, fy0, fy1), serial: p.serial, id: this.painted + 1, rows: [fy0, fy1] });
     this.painted++;
   }
   // ¿Nada rehorneado cerca de la unidad i desde serial?
@@ -611,9 +610,20 @@ export class SectionPainter {
     if (pub.serial === serial) return true;
     const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
     if (serial < oldest - 1) return false;
-    const ox = this.b.options.originX ?? 0, m = SKY_REACH + 1, x0 = ox + i * UNIT, x1 = x0 + UNIT - 1;
-    for (const r of pub.rects) if (r.serial > serial && r.x1 >= x0 - m && r.x0 <= x1 + m) return false;
+    const p = this.pending.get(i);
+    const [ry0, ry1] = p ? [p.fy0, p.fy1] : [-Infinity, Infinity];
+    for (const r of pub.rects) if (r.serial > serial && this.touches(r, i, ry0, ry1)) return false;
     return true;
+  }
+  // ¿Un recuadro publicado toca lo que pinta la unidad i en las filas ry0..ry1? Lo que pinta depende de sus columnas y, por
+  // el tono y el cielo, de lo que hay a SKY_REACH + 1 vóxeles a cada lado y por encima: en la imagen, SKY_REACH + 1
+  // columnas a cada lado y (a + 1) * (SKY_REACH + 1) filas (un vóxel de lado y de alto se ve a + 1 filas más arriba). Antes
+  // solo se miraban las columnas: un recuadro lejos al sur (más abajo en la imagen) en las mismas columnas la tiraba
+  private touches(r: { x0: number; y0: number; x1: number; y1: number }, i: number, ry0: number, ry1: number): boolean {
+    const ox = this.b.options.originX ?? 0, m = SKY_REACH + 1, x0 = ox + i * UNIT, x1 = x0 + UNIT - 1;
+    if (r.x1 < x0 - m || r.x0 > x1 + m) return false;
+    const a = this.b.options.oblique?.y ?? 1, mr = Math.ceil((a + 1) * m) + 1;
+    return r.y1 >= ry0 - mr && r.y0 <= ry1 + mr;
   }
 
   // La capa de la caja de ahora, con lo que ya está pintado (las franjas que falten, sin sustituir todavía)
