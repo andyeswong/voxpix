@@ -68,6 +68,9 @@ export interface Baked {
   // pidió, y si no, se pinta aquí
   remote?: RemoteRects;
   // (para el banco: recuadros publicados de fuera, pintados aquí por haber cambiado mientras, y pintados aquí sin pedirse)
+  // (para medir) el cielo del rehorneado: trabajos creados, píxeles calculados (con los rehechos), veces rehecho por un
+  // recuadro publicado encima o por vóxeles que cambiaron, y píxeles publicados
+  skyStats?: { jobs: number; pixels: number; restartPub: number; restartVox: number; published: number; ms: number };
   remoteStats?: { published: number; stale: number; local: number; localMs: number };
   // El rehorneado que está en la cola sin publicar (recuadros, cielo y luces), con las cajas de lo que rehace; y el número
   // de tanda: al correrse la ventana (shiftBakedJob), lo de la cola se descarta (cancelRebakes: sus trabajos acaban sin
@@ -1202,6 +1205,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
     let skyStarted = -1, skySerial = -1, skyRestarts = 0;
+    const sst = (b.skyStats ??= { jobs: 0, pixels: 0, restartPub: 0, restartVox: 0, published: 0, ms: 0 });
+    sst.jobs++;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
@@ -1210,7 +1215,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (stale()) return true;
         if (b.shiftHold || waiting()) return false;
         if (skyStarted < 0) { skyStarted = b.source.clock; skySerial = b.published.serial; }
+        const t0 = performance.now(), r0 = row;
         do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
+        sst.pixels += (row - r0) * w; sst.ms += performance.now() - t0;
         if (row <= r.y1) return false;
         if (skyRestarts < 2) {
           const moved = b.source.changedSince(skyStarted);
@@ -1218,12 +1225,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // publicado mientras sobre lo suyo cambia el cielo de esos píxeles, y el cielo de ese rehorneado puede acabar antes)
           const since = publishedSince(b, skySerial);
           const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
-          if (repainted || (moved.length && reads.some((c) => moved.includes(c)))) { skyRestarts++; row = r.y0; skyStarted = -1; return false; }
+          const voxMoved = moved.length > 0 && reads.some((c) => moved.includes(c));
+          if (repainted || voxMoved) { if (repainted) sst.restartPub++; else sst.restartVox++; skyRestarts++; row = r.y0; skyStarted = -1; return false; }
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
         const pub = b.published;
         pushPublished(b, { serial: ++pub.serial, ...r, sky: true });
+        sst.published += w * (r.y1 - r.y0 + 1);
         return true;
       },
     });
