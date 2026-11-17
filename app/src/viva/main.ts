@@ -90,6 +90,9 @@ void (async () => {
   const [lx0, ly0] = win.toLocal(x, Y);
   const id = win.state.entities.add({ model: walk[0]!, x: lx0, y: ly0, z: ground(x, Y), facing: 90 });
   const budget = new FrameBudget(3, undefined, { ms: 8, below: 64 });
+  const PREWARM = q.get('prewarm') === '1';
+  let warmed = false;
+  const uploads: Array<Record<string, number>> = [], slowCompose: number[] = [];
   // ?caminos=1: un campo de caminos por niveles enganchado a la ventana (se corre en el cambio) y un bicho a 40 vóxeles
   // detrás de MAIA que le pregunta cada cuadro (búsqueda repartida, budget nodos por cuadro): lo que cuesta en el cuadro
   // del cambio y en los demás
@@ -222,9 +225,14 @@ void (async () => {
       const [x0, y0, x1, y1] = k.slice(5).split(',').map(Number) as [number, number, number, number];
       if (x1 >= o.vx && x0 < o.vx + VW && y1 >= o.vy && y0 < o.vy + VH) { viewPending++; break; }
     }
+    // ?prewarm=1: los 8 cuadros de andar de MAIA, a este y oeste, precalentados la primera vez (como el juego)
+    if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; }
     compositor.frame(win.view.frame(), win.baked, o);
     espera('componer');
     const t5 = performance.now();
+    // Lo que subió este cuadro: sprites nuevos y cuerpos de sombra (el primer cuadro de cada modelo y giro)
+    { const u = compositor.uploadStats(); if (u && (u.sprites || u.occFull || u.occParts || u.bodyFull || u.bodyParts) && uploads.length < 60) uploads.push({ at: +((now - start) / 1000).toFixed(1), sprites: u.sprites, occ: u.occFull + u.occParts, body: u.bodyFull + u.bodyParts, componer: +(t5 - t4).toFixed(1) }); }
+    if (t5 - t4 > 8) slowCompose.push(+((now - start) / 1000).toFixed(1));
     // Por fases (el intervalo que acaba en el cuadro siguiente es el de este trabajo): los 8 peores intervalos, con lo de
     // cada fase del cuadro de antes y lo que queda fuera de nuestro JS (el recolector, el navegador, la GPU)
     // (el paso entero del cuadro de antes, prevPaso: lo que no cae en ninguna fase es "sinMedir", y lo que queda del
@@ -261,7 +269,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      viewPending, over25By, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
