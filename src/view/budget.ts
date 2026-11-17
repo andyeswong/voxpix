@@ -42,18 +42,42 @@ export class FrameBudget {
 
   // Encola. Si ya hay uno con la misma key, el nuevo ocupa su sitio en la cola (no vuelve al final: lo que cambia
   // a menudo no se quedaría nunca sin hacer) y el viejo se descarta sin acabar.
+  // (byKey: el trabajo de cada key que está en la cola, para no buscarlo recorriéndola; sorted: los que llevan prioridad
+  // van todos delante, ordenados, y los demás detrás, así que el sitio de uno nuevo se busca partiendo en dos. Con miles
+  // de trabajos esperando al worker, buscar por toda la cola en cada push costaba un cuadro a 6x)
+  private byKey = new Map<string, ViewJob>();
+  private sorted = true;
   push(job: ViewJob): void {
-    const i = this.queue.findIndex((j) => j.key === job.key);
-    if (i >= 0) this.queue[i] = job;
-    else this.queue.push(job);
+    const old = this.byKey.get(job.key);
+    const i = old ? this.queue.indexOf(old) : -1;
+    if (i >= 0) {
+      this.queue[i] = job;
+      // (uno sin prioridad en el sitio de uno con ella: lo de delante ya no está ordenado)
+      if (job.priority === undefined && old!.priority !== undefined) this.sorted = false;
+    } else this.queue.push(job);
+    this.byKey.set(job.key, job);
     if (job.priority === undefined) return;
     // Con prioridad: delante de los que tienen más (o ninguna), detrás de los de igual o menos
     const at = i >= 0 ? i : this.queue.length - 1;
     this.queue.splice(at, 1);
-    const p = job.priority;
-    let k = this.queue.findIndex((j) => j.priority === undefined || j.priority > p);
-    if (k < 0) k = this.queue.length;
-    this.queue.splice(k, 0, job);
+    const p = job.priority, q = this.queue;
+    let k: number;
+    if (this.sorted) {
+      let lo = 0, hi = q.length;
+      while (lo < hi) { const mid = (lo + hi) >> 1, j = q[mid]!; if (j.priority === undefined || j.priority > p) hi = mid; else lo = mid + 1; }
+      k = lo;
+    } else {
+      k = q.findIndex((j) => j.priority === undefined || j.priority > p);
+      if (k < 0) k = q.length;
+    }
+    q.splice(k, 0, job);
+  }
+  // Quita el de la posición i (acabó)
+  private removeAt(i: number): void {
+    const job = this.queue[i]!;
+    this.queue.splice(i, 1);
+    if (this.byKey.get(job.key) === job) this.byKey.delete(job.key);
+    if (!this.queue.length) this.sorted = true;
   }
 
   // Lo que cuesta cada clase de llamada (la key hasta ":" o "#": rect, light, sky, view-cut...): las últimas
@@ -99,7 +123,7 @@ export class FrameBudget {
       const job = this.queue[k]!;
       if ((this.skipped.get(job) ?? 0) < STARVE_FRAMES || this.skippedFrame.get(job) !== this.frameNo - 1) continue;
       const t = this.now(), r = this.call(job, deadline, t);
-      if (r.done) this.queue.splice(k, 1);
+      if (r.done) this.removeAt(k);
       if (r.ms >= MIN_SAMPLE_MS) ran++;
       break;
     }
@@ -127,7 +151,7 @@ export class FrameBudget {
       // llamada de la fase: lo de detrás, aunque sea de una clase sin estimación, todavía puede empezar (si no, una luz
       // que espera a su recuadro dejaría el recuadro sin correr)
       if (r.ms >= MIN_SAMPLE_MS) ran++;
-      if (r.done) this.queue.splice(i, 1);
+      if (r.done) this.removeAt(i);
       else i++;
     }
   }
