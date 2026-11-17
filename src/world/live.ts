@@ -218,17 +218,19 @@ export class LiveWindow {
     };
     let stage = 0;
     const build = (deadline: number): boolean => {
-      for (let did = false; stage < 3; stage++, did = true) {
+      for (let did = false; stage < 4; stage++, did = true) {
         if (did && performance.now() >= deadline) return false;
         if (stage === 0) {
           if (copied) rotated = new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
         } else if (stage === 1) {
           view = new WorldView(this.state, q, vo, rotated ? { static: rotated, since: src.clock } : undefined);
           baked = bakeWorldJob(view.bakeable(), { topZ: src.zMax + 1, ...(this.o.bake ?? {}) }, `bake:g${q}`).baked;
-          // (lo que ningún recuadro pinta, el fondo, como en el horneado entero: sin profundidad y con todo el cielo)
+          vs = view.static; n = vs.cols * vs.rows;
+        } else if (stage === 2) {
+          // (lo que ningún recuadro pinta, el fondo, como en el horneado entero: sin profundidad y con todo el cielo; aparte,
+          // porque llenar la memoria nueva de la imagen es lo que cuesta: ~10 ms con 1410 x 948 en Bun)
           baked.depth.fill(Infinity);
           baked.sky?.fill(SKY_RAYS);
-          vs = view.static; n = vs.cols * vs.rows;
         } else {
           const vp = this.o.viewport;
           if (!vp) core = Array.from({ length: n }, (_, c) => c);
@@ -274,7 +276,7 @@ export class LiveWindow {
       if (this.turnPrep?.job !== job) return true;
       const a = performance.now();
       try {
-        if (stage < 3) { if (!build(deadline)) return false; if (performance.now() >= deadline) return false; }
+        if (stage < 4) { if (!build(deadline)) return false; if (performance.now() >= deadline) return false; }
         // (al menos un trozo por llamada: con el índice no bastaba, al volver a entrar con el plazo ya vencido no avanzaba)
         for (let did = false; k < copyFirst.length; k++, did = true) {
           if (did && performance.now() >= deadline) { this.lastTurn.copyMs += performance.now() - a; return false; }
