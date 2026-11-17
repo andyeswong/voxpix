@@ -80,7 +80,7 @@ void (async () => {
     } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
   let rid = 0;
-  if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; } }; } };
+  if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; }, ready: () => results.has(id) }; } };
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
   compositor.upload(win.baked);
   const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
@@ -118,7 +118,7 @@ void (async () => {
     let w = wrapped.get(j);
     if (!w) {
       const kind = kindOf(j.key);
-      w = { key: j.key, ...(j.priority !== undefined ? { priority: j.priority } : {}), run(d: number) { const a = performance.now(), ok = j.run(d), e = byKind.get(kind) ?? { ms: 0, calls: 0 }; e.ms += performance.now() - a; e.calls++; byKind.set(kind, e); return ok; } };
+      w = { key: j.key, ...(j.priority !== undefined ? { priority: j.priority } : {}), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), run(d: number) { const a = performance.now(), ok = j.run(d), e = byKind.get(kind) ?? { ms: 0, calls: 0 }; e.ms += performance.now() - a; e.calls++; byKind.set(kind, e); return ok; } };
       wrapped.set(j, w);
     }
     budget.push(w);

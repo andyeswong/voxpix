@@ -12,6 +12,10 @@ export interface ViewJob {
   run(deadline: number): boolean;
   // Opcional: cuanto más bajo, antes (lo que está cerca del jugador). Los que no la llevan van detrás, en su orden
   readonly priority?: number;
+  // Opcional: true mientras solo espera (a otro trabajo, a un worker): la cola lo salta sin llamarlo. Lo mismo que si
+  // run devolviera false sin gastar, pero sin la llamada (con miles esperando al worker, eran ~10 000 llamadas por
+  // segundo)
+  waiting?(): boolean;
 }
 
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
@@ -131,6 +135,7 @@ export class FrameBudget {
     while (i < this.queue.length) {
       const job = this.queue[i]!;
       if (!inPhase(job)) break;
+      if (job.waiting?.()) { i++; continue; }
       const t = this.now();
       if (ran > 0 && t >= deadline) break;
       // Una clase que todavía no ha corrido nunca no tiene estimación: solo empieza como primera llamada de la fase

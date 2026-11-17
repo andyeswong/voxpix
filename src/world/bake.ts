@@ -856,7 +856,7 @@ const PUBLISHED_KEEP = 32;
 // publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
 // rebakeJobs, de una vez); publishRectBuffers: lo que hace el hilo principal con lo que le llega
 export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
-export interface RemoteRects { ask(rect: ScreenRect): { result(): RectOut | null } | null }
+export interface RemoteRects { ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean } | null }
 export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
 export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
   const buf = rectBuffers(rect);
@@ -873,7 +873,7 @@ export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, 
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
 // al viejo (lo hace la cola).
-export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number }
+export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean }
 
 // Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
 // contorno no cambia nada); 'auto', solo con contorno
@@ -948,7 +948,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
     // (EXPERIMENTO worker-exp: el recuadro pedido fuera, y el reloj de cuando se pidió)
-    let ticket: { result(): RectOut | null } | null | undefined, askedAt = 0;
+    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
@@ -958,6 +958,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let started = -1, restarts = 0;
     jobs.push({
       key,
+      // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
+      waiting: () => !stale() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
       run(deadline) {
         if (stale()) return true;                                          // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
@@ -1148,6 +1150,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let row = r.y0;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
+      // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
+      waiting: () => !stale() && (!!b.shiftHold || waiting()),
       run(deadline) {
         if (stale()) return true;
         if (b.shiftHold || waiting()) return false;
@@ -1241,7 +1245,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
         p = (opts.nearLights === false || !byWorld ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py);
       }
     }
-    return { key: j.key, priority: p, run: (d: number) => j.run(d) } as ViewJob;
+    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}) } as ViewJob;
   }).concat(extra);
 }
 

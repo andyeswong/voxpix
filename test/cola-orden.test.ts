@@ -42,4 +42,18 @@ describe('cola: el orden de push', () => {
       }
     }
   });
+
+  it('waiting: la cola salta sin llamarlo al que solo espera, y lo corre en cuanto deja de esperar', () => {
+    const budget = new FrameBudget(5);
+    let wait = true, calls = 0, other = 0;
+    budget.push({ key: 'espera', priority: 0, waiting: () => wait, run: () => { calls++; return true; } });
+    budget.push({ key: 'otro', priority: 1, run: () => { other++; return other >= 3; } });
+    for (let f = 0; f < 5; f++) budget.run();
+    expect(calls).toBe(0);
+    expect(other).toBe(3);
+    wait = false;
+    budget.run();
+    expect(calls).toBe(1);
+    expect(budget.pending).toBe(0);
+  });
 });

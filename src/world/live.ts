@@ -460,7 +460,7 @@ export class LiveWindow {
       const pri = (j: ViewJob) => pre && !j.key.startsWith('exposure:') ? 1 + Math.min(62, dist(j.priority ?? 0) / 16) : this.preloading && !j.key.startsWith('exposure:') ? 1 : j.priority;
       for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true }, ...(near ? { near } : {}) })) {
         const p = pri(j);
-        budget.push(q === 0 && p === j.priority ? j : { key: q === 0 ? j.key : `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(p !== undefined ? { priority: p } : {}) });
+        budget.push(q === 0 && p === j.priority ? j : { key: q === 0 ? j.key : `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(p !== undefined ? { priority: p } : {}), ...(j.waiting ? { waiting: () => j.waiting!() } : {}) });
       }
     }
     if (lastPreload && !this.pendingRebake) this.preloading = false;
