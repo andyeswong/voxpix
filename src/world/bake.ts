@@ -915,13 +915,20 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     pp.set(token, [plan]);
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
+    // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
+    // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
+    // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
+    // como mucho: con cambios en cada cuadro, se publica y lo arregla el rehorneado de esos cambios, que va detrás)
+    const planChunks: number[] = [];
+    { const s = b.source; for (let cy = Math.max(0, Math.floor(plan.Y0 / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor(plan.Y1 / CHUNK)); cy++) for (let cx = Math.max(0, Math.floor(plan.X0 / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor(plan.X1 / CHUNK)); cx++) planChunks.push(cy * s.cols + cx); }
+    let started = -1, restarts = 0;
     jobs.push({
       key,
       run(deadline) {
         if (stale()) return true;                                          // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) return true;
-        buf ??= rectBuffers(rect);
+        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; }
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
         // última se pasaba del plazo entera)
         let t = performance.now();
@@ -936,6 +943,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           est = now - t; t = now;
         } while (col <= rect.x1 && t + est < deadline);
         if (col <= rect.x1) return false;
+        if (restarts < 2) {
+          const moved = b.source.changedSince(started);
+          if (moved.length && planChunks.some((c) => moved.includes(c))) { restarts++; col = rect.x0; row = rect.y0; buf = null; return false; }
+        }
         const mask = new Uint8Array(buf.w * buf.h);
         publishRect(b, rect, buf, mask);
         masks.set(rect, mask);

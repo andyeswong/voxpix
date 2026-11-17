@@ -251,8 +251,9 @@ export class LiveWindow {
       if (this.turnPrep?.job !== job) return true;
       const a = performance.now();
       try {
-        for (; k < copyFirst.length; k++) {
-          if (k && performance.now() >= deadline) { this.lastTurn.copyMs += performance.now() - a; return false; }
+        // (al menos un trozo por llamada: con el índice no bastaba, al volver a entrar con el plazo ya vencido no avanzaba)
+        for (let did = false; k < copyFirst.length; k++, did = true) {
+          if (did && performance.now() >= deadline) { this.lastTurn.copyMs += performance.now() - a; return false; }
           rotated!.copyRotatedChunk(src, q, toWorld(copyFirst[k]!));
         }
         if (!jobs) this.lastTurn.copyMs += performance.now() - a;
@@ -299,8 +300,8 @@ export class LiveWindow {
       this.turnRest = { q, job: { key: `turn-rest:g${q}`, priority: 70, run: (deadline: number) => {
         // (si ya se giró a otro, este se dejó)
         if (this.views.get(q)?.view !== view) return true;
-        for (; r < rest.length; r++) {
-          if (r && performance.now() >= deadline) return false;
+        for (let did = false; r < rest.length; r++, did = true) {
+          if (did && performance.now() >= deadline) return false;
           const c = rest[r]!;
           if (rotated && !first.has(c)) rotated.copyRotatedChunk(src, q, toWorld(c));
           vs.touch(c);

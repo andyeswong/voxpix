@@ -45,6 +45,10 @@ const make = (center: Trozo, log?: { unload: string[]; load: string[] }) => new 
     for (const k of dug) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (Math.floor(x / TV) === t[0] && Math.floor(y / TV) === t[1]) ctx.write(x, y, z, 0); }
   },
 });
+// Una cola sin reloj: FrameBudget con un reloj parado muy en el pasado. Todo plazo que da ya venció, así que cada trabajo
+// hace exactamente una unidad por llamada (una franja, 16 columnas del corte, un paso) y la cola no decide nada por tiempo:
+// el mismo orden en cualquier máquina y con cualquier carga
+const stepBudget = () => new FrameBudget(1, () => -1e12, { ms: 1, below: 64 });
 const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y1: number }) => {
   let n = 0;
   for (let i = 0; i < r.width * r.height; i++) {
@@ -174,7 +178,9 @@ describe('ventana viva', () => {
     // La caja del techo alrededor del objetivo, en coordenadas locales de la ventana de ahora
     const cutAt = (w: LiveWindow, x: number, y: number) => { const [lx, ly] = w.toLocal(x, y); return { x0: Math.floor(lx) - 20, y0: Math.floor(ly) - 20, x1: Math.floor(lx) + 20, y1: Math.floor(ly) + 20, zTop: 36 }; };
     // Tanda pequeña: el repaso del corte va a medias cuando la ventana se corre
-    const budget = new FrameBudget(0.3, undefined, { ms: 0.3, below: 64 });
+    // (por pasos, sin reloj: con un reloj parado en el pasado cada plazo ya venció y cada trabajo hace una unidad por
+    // cuadro; con 0,3 ms de reloj el test dependía de la carga de la máquina)
+    const budget = stepBudget();
     let placed = false;
     const frame = (x: number, y: number) => {
       win.update(x, y, budget);
@@ -213,7 +219,7 @@ describe('ventana viva', () => {
   it('capa de sección (SectionPainter) con la ventana: pintando a mitad de los corrimientos, y tras girar con un pintor nuevo; igual que abrirla de nuevo ahí', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });
-    const budget = new FrameBudget(0.5, undefined, { ms: 0.5, below: 64 });
+    const budget = stepBudget();
     let painter = new SectionPainter(win.baked, { ahead: 2, behind: 1 });
     // La caja: 24 vóxeles de ancho alrededor de los pies del objetivo (en los ejes de la vista)
     const cutOf = (w: LiveWindow, x: number, y: number) => { const [lx, ly] = w.toLocal(x, y); return sectionAround(w.view.camera, lx, ly, w.store.height[Math.floor(ly) * w.store.width + Math.floor(lx)]! - 12, 24); };
@@ -271,7 +277,7 @@ describe('ventana viva', () => {
   it('el salto (el objetivo aparece fuera de la ventana, a mitad de escribir): un solo cambio, onUnload solo de lo escrito, lo de alrededor antes que todo, e igual que hecha de nuevo ahí', () => {
     const log = { unload: [] as string[], load: [] as string[] };
     const win = make([0, 0], log);
-    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    const budget = stepBudget();
     const frame = (x: number, y: number) => { win.update(x, y, budget); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); budget.run(); };
     // Andar un poco y picar; y saltar en cuanto un corrimiento deja trozos por escribir
     let x = TV / 2, y = TV / 2;
@@ -315,7 +321,7 @@ describe('ventana viva', () => {
     // (el anillo, el trozo del objetivo solo: con 5 x 5, uno de 3 x 3 toca todos los de fuera con el margen del rehorneado)
     const x = TV / 2, y = TV / 2, ring = { x: 0, n: 0, s: 0 };
     expect(win.ready(x, y, ring)).toBe(false);
-    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    const budget = stepBudget();
     let ringAt = -1, allAt = -1, k = 0;
     for (; k < 20000 && (win.busy || budget.pending || win.preloadingNow); k++) {
       win.update(x, y, budget); budget.run();
@@ -341,7 +347,7 @@ describe('ventana viva', () => {
     // Una luz fija, para que el giro la hornee
     const LW = [3 * TV + 5, 2 * TV + 7] as const;
     { const [lx, ly] = win.toLocal(LW[0], LW[1]); win.state.lights.addFixed({ id: 'antorcha', kind: 'torch', x: lx + 0.5, y: ly + 0.5, z: 44 }); }
-    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    const budget = stepBudget();
     // El juego: cada cuadro, lo cambiado en el giro de ahora
     // Una ventana hecha de nuevo donde está win, en el giro q, con lo mismo picado y la misma luz
     const refAt = (q: 0 | 1 | 2 | 3) => {
@@ -368,7 +374,7 @@ describe('ventana viva', () => {
         expect(win.turning).toEqual({ to: 1, phase: 'core' });
         win.turnTo(((win.turnTarget + 1) % 4) as 2);
         expect(win.turning).toEqual({ to: 2, phase: 'core' });
-        for (frames = 0; win.turning?.phase === 'core' && frames < 5000; frames++) frame(x, y);
+        for (frames = 0; win.turning?.phase === 'core' && frames < 200000; frames++) frame(x, y);
         swapAt = frames;
         expect(win.quarter).toBe(2);
         // Al cambiar, lo que se ve ya está como en una ventana hecha de nuevo en ese giro
@@ -381,10 +387,10 @@ describe('ventana viva', () => {
         expect(win.turning?.phase).toBe('rest');
       }
       frame(x, y);
-      for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y);
+      for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame(x, y);
     }
     expect(swapAt).toBeGreaterThan(0);
-    for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y); }
+    for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame(x, y); }
     expect(win.tx0).toBeGreaterThan(-2);
     // Una ventana hecha de nuevo ahí, en el giro 2, con lo mismo picado y la misma luz
     const ref = refAt(2), r = ref.viewOf(2)!;
@@ -400,15 +406,15 @@ describe('ventana viva', () => {
       for (let s = 0; s < 3 * 8 && !turned; s++) {
         y -= TV / 8;
         onUpdate = () => { if (!turned && win.shifting) { win.turnTo(to); turned = true; expect(win.turning?.phase).toBe('core'); } };
-        for (let k = 0; k < 400; k++) {
+        for (let k = 0; k < 20000; k++) {
           frame(x, y);
           if (!win.busy && !budget.pending) break;
         }
         onUpdate = null;
       }
       expect(turned).toBe(true);
-      for (let k = 0; k < 4000 && (win.busy || budget.pending); k++) frame(x, y);
-      for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y); }
+      for (let k = 0; k < 200000 && (win.busy || budget.pending); k++) frame(x, y);
+      for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame(x, y); }
       expect(win.quarters).toEqual([to]);
       const rq = refAt(to);
       let nv = 0;
