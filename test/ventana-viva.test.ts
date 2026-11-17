@@ -107,39 +107,6 @@ describe('ventana viva', () => {
     expect(win.toWorld(e.x, e.y)).toEqual([40, 40]);
   });
 
-  it('rebakeLimit: el rehorneado de lo cambiado, pocos trozos por cuadro (lo demás para los siguientes, también a través de los corrimientos), queda igual que una ventana hecha de nuevo', () => {
-    // Lo picado, en coordenadas del mundo, y al entrar un trozo se vuelve a poner (en las dos ventanas)
-    const pits = new Set<string>();
-    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS,
-      onLoad: (t: Trozo, ctx: { write(x: number, y: number, z: number, v: number): void }) => {
-        for (const k of pits) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (Math.floor(x / TV) === t[0] && Math.floor(y / TV) === t[1]) ctx.write(x, y, z, 0); }
-      } });
-    const win = new LiveWindow({ ...opts([0, 0]), rebakeLimit: 3 });
-    const budget = stepBudget();
-    let x = TV / 2, y = TV / 2, deferredSeen = 0;
-    const frame = () => { win.update(x, y, budget); budget.run(); if (win.baked.deferred?.size) deferredSeen++; };
-    for (let s = 0; s < 6 * 8; s++) {
-      if (s < 32) x += TV / 8; else y += TV / 8;
-      // A mitad: un hoyo en cada trozo de vóxeles de la ventana (todo cambiado a la vez: queda rehorneado pendiente al
-      // correrse)
-      if (s === 34) {
-        const src = win.store;
-        for (let cy = 0; cy < src.rows; cy++) for (let cx = 0; cx < src.cols; cx++) {
-          const lx = cx * 16 + 8, ly = cy * 16 + 8, h = src.height[ly * src.width + lx]!, [wx, wy] = win.toWorld(lx, ly);
-          for (let z = Math.max(src.zMin, h - 4); z < h; z++) { src.set(lx, ly, z, 0); pits.add(`${wx},${wy},${z}`); }
-        }
-      }
-      frame();
-    }
-    for (let k = 0; k < 200000 && (win.busy || budget.pending || win.baked.deferred?.size); k++) frame();
-    // (de verdad se dejaron trozos para después)
-    expect(deferredSeen).toBeGreaterThan(0);
-    expect(win.baked.deferred?.size ?? 0).toBe(0);
-    const ref = new LiveWindow(opts([win.tx0 + 2, win.ty0 + 2]));
-    expect([ref.tx0, ref.ty0]).toEqual([win.tx0, win.ty0]);
-    expect(diff(win.baked, ref.baked)).toBe(0);
-  });
-
   it('con fill (el juego escribe el trozo: lo generado y sus celdas guardadas, con giro) y onShift en celdas y vóxeles', () => {
     // El "juego": por trozo, celdas guardadas [x, y, z, bloque, giro] en celdas del mundo
     const saved = new Map<string, Array<[number, number, number, number, 0 | 90 | 180 | 270]>>();

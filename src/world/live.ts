@@ -46,7 +46,7 @@ import { StaticVoxels, WorldState, CHUNK, type PreparedSlab } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec, type GeneratedRegion } from './regiongen';
-import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, rebakePending, cancelRebakes, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
+import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, cancelRebakes, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
 export type Trozo = readonly [number, number];
@@ -83,8 +83,6 @@ export interface LiveWindowOptions {
   // cercano, hasta que estén todos (ready() dice cuándo está lo de alrededor del objetivo: para una pantalla de carga que
   // avanza y un juego que empieza antes de tenerlo todo)
   preload?: 'block' | 'queue';
-  // Trozos de vóxeles cambiados que pasan a trabajos de rehorneado por cuadro (por defecto REBAKE_LIMIT)
-  rebakeLimit?: number;
   // Lo que el juego hace con el horneado del giro nuevo antes de enseñarlo (turnTo), como trabajo por pasos que corre el
   // núcleo del giro tras sus recuadros y antes del cambio: subirlo a la GPU por partes (compositor.prepare). Así el
   // cuadro del cambio no lo sube entero (~100 ms con 11 x 13)
@@ -107,10 +105,6 @@ export interface PreparedTrozo {
   chunks: Array<{ c: number; slabs: Array<PreparedSlab | null>; tops: Int16Array }>;
   local?: boolean;                     // no se pudo preparar (una losa con más de 256 valores): se estampa aquí
 }
-
-// Trozos de vóxeles cambiados que se convierten en trabajos de rehorneado por cuadro (rebakeChangedJobs limit): lo que se
-// junta durante un corrimiento (miles) costaba un cuadro entero a 6x
-const REBAKE_LIMIT = 512;
 
 export class LiveWindow {
   readonly store: StaticVoxels;
@@ -403,7 +397,6 @@ export class LiveWindow {
     const X0 = Math.floor(Math.min(p0x, p1x) / CHUNK), X1 = Math.floor(Math.max(p0x, p1x) / CHUNK), Y0 = Math.floor(Math.min(p0y, p1y) / CHUNK), Y1 = Math.floor(Math.max(p0y, p1y) / CHUNK);
     const inRing = (c: number) => { const x = c % src.cols, y = Math.floor(c / src.cols); return x >= X0 && x <= X1 && y >= Y0 && y <= Y1; };
     if (src.changedSince(baked.version).some(inRing)) return false;
-    for (const c of baked.deferred?.keys() ?? []) if (inRing(c)) return false;
     // (sin el margen que chunkRect suma a la caja de cada plan: el rehorneado de un trozo vecino lo toca solo por él)
     const mg = (baked.options.smooth ?? 0.6) > 0 ? 3 : 1;
     for (const plans of baked.pendingPlans?.values() ?? []) for (const p of plans) {
@@ -457,7 +450,7 @@ export class LiveWindow {
     for (const [q, { view, baked }] of this.views) {
       if (q === this.quarter && !all) continue;
       const lights = view.bakeable().lights;
-      if (!rebakePending(baked)) continue;
+      if (!baked.source.changedSince(baked.version).length) continue;
       // (en la carga del principio y tras un salto, el rehorneado va cercano, detrás de los trozos y por distancia al
       // objetivo en pantalla, lo de cerca primero; lo expuesto, detrás de todo)
       const pre = this.preloading && q === this.quarter;
@@ -465,11 +458,7 @@ export class LiveWindow {
       // (el cielo y las luces llevan LIGHT_PRIORITY más su distancia: van justo detrás del recuadro a su misma distancia)
       const dist = (p: number) => p >= LIGHT_PRIORITY ? p - LIGHT_PRIORITY + 0.5 : p;
       const pri = (j: ViewJob) => pre && !j.key.startsWith('exposure:') ? 1 + Math.min(62, dist(j.priority ?? 0) / 16) : this.preloading && !j.key.startsWith('exposure:') ? 1 : j.priority;
-      // (como mucho REBAKE_LIMIT trozos por cuadro, lo más cerca del objetivo primero: lo demás, en los siguientes)
-      const [ox, oy] = this.toLocal(this.at[0], this.at[1]), [vx0, vy0] = view.camera.pointToView(ox, oy);
-      const built = rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true }, ...(near ? { near } : {}), limit: this.o.rebakeLimit ?? REBAKE_LIMIT, order: { x: vx0, y: vy0 } });
-      if (baked.deferred?.size) this.pendingRebake = true;
-      for (const j of built) {
+      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true }, ...(near ? { near } : {}) })) {
         const p = pri(j);
         budget.push(q === 0 && p === j.priority ? j : { key: q === 0 ? j.key : `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(p !== undefined ? { priority: p } : {}) });
       }
@@ -559,7 +548,7 @@ export class LiveWindow {
     // detrás); lo que se escriba se rehornea trozo a trozo, del centro hacia fuera
     if (this.jumping) {
       this.jumping = false;
-      for (const { baked } of this.views.values()) { baked.source.cut(); baked.version = baked.source.clock; baked.deferred?.clear(); }
+      for (const { baked } of this.views.values()) { baked.source.cut(); baked.version = baked.source.clock; }
     } else for (const { baked } of this.views.values()) {
       // Al correrse, lo que entra está vacío, y la imagen corrida también: no hay nada que rehornear ahí hasta que se
       // escriba cada trozo (si no, el primer rehorneado era un recuadro de toda la columna que entra, de vacío, y con un
