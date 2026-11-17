@@ -29,6 +29,9 @@ void (async () => {
   // ?girar=s: cada s segundos, Q (girar con fundido, turnTo: solo vive el giro de ahora); ?presu=ms: el presupuesto cercano
   // mientras dura el fundido (8 por defecto, el de siempre)
   const GIRAR = Number(q.get('girar') ?? 0), PRESU = Number(q.get('presu') ?? 8);
+  // ?hz=60: un cuadro cada 1000/hz ms como mucho, como una pantalla con vsync. Edge sin ventana no tiene vsync y da ~180
+  // cuadros por segundo: la cola (~6 ms por cuadro) avanzaba 3 veces más por segundo que en el juego
+  const HZ = Number(q.get('hz') ?? 0);
   const canvas = document.getElementById('view') as HTMLCanvasElement;
   const hud = document.getElementById('hud')!;
   canvas.width = VW; canvas.height = VH;
@@ -77,6 +80,8 @@ void (async () => {
   const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
   function loop(now: number): void {
+    // (medio milisegundo de holgura: los rAF no caen exactos)
+    if (HZ && last > 0 && now - last < 1000 / HZ - 0.5) { requestAnimationFrame(loop); return; }
     if (start < 0) start = now;
     const dt = Math.min(0.1, (now - last) / 1000);
     frames.push(now - last); last = now; frameNo++;
