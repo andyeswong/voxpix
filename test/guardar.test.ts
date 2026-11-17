@@ -25,7 +25,9 @@ describe('guardar y cargar', () => {
     // Y sigue igual al avanzar los dos
     for (let t = 0; t < 10; t++) { a.step(); b.step(); }
     expect(b.hash()).toBe(a.hash());
-  });
+    // (dos mundos medievales enteros y 40 ticks: ~7,7 s solo y 12-14 s con la batería en paralelo, en el portátil de
+    // NARUTO; con el tope de 5 s de vitest salía rojo siempre y tapaba los rojos nuevos. No depende del reloj: es lento)
+  }, 30_000);
 
   const N = 8;
   const PAL: Palette = { ramps: ['piedra', 'tierra', 'hierba'].map((name, i) => ({ name, colors: [`#${i}0${i}0${i}0`, `#${i}4${i}4${i}4`, `#${i}8${i}8${i}8`] })) };
