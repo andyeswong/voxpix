@@ -540,6 +540,28 @@ describe('ventana viva', () => {
     expect(diff(win.baked, ref.baked)).toBe(0);
   });
 
+  it('bakeFirst view: el constructor hornea solo lo que se ve; en el primer cuadro la pantalla es la de la imagen entera, y lo demás lo hace la cola', () => {
+    const opts = { blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0] as Trozo, margin: 1, bake: OPTS };
+    const VP = [64, 40] as const;
+    const win = new LiveWindow({ ...opts, viewport: VP, bakeFirst: 'view' });
+    const ref = new LiveWindow(opts);
+    expect(win.startup.core).toBeGreaterThan(0);
+    expect(win.startup.rest).toBeGreaterThan(win.startup.core);
+    // La pantalla alrededor del objetivo (el centro del trozo del centro), como la pone la cámara del juego
+    const [lx, ly] = win.toLocal(TV / 2, TV / 2), [vx, vy] = win.view.camera.pointToView(lx, ly);
+    const [px, py] = win.baked.cam.project(vx, vy, win.store.height[Math.floor(ly) * win.store.width + Math.floor(lx)]!);
+    const X0 = Math.max(0, Math.min(win.baked.width - VP[0], Math.round(px) - VP[0] / 2)), Y0 = Math.max(0, Math.min(win.baked.height - VP[1], Math.round(py) - VP[1] / 2));
+    const screen = { x0: X0, y0: Y0, x1: X0 + VP[0] - 1, y1: Y0 + VP[1] - 1 };
+    // Antes de que corra nada de la cola: 0 píxeles distintos en la pantalla; fuera, todavía sin hacer
+    expect(diff(win.baked, ref.baked, screen)).toBe(0);
+    expect(diff(win.baked, ref.baked)).toBeGreaterThan(0);
+    // Y con la cola, toda la imagen como la entera
+    const budget = stepBudget();
+    for (let k = 0; k < 50000 && (win.busy || budget.pending); k++) { win.update(TV / 2, TV / 2, budget); budget.run(); }
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
   it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });

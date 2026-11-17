@@ -78,6 +78,13 @@ export interface LiveWindowOptions {
   // Lo que se ve de la imagen (píxeles, ancho y alto, centrado en el objetivo como la cámara del juego): lo que turnTo
   // hornea antes del cambio. Sin él, la imagen entera
   viewport?: readonly [number, number];
+  // Al construir, con viewport: hornear solo lo que se ve (el núcleo, como turnTo: los trozos de vóxeles que caen en el
+  // recuadro de la pantalla alrededor de `target`, recortado a él) y dejar lo demás de la imagen para la cola (rehorneado
+  // de siempre). El primer cuadro enseña lo mismo que con la imagen entera; el resto se hace sin verse
+  bakeFirst?: 'view';
+  // Dónde está el objetivo al construir (coordenadas del mundo; por defecto el centro del trozo `center`): el núcleo de
+  // bakeFirst y lo cercano de la carga
+  target?: readonly [number, number];
   // La carga del principio: 'block' (por defecto), todos los trozos en el constructor; 'queue', la ventana vacía y los
   // trozos por la cola del centro hacia fuera, con prioridad 0 (el presupuesto cercano) y su rehorneado detrás, también
   // cercano, hasta que estén todos (ready() dice cuándo está lo de alrededor del objetivo: para una pantalla de carga que
@@ -169,14 +176,65 @@ export class LiveWindow {
       this.startup.loadMs = Math.round(performance.now() - t0);
     }
     const t1 = performance.now();
+    if (opts.target) this.at = [opts.target[0], opts.target[1]];
+    else if (!this.at[0] && !this.at[1]) this.at = [(cx + 0.5) * this.T, (cy + 0.5) * this.T];
     for (const q of new Set<Quarter>([0, ...(opts.quarters ?? [])])) {
       const view = new WorldView(this.state, q, opts.view ?? {});
-      this.views.set(q, { view, baked: bakeWorld(view.bakeable(), { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) }) });
+      // (lo que se ve primero: el giro que se enseña, el 0; los demás de quarters, enteros)
+      const baked = q === 0 && opts.bakeFirst === 'view' && opts.viewport && opts.preload !== 'queue' ? this.bakeCore(view) : bakeWorld(view.bakeable(), { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) });
+      this.views.set(q, { view, baked });
     }
     this.startup.bakeMs = Math.round(performance.now() - t1);
   }
-  // (para medir) lo que costó el constructor: escribir los trozos (sin preload por la cola) y hornear las vistas
-  readonly startup = { loadMs: 0, bakeMs: 0 };
+  // (para medir) lo que costó el constructor: escribir los trozos (sin preload por la cola) y hornear las vistas; con
+  // bakeFirst, los trozos de vóxeles del núcleo y los que quedan para la cola
+  readonly startup = { loadMs: 0, bakeMs: 0, core: 0, rest: 0 };
+
+  // bakeFirst: la imagen vacía (sin profundidad y con todo el cielo, como el fondo del horneado entero), lo que cae en el
+  // recuadro de la pantalla alrededor del objetivo horneado de una vez y recortado a él, y lo demás marcado como cambiado
+  // para el rehorneado de la cola. Lo mismo que el núcleo de turnTo, sin copia (el giro 0) y sin repartirlo en cuadros
+  private bakeCore(view: WorldView): Baked {
+    const src = this.store, vs = view.static, n = vs.cols * vs.rows, vp = this.o.viewport!, cam = view.camera;
+    const baked = bakeWorldJob(view.bakeable(), { topZ: src.zMax + 1, ...(this.o.bake ?? {}) }, 'bake:g0').baked;
+    baked.depth.fill(Infinity);
+    baked.sky?.fill(SKY_RAYS);
+    const boxesOf = (cs: Iterable<number>) => {
+      const out = new Map<number, { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }>();
+      for (const c of cs) {
+        const X = (c % vs.cols) * CHUNK, Y = Math.floor(c / vs.cols) * CHUNK;
+        let top = vs.zMin;
+        for (let y = Y; y < Math.min(vs.depth, Y + CHUNK); y++) for (let x = X; x < Math.min(vs.width, X + CHUNK); x++) top = Math.max(top, vs.height[y * vs.width + x]!);
+        out.set(c, { x0: X, y0: Y, z0: vs.zMin, x1: X + CHUNK - 1, y1: Y + CHUNK - 1, z1: Math.max(vs.zMin, top - 1) });
+      }
+      return out;
+    };
+    const [lx, ly] = this.toLocal(this.at[0], this.at[1]), [vx, vy] = cam.pointToView(lx, ly);
+    const hx = Math.max(0, Math.min(vs.width - 1, Math.floor(vx))), hy = Math.max(0, Math.min(vs.depth - 1, Math.floor(vy)));
+    const [px, py] = baked.cam.project(vx, vy, vs.height[hy * vs.width + hx]!);
+    const M = 16, x0 = Math.max(0, Math.min(baked.width - vp[0], Math.round(px) - vp[0] / 2)), y0 = Math.max(0, Math.min(baked.height - vp[1], Math.round(py) - vp[1] / 2));
+    const clip = { x0: x0 - M, y0: y0 - M, x1: x0 + vp[0] - 1 + M, y1: y0 + vp[1] - 1 + M };
+    const near = chunksInScreen(baked, clip), nearSet = new Set(near);
+    const hit = chunksInScreen(baked, clip, boxesOf(near)).filter((c) => nearSet.has(c));
+    let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
+    for (const c of hit) { const cx = c % vs.cols, cy = Math.floor(c / vs.cols); cx0 = Math.min(cx0, cx); cy0 = Math.min(cy0, cy); cx1 = Math.max(cx1, cx); cy1 = Math.max(cy1, cy); }
+    const core: number[] = [];
+    for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) core.push(cy * vs.cols + cx);
+    vs.cut();
+    const V1 = vs.clock;
+    let X0 = Infinity, Y0 = Infinity, X1 = -Infinity, Y1 = -Infinity;
+    for (const c of core) { const x = (c % vs.cols) * CHUNK, y = Math.floor(c / vs.cols) * CHUNK; X0 = Math.min(X0, x); Y0 = Math.min(Y0, y); X1 = Math.max(X1, x + CHUNK); Y1 = Math.max(Y1, y + CHUNK); }
+    const R = 64, lights = view.lights.filter((l) => l.x > X0 - R && l.x < X1 + R && l.y > Y0 - R && l.y < Y1 + R);
+    const boxes = boxesOf(core);
+    for (const j of rebakeJobs(baked, core, lights, boxes, this.o.rebake ?? { band: 16, rows: 64, merge: true }, clip)) while (!j.run(Infinity));
+    // Lo que queda fuera (o en el borde del recorte: su contorno puede quedar mal), para la cola
+    const inCore = new Set(chunksInScreen(baked, { x0: clip.x0 + 2, y0: clip.y0 + 2, x1: clip.x1 - 2, y1: clip.y1 - 2 }, boxes, true).filter((c) => core.includes(c)));
+    baked.version = V1;
+    let rest = 0;
+    for (let c = 0; c < n; c++) if (!inCore.has(c)) { vs.touch(c); rest++; }
+    this.pendingRebake = true;
+    this.startup.core = inCore.size; this.startup.rest = rest;
+    return baked;
+  }
 
   /**
    * Cambia al giro q, ya horneado y al día (uno de `quarters`, o el 0): view y baked pasan a ser los suyos, sin esperar.
