@@ -196,13 +196,11 @@ export class LiveWindow {
     const src = this.store, cam = new ViewCamera(q, src.width, src.depth);
     // (la vista tiene copia si está girada o con corte: se copia por trozos, no de una vez en el constructor)
     const vo = this.o.view ?? {}, copied = q !== 0 || !!vo.cut || !!vo.dress;
-    const rotated = copied ? new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax) : null;
-    const view = new WorldView(this.state, q, vo, rotated ? { static: rotated, since: src.clock } : undefined);
-    const { baked } = bakeWorldJob(view.bakeable(), { topZ: src.zMax + 1, ...(this.o.bake ?? {}) }, `bake:g${q}`);
-    // (lo que ningún recuadro pinta, el fondo, como en el horneado entero: sin profundidad y con todo el cielo)
-    baked.depth.fill(Infinity);
-    baked.sky?.fill(SKY_RAYS);
-    const vs = view.static, n = vs.cols * vs.rows;
+    // Se prepara por pasos en la propia cola (antes, en update: ~20 ms en un cuadro con 11 x 13): la copia girada, la vista
+    // y el horneado vacío, y el núcleo (lo que cae en el recuadro de la pantalla)
+    let rotated: StaticVoxels | null = null, view!: WorldView, baked!: Baked, vs!: StaticVoxels, n = 0;
+    let core!: number[], clip: { x0: number; y0: number; x1: number; y1: number } | undefined;
+    let inCore!: Set<number>, first!: Set<number>, copyFirst!: number[];
     // Del trozo c de la vista, el trozo del mundo (para copyRotatedChunk)
     const toWorld = (c: number) => { const [x, y] = cam.cellToWorld((c % vs.cols) * CHUNK, Math.floor(c / vs.cols) * CHUNK); return src.chunkOf(x, y); };
     // La caja de cada trozo de la vista hasta lo más alto que tiene (de las alturas de h, en ejes del mundo o de la vista):
@@ -218,37 +216,57 @@ export class LiveWindow {
       }
       return out;
     };
-    let core: number[], clip: { x0: number; y0: number; x1: number; y1: number } | undefined;
-    const vp = this.o.viewport;
-    if (!vp) core = Array.from({ length: n }, (_, c) => c);
-    else {
-      const [lx, ly] = this.toLocal(this.at[0], this.at[1]), [vx, vy] = cam.pointToView(lx, ly);
-      const hx = Math.max(0, Math.min(src.width - 1, Math.floor(lx))), hy = Math.max(0, Math.min(src.depth - 1, Math.floor(ly)));
-      const [px, py] = baked.cam.project(vx, vy, src.height[hy * src.width + hx]!);
-      const M = 16, x0 = Math.max(0, Math.min(baked.width - vp[0], Math.round(px) - vp[0] / 2)), y0 = Math.max(0, Math.min(baked.height - vp[1], Math.round(py) - vp[1] / 2));
-      clip = { x0: x0 - M, y0: y0 - M, x1: x0 + vp[0] - 1 + M, y1: y0 + vp[1] - 1 + M };
-      const hit = chunksInScreen(baked, clip, boxesOf(src, true, Array.from({ length: n }, (_, c) => c)));
-      // Su rectángulo de trozos entero: así todas las columnas de trozos tienen el mismo tramo y el rehorneado las junta
-      // en un recuadro (por columnas sueltas, cada una repetía su margen: ~1,5 veces los píxeles)
-      let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
-      for (const c of hit) { const cx = c % vs.cols, cy = Math.floor(c / vs.cols); cx0 = Math.min(cx0, cx); cy0 = Math.min(cy0, cy); cx1 = Math.max(cx1, cx); cy1 = Math.max(cy1, cy); }
-      core = [];
-      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) core.push(cy * vs.cols + cx);
-    }
-    // Lo que no hace falta rehornear después: con recorte, solo los trozos del núcleo que caen enteros dentro (a 2 píxeles
-    // del borde: el contorno del borde del recorte puede quedar mal); el resto, como lo demás
-    let inCore = new Set(core);
-    // Lo que se copia antes: el núcleo y un trozo más alrededor
-    const first = new Set<number>();
-    for (const c of core) {
-      const cx = c % vs.cols, cy = Math.floor(c / vs.cols);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = cx + dx, y = cy + dy;
-        if (x >= 0 && y >= 0 && x < vs.cols && y < vs.rows) first.add(y * vs.cols + x);
+    let stage = 0;
+    const build = (deadline: number): boolean => {
+      for (let did = false; stage < 3; stage++, did = true) {
+        if (did && performance.now() >= deadline) return false;
+        if (stage === 0) {
+          if (copied) rotated = new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
+        } else if (stage === 1) {
+          view = new WorldView(this.state, q, vo, rotated ? { static: rotated, since: src.clock } : undefined);
+          baked = bakeWorldJob(view.bakeable(), { topZ: src.zMax + 1, ...(this.o.bake ?? {}) }, `bake:g${q}`).baked;
+          // (lo que ningún recuadro pinta, el fondo, como en el horneado entero: sin profundidad y con todo el cielo)
+          baked.depth.fill(Infinity);
+          baked.sky?.fill(SKY_RAYS);
+          vs = view.static; n = vs.cols * vs.rows;
+        } else {
+          const vp = this.o.viewport;
+          if (!vp) core = Array.from({ length: n }, (_, c) => c);
+          else {
+            const [lx, ly] = this.toLocal(this.at[0], this.at[1]), [vx, vy] = cam.pointToView(lx, ly);
+            const hx = Math.max(0, Math.min(src.width - 1, Math.floor(lx))), hy = Math.max(0, Math.min(src.depth - 1, Math.floor(ly)));
+            const [px, py] = baked.cam.project(vx, vy, src.height[hy * src.width + hx]!);
+            const M = 16, x0 = Math.max(0, Math.min(baked.width - vp[0], Math.round(px) - vp[0] / 2)), y0 = Math.max(0, Math.min(baked.height - vp[1], Math.round(py) - vp[1] / 2));
+            clip = { x0: x0 - M, y0: y0 - M, x1: x0 + vp[0] - 1 + M, y1: y0 + vp[1] - 1 + M };
+            // Primero con toda la altura (sin mirar alturas: una caja que contiene la de verdad), y las alturas solo de esos:
+            // lo mismo que mirarlas en toda la ventana (que eran 5-8 ms con 11 x 13)
+            const near = chunksInScreen(baked, clip), nearSet = new Set(near);
+            const hit = chunksInScreen(baked, clip, boxesOf(src, true, near)).filter((c) => nearSet.has(c));
+            // Su rectángulo de trozos entero: así todas las columnas de trozos tienen el mismo tramo y el rehorneado las junta
+            // en un recuadro (por columnas sueltas, cada una repetía su margen: ~1,5 veces los píxeles)
+            let cx0 = Infinity, cy0 = Infinity, cx1 = -1, cy1 = -1;
+            for (const c of hit) { const cx = c % vs.cols, cy = Math.floor(c / vs.cols); cx0 = Math.min(cx0, cx); cy0 = Math.min(cy0, cy); cx1 = Math.max(cx1, cx); cy1 = Math.max(cy1, cy); }
+            core = [];
+            for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) core.push(cy * vs.cols + cx);
+          }
+          // Lo que no hace falta rehornear después: con recorte, solo los trozos del núcleo que caen enteros dentro (a 2
+          // píxeles del borde: el contorno del borde del recorte puede quedar mal); el resto, como lo demás
+          inCore = new Set(core);
+          // Lo que se copia antes: el núcleo y un trozo más alrededor
+          first = new Set<number>();
+          for (const c of core) {
+            const cx = c % vs.cols, cy = Math.floor(c / vs.cols);
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+              const x = cx + dx, y = cy + dy;
+              if (x >= 0 && y >= 0 && x < vs.cols && y < vs.rows) first.add(y * vs.cols + x);
+            }
+          }
+          copyFirst = rotated ? [...first] : [];
+          this.lastTurn = { core: core.length, copied: copyFirst.length, of: n, copyMs: 0, jobMs: {} };
+        }
       }
-    }
-    const copyFirst = rotated ? [...first] : [];
-    this.lastTurn = { core: core.length, copied: copyFirst.length, of: n, copyMs: 0, jobMs: {} };
+      return true;
+    };
     let k = 0, jobs: ViewJob[] | null = null, j = 0, V1 = 0, spent = 0, prepDone = false;
     let prep: { run(deadline: number): boolean } | null | undefined;
     const job: ViewJob = { key: `turn:g${q}`, priority: 0, run: (deadline: number) => {
@@ -256,6 +274,7 @@ export class LiveWindow {
       if (this.turnPrep?.job !== job) return true;
       const a = performance.now();
       try {
+        if (stage < 3) { if (!build(deadline)) return false; if (performance.now() >= deadline) return false; }
         // (al menos un trozo por llamada: con el índice no bastaba, al volver a entrar con el plazo ya vencido no avanzaba)
         for (let did = false; k < copyFirst.length; k++, did = true) {
           if (did && performance.now() >= deadline) { this.lastTurn.copyMs += performance.now() - a; return false; }
