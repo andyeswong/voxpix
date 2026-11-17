@@ -402,6 +402,8 @@ export class LiveWindow {
     this.onSwitch(dx, dy);
     // (los dos se corrieron igual: lo que entra, vacío en los dos)
     for (const { view } of this.views.values()) view.markSynced();
+    // (lo que quedaba por rehornear se descartó en el cambio y se volvió a marcar: a la cola otra vez)
+    this.pendingRebake = true;
     this.lastSwitchMs = performance.now() - t0;
     this.stats.switchMs.push(this.lastSwitchMs); this.stats.shiftMs.push(this.shiftSpent);
     this.afterShift(dx, dy);

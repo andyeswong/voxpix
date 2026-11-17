@@ -30,7 +30,7 @@ const SPEC: RegionSpec = {
 };
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
-import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, type Baked } from '../src/world/bake';
+import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, rebakeChangedJobs, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 import { unkey } from '../src/core';
 
@@ -149,5 +149,35 @@ describe('ventana viva: correr lo horneado', () => {
     for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (i === N - 1) stamp(b.source, 1 + i, j, i, j);
     rebakeChanged(b, local(1, 0));
     expect(diff(b, fresh(1, 0, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+  });
+
+  it('el cambio no espera al rehorneado de la cola: lo descarta (uno a medias, otros sin empezar, luces) y lo vuelve a marcar corrido', () => {
+    const b = fresh(0, 0);
+    const job = shiftBakedJob(b, K, 0, { band: 8, manual: true });
+    while (!job.run(-Infinity));
+    // Dos huecos que siguen dentro después de correr, con antorchas cerca: recuadros, cielo y luces en la cola
+    const holes: Box[] = [[40, 30, 20, 55, 45, 63], [70, 60, 16, 80, 75, 63]];
+    for (const h of holes) dig(b.source, 0, 0, h);
+    const jobs = rebakeChangedJobs(b, local(0, 0));
+    expect(jobs.length).toBeGreaterThan(2);
+    // El primero, a medias (una llamada sin plazo); los demás, sin empezar
+    expect(jobs[0]!.run(-Infinity)).toBe(false);
+    expect(job.run(-Infinity)).toBe(true);
+    expect(job.canCommit()).toBe(true);
+    job.commit();
+    // Lo que quedaba en la cola ya no hace nada
+    for (const j of jobs) expect(j.run(Infinity)).toBe(true);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (i === N - 1) stamp(b.source, 1 + i, j, i, j);
+    rebakeChanged(b, local(1, 0));
+    expect(diff(b, fresh(1, 0, holes))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+    const byId = (x: Baked) => new Map(x.lights.map((l) => [l.light.id, l]));
+    const lb = byId(b), lr = byId(fresh(1, 0, holes));
+    expect([...lb.keys()].sort()).toEqual([...lr.keys()].sort());
+    for (const [id, z] of lr) {
+      const y = lb.get(id)!;
+      let off = 0;
+      for (let i = 0; i < z.weight.length; i++) if (Math.abs(y.weight[i]! - z.weight[i]!) > 1e-6) off++;
+      expect({ id, off }).toEqual({ id, off: 0 });
+    }
   });
 });
