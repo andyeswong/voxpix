@@ -30,7 +30,7 @@ const { s, lights, W, D, ZT } = tunnelWorld(true, true, Number(q.get('mundo') ??
 const state = new WorldState(s, lights, null);
 const baked = bakeWorld({ model: s, lights, width: W, depth: D }, { topZ: ZT, incline: 0.5, sky: true, outline: 'both' });
 const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
-const TY = 191, TZ = 8, X0 = 64, X1 = W - 64;
+const TY = 191, TZ = 8, X0 = 64, X1 = W - 64, GAME = q.get('juego') === '1';
 const id = state.entities.add({ model: walk[0]!, x: X0, y: TY, z: TZ, facing: 90 });
 const [, py] = baked.cam.project(X0, TY, TZ);
 const vy = Math.max(0, Math.min(baked.height - VH, Math.round(py) - VH / 2));
@@ -45,13 +45,15 @@ const walker = (width: number): Walker => ({ x: X0, f: 0, painter: width ? new S
 function advance(w: Walker): { layer: SectionLayer | null; ready: boolean; queue: number; layerMs: number } {
   w.x += SPEED; w.f++;
   if (w.x > X1) w.x = X0;
-  state.entities.move(id, Math.round(w.x), TY, TZ, 90);
+  // (?juego=1: como en el juego, se mueve en y dentro del túnel y sus pies cambian de vez en cuando)
+  const jy = GAME ? TY + Math.round(3 * Math.sin(w.f / 23)) : TY, jz = GAME ? TZ + (Math.floor(w.f / 37) % 3 === 2 ? 1 : 0) : TZ;
+  state.entities.move(id, Math.round(w.x), jy, jz, 90);
   state.entities.setModel(id, walk[Math.floor((w.f * 1000 / 60) / WALK_FRAME_MS) % 8]!);
   state.step();
   let layer: SectionLayer | null = null, ready = true, layerMs = 0;
   const t0 = performance.now();
   if (w.painter) {
-    w.painter.set(sectionAround(null, w.x, TY, TZ, w.width * B), 1);
+    w.painter.set(sectionAround(null, w.x, jy, jz, w.width * B), 1);
     const job = w.painter.job();
     if (job) w.budget.push(job);
   }

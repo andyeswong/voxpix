@@ -202,16 +202,22 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
       if (mt && !Number.isNaN(pick[q]!)) { const [x, y, z] = unkey(pick[q]!); back[q] = mt.backlit[s.get(x, y, z)]!; }
     }
   }
-  // Lo sustituido donde detrás no se encontró nada (más allá de depth): si lo que tapaba estaba bajo tierra (su cielo
-  // horneado no es el abierto, o el horneado no tiene cielo), el fondo de la sección (cut.fill, oscuro por defecto); si
-  // no, transparente (el cielo del juego)
+  // Lo sustituido donde detrás no se encontró nada (más allá de depth): si su rayo pasa por debajo de la tierra en alguna
+  // fila de detrás de la caja (un pozo, una cueva, el suelo que sigue), el fondo de la sección (cut.fill, oscuro por
+  // defecto); si va por encima de todo, transparente (el cielo del juego)
   const fill = cut.fill === null ? null : rgbOf(cut.fill ?? SECTION_FILL);
-  if (fill) for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
-    const q = j * w + i;
-    if (mask[q] !== 1 || rgba[q * 4 + 3]) continue;
-    const k = b.sky ? b.sky[(ry + j) * b.width + rx + i]! : 0;
-    if (k >= SKY_RAYS) continue;
-    rgba[q * 4] = fill[0]; rgba[q * 4 + 1] = fill[1]; rgba[q * 4 + 2] = fill[2]; rgba[q * 4 + 3] = 255;
+  if (fill) for (let j = 0; j < h; j++) {
+    const P = O - (ry + j + 0.5);                                  // = a * y + z de la fila
+    for (let i = 0; i < w; i++) {
+      const q = j * w + i;
+      if (mask[q] !== 1 || rgba[q * 4 + 3]) continue;
+      const x = rx + i - ox;
+      if (x < 0 || x >= s.width) continue;
+      let under = false;
+      for (let y = Y1 + 1; y <= Math.min(s.depth - 1, Y1 + depthBack) && !under; y++) under = P - a * y < s.height[y * s.width + x]!;
+      if (!under) continue;
+      rgba[q * 4] = fill[0]; rgba[q * 4 + 1] = fill[1]; rgba[q * 4 + 2] = fill[2]; rgba[q * 4 + 3] = 255;
+    }
   }
   if (oy0 === ry && oy1 === ry1) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut };
   // Solo las filas pedidas (sin el margen)
@@ -340,16 +346,25 @@ export class SectionPainter {
   }
 
   // La caja de este cuadro (o null: sin corte) y hacia dónde anda en x de la vista (-1, 0, 1). La caja se lleva a
-  // franjas enteras (las que toca)
+  // franjas enteras en x (las que toca) y a bloques en y y en z
   set(cut: SectionCut | null, dir = 0): void {
     this.dir = dir;
     if (!cut) { this.cut = null; return; }
     // (con el mismo ancho siempre: la caja siguiente es esta desplazada una franja, y lo que se adelanta para ella vale)
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((cut.x1 - cut.x0 + 1) / STRIP) * STRIP - 1;
-    this.cut = { ...cut, x0, x1 };
+    // También en y y en z, por bloques (STRIP): la caja acaba en la última fila de bloques antes de la de los pies y corta
+    // desde el bloque de los pies. Así lo pintado sigue valiendo mientras el objetivo se mueve dentro de su bloque (si no,
+    // cada vóxel que se mueve en y o en z lo repinta todo)
+    // (con holgura: mientras el objetivo no se aleje del bloque de antes más de medio bloque, se queda; si no, en la frontera
+    // entre dos bloques la caja saltaría de uno a otro)
+    const prev = this.cut, H2 = STRIP / 2;
+    let y1 = Math.floor((cut.y1 + 1) / STRIP) * STRIP - 1, zMin = Math.floor(cut.zMin / STRIP) * STRIP;
+    if (prev && cut.y1 >= prev.y1 + 1 - H2 && cut.y1 <= prev.y1 + STRIP + H2) y1 = prev.y1;
+    if (prev && cut.zMin >= prev.zMin - H2 && cut.zMin < prev.zMin + STRIP + H2) zMin = prev.zMin;
+    this.cut = { ...cut, x0, x1, y1, zMin };
     // (y si la ventana se corrió, todo lo pintado está en las coordenadas de antes)
-    const track = `${cut.y0},${cut.y1},${cut.zMin},${cut.depth ?? ''}:${this.b.shifts ?? 0}`;
-    if (track !== this.track) { this.track = track; this.strips.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
+    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}:${this.b.shifts ?? 0}`;
+    if (track !== this.track) { this.track = track; this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
   }
 
   // ¿La franja i está pintada y al día con la imagen?
@@ -508,14 +523,14 @@ export class SectionPainter {
 
   // Un paso: la banda siguiente de filas de la unidad i (BAND filas). Con la última, la unidad queda pintada. Las bandas
   // de una unidad se pintan con la misma imagen: si se rehornea algo cerca a medias, se empieza de nuevo
-  private pending = new Map<number, { serial: number; next: number; parts: Array<SectionLayer | null> }>();
+  private pending = new Map<number, { serial: number; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
   private paintStep(i: number): void {
     const c = this.cut!, b = this.b;
     const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9 };
     const [fy0, fy1] = sectionRows(b, wide);
     let p = this.pending.get(i);
-    if (p && !this.unchangedSince(i, p.serial)) p = undefined;
-    if (!p) { p = { serial: b.published.serial, next: fy0, parts: [] }; this.pending.set(i, p); }
+    if (p && (!this.unchangedSince(i, p.serial) || p.fy0 !== fy0 || p.fy1 !== fy1)) p = undefined;
+    if (!p) { p = { serial: b.published.serial, next: fy0, fy0, fy1, parts: [] }; this.pending.set(i, p); }
     // Con una columna de margen a cada lado (el contorno, el borde y la costura miran a los vecinos); se copian sus UNIT
     const y1 = Math.min(fy1, p.next + BAND - 1);
     p.parts.push(sectionLayer(b, wide, { x0: i * UNIT - 1, x1: i * UNIT + UNIT }, { y0: p.next, y1 }));
