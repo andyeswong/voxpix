@@ -359,7 +359,7 @@ export class LiveWindow {
     // cambian en el mismo momento que los giros
     this.storeShift = this.views.has(0) ? null : { job: this.store.shiftJob(dx * k, dy * k), ready: false };
     // Un trabajo de la cola: prepara los giros (el que se ve, primero) y, cuando están todos, el cambio
-    this.shiftSpent = 0;
+    this.shiftSpent = 0; this.shiftStartAt = performance.now();
     // (con la prioridad de los trozos: sin ella iba detrás de todo el rehorneado de la cola, en orden de llegada)
     this.shiftJob = { key: 'shift', priority: 70, run: (deadline: number) => {
       const a = performance.now();
@@ -384,7 +384,10 @@ export class LiveWindow {
   lastSwitchMs = 0;
   // Para el banco: ms de CPU por trozo escrito (en sus llamadas), por corrimiento preparado y por cambio, y los que esperan
   // (y por giro con fundido, ms de CPU del núcleo)
-  readonly stats = { loadMs: [] as number[], shiftMs: [] as number[], switchMs: [] as number[], turnMs: [] as number[] };
+  // (y de reloj: del empiece de cada corrimiento a su cambio, y del cambio a tener escritos los trozos que entraron)
+  readonly stats = { loadMs: [] as number[], shiftMs: [] as number[], switchMs: [] as number[], turnMs: [] as number[], shiftWallMs: [] as number[], loadWallMs: [] as number[] };
+  private shiftStartAt = 0;
+  private switchAt = -1;
   get queued(): number { return this.loading.length + (this.loadJob ? 1 : 0); }
   private shiftSpent = 0;
 
@@ -407,6 +410,7 @@ export class LiveWindow {
     this.pendingRebake = true;
     this.lastSwitchMs = performance.now() - t0;
     this.stats.switchMs.push(this.lastSwitchMs); this.stats.shiftMs.push(this.shiftSpent);
+    this.stats.shiftWallMs.push(performance.now() - this.shiftStartAt); this.switchAt = performance.now();
     this.afterShift(dx, dy);
     return true;
   }
@@ -446,6 +450,7 @@ export class LiveWindow {
       if (!ok) return false;
       this.stats.loadMs.push(spent);
       this.loadJob = null;
+      if (!this.loading.length && this.switchAt >= 0) { this.stats.loadWallMs.push(performance.now() - this.switchAt); this.switchAt = -1; }
       // Rehornear lo escrito (y lo del juego): sus trabajos, a la cola en la próxima update
       this.pendingRebake = true;
       return true;
