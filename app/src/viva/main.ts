@@ -18,7 +18,7 @@ import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import { set as SET, SPEC } from '../../../scripts/ventana-mundo';
 import { BlockSet, type VoxsetFile } from '../../../src/world/blocks';
 import type { RegionSpec } from '../../../src/world/regiongen';
-import type { ViewJob } from '../../../src/world/bake';
+import type { ViewJob, RectOut } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
 
@@ -46,8 +46,24 @@ void (async () => {
   const spec = ext ? ext.spec : spec0;
   const CENTER: [number, number] = ext?.center ?? [0, 0];
   const NXW = ext?.nx ?? NX, NYW = ext?.ny ?? NY;
-  const win = new LiveWindow({ blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
+  // EXPERIMENTO (worker-exp): ?worker=1 pinta los recuadros de lo que entra en un worker con su copia de la ventana
+  // (hornero.ts); ?freno=N, su freno propio
+  const WORKER = q.get('worker') === '1', FRENO = Number(q.get('freno') ?? 1);
+  const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;
+  const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0 };
+  const results = new Map<number, RectOut>();
+  if (hornero) {
+    hornero.postMessage({ kind: 'init', voxset: ext ? ext.voxset : null, spec: ext ? ext.spec : spec0, chunk: 16, width: NXW * 128, depth: NYW * 128, bake: ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' } });
+    hornero.onmessage = (e) => { const d = e.data as { id: number; ms: number; busyMs: number; o: RectOut }; results.set(d.id, d.o); remote.got++; remote.workerMs += d.ms; remote.busyMs = d.busyMs; };
+  }
+  const win = new LiveWindow({
+    ...(hornero ? {
+      onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }),
+      onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }),
+    } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
+  let rid = 0;
+  if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; } }; } };
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
   compositor.upload(win.baked);
   const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
@@ -197,6 +213,7 @@ void (async () => {
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
+      remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs) } : null,
       worst, ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),

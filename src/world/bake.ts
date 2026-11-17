@@ -59,6 +59,10 @@ export interface Baked {
   // Los recuadros en marcha, por key (con la ficha del último trabajo que la usa: uno nuevo con la misma key sustituye
   // al viejo en la cola). Las luces y el cielo esperan a que no quede en marcha ninguno de los suyos
   rectsBusy?: Map<string, object>;
+  // EXPERIMENTO (worker-exp): quien pinta los recuadros fuera (un worker con su copia de los vóxeles). ask(rect) da un
+  // vale (o null: se pinta aquí) y result() el recuadro cuando llega; se publica si ningún trozo suyo cambió desde que se
+  // pidió, y si no, se pinta aquí
+  remote?: RemoteRects;
   // El rehorneado que está en la cola sin publicar (recuadros, cielo y luces), con las cajas de lo que rehace; y el número
   // de tanda: al correrse la ventana (shiftBakedJob), lo de la cola se descarta (cancelRebakes: sus trabajos acaban sin
   // hacer nada) y sus trozos se vuelven a marcar como cambiados ya corridos. Antes el cambio esperaba a que se vaciara
@@ -846,8 +850,9 @@ const PUBLISHED_KEEP = 32;
 // publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
 // rebakeJobs, de una vez); publishRectBuffers: lo que hace el hilo principal con lo que le llega
 export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
-export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut {
-  const { rect } = chunkRect(b, chunks);
+export interface RemoteRects { ask(rect: ScreenRect): { result(): RectOut | null } | null }
+export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
+export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
   const buf = rectBuffers(rect);
   for (let col = rect.x0; col <= rect.x1; col += band) {
     const c1 = Math.min(rect.x1, col + band - 1);
@@ -931,12 +936,30 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     pp.set(token, [plan]);
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
+    // (EXPERIMENTO worker-exp: el recuadro pedido fuera, y el reloj de cuando se pidió)
+    let ticket: { result(): RectOut | null } | null | undefined, askedAt = 0;
     jobs.push({
       key,
       run(deadline) {
         if (stale()) return true;                                          // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) return true;
+        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; ticket = b.remote.ask(rect); }
+        if (ticket) {
+          const r = ticket.result();
+          if (!r) return false;                                            // espera (sin gastar)
+          ticket = null;
+          const moved = b.source.changedSince(askedAt);
+          if (!g.some((c) => moved.includes(c))) {
+            const mask = new Uint8Array(r.w * r.h);
+            publishRect(b, rect, r, mask);
+            masks.set(rect, mask);
+            if (busy.get(key) === token) busy.delete(key);
+            pp.delete(token);
+            return true;
+          }
+          // (algo suyo cambió mientras: se pinta aquí)
+        }
         buf ??= rectBuffers(rect);
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
         // última se pasaba del plazo entera)
