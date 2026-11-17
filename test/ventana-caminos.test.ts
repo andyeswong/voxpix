@@ -99,4 +99,21 @@ describe('caminos en la ventana viva', () => {
       expect([fx, fy, lv.path({ x: fx, y: fy, z: 40 }, { ...goal, z: 40 }, 2)]).toEqual([fx, fy, rlv.path({ x: fx, y: fy, z: 40 }, { ...goal, z: 40 }, 2)]);
     }
   });
+
+  it('reach: hasta N pasos de la meta, el mismo camino que sin tope; más lejos, ninguno', () => {
+    const win = make([0, 0]);
+    const R = 10, goal = { x: 80, y: 80 };
+    const full = new LevelPathField(win.state, LV), near = new LevelPathField(win.state, { ...LV, reach: R });
+    const ffull = new PathField(win.state, FL), fnear = new PathField(win.state, { ...FL, reach: R });
+    let inside = 0, outside = 0;
+    for (let y = 2; y < win.store.depth; y += 6) for (let x = 2; x < win.store.width; x += 6) {
+      const p = full.path({ x, y, z: 40 }, { ...goal, z: 40 }, 2), q = near.path({ x, y, z: 40 }, { ...goal, z: 40 }, 2);
+      if (p && p.length - 1 <= R) { expect(q).toEqual(p); inside++; } else { expect(q).toBeNull(); if (p) outside++; }
+      const a = ffull.path({ x, y }, goal, 2), b = fnear.path({ x, y }, goal, 2);
+      if (a && a.length - 1 <= R) expect(b).toEqual(a); else expect(b).toBeNull();
+    }
+    // (que haya de los dos)
+    expect(inside).toBeGreaterThan(5);
+    expect(outside).toBeGreaterThan(5);
+  });
 });

@@ -61,7 +61,8 @@ void (async () => {
   // detrás de MAIA que le pregunta cada cuadro (búsqueda repartida, budget nodos por cuadro): lo que cuesta en el cuadro
   // del cambio y en los demás
   const CAMINOS = q.get('caminos') === '1';
-  const field = CAMINOS ? new LevelPathField(win.state, { cell: 4, radius: 2, height: 16, step: 8, maxDrop: 24, budget: Number(q.get('nodos') ?? 400) }) : null;
+  const REACH = q.get('reach') ? Number(q.get('reach')) : undefined;
+  const field = CAMINOS ? new LevelPathField(win.state, { cell: 4, radius: 2, height: 16, step: 8, maxDrop: 24, budget: Number(q.get('nodos') ?? 400), ...(REACH ? { reach: REACH } : {}) }) : null;
   if (field) win.attach(field);
   const pathMs: number[] = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez

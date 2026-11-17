@@ -14,6 +14,7 @@ export interface PathOptions {
   radius?: number;      // radio del cuerpo, en vóxeles: cabe si todas las columnas a esa distancia se pisan (0: el centro)
   step?: number;        // lo más que sube de una celda a otra, y lo más que puede sobresalir el suelo bajo el cuerpo (2)
   maxDrop?: number;     // lo más que baja de una celda a otra (Infinity)
+  reach?: number;       // hasta cuántos pasos de la meta se busca (Infinity); más lejos, sin camino. Ver LevelPathField
 }
 
 const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
@@ -25,6 +26,7 @@ export class PathField {
   readonly radius: number;
   readonly step: number;
   readonly maxDrop: number;
+  readonly reach: number;
   private floor: Float64Array;          // el suelo de cada celda (NO_FOOT: no se puede estar)
   private dist: Int32Array;             // pasos hasta la meta (-1: sin camino)
   private goal = '';
@@ -33,6 +35,7 @@ export class PathField {
 
   constructor(readonly state: WorldState, o: PathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.step = o.step ?? 2; this.maxDrop = o.maxDrop ?? Infinity;
+    this.reach = o.reach ?? Infinity;
     this.cols = Math.ceil(state.width / this.cell); this.rows = Math.ceil(state.depth / this.cell);
     this.floor = new Float64Array(this.cols * this.rows);
     this.dist = new Int32Array(this.cols * this.rows).fill(-1);
@@ -126,6 +129,7 @@ export class PathField {
     // Hacia atrás: m entra en la cola si desde m se puede ir a k
     while (head < tail) {
       const k = q[head++]!, x = k % cols, y = (k - x) / cols;
+      if (dist[k]! >= this.reach) continue;
       for (const [dx, dy] of N8) {
         const nx = x + dx, ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;

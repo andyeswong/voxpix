@@ -19,6 +19,10 @@ export interface LevelPathOptions {
   levels?: number;      // suelos por celda como mucho, de arriba abajo (4)
   // Búsqueda repartida: nodos por advance() (sin él, cada meta nueva se busca entera al pedirla). Ver advance()
   budget?: number;
+  // Hasta dónde se busca: los nodos a más de `reach` pasos de la meta no tienen camino (dir null). Sin él, todo el campo.
+  // En una ventana viva grande (288 x 352 celdas en 9 x 11 trozos), una meta que se mueve cuesta una búsqueda de todo
+  // el campo cada vez que cambia de celda; con reach, ~π·reach² nodos
+  reach?: number;
 }
 
 const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
@@ -35,6 +39,7 @@ export class LevelPathField {
   readonly maxDrop: number;
   readonly L: number;
   readonly budget: number | undefined;
+  readonly reach: number;
   private floor: Float64Array;          // por celda y nivel: el suelo (NO_FOOT: ninguno)
   private ceil: Float64Array;           // y su techo: la cara de abajo del primer vóxel que bloquea encima (Infinity: cielo)
   private dist: Int32Array;             // pasos hasta la meta (-1: sin camino)
@@ -52,6 +57,7 @@ export class LevelPathField {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
     this.maxDrop = o.maxDrop ?? Infinity; this.L = o.levels ?? 4;
     this.budget = o.budget;
+    this.reach = o.reach ?? Infinity;
     this.cols = Math.ceil(state.width / this.cell); this.rows = Math.ceil(state.depth / this.cell);
     this.floor = new Float64Array(this.cols * this.rows * this.L).fill(NO_FOOT);
     this.ceil = new Float64Array(this.cols * this.rows * this.L);
@@ -253,6 +259,7 @@ export class LevelPathField {
     let head = w.head, tail = w.tail;
     for (let left = nodes; head < tail && left > 0; left--) {
       const n = q[head++]!, cell = Math.floor(n / L), x = cell % cols, y = Math.floor(cell / cols);
+      if (dist[n]! >= this.reach) continue;
       for (let d = 0; d < 8; d++) {
         const nx = x + N8[d]![0], ny = y + N8[d]![1];
         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
