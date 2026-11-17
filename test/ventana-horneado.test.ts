@@ -151,6 +151,24 @@ describe('ventana viva: correr lo horneado', () => {
     expect(diff(b, fresh(1, 0, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
   });
 
+  it('lo expuesto (exposureJob) a medias cuando se corre la ventana: para sin error (las máscaras caducan al correrse)', () => {
+    // Llamadas con plazo corto (las tandas se cuentan dentro de una llamada): con plazos distintos, alguna se corta a
+    // mitad de un trozo. Solo importa que no dé error: las imágenes, aquí, no se comparan
+    for (const ms of [0.02, 0.05, 0.1, 0.2, 0.4, 0.8]) {
+      const n = ms;
+      const b = fresh(0, 0);
+      expect(b.exposurePending).toBe(true);
+      const exp = rebakeChangedJobs(b, local(0, 0)).find((j) => j.key.startsWith('exposure:'))!;
+      expect(exp).toBeDefined();
+      // Varios corrimientos con el trabajo a medias (en la página de FERN cruzaba ~12), de ida y vuelta
+      for (let k = 0; k < 8; k++) { exp.run(performance.now() + ms); shiftBaked(b, k % 2 ? -K : K, 0); }
+      // Antes contaba las tandas de antes del corrimiento contra el tope de un trozo: "lo expuesto no acaba"
+      let done = false;
+      for (let k = 0; k < 100000 && !done; k++) done = exp.run(performance.now() + 5);
+      expect([n, done]).toEqual([n, true]);
+    }
+  });
+
   it('el cambio no espera al rehorneado de la cola: lo descarta (uno a medias, otros sin empezar, luces) y lo vuelve a marcar corrido', () => {
     const b = fresh(0, 0);
     const job = shiftBakedJob(b, K, 0, { band: 8, manual: true });

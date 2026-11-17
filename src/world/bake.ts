@@ -1184,9 +1184,15 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
   }
   let k = 0, batches = 0;
   const most = warmBatches(s, { x0: 0, y0: 0, x1: CHUNK - 1, y1: CHUNK - 1 });
+  // La ventana viva: al correrse, las máscaras caducan todas (StaticVoxels.shift / shiftJob) y el orden y las regiones de
+  // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
+  // con su plazo. Antes seguía, contaba las tandas de antes del corrimiento contra el tope del trozo y acababa en "lo
+  // expuesto no acaba" (FERN, abierto a 1x: el trabajo duraba ~6 s y cruzaba una docena de corrimientos)
+  const shifts = b.shifts ?? 0;
   return {
     key: `exposure:${++exposureSerial}`,
     run(deadline) {
+      if ((b.shifts ?? 0) !== shifts) return true;
       if (b.shiftHold) return false;
       while (k < order.length) {
         const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;
