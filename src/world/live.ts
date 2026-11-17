@@ -32,7 +32,7 @@ import { StaticVoxels, WorldState, CHUNK } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec } from './regiongen';
-import { bakeWorld, shiftBakedJob, rebakeChangedJobs, type Baked, type ShiftJob, type ViewJob } from './bake';
+import { bakeWorld, shiftBakedJob, rebakeChangedJobs, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, type Quarter } from './view';
 
 export type Trozo = readonly [number, number];
@@ -58,6 +58,9 @@ export interface LiveWindowOptions {
   margin?: number | { x: number; n: number; s: number };
   band?: number;                       // filas de la imagen por paso al correrla (shiftBakedJob)
   quarters?: readonly Quarter[];       // los giros que se tienen horneados (el 0 siempre; [0] por defecto)
+  // Cómo se rehornea lo que entra (rebakeJobs): por defecto pasos de 16 columnas x 64 filas y un recuadro por tramo de
+  // trozos (bench-viva, sin freno: de ~1020 a ~660 ms por trozo cruzado, y la llamada más larga de 8 a 5 ms)
+  rebake?: RebakeShape;
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
@@ -160,7 +163,7 @@ export class LiveWindow {
       if (q === this.quarter && !all) continue;
       const lights = view.bakeable().lights;
       if (!baked.source.changedSince(baked.version).length) continue;
-      for (const j of rebakeChangedJobs(baked, lights)) budget.push(q === 0 ? j : { key: `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(j.priority !== undefined ? { priority: j.priority } : {}) });
+      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true } })) budget.push(q === 0 ? j : { key: `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(j.priority !== undefined ? { priority: j.priority } : {}) });
     }
   }
 

@@ -112,6 +112,23 @@ describe('rehorneado como trabajos (para la cola con presupuesto)', () => {
     same(b, bakeWorld({ model: s, lights, width: 80, depth: 64 }, { topZ: 30, incline: 0.5 }));
   });
 
+  it('con forma (franjas de 16 x 16 filas, recuadros juntados, contorno): da lo mismo que hornear de cero', () => {
+    for (const shape of [{ band: 16, rows: 16, merge: true }, { band: 3, rows: 7 }, { band: 64, merge: true }]) {
+      const { s, lights } = yard();
+      const o = { topZ: 30, incline: 0.5, outline: 'both' as const, sky: true };
+      const b = bakeWorld({ model: s, lights, width: 80, depth: 64 }, o);
+      // Un trozo entero (16 x 16) nuevo de 12 de alto y su vecino al este, más un hueco en el muro
+      for (let z = 1; z <= 12; z++) for (let y = 0; y < 16; y++) for (let x = 0; x < 32; x++) if ((x * 7 + y * 3 + z) % 5) s.set(x, y, z, material(0, 1 + (z % 4)));
+      for (let z = 1; z <= 20; z++) for (let x = 36; x < 44; x++) for (let y = 30; y < 33; y++) s.set(x, y, z, 0);
+      let calls = 0;
+      for (const j of rebakeChangedJobs(b, lights, { shape })) while (!j.run(0)) calls++;
+      expect(calls).toBeGreaterThan(3);
+      const r = bakeWorld({ model: s, lights, width: 80, depth: 64 }, o);
+      same(b, r);
+      expect(Buffer.from(b.sky!.buffer).equals(Buffer.from(r.sky!.buffer))).toBe(true);
+    }
+  });
+
   it('mientras no acaban, lo publicado es lo viejo (nunca se ve medio recuadro ni media luz)', () => {
     const { lights, b, before } = edited();
     const [rect, light] = rebakeChangedJobs(b, lights);

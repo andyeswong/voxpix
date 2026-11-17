@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><title>VoxPix · freno de CPU y workers</title></head>
+<body style="background:#111;color:#ccc;font:14px monospace">
+<div id="hud">midiendo...</div>
+<script type="module">
+// ¿El freno de CPU del CDP (Emulation.setCPUThrottlingRate) llega a los workers? El mismo bucle fijo (aritmética entera,
+// sin memoria), 5 veces en el hilo principal y 5 en un worker; se compara a 1x y a 6x. window.__viva = { main, worker } (ms)
+const src = `
+  function work(n) { let h = 0x811c9dc5 | 0; for (let i = 0; i < n; i++) { h ^= i; h = Math.imul(h, 16777619); } return h; }
+  self.onmessage = (e) => { const out = []; for (let k = 0; k < e.data.reps; k++) { const a = performance.now(); work(e.data.n); out.push(performance.now() - a); } self.postMessage(out); };
+`;
+function work(n) { let h = 0x811c9dc5 | 0; for (let i = 0; i < n; i++) { h ^= i; h = Math.imul(h, 16777619); } return h; }
+const N = 2e7, REPS = 5;
+await new Promise((r) => setTimeout(r, 500));
+work(1e6);
+const main = [];
+for (let k = 0; k < REPS; k++) { const a = performance.now(); work(N); main.push(+(performance.now() - a).toFixed(1)); }
+const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+const worker = await new Promise((r) => { w.onmessage = (e) => r(e.data.map((v) => +v.toFixed(1))); w.postMessage({ n: N, reps: REPS }); });
+// Y el worker medido desde el hilo principal (reloj de fuera), por si el reloj del worker va frenado con él
+const a = performance.now();
+await new Promise((r) => { w.onmessage = () => r(); w.postMessage({ n: N, reps: 1 }); });
+const workerOutside = +(performance.now() - a).toFixed(1);
+window.__viva = { main, worker, workerOutside };
+document.getElementById('hud').textContent = JSON.stringify(window.__viva);
+</script>
+</body>
+</html>

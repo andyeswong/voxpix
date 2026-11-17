@@ -688,7 +688,7 @@ function chunkRect(b: Baked, chunks: readonly number[], boxes?: ReadonlyMap<numb
 // seguidos en y. Dos tramos de la misma columna van juntos si el hueco entre ellos cuesta menos píxeles que la altura
 // de las paredes que repetirían dos recuadros. Así unos cambios sueltos por todo el mundo (una caída) no rehacen el
 // mundo entero de un recuadro.
-function chunkGroups(b: Baked, chunks: readonly number[]): number[][] {
+function chunkGroups(b: Baked, chunks: readonly number[], merge = false): number[][] {
   const s = b.source, a = b.options.oblique?.y ?? 1;
   const gap = Math.max(1, Math.floor((s.zMax - s.zMin + 2) / (a * CHUNK)));
   const byCol = new Map<number, number[]>();
@@ -707,19 +707,29 @@ function chunkGroups(b: Baked, chunks: readonly number[]): number[][] {
     }
     groups.push(g);
   }
-  return groups;
+  if (!merge) return groups;
+  // Las de columnas seguidas con el mismo tramo de filas, juntas
+  const span = (g: number[]) => `${Math.floor(g[0]! / s.cols)},${Math.floor(g[g.length - 1]! / s.cols)},${g.length}`;
+  const out: number[][] = [];
+  for (const g of groups) {
+    const last = out[out.length - 1], cx = g[0]! % s.cols;
+    if (last && (last[last.length - 1]! % s.cols) === cx - 1 && span(last.filter((c) => c % s.cols === cx - 1)) === span(g)) last.push(...g);
+    else out.push([...g]);
+  }
+  return out;
 }
 
 // Renderiza las columnas de píxeles c0..c1 del recuadro en sus búferes
 // Lo que recorre la franja de columnas c0..c1 del recuadro: la región de vóxeles (sus columnas y las y que pueden caer
 // en sus filas) y, por bandas de 16 de y, la franja de alturas que puede caer en esas filas
-function stripRegion(b: Baked, r: ScreenRect, c0: number, c1: number) {
+// (j0..j1: solo esas filas del recuadro; por defecto, todas)
+function stripRegion(b: Baked, r: ScreenRect, c0: number, c1: number, j0 = r.y0, j1 = r.y1) {
   const s = b.source, a = b.options.oblique?.y ?? 1, O = b.options.originY;
   // Con contorno, se renderiza con 1 píxel más por cada lado y se recorta: el contorno de un píxel mira a sus 4 vecinos,
   // y los del borde del recuadro tienen que verlos como en el horneado entero. Sin contorno ningún píxel depende de sus
   // vecinos y el margen solo costaría (casi duplica las columnas de un recuadro pequeño)
   const halo = RECT_TUNING.halo === 'always' || (b.options.outline ?? 'none') !== 'none' ? 1 : 0;
-  const R0 = r.y0 - halo, R1 = r.y1 + halo, C0 = c0 - halo, C1 = c1 + halo;
+  const R0 = j0 - halo, R1 = j1 + halo, C0 = c0 - halo, C1 = c1 + halo;
   // Solo los vóxeles de esas columnas (el borde de una columna de píxeles es la columna de vóxeles de su x) y de las y
   // que pueden caer en esas filas. Por arriba manda lo más alto que haya en esas columnas (la rejilla de alturas), no
   // zMax: en un mundo alto y medio vacío, eso es la mitad de las filas
@@ -748,8 +758,8 @@ function warmBatches(s: StaticVoxels, r: { x0: number; y0: number; x1: number; y
   const ys = Math.min(s.depth - 1, r.y1) - Math.max(0, r.y0) + 1;
   return Math.ceil((chunksX * ys * (s.zMax - s.zMin + 1)) / WARM_ROWS) + 1;
 }
-function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: number): boolean {
-  const { region, bands } = stripRegion(b, r, c0, c1);
+function warmStrip(b: Baked, r: ScreenRect, c0: number, c1: number, deadline: number, j0 = r.y0, j1 = r.y1): boolean {
+  const { region, bands } = stripRegion(b, r, c0, c1, j0, j1);
   const parts = (b.options.yaw ?? 0) !== 0 ? [region] : bands;
   for (const part of parts) {
     const most = warmBatches(b.source, part);
@@ -772,17 +782,17 @@ function facesOf(b: Baked): FaceSet {
 }
 
 // remember: false para recorrer una sola vez (el horneado inicial): sin las máscaras de lo expuesto (ver forEachExposed)
-function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number, remember = true): void {
+function renderColumns(b: Baked, r: ScreenRect, buf: RectBuffers, c0: number, c1: number, remember = true, j0 = r.y0, j1 = r.y1): void {
   const s = b.source, O = b.options.originY;
-  const { halo, R0, R1, C0, C1, region, bands } = stripRegion(b, r, c0, c1);
+  const { halo, R0, R1, C0, C1, region, bands } = stripRegion(b, r, c0, c1, j0, j1);
   const W = C1 - C0 + 1, H = R1 - R0 + 1, w = c1 - c0 + 1;
   const banded = (fn: (x: number, y: number, z: number, v: number) => void) => {
     for (const band of bands) s.forEachExposed(fn, band, remember, facesOf(b));
   };
   const sub: VoxelSource = { palette: s.palette, get: (x, y, z) => s.get(x, y, z), entries: () => s.entries(region), forEachExposed: (b.options.yaw ?? 0) === 0 ? banded : (fn) => s.forEachExposed(fn, region, remember) };
   const img = render(sub, { ...b.options, width: W, height: H, originX: (b.options.originX ?? 0) - C0, originY: O - R0 });
-  for (let j = 0; j < buf.h; j++) for (let i = 0; i < w; i++) {
-    const src = (j + halo) * W + i + (c0 - C0), dst = j * buf.w + (c0 - r.x0) + i;
+  for (let j = 0; j <= j1 - j0; j++) for (let i = 0; i < w; i++) {
+    const src = (j + halo) * W + i + (c0 - C0), dst = (j + j0 - r.y0) * buf.w + (c0 - r.x0) + i;
     buf.depth[dst] = img.depth[src]!; buf.face[dst] = img.pickFace![src]!; buf.pick[dst] = img.pickKey![src]!;
     for (let ch = 0; ch < 4; ch++) buf.rgba[dst * 4 + ch] = img.rgba[src * 4 + ch]!;
   }
@@ -821,7 +831,18 @@ const LIGHT_CHECK = 4;    // píxeles entre dos miradas al reloj dentro de un pa
 // lights son TODAS las luces del mundo (o de la vista): las fijas horneadas que ya no están (quitadas, o que pasaron a
 // dinámicas) se deshornean al momento, y las fijas que no estaban horneadas (puestas en partida) se hornean enteras,
 // aunque no haya cambiado ningún vóxel
-export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>): ViewJob[] {
+// Cómo se reparte el rehorneado (lo de mucho de una vez, como los trozos que entran en la ventana viva):
+// - band: columnas de píxeles por franja (RECT_BAND). Cada franja renderiza 1 columna de margen por lado (el contorno) y
+//   recorre otra de vóxeles más: con 4, 7 columnas de vóxeles por cada 4 de píxeles. Más ancha, menos repetido, pero
+//   cada paso de la cola es más largo.
+// - merge: junta en un recuadro las columnas de trozos vecinas con el mismo tramo de filas (un trozo de la ventana entero,
+//   en vez de un recuadro por columna de 16 con su margen de 3 por lado)
+// - rows: filas por paso (en pasos de band columnas x rows filas). Sin rows, la franja entera: en un recuadro alto (una
+//   columna de la ventana viva, cientos de filas) un paso de 4 columnas costaba 13 ms sin freno
+export interface RebakeShape { band?: number; merge?: boolean; rows?: number }
+
+export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>, shape: RebakeShape = {}): ViewJob[] {
+  const BAND = shape.band ?? RECT_BAND;
   const fixed = new Map<LightId, WorldLight>();
   for (const l of lights) if (l.baked !== false) fixed.set(l.id, l);
   const gone = (b.goneLights ??= new Set());
@@ -850,12 +871,13 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   const busy = (b.rectsBusy ??= new Map()), myKeys: string[] = [];
   // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
   const waiting = () => myKeys.some((k) => busy.has(k));
-  for (const g of chunkGroups(b, chunks)) {
+  for (const g of chunkGroups(b, chunks, shape.merge)) {
     const { rect, plan } = chunkRect(b, g, boxes);
     plans.push(plan); rects.push(rect);
     const key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`, token = {};
     busy.set(key, token); myKeys.push(key);
-    let buf: RectBuffers | null = null, col = rect.x0, est = 0;
+    let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
+    const ROWS = shape.rows ?? Infinity;
     jobs.push({
       key,
       run(deadline) {
@@ -866,12 +888,12 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         // última se pasaba del plazo entera)
         let t = performance.now();
         do {
-          const c1 = Math.min(rect.x1, col + RECT_BAND - 1);
+          const c1 = Math.min(rect.x1, col + BAND - 1), r1 = Math.min(rect.y1, row + ROWS - 1);
           // Lo que la franja tiene que recalcular de lo expuesto (tras un cambio grande, como un corte), antes y con plazo:
           // si no da tiempo, se sigue en la llamada siguiente (lo hecho se queda) y la franja no se pasa del plazo por eso
-          if (!warmStrip(b, rect, col, c1, deadline)) return false;
-          renderColumns(b, rect, buf, col, c1);
-          col = c1 + 1;
+          if (!warmStrip(b, rect, col, c1, deadline, row, r1)) return false;
+          renderColumns(b, rect, buf, col, c1, true, row, r1);
+          if (r1 < rect.y1) row = r1 + 1; else { row = rect.y0; col = c1 + 1; }
           const now = performance.now();
           est = now - t; t = now;
         } while (col <= rect.x1 && t + est < deadline);
@@ -1070,12 +1092,12 @@ export const LIGHT_PRIORITY = 10000;
 // se ve encendida en pocos cuadros. No se adelantan a sus recuadros: esperan a que se publiquen sin gastar nada. Las que
 // solo toca de rebote un corte de vista (escrituras de vista: StaticVoxels.viewWrites) van detrás, como el cielo: un
 // corte bajo unas antorchas no tiene que quitarle el cercano a sus recuadros. nearLights: false, todas detrás
-export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean } = {}): ViewJob[] {
+export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts: { near?: { x: number; y: number }; nearLights?: boolean; shape?: RebakeShape } = {}): ViewJob[] {
   const since = b.version;
   const { chunks, boxes } = changedBoxes(b);
   // Los trozos que cambiaron por el mundo (no solo por un corte de vista)
   const worldChunks = chunks.filter((c) => b.source.worldChangedSince(c, since));
-  const jobs = rebakeJobs(b, chunks, lights, boxes);
+  const jobs = rebakeJobs(b, chunks, lights, boxes, opts.shape);
   const n = opts.near;
   // Lo expuesto que el horneado inicial no preparó: una vez, sin prioridad (detrás de todo)
   const extra: ViewJob[] = [];
