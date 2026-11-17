@@ -256,6 +256,15 @@ export class LiveWindow {
       this.quarter = q;
       if (!this.live.has(old)) this.views.delete(old);
       this.turnPrep = null;
+      // Un corrimiento a medias: el de la vista que se soltó sobra, la nueva prepara el suyo, y los vóxeles del mundo los
+      // corre el giro 0 si está (su horneado es del mundo) o, si no, aparte
+      if (this.shiftJobs) {
+        const [dx, dy] = this.shiftDir;
+        this.shiftJobs = this.shiftJobs.filter((s) => this.views.has(s.q) && s.q !== q);
+        this.shiftJobs.push(this.viewShiftJob(q, view, baked, dx, dy));
+        if (this.views.has(0)) this.storeShift = null;
+        else if (!this.storeShift) { const k = this.T / CHUNK; this.storeShift = { job: this.store.shiftJob(dx * k, dy * k), ready: false }; }
+      }
       this.stats.turnMs.push(spent);
       const rest: number[] = [];
       for (let c = 0; c < n; c++) if (!inCore.has(c)) rest.push(c);
@@ -298,6 +307,8 @@ export class LiveWindow {
   // ¿Está escrito el trozo (y se puede leer)?
   isLoaded(t: Trozo): boolean { return this.loaded.has(`${t[0]},${t[1]}`); }
   // ¿Hay trabajo de la ventana en marcha (corrimiento o trozos por escribir)?
+  // ¿Hay un corrimiento empezado (sin cambiar aún)?
+  get shifting(): boolean { return !!this.shiftJobs; }
   get busy(): boolean { return !!this.shiftJobs || this.loading.length > 0 || !!this.loadJob || !!this.turnPrep || !!this.turnRest || this.pendingRebake; }
 
   // Cada cuadro: con el objetivo en (x, y) del MUNDO, decide si correr la ventana y mete su trabajo en la cola. Se corre un
@@ -312,7 +323,9 @@ export class LiveWindow {
     if ((dx || dy) && !turning && !this.shiftJobs && !this.loading.length && !this.loadJob) this.startShift(dx, dy);
     if (this.shiftJob) budget.push(this.shiftJob);
     // El giro, cuando no hay corrimiento a medias (copia de lo que se está corriendo)
-    if (this.turnPrep && !this.shiftJobs) budget.push(this.turnPrep.job ??= this.turnCoreJob(this.turnPrep.q));
+    // El giro no espera a un corrimiento a medias: el cambio del corrimiento es el que espera a que acabe el giro (núcleo y
+    // copia de lo demás), y en el cambio de giro el corrimiento pasa a ser el de la vista nueva
+    if (this.turnPrep) budget.push(this.turnPrep.job ??= this.turnCoreJob(this.turnPrep.q));
     if (this.turnRest) budget.push(this.turnRest.job);
     if (!this.shiftJobs && !this.turnPrep && this.loading.length && !this.loadJob) this.nextLoad();
     if (this.loadJob) budget.push(this.loadJob);
@@ -341,10 +354,7 @@ export class LiveWindow {
     const k = this.T / CHUNK;
     this.shiftTo = [ntx, nty];
     this.shiftDir = [dx, dy];
-    this.shiftJobs = [...this.views].map(([q, { view, baked }]) => {
-      const [vx, vy] = view.camera.dirToView(dx, dy);
-      return { q, job: shiftBakedJob(baked, vx * k, vy * k, { band: this.o.band, manual: true, key: `shift:g${q}` }) };
-    });
+    this.shiftJobs = [...this.views].map(([q, { view, baked }]) => this.viewShiftJob(q, view, baked, dx, dy));
     // Sin el giro 0 (girar con fundido), nadie corre los vóxeles del mundo con su horneado: se corren aparte, por pasos, y
     // cambian en el mismo momento que los giros
     this.storeShift = this.views.has(0) ? null : { job: this.store.shiftJob(dx * k, dy * k), ready: false };
@@ -362,6 +372,11 @@ export class LiveWindow {
       } finally { this.shiftSpent += performance.now() - a; }
     } };
   }
+  // El corrimiento de la imagen del giro q (en sus ejes), preparado por pasos; el cambio lo hace trySwitch
+  private viewShiftJob(q: Quarter, view: WorldView, baked: Baked, dx: number, dy: number): { q: Quarter; job: ShiftJob } {
+    const k = this.T / CHUNK, [vx, vy] = view.camera.dirToView(dx, dy);
+    return { q, job: shiftBakedJob(baked, vx * k, vy * k, { band: this.o.band, manual: true, key: `shift:g${q}` }) };
+  }
   private shiftDir: [number, number] = [0, 0];
   private storeShift: { job: { step(): boolean; commit(): void }; ready: boolean } | null = null;
   // Lo que pidió el último cambio (para el banco): ms de todo el cambio
@@ -377,6 +392,8 @@ export class LiveWindow {
   private trySwitch(): boolean {
     const t0 = performance.now();
     // Las copias giradas, al día con el mundo antes de correrlas
+    // (un giro en marcha copia del mundo sin correr: el corrimiento espera a que acabe)
+    if (this.turnPrep || this.turnRest) return false;
     for (const { view } of this.views.values()) view.frame();
     for (const s of this.shiftJobs!) if (!s.job.canCommit()) return false;
     for (const s of this.shiftJobs!) s.job.commit();

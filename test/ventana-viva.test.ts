@@ -175,7 +175,7 @@ describe('ventana viva', () => {
     const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
     // El juego: cada cuadro, lo cambiado en el giro de ahora
     // Una ventana hecha de nuevo donde está win, en el giro q, con lo mismo picado y la misma luz
-    const refAt = (q: 0 | 2) => {
+    const refAt = (q: 0 | 1 | 2 | 3) => {
       const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]), ...(q ? { quarters: [q] } : {}) });
       for (let z = 20; z < 40; z++) for (let y2 = 5; y2 < 15; y2++) for (let x2 = TV + 4; x2 < TV + 14; x2++) {
         const [lx, ly] = ref.toLocal(x2, y2);
@@ -186,7 +186,9 @@ describe('ventana viva', () => {
       for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
       return ref;
     };
-    const frame = (x: number, y: number) => { win.update(x, y, budget); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); budget.run(); };
+    // (onUpdate: justo después de update, antes de la cola)
+    let onUpdate: (() => void) | null = null;
+    const frame = (x: number, y: number) => { win.update(x, y, budget); onUpdate?.(); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); budget.run(); };
     let x = TV / 2, y = TV / 2, frames = 0, swapAt = -1;
     for (let s = 0; s < 5 * 8; s++) {
       if (s < 24) x += TV / 8; else y += TV / 8;
@@ -222,11 +224,27 @@ describe('ventana viva', () => {
     for (let z = win.store.zMin; z <= win.store.zMax; z++) for (let y2 = 0; y2 < win.store.depth; y2++) for (let x2 = 0; x2 < win.store.width; x2++) if (win.store.get(x2, y2, z) !== ref.store.get(x2, y2, z)) nv++;
     expect(nv).toBe(0);
     expect(diff(win.baked, r.baked)).toBe(0);
-    // Y volver al 0 (sin copia: lo demás se marca en el mundo)
-    win.turnTo(0);
-    for (let k = 0; k < 4000 && (win.busy || budget.pending); k++) frame(x, y);
-    const ref0 = refAt(0);
-    expect(win.quarters).toEqual([0]);
-    expect(diff(win.baked, ref0.baked)).toBe(0);
+    // Girar con un corrimiento a medias (el cambio del corrimiento espera al giro, y pasa a la vista nueva): al 1, y en el
+    // corrimiento siguiente al 0 (sin copia: lo demás se marca en el mundo, y los vóxeles los corre su horneado otra vez)
+    for (const to of [1, 0] as const) {
+      let turned = false;
+      for (let s = 0; s < 3 * 8 && !turned; s++) {
+        y -= TV / 8;
+        onUpdate = () => { if (!turned && win.shifting) { win.turnTo(to); turned = true; expect(win.turning?.phase).toBe('core'); } };
+        for (let k = 0; k < 400; k++) {
+          frame(x, y);
+          if (!win.busy && !budget.pending) break;
+        }
+        onUpdate = null;
+      }
+      expect(turned).toBe(true);
+      for (let k = 0; k < 4000 && (win.busy || budget.pending); k++) frame(x, y);
+      for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y); }
+      expect(win.quarters).toEqual([to]);
+      const rq = refAt(to);
+      let nv = 0;
+      for (let z = win.store.zMin; z <= win.store.zMax; z++) for (let y2 = 0; y2 < win.store.depth; y2++) for (let x2 = 0; x2 < win.store.width; x2++) if (win.store.get(x2, y2, z) !== rq.store.get(x2, y2, z)) nv++;
+      expect([to, nv, diff(win.baked, rq.baked)]).toEqual([to, 0, 0]);
+    }
   });
 });

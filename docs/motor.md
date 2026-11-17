@@ -587,6 +587,26 @@ compositor.frame(win.state, win.baked, opts);
   entra se rehornea en todos; lo que pica el juego, en el giro de ahora lo rehornea él (como siempre) y en los demás
   `update`. `turn(q)` cambia sin esperar: `win.view` y `win.baked` pasan a ser los de q (hay que volver a subirlo a la
   GPU). Las copias giradas se ponen al día por losas (`StaticVoxels.copyRotatedChunk`).
+- Girar con fundido (`turnTo(q)`, sin `quarters`): solo vive el giro de ahora. Los cuatro al día cuestan ~5 s de CPU
+  por trozo cruzado; uno, ~0,7 s. Al pedir otro giro, su vista se hace por pasos y el juego tapa la espera con un fundido
+  mientras `win.turning.phase === 'core'`:
+  1. Lo visible primero, con `viewport: [ancho, alto]` (los píxeles que enseña la cámara, centrada en el objetivo).
+     Se copian girados los trozos de vóxeles que caen en ese recuadro, más uno alrededor (lo que miran la oclusión y el
+     cielo). Su horneado se hace con `rebakeJobs(..., clip)` sobre una imagen vacía: solo los píxeles del recuadro, con
+     16 de margen. Va con prioridad 0 (el presupuesto cercano).
+  2. El cambio: `win.view` y `win.baked` pasan a ser los del giro nuevo (hay que subirlo entero a la GPU) y el de antes
+     se suelta.
+  3. `phase === 'rest'`: se copia lo demás y se marca como cambiado (`StaticVoxels.touch`). Lo rehace la cola de
+     siempre, como un trozo que entra.
+
+  Mientras se gira, no empieza ningún corrimiento. Uno ya empezado no hace esperar al giro: es su cambio el que espera
+  a que acabe el giro (núcleo y copia de lo demás), y en el cambio de giro pasa a la vista nueva. Sin el giro 0, los vóxeles del mundo se corren aparte
+  (`StaticVoxels.shiftJob`), en el mismo cuadro que los giros. Pedir otro giro durante el fundido cambia el destino:
+  `turnTo((win.turnTarget + 1) % 4)` dos veces seguidas es medio giro, y volver al de ahora lo cancela.
+
+  Sin freno, en la ventana de 9 x 11 con el recuadro de 384 x 216, el núcleo cuesta 300-350 ms de CPU (unos 30 de
+  copia, el resto recuadro y cielo). Lo demás, unos 3,5 s por la cola normal (`bun scripts/bench-viva.ts 1 0` con
+  `GIRAR=1`). En el navegador: `viva.html?girar=6` (Q cada 6 s; `presu=ms`, el presupuesto cercano durante el fundido).
 - Aún no: el agua y los caminos por ventana.
 
 ## Caminos por niveles
