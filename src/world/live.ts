@@ -47,7 +47,7 @@ import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec } from './regiongen';
 import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, chunksInScreen, SKY_RAYS, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
-import { WorldView, ViewCamera, type Quarter } from './view';
+import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
 export type Trozo = readonly [number, number];
 // Lo que se le da al juego por trozo, en coordenadas del MUNDO
@@ -83,6 +83,9 @@ export interface LiveWindowOptions {
   // cercano, hasta que estén todos (ready() dice cuándo está lo de alrededor del objetivo: para una pantalla de carga que
   // avanza y un juego que empieza antes de tenerlo todo)
   preload?: 'block' | 'queue';
+  // Las opciones de sus vistas (WorldView): { cut: true } para el corte de casa de muñecas (setCut / cutJob en win.view).
+  // El corte se corre con la ventana (WorldView.shift, antes de onShift); un cutJob a medias sigue en la cola
+  view?: WorldViewOptions;
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
@@ -148,7 +151,7 @@ export class LiveWindow {
       while (!job.run(Infinity));
     }
     for (const q of new Set<Quarter>([0, ...(opts.quarters ?? [])])) {
-      const view = new WorldView(this.state, q);
+      const view = new WorldView(this.state, q, opts.view ?? {});
       this.views.set(q, { view, baked: bakeWorld(view.bakeable(), { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) }) });
     }
   }
@@ -187,8 +190,10 @@ export class LiveWindow {
   // El núcleo del giro q: copiar lo visible (y un trozo más), hornearlo sobre una imagen vacía y cambiar
   private turnCoreJob(q: Quarter): ViewJob {
     const src = this.store, cam = new ViewCamera(q, src.width, src.depth);
-    const rotated = q === 0 ? null : new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax);
-    const view = new WorldView(this.state, q, {}, rotated ? { static: rotated, since: src.clock } : undefined);
+    // (la vista tiene copia si está girada o con corte: se copia por trozos, no de una vez en el constructor)
+    const vo = this.o.view ?? {}, copied = q !== 0 || !!vo.cut || !!vo.dress;
+    const rotated = copied ? new StaticVoxels(src.palette, cam.viewWidth, cam.viewDepth, src.zMin, src.zMax) : null;
+    const view = new WorldView(this.state, q, vo, rotated ? { static: rotated, since: src.clock } : undefined);
     const { baked } = bakeWorldJob(view.bakeable(), { topZ: src.zMax + 1, ...(this.o.bake ?? {}) }, `bake:g${q}`);
     // (lo que ningún recuadro pinta, el fondo, como en el horneado entero: sin profundidad y con todo el cielo)
     baked.depth.fill(Infinity);
@@ -284,7 +289,7 @@ export class LiveWindow {
         const [dx, dy] = this.shiftDir;
         this.shiftJobs = this.shiftJobs.filter((s) => this.views.has(s.q) && s.q !== q);
         this.shiftJobs.push(this.viewShiftJob(q, view, baked, dx, dy));
-        if (this.views.has(0)) this.storeShift = null;
+        if (this.worldViewed()) this.storeShift = null;
         else if (!this.storeShift) { const k = this.T / CHUNK; this.storeShift = { job: this.store.shiftJob(dx * k, dy * k), ready: false }; }
       }
       this.stats.turnMs.push(spent);
@@ -408,7 +413,7 @@ export class LiveWindow {
     this.shiftJobs = [...this.views].map(([q, { view, baked }]) => this.viewShiftJob(q, view, baked, dx, dy));
     // Sin el giro 0 (girar con fundido), nadie corre los vóxeles del mundo con su horneado: se corren aparte, por pasos, y
     // cambian en el mismo momento que los giros
-    this.storeShift = this.views.has(0) ? null : { job: this.store.shiftJob(dx * k, dy * k), ready: false };
+    this.storeShift = this.worldViewed() ? null : { job: this.store.shiftJob(dx * k, dy * k), ready: false };
     // Un trabajo de la cola: prepara los giros (el que se ve, primero) y, cuando están todos, el cambio
     this.shiftSpent = 0; this.shiftStartAt = performance.now();
     // (con la prioridad de los trozos: sin ella iba detrás de todo el rehorneado de la cola, en orden de llegada)
@@ -430,6 +435,9 @@ export class LiveWindow {
     return { q, job: shiftBakedJob(baked, vx * k, vy * k, { band: this.o.band, manual: true, key: `shift:g${q}` }) };
   }
   private shiftDir: [number, number] = [0, 0];
+  // ¿Alguna vista hornea los vóxeles del mundo tal cual (el giro 0 sin copia)? Entonces su corrimiento los corre; si no,
+  // se corren aparte (storeShift)
+  private worldViewed(): boolean { for (const { view } of this.views.values()) if (view.static === this.store) return true; return false; }
   private storeShift: { job: { step(): boolean; commit(): void }; ready: boolean } | null = null;
   // Lo que pidió el último cambio (para el banco): ms de todo el cambio
   lastSwitchMs = 0;
@@ -454,6 +462,9 @@ export class LiveWindow {
     for (const s of this.shiftJobs!) s.job.commit();
     this.storeShift?.job.commit(); this.storeShift = null;
     const [dx, dy] = this.shiftDir;
+    // El corte de cada vista (en coordenadas locales del mundo), corrido antes de avisar al juego (que puede poner otro
+    // en onShift, ya en las coordenadas nuevas)
+    for (const { view } of this.views.values()) view.shift(dx * this.T, dy * this.T);
     this.onSwitch(dx, dy);
     // (los dos se corrieron igual: lo que entra, vacío en los dos)
     for (const { view } of this.views.values()) view.markSynced();

@@ -182,10 +182,13 @@ void (async () => {
         worst.sort((u, v) => v.iv - u.iv); worst.length = Math.min(8, worst.length);
       }
     }
-    prevPhases = { update: +(t1 - t0).toFixed(1), caminos: +(b0 - t1).toFixed(1), cola: +(t2 - b0).toFixed(1), mover: +(t3 - t2).toFixed(1), resto: +(t4 - t3).toFixed(1), componer: +(t5 - t4).toFixed(1) };
-    prevShift = shifts !== shiftsSeen; shiftsSeen = shifts;
     if (now - start >= nextHeap) { heap.push(mem()); nextHeap += 1000; }
+    // (las capturas del banco: toDataURL del lienzo de la GPU, también por fases)
+    const t6 = performance.now();
     if (frameNo % 1200 === 600 && shots.length < 6) shots.push(canvas.toDataURL('image/png'));
+    const t7 = performance.now();
+    prevPhases = { update: +(t1 - t0).toFixed(1), caminos: +(b0 - t1).toFixed(1), cola: +(t2 - b0).toFixed(1), mover: +(t3 - t2).toFixed(1), resto: +(t4 - t3).toFixed(1), componer: +(t5 - t4).toFixed(1), captura: +(t7 - t6).toFixed(1) };
+    prevShift = shifts !== shiftsSeen; shiftsSeen = shifts;
     hud.textContent = `ventana viva · ${(now - start) / 1000 | 0} s · giro ${win.quarter}${win.turning ? ' (' + win.turning.phase + ')' : ''} · trozo ${win.trozoOf(x, Y).join(',')} · corrimientos ${shifts} · huecos ${holes}`;
     if (now - start < SECONDS * 1000) { requestAnimationFrame(loop); return; }
     const f = frames.slice(60), s = [...f].sort((a, b) => a - b), p = (k: number) => +s[Math.floor(k * (s.length - 1))]!.toFixed(1);

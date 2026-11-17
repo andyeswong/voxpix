@@ -32,6 +32,7 @@ import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget } from '../src/view/budget';
 import { LiveWindow, type Trozo } from '../src/world/live';
 import { rebakeChangedJobs, type Baked } from '../src/world/bake';
+import { sectionAround, sectionLayer, SectionPainter, STRIP, secIdx, type SectionLayer } from '../src/world/section';
 
 const OPTS = { incline: 0.5, sky: true, outline: 'both' as const };
 // El "juego": lo picado, en coordenadas del mundo; al entrar un trozo se vuelve a poner
@@ -163,6 +164,108 @@ describe('ventana viva', () => {
     }
     win.turn(2);
     expect(win.baked).toBe(win.viewOf(2)!.baked);
+  });
+
+  // every: el juego pone el corte en cada cuadro (alrededor del objetivo) o una vez, al empezar un corrimiento, y no lo
+  // vuelve a tocar (la ventana lo corre; su cutJob a medias sigue en la cola)
+  for (const every of [true, false]) it(`corte de casa de muñecas (view: { cut: true }), ${every ? 'puesto en cada cuadro' : 'puesto una vez'}: se corre con la ventana a medias de repasar, y tras girar; igual que cortar de nuevo ahí`, () => {
+    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS, view: { cut: true } });
+    const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });
+    // La caja del techo alrededor del objetivo, en coordenadas locales de la ventana de ahora
+    const cutAt = (w: LiveWindow, x: number, y: number) => { const [lx, ly] = w.toLocal(x, y); return { x0: Math.floor(lx) - 20, y0: Math.floor(ly) - 20, x1: Math.floor(lx) + 20, y1: Math.floor(ly) + 20, zTop: 36 }; };
+    // Tanda pequeña: el repaso del corte va a medias cuando la ventana se corre
+    const budget = new FrameBudget(0.3, undefined, { ms: 0.3, below: 64 });
+    let placed = false;
+    const frame = (x: number, y: number) => {
+      win.update(x, y, budget);
+      // (una vez: al empezar un corrimiento, para que el repaso vaya a medias en el cambio)
+      if (every || (!placed && win.shifting)) { budget.push(win.view.cutJob(cutAt(win, x, y))); placed = true; }
+      for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+      budget.run();
+    };
+    const settle = (x: number, y: number) => { for (let k = 0; k < 20000 && (win.busy || budget.pending); k++) frame(x, y); };
+    const check = (x: number, y: number, q: 0 | 1) => {
+      settle(x, y);
+      const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]), ...(q ? { quarters: [q] } : {}) });
+      if (q) ref.turn(q);
+      // (puesto una vez: la caja es la de entonces, corrida con la ventana; la ventana nueva está en el mismo sitio)
+      ref.view.setCut(every ? cutAt(ref, x, y) : (win.view.currentCut as never));
+      for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+      for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+      expect(win.view.currentCut).toEqual(ref.view.currentCut);
+      expect([q, diff(win.baked, ref.baked)]).toEqual([q, 0]);
+    };
+    let x = TV / 2, y = TV / 2, shifted = 0;
+    for (let s = 0; s < 3 * 8; s++) { x += TV / 8; const t = win.tx0; frame(x, y); for (let k = 0; k < 6; k++) frame(x, y); if (win.tx0 !== t) shifted++; }
+    expect(win.tx0).toBeGreaterThan(-2);
+    check(x, y, 0);
+    // Girar (la vista nueva lleva el corte: el juego lo pone en win.view) y seguir andando
+    win.turnTo(1);
+    placed = false;
+    settle(x, y);
+    expect(win.quarter).toBe(1);
+    const ty = win.ty0;
+    for (let s = 0; s < 2 * 8; s++) { y += TV / 8; frame(x, y); for (let k = 0; k < 6; k++) frame(x, y); }
+    expect(win.ty0).toBeGreaterThan(ty);
+    check(x, y, 1);
+  });
+
+  it('capa de sección (SectionPainter) con la ventana: pintando a mitad de los corrimientos, y tras girar con un pintor nuevo; igual que abrirla de nuevo ahí', () => {
+    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
+    const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });
+    const budget = new FrameBudget(0.5, undefined, { ms: 0.5, below: 64 });
+    let painter = new SectionPainter(win.baked, { ahead: 2, behind: 1 });
+    // La caja: 24 vóxeles de ancho alrededor de los pies del objetivo (en los ejes de la vista)
+    const cutOf = (w: LiveWindow, x: number, y: number) => { const [lx, ly] = w.toLocal(x, y); return sectionAround(w.view.camera, lx, ly, w.store.height[Math.floor(ly) * w.store.width + Math.floor(lx)]! - 12, 24); };
+    const frame = (x: number, y: number, dir: number) => {
+      win.update(x, y, budget);
+      for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+      painter.set(cutOf(win, x, y), dir);
+      const j = painter.job();
+      if (j) budget.push(j);
+      budget.run();
+      painter.layer();
+    };
+    // (la capa del pintor va en anillo por columnas: secIdx, como en test/corte-componer.test.ts; y en la columna de cada
+    // borde de la caja y la de fuera junto a ella, por diseño, el tono, el cielo y el contorno son los de un corte que
+    // siguiera: esas no se comparan; también difieren sin ventana, andando sin correrse)
+    const same = (a: SectionLayer | null, r: SectionLayer | null, bx0: number, bx1: number) => {
+      if (!a || !r) return a === r;
+      if (a.x !== r.x || a.y !== r.y || a.w !== r.w || a.h !== r.h || a.count !== r.count) return false;
+      for (let q = 0; q < r.w * r.h; q++) {
+        const gx = r.x + (q % r.w);
+        if (gx === bx0 - 1 || gx === bx0 || gx === bx1 || gx === bx1 + 1) continue;
+        const l = secIdx(a, gx, Math.floor(q / r.w));
+        if (a.mask[l] !== r.mask[q]) return false;
+        if (!r.mask[q]) continue;
+        for (let c = 0; c < 4; c++) if (a.rgba[l * 4 + c] !== r.rgba[q * 4 + c]) return false;
+        if (a.depth[l] !== r.depth[q] || a.sky![l] !== r.sky![q] || a.face[l] !== r.face[q]) return false;
+      }
+      return true;
+    };
+    const check = (x: number, y: number, dir: number, q: 0 | 1) => {
+      for (let k = 0; k < 20000 && (win.busy || budget.pending || !painter.ready()); k++) frame(x, y, dir);
+      const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]), ...(q ? { quarters: [q] } : {}) });
+      if (q) ref.turn(q);
+      for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+      const c = cutOf(ref, x, y), x0 = Math.floor(c.x0 / STRIP) * STRIP;
+      const R = sectionLayer(ref.baked, { ...c, x0, x1: x0 + Math.ceil((c.x1 - c.x0 + 1) / STRIP) * STRIP - 1 });
+      expect(R).not.toBeNull();
+      expect(R!.count).toBeGreaterThan(100);
+      expect([q, same(painter.layer(), R, x0, x0 + Math.ceil((c.x1 - c.x0 + 1) / STRIP) * STRIP - 1)]).toEqual([q, true]);
+    };
+    let x = TV / 2, y = TV / 2;
+    for (let s = 0; s < 3 * 8; s++) { x += TV / 8; for (let k = 0; k < 6; k++) frame(x, y, 1); }
+    expect(win.tx0).toBeGreaterThan(-2);
+    check(x, y, 1, 0);
+    // Girar: el horneado es otro, y el pintor va atado al suyo (el juego hace uno nuevo)
+    win.turnTo(1);
+    for (let k = 0; k < 20000 && win.turning; k++) frame(x, y, 0);
+    painter = new SectionPainter(win.baked, { ahead: 2, behind: 1 });
+    const ty = win.ty0;
+    for (let s = 0; s < 2 * 8; s++) { y += TV / 8; for (let k = 0; k < 6; k++) frame(x, y, 0); }
+    expect(win.ty0).toBeGreaterThan(ty);
+    check(x, y, 0, 1);
   });
 
   it("carga del principio por la cola (preload: 'queue'): el anillo listo antes que todo, y al final igual que cargada en el constructor", () => {

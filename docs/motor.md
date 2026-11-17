@@ -613,6 +613,11 @@ compositor.frame(win.state, win.baked, opts);
   juego. Con una ventana grande, una meta que se mueve costaría una búsqueda de todo el campo cada vez que cambia de
   celda: `reach` (40 pasos por defecto) para la búsqueda a esa distancia de la meta, y más lejos no hay camino (`dir`
   da null). `findPath` sigue sin tope.
+- Cortes de casa de muñecas: `view: { cut: true }` da a las vistas de la ventana su copia para `setCut` / `cutJob` (en
+  `win.view`). En el cambio, `WorldView.shift` corre el corte (desde qué z está escondida cada columna, las cajas, que
+  quedan recortadas a la ventana, y lo pendiente, que sigue el `cutJob` que esté en la cola), antes de `onShift`. Con el
+  giro 0 copiado, los vóxeles del mundo se corren aparte. La capa de sección (`SectionPainter`) ya se rehace sola al
+  correrse (lo pintado está en las coordenadas de antes); tras `turnTo` el horneado es otro y hace falta un pintor nuevo.
 - Carga del principio por la cola: `preload: 'queue'` (la ventana vacía, los trozos del centro hacia fuera con prioridad
   0 y su rehorneado cercano) y `win.ready(x, y, anillo)` para quitar la pantalla de carga.
 - Aún no: el agua por ventana.

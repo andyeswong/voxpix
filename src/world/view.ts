@@ -24,7 +24,7 @@
 // lo hace con un vestido (ViewDress): new WorldView(state, q, { dress }) o prepareViewJob(..., { dress }). El vestido
 // cambia la copia de la vista (nunca el mundo), se vuelve a aplicar donde el mundo cambia y puede esconder luces
 // (view.hideLight), que entonces ni se hornean ni se pintan.
-import { CHUNK, StaticVoxels, type Entity, type RenderState, type WaterSurface, type DropSource, type WorldState } from './state';
+import { CHUNK, StaticVoxels, shiftGrid, type Entity, type RenderState, type WaterSurface, type DropSource, type WorldState } from './state';
 import type { WorldLight } from './build';
 import type { Bakeable, Baked, ViewJob } from './bake';
 import { bakeWorld, bakeWorldJob, worldPointAt } from './bake';
@@ -378,6 +378,23 @@ export class WorldView implements RenderState {
     for (const c of this.cut) if (x >= c.x0 && x <= c.x1 && y >= c.y0 && y <= c.y1 && c.zTop < top) top = c.zTop;
     return top;
   }
+  // LA VENTANA VIVA (LiveWindow, en el cambio de cada corrimiento): el mundo se corrió dx, dy vóxeles (lo que estaba en
+  // la x pasa a x - dx) y la copia de la vista ya se corrió con su horneado. Se corre el corte: desde qué z está
+  // escondida cada columna, las cajas (recortadas a la ventana: nunca cubren lo que entra, que queda sin esconder) y lo
+  // pendiente, que sigue repasando el cutJob que esté en la cola
+  shift(dx: number, dy: number): void {
+    const src = this.state.solid, W = src.width, D = src.depth;
+    if (this.applied) shiftGrid(this.applied, W, D, 1, dx, dy, Infinity);
+    const mv = <T extends { x0: number; y0: number; x1: number; y1: number }>(b: T): T => ({ ...b, x0: b.x0 - dx, x1: b.x1 - dx, y0: b.y0 - dy, y1: b.y1 - dy });
+    const clip = <T extends { x0: number; y0: number; x1: number; y1: number }>(b: T): T => ({ ...b, x0: Math.max(0, b.x0), y0: Math.max(0, b.y0), x1: Math.min(W - 1, b.x1), y1: Math.min(D - 1, b.y1) });
+    const inside = (b: { x0: number; y0: number; x1: number; y1: number }) => b.x0 <= b.x1 && b.y0 <= b.y1;
+    if (this.cutAsked) this.cutAsked = Array.isArray(this.cutAsked) ? this.cutAsked.map(mv) : mv(this.cutAsked);
+    this.cut = this.cut.map((b) => clip(mv(b))).filter(inside);
+    // (lo pendiente, desde el principio de su caja: repasar una columna que ya tiene su corte no hace nada)
+    this.pending = this.pending.map((b) => clip(mv(b))).filter(inside);
+    this.cursor = 0; this.pendingAt = 0;
+  }
+
   // Desde qué z está escondida ya en la copia
   private appliedAt(x: number, y: number): number {
     return this.applied ? this.applied[y * this.state.solid.width + x]! : Infinity;
