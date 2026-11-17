@@ -268,6 +268,45 @@ describe('ventana viva', () => {
     check(x, y, 0, 1);
   });
 
+  it('el salto (el objetivo aparece fuera de la ventana, a mitad de escribir): un solo cambio, onUnload solo de lo escrito, lo de alrededor antes que todo, e igual que hecha de nuevo ahí', () => {
+    const log = { unload: [] as string[], load: [] as string[] };
+    const win = make([0, 0], log);
+    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    const frame = (x: number, y: number) => { win.update(x, y, budget); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); budget.run(); };
+    // Andar un poco y picar; y saltar en cuanto un corrimiento deja trozos por escribir
+    let x = TV / 2, y = TV / 2;
+    for (let z = 20; z < 40; z++) for (let yy = 5; yy < 15; yy++) for (let xx = 4; xx < 14; xx++) { dug.add(`${xx},${yy},${z}`); const [lx, ly] = win.toLocal(xx, yy); win.store.set(lx, ly, z, 0); }
+    const shifts0 = win.tx0;
+    for (let k = 0; k < 2000 && !(win.tx0 !== shifts0 && win.queued > 2); k++) { x += 1; frame(x, y); }
+    expect(win.queued).toBeGreaterThan(2);
+    const loadedBefore = new Set(log.load.filter((t) => !log.unload.includes(t)));
+    log.unload.length = 0; log.load.length = 0;
+    // El salto: 9 trozos al este (la ventana tiene 5)
+    x += 9 * TV;
+    let ringAt = -1, k = 0;
+    const [ttx, tty] = win.trozoOf(x, y);
+    for (; k < 20000 && (win.busy || budget.pending || win.preloadingNow); k++) {
+      frame(x, y);
+      if (ringAt < 0 && win.ready(x, y, { x: 0, n: 0, s: 0 })) ringAt = k;
+    }
+    expect(k).toBeLessThan(20000);
+    expect(win.jumps).toBe(1);
+    expect([win.tx0 + 2, win.ty0 + 2]).toEqual([ttx, tty + 0]);
+    // onUnload: solo los que estaban escritos, una vez cada uno (ni los que estaban por escribir)
+    // (el salto es más largo que la ventana: salen todos los que había escritos)
+    expect(new Set(log.unload)).toEqual(loadedBefore);
+    expect(log.unload.length).toBe(loadedBefore.size);
+    // El trozo del objetivo, listo antes que la ventana entera
+    expect(ringAt).toBeGreaterThan(0);
+    expect(ringAt).toBeLessThan(k - 1);
+    // Igual que una ventana hecha de nuevo ahí
+    const ref = make([win.tx0 + 2, win.ty0 + 2]);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(win.baked, ref.baked)).toBe(0);
+    dug.clear();
+  });
+
   it("carga del principio por la cola (preload: 'queue'): el anillo listo antes que todo, y al final igual que cargada en el constructor", () => {
     const opts = { blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0] as Trozo, margin: 1, bake: OPTS };
     const win = new LiveWindow({ ...opts, preload: 'queue' });

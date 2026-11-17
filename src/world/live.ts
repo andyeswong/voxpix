@@ -46,7 +46,7 @@ import { StaticVoxels, WorldState, CHUNK } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec } from './regiongen';
-import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, chunksInScreen, SKY_RAYS, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
+import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
 export type Trozo = readonly [number, number];
@@ -333,7 +333,10 @@ export class LiveWindow {
   trozoOf(x: number, y: number): Trozo { return [Math.floor(x / this.T), Math.floor(y / this.T)]; }
   // ¿Está escrito el trozo (y se puede leer)?
   isLoaded(t: Trozo): boolean { return this.loaded.has(`${t[0]},${t[1]}`); }
-  // ¿Sigue la carga del principio (preload: 'queue')?
+  // Cuántas veces la ventana saltó (el objetivo apareció fuera de ella)
+  jumps = 0;
+  private jumping = false;
+  // ¿Sigue la carga del principio (preload: 'queue', o tras un salto)?
   get preloadingNow(): boolean { return this.preloading; }
   private preloading = false;
   // ¿Está listo lo de alrededor del punto (x, y) del MUNDO: los trozos tx - ring.x .. tx + ring.x, ty - ring.s .. ty +
@@ -349,8 +352,10 @@ export class LiveWindow {
     const X0 = Math.floor(Math.min(p0x, p1x) / CHUNK), X1 = Math.floor(Math.max(p0x, p1x) / CHUNK), Y0 = Math.floor(Math.min(p0y, p1y) / CHUNK), Y1 = Math.floor(Math.max(p0y, p1y) / CHUNK);
     const inRing = (c: number) => { const x = c % src.cols, y = Math.floor(c / src.cols); return x >= X0 && x <= X1 && y >= Y0 && y <= Y1; };
     if (src.changedSince(baked.version).some(inRing)) return false;
+    // (sin el margen que chunkRect suma a la caja de cada plan: el rehorneado de un trozo vecino lo toca solo por él)
+    const mg = (baked.options.smooth ?? 0.6) > 0 ? 3 : 1;
     for (const plans of baked.pendingPlans?.values() ?? []) for (const p of plans) {
-      if (!(p.X1 < X0 * CHUNK || p.X0 > (X1 + 1) * CHUNK - 1 || p.Y1 < Y0 * CHUNK || p.Y0 > (Y1 + 1) * CHUNK - 1)) return false;
+      if (!(p.X1 - mg < X0 * CHUNK || p.X0 + mg > (X1 + 1) * CHUNK - 1 || p.Y1 - mg < Y0 * CHUNK || p.Y0 + mg > (Y1 + 1) * CHUNK - 1)) return false;
     }
     return true;
   }
@@ -368,7 +373,20 @@ export class LiveWindow {
     if (tx - this.tx0 < m.x) dx = -1; else if (this.tx0 + nx - 1 - tx < m.x) dx = 1;
     if (ty - this.ty0 < m.s) dy = -1; else if (this.ty0 + ny - 1 - ty < m.n) dy = 1;
     const turning = !!this.turnPrep || !!this.turnRest;
-    if ((dx || dy) && !turning && !this.shiftJobs && !this.loading.length && !this.loadJob) this.startShift(dx, dy);
+    // EL SALTO: el objetivo fuera de la ventana (aparecer lejos, un teletransporte). En vez de correrse trozo a trozo
+    // (cada cambio descartaba y volvía a marcar lo encolado, y al final quedaba un rehorneado de casi toda la imagen que no
+    // se veía hasta acabar: 26-34 s en negro a 1x en la página de FERN), un solo cambio hasta la ventana centrada en él,
+    // y la ventana nueva se carga del centro hacia fuera con prioridad cercana, como preload 'queue'. Lo que estaba por
+    // escribir se olvida (sigue el trozo a medias, si lo hay)
+    const outside = tx < this.tx0 || tx >= this.tx0 + nx || ty < this.ty0 || ty >= this.ty0 + ny;
+    if (outside && !turning && !this.shiftJobs && !this.loadJob) {
+      const ntx0 = tx - Math.floor(nx / 2), nty0 = ty - m.s - Math.floor((ny - m.n - m.s - 1) / 2);
+      this.loading = [];
+      this.preloading = true;
+      this.jumps++;
+      this.jumping = true;
+      this.startShift(ntx0 - this.tx0, nty0 - this.ty0);
+    } else if ((dx || dy) && !turning && !this.shiftJobs && !this.loading.length && !this.loadJob) this.startShift(dx, dy);
     if (this.shiftJob) budget.push(this.shiftJob);
     // El giro, cuando no hay corrimiento a medias (copia de lo que se está corriendo)
     // El giro no espera a un corrimiento a medias: el cambio del corrimiento es el que espera a que acabe el giro (núcleo y
@@ -388,9 +406,14 @@ export class LiveWindow {
       if (q === this.quarter && !all) continue;
       const lights = view.bakeable().lights;
       if (!baked.source.changedSince(baked.version).length) continue;
-      // (en la carga del principio, el rehorneado va cercano, detrás de los trozos; lo expuesto, detrás de todo)
-      const pri = (j: ViewJob) => this.preloading && !j.key.startsWith('exposure:') ? 1 : j.priority;
-      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true } })) {
+      // (en la carga del principio y tras un salto, el rehorneado va cercano, detrás de los trozos y por distancia al
+      // objetivo en pantalla, lo de cerca primero; lo expuesto, detrás de todo)
+      const pre = this.preloading && q === this.quarter;
+      const near = pre ? (() => { const [lx, ly] = this.toLocal(this.at[0], this.at[1]), [vx, vy] = view.camera.pointToView(lx, ly); return { x: vx, y: vy }; })() : undefined;
+      // (el cielo y las luces llevan LIGHT_PRIORITY más su distancia: van justo detrás del recuadro a su misma distancia)
+      const dist = (p: number) => p >= LIGHT_PRIORITY ? p - LIGHT_PRIORITY + 0.5 : p;
+      const pri = (j: ViewJob) => pre && !j.key.startsWith('exposure:') ? 1 + Math.min(62, dist(j.priority ?? 0) / 16) : this.preloading && !j.key.startsWith('exposure:') ? 1 : j.priority;
+      for (const j of rebakeChangedJobs(baked, lights, { shape: this.o.rebake ?? { band: 16, rows: 64, merge: true }, ...(near ? { near } : {}) })) {
         const p = pri(j);
         budget.push(q === 0 && p === j.priority ? j : { key: q === 0 ? j.key : `g${q}/${j.key}`, run: (d: number) => j.run(d), ...(p !== undefined ? { priority: p } : {}) });
       }
@@ -403,6 +426,9 @@ export class LiveWindow {
     const { nx, ny } = this.o, ntx = this.tx0 + dx, nty = this.ty0 + dy;
     for (let ty = this.ty0; ty < this.ty0 + ny; ty++) for (let tx = this.tx0; tx < this.tx0 + nx; tx++) {
       if (tx >= ntx && tx < ntx + nx && ty >= nty && ty < nty + ny) continue;
+      // (solo los escritos: tras un salto con trozos por escribir, uno sin escribir no tiene nada que guardar, y guardarlo
+      // pisaría sus diferencias con aire)
+      if (!this.loaded.has(`${tx},${ty}`)) continue;
       this.o.onUnload?.([tx, ty], this.ctx([tx, ty]));
       this.loaded.delete(`${tx},${ty}`);
     }
@@ -470,6 +496,13 @@ export class LiveWindow {
     for (const { view } of this.views.values()) view.markSynced();
     // (lo que quedaba por rehornear se descartó en el cambio y se volvió a marcar: a la cola otra vez)
     this.pendingRebake = true;
+    // Tras un salto no queda nada de antes: la imagen corrida está vacía, que es lo que da un mundo vacío. Se da por
+    // horneada tal cual (si no, el primer rehorneado era un recuadro de toda la imagen vacía, y lo del centro esperaba
+    // detrás); lo que se escriba se rehornea trozo a trozo, del centro hacia fuera
+    if (this.jumping) {
+      this.jumping = false;
+      for (const { baked } of this.views.values()) { baked.source.cut(); baked.version = baked.source.clock; }
+    }
     this.lastSwitchMs = performance.now() - t0;
     this.stats.switchMs.push(this.lastSwitchMs); this.stats.shiftMs.push(this.shiftSpent);
     this.stats.shiftWallMs.push(performance.now() - this.shiftStartAt); this.switchAt = performance.now();
@@ -494,12 +527,10 @@ export class LiveWindow {
   private afterShift(dx: number, dy: number): void {
     const [ntx, nty] = this.shiftTo!, { nx, ny } = this.o;
     this.shiftJobs = null; this.shiftJob = null; this.shiftTo = null;
-    // Los que entran, del centro hacia fuera
-    const old = [ntx - dx, nty - dy], entered: Trozo[] = [];
-    for (let ty = nty; ty < nty + ny; ty++) for (let tx = ntx; tx < ntx + nx; tx++) {
-      if (tx >= old[0]! && tx < old[0]! + nx && ty >= old[1]! && ty < old[1]! + ny) continue;
-      entered.push([tx, ty]);
-    }
+    // Los que hay que escribir (los que entran y, tras un salto, los que estaban por escribir), del centro hacia fuera
+    void dx; void dy;
+    const entered: Trozo[] = [];
+    for (let ty = nty; ty < nty + ny; ty++) for (let tx = ntx; tx < ntx + nx; tx++) if (!this.loaded.has(`${tx},${ty}`)) entered.push([tx, ty]);
     const cx = ntx + (nx - 1) / 2, cy = nty + (ny - 1) / 2;
     entered.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
     this.loading.push(...entered);
