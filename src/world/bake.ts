@@ -1232,12 +1232,14 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
   let P = par();
   // Copia las filas y0..y1 de la imagen nueva desde la de ahora (corrida, con la profundidad y las claves puestas al día,
   // y lo de vóxeles que salieron borrado)
-  const copyRows = (y0: number, y1: number) => {
+  // (x0..x1: solo esas columnas; la recopia de un recuadro publicado no rehace filas enteras)
+  const copyRows = (y0: number, y1: number, x0 = 0, x1 = W - 1) => {
     const { DX, rows, dd, dk } = P, sw = s.width, sd = s.depth;
+    x0 = Math.max(0, x0); x1 = Math.min(W - 1, x1);
     for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) {
       const sy = y - rows, o = y * W;
-      gone.fill(0, o, o + W);
-      for (let x = 0; x < W; x++) {
+      gone.fill(0, o + x0, o + x1 + 1);
+      for (let x = x0; x <= x1; x++) {
         const i = o + x, sx = x + DX;
         if (sy < 0 || sy >= H || sx < 0 || sx >= W) {
           bk.rgba[i * 4] = 0; bk.rgba[i * 4 + 1] = 0; bk.rgba[i * 4 + 2] = 0; bk.rgba[i * 4 + 3] = 0;
@@ -1266,8 +1268,8 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     }
   };
   // El contorno de fuera pegado a lo borrado (no tiene vóxel): las filas y0..y1 (con sus vecinas ya copiadas)
-  const haloRows = (y0: number, y1: number) => {
-    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) for (let x = 0; x < W; x++) {
+  const haloRows = (y0: number, y1: number, x0 = 0, x1 = W - 1) => {
+    for (let y = Math.max(0, y0); y <= Math.min(H - 1, y1); y++) for (let x = Math.max(0, x0); x <= Math.min(W - 1, x1); x++) {
       const i = y * W + x;
       if (gone[i] || bk.pick[i] === bk.pick[i] || !bk.rgba[i * 4 + 3]) continue;
       if ((x > 0 && gone[i - 1]) || (x < W - 1 && gone[i + 1]) || (y > 0 && gone[i - W]) || (y < H - 1 && gone[i + W])) {
@@ -1289,8 +1291,9 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     if (oldest > start + 1) { restart(); return false; }
     for (const r of pub.rects) {
       if (r.serial <= start) continue;
-      const y0 = r.y0 + P.rows - 1, y1 = r.y1 + P.rows + 1;
-      copyRows(y0, y1); haloRows(y0 - 1, y1 + 1);
+      // (en la imagen nueva, lo de la columna x de ahora va a x - DX)
+      const y0 = r.y0 + P.rows - 1, y1 = r.y1 + P.rows + 1, x0 = r.x0 - P.DX - 1, x1 = r.x1 - P.DX + 1;
+      copyRows(y0, y1, x0, x1); haloRows(y0 - 1, y1 + 1, x0 - 1, x1 + 1);
     }
     start = pub.serial;
     return true;
@@ -1344,7 +1347,9 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
           continue;
         }
         if (halo < H) { haloRows(halo, H - 1); halo = H; continue; }
-        if (opts.manual) return true;
+        // (manual: ya preparado; lo que se publique mientras espera el cambio se recopia aquí, por llamadas, y no todo en el
+        // cuadro del cambio)
+        if (opts.manual) { if (!recopy()) continue; return true; }
         // Lo rehorneado mientras tanto; y el cambio, cuando no quede rehorneado a medias
         // El cambio, de una vez (los vóxeles, la imagen y lo de onSwitch): un estado a medias (vóxeles corridos y entidades
         // sin correr) haría que el juego leyera mal un cuadro. Con los vóxeles preparados en el otro búfer, cuesta poco

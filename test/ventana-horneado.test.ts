@@ -132,4 +132,22 @@ describe('ventana viva: correr lo horneado', () => {
     rebakeChanged(b, local(1, 1));
     expect(diff(b, fresh(1, 1, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
   });
+
+  it('manual: preparado del todo, un rehorneado publicado mientras espera el cambio se recopia (solo sus columnas) y da lo mismo', () => {
+    const b = fresh(0, 0);
+    const job = shiftBakedJob(b, K, 0, { band: 8, manual: true });
+    while (!job.run(-Infinity));
+    expect(job.prepared).toBe(true);
+    // Picar y rehornear en la imagen vieja, ya preparado: lo recopia la llamada siguiente (no el cambio)
+    const hole: Box = [40, 30, 20, 55, 45, 63];
+    dig(b.source, 0, 0, hole);
+    rebakeChanged(b, local(0, 0));
+    expect(job.run(-Infinity)).toBe(true);
+    expect(job.canCommit()).toBe(true);
+    job.commit();
+    expect(job.done).toBe(true);
+    for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) if (i === N - 1) stamp(b.source, 1 + i, j, i, j);
+    rebakeChanged(b, local(1, 0));
+    expect(diff(b, fresh(1, 0, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+  });
 });

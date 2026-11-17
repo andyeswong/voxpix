@@ -189,7 +189,8 @@ export class LiveWindow {
       const a = performance.now();
       try {
         const jobs = [...this.shiftJobs!].sort((a, b) => +(b.q === this.quarter) - +(a.q === this.quarter));
-        for (const s of jobs) if (!s.job.prepared && !s.job.run(deadline)) return false;
+        // (también los ya preparados: así recopian lo publicado mientras tanto)
+        for (const s of jobs) if (!s.job.run(deadline)) return false;
         return this.trySwitch();
       } finally { this.shiftSpent += performance.now() - a; }
     } };
