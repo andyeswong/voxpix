@@ -35,6 +35,8 @@ void (async () => {
   // ?girar=s: cada s segundos, Q (girar con fundido, turnTo: solo vive el giro de ahora); ?presu=ms: el presupuesto cercano
   // mientras dura el fundido (8 por defecto, el de siempre)
   const GIRAR = Number(q.get('girar') ?? 0), PRESU = Number(q.get('presu') ?? 8);
+  // ?nucleo=1: la ventana hornea primero solo lo que se ve (bakeFirst: 'view'); ?quieto=1: MAIA no anda
+  const NUCLEO = q.get('nucleo') === '1', QUIETO = q.get('quieto') === '1';
   // ?hz=60: un cuadro cada 1000/hz ms como mucho, como una pantalla con vsync. Edge sin ventana no tiene vsync y da ~180
   // cuadros por segundo: la cola (~6 ms por cuadro) avanzaba 3 veces más por segundo que en el juego
   const HZ = Number(q.get('hz') ?? 0);
@@ -84,7 +86,7 @@ void (async () => {
       },
       // (la tanda nueva antes que el corrimiento: lo pedido antes se salta en el worker)
       onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => { hornero.postMessage({ kind: 'epoch', epoch: win.baked.rebakeEpoch ?? 0 }); hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }); },
-    } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
+    } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR || NUCLEO ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(NUCLEO ? { bakeFirst: 'view' as const } : {}), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
   boot.ventana = Math.round(performance.now());
   let rid = 0;
@@ -95,7 +97,7 @@ void (async () => {
   boot.subida = Math.round(performance.now());
   const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
   const T = 128, X0 = CENTER[0] * T + 64, Y = CENTER[1] * T + 64.5;
-  let x = X0 + 0.5, dir = 1;
+  let x = X0 + 0.5, dir = QUIETO ? 0 : 1;
   const ground = (wx: number, wy: number) => { const [lx, ly] = win.toLocal(Math.floor(wx), Math.floor(wy)); return win.store.height[ly * win.store.width + lx] ?? 0; };
   const [lx0, ly0] = win.toLocal(x, Y);
   const id = win.state.entities.add({ model: walk[0]!, x: lx0, y: ly0, z: ground(x, Y), facing: 90 });
@@ -120,6 +122,7 @@ void (async () => {
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
   const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0);
+  const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
@@ -222,7 +225,7 @@ void (async () => {
     // La vista, centrada en MAIA (en los ejes del giro de ahora)
     const [vx, vy] = win.view.camera.pointToView(lx, ly);
     const [px, py] = win.baked.cam.project(vx, vy, ground(x, Y));
-    const o: Frame2DOptions = { vx: Math.max(0, Math.min(win.baked.width - VW, Math.round(px) - VW / 2)), vy: Math.max(0, Math.min(win.baked.height - VH, Math.round(py) - VH / 2)), vw: VW, vh: VH, time: (now - start) / 1000, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
+    const o: Frame2DOptions = { vx: Math.max(0, Math.min(win.baked.width - VW, Math.round(px) - VW / 2)), vy: Math.max(0, Math.min(win.baked.height - VH, Math.round(py) - VH / 2)), vw: VW, vh: VH, time: CAPTURA ? 0 : (now - start) / 1000, lights: true, ambient: [0.8, 0.8, 0.85], cave: [0.2, 0.2, 0.25] };
     // ?seccion=N: el corte de una caja de N vóxeles de ancho alrededor de MAIA, desde sus pies (lo de delante, bajo tierra),
     // pintado por franjas (SectionPainter, uno por horneado) en la cola; se cuentan los cuadros con la caja sin pintar
     // del todo
@@ -289,6 +292,11 @@ void (async () => {
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     compositor.frame(win.view.frame(), win.baked, o);
     if (!boot.primerCuadro) boot.primerCuadro = Math.round(performance.now());
+    // ?nucleo=1 (con ?quieto=1): el primer cuadro y el mismo cuadro con la cola vacía (todo horneado), para compararlos
+    if (CAPTURA) {
+      if (!captura.primero) captura.primero = canvas.toDataURL('image/png');
+      else if (!captura.final && frames.length > 60 && !win.busy && !budget.pending) { captura.final = canvas.toDataURL('image/png'); captura.finalA = Math.round((now - start) / 1000 * 10) / 10; }
+    }
     espera('componer');
     const t5 = performance.now();
     // Lo que subió este cuadro: sprites nuevos y cuerpos de sombra (el primer cuadro de cada modelo y giro)
@@ -330,6 +338,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
+      captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
@@ -346,7 +355,7 @@ void (async () => {
   }
   function state_move(lx: number, ly: number): void {
     win.state.entities.move(id, lx, ly, ground(x, Y), dir > 0 ? 90 : 270);
-    win.state.entities.setModel(id, walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
+    win.state.entities.setModel(id, CAPTURA ? walk[0]! : walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
     win.state.step();
   }
   boot.antesDelPrimerRaf = Math.round(performance.now());
