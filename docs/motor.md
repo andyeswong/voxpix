@@ -533,11 +533,14 @@ win.get(x, y, z);                                                // coordenadas 
 - Coste en la ventana de 8 x 13 (imagen 1026 x 1036):
   - Bun sin freno (`bench-ventana`): de una vez, p50 9,7 ms; por pasos con bandas de 32 filas, 34 pasos de p50 0,5 ms;
     `shift` de los vóxeles, p50 0,4 ms.
-  - Edge con GPU a 6x (`app/ventana.html?medir=1`, cola del juego, un trozo cada 192 cuadros): la copia, 17-19 cuadros;
-    el cuadro de los vóxeles, 10-21 ms (`shift` 7-15 ms: las referencias de las losas ~3, las alturas ~3, las cajas de
-    cambio ~2); el del cambio de imagen (con la copia en la GPU), 4-7 ms (16-17 el primero, que crea las texturas); el
-    resto, p50 2,1 ms y p95 3,6. Pendiente: que el cuadro de los vóxeles baje de ~10 ms (preparar en el otro búfer
-    también las referencias, las alturas y las cajas durante la copia, y en el cambio solo cambiar punteros).
+  - Los vóxeles también van en dos búferes: `StaticVoxels.shiftJob(dcx, dcy)` prepara las referencias de las losas, las
+    alturas y las cajas de lo cambiado por filas de trozos (con las bandas de la imagen), y `commit` vuelve a copiar lo
+    que cambió mientras tanto, cambia los búferes y corre lo pequeño en su sitio; la rejilla de pisar queda sucia (se
+    rehace al pedirla). La GPU guarda las texturas de antes como repuesto y, la primera vez, las crea de una en una
+    mientras se prepara (`b.shifting`).
+  - Edge con GPU a 6x (`app/ventana.html?medir=1`, cola del juego, un trozo cada 192 cuadros), dos tiradas: la copia,
+    19-25 cuadros; el cuadro de los vóxeles, 6-13 ms (`commit` 2,8-5); el del cambio de imagen, 3-9,5 ms, salvo el
+    primero o los dos primeros, 16-18 ms (el primer uso en la GPU de ese camino); el resto, p50 2,0-2,2 ms, p95 3,1-3,4.
 - Aún no: `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles

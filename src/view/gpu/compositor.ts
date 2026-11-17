@@ -534,6 +534,7 @@ export class GpuCompositor {
         return;
       }
     }
+    if (b.shifting && b === this.baked) this.prepareSpares(b);
     if (pub.serial === this.bakedSerial) return;
     // La ventana se corrió (shiftBaked) y esto estaba al día justo antes: se corre dentro de la GPU, y abajo se sube solo lo
     // publicado con el corrimiento (lo borrado)
@@ -649,13 +650,47 @@ export class GpuCompositor {
   // color, cara y cielo con blitFramebuffer (lo que entra, vacío), profundidad e y del mundo con un paso que les resta lo
   // suyo. Cada una a una textura nueva (no se puede leer y escribir la misma)
   shiftMs = 0;
-  shiftCount = 0;          // cuántas veces se corrieron las texturas dentro de la GPU (para probar)
+  shiftCount = 0;
+  // Las texturas de repuesto para correr (las de antes del último corrimiento; o creadas de una en una, cuadro a cuadro,
+  // mientras se prepara el primero: crearlas todas en el cuadro del cambio costaba ~15 ms a 6x)
+  private spares: Record<string, WebGLTexture | null> = { color: null, face: null, sky: null, depth: null, worldY: null };
+  private spareSize: [number, number] = [0, 0];
+  private prepareSpares(b: Baked): void {
+    const gl = this.gl;
+    if (this.spareSize[0] !== b.width || this.spareSize[1] !== b.height) {
+      for (const k of Object.keys(this.spares)) { const x = this.spares[k]; if (x) gl.deleteTexture(x); this.spares[k] = null; }
+      this.spareSize = [b.width, b.height];
+    }
+    const make: Record<string, () => WebGLTexture> = {
+      color: () => tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, null),
+      face: () => tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, null),
+      sky: () => tex2D(gl, gl.R8UI, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null),
+      depth: () => tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, null),
+      worldY: () => tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, null),
+    };
+    for (const k of Object.keys(make)) if (!this.spares[k] && (k !== 'sky' || this.tSky)) { this.spares[k] = make[k]!(); return; }   // una por cuadro
+  }
+  private takeSpare(k: string, b: Baked, create: () => WebGLTexture): WebGLTexture {
+    const x = this.spareSize[0] === b.width && this.spareSize[1] === b.height ? this.spares[k] : null;
+    this.spares[k] = null;
+    return x ?? create();
+  }          // cuántas veces se corrieron las texturas dentro de la GPU (para probar)
   private gpuShift(b: Baked, ls: NonNullable<Baked['lastShift']>): void {
     const t0 = performance.now(), gl = this.gl, W = b.width, H = b.height, { dx, rows } = ls;
     const rd = gl.createFramebuffer()!, dr = gl.createFramebuffer()!;
     const dx0 = Math.max(0, -dx), dx1 = W - Math.max(0, dx), dy0 = Math.max(0, rows), dy1 = H + Math.min(0, rows);
-    const blit = (src: WebGLTexture, internal: number, format: number, type: number, clear: () => void): WebGLTexture => {
-      const dst = tex2D(gl, internal, W, H, format, type, null);
+    const keep = (k: string, x: WebGLTexture) => {
+      // (si los repuestos eran de otro tamaño, fuera todos: no se mezclan)
+      if (this.spareSize[0] !== W || this.spareSize[1] !== H) {
+        for (const q of Object.keys(this.spares)) { const y = this.spares[q]; if (y) gl.deleteTexture(y); this.spares[q] = null; }
+        this.spareSize = [W, H];
+      }
+      const old = this.spares[k];
+      if (old) gl.deleteTexture(old);
+      this.spares[k] = x;
+    };
+    const blit = (k: string, src: WebGLTexture, internal: number, format: number, type: number, clear: () => void): WebGLTexture => {
+      const dst = this.takeSpare(k, b, () => tex2D(gl, internal, W, H, format, type, null));
       gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dr);
       gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
       gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
@@ -666,15 +701,15 @@ export class GpuCompositor {
         gl.readBuffer(gl.COLOR_ATTACHMENT0);
         gl.blitFramebuffer(dx0 + dx, dy0 - rows, dx1 + dx, dy1 - rows, dx0, dy0, dx1, dy1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
       }
-      gl.deleteTexture(src);
+      keep(k, src);
       return dst;
     };
-    this.tColor = blit(this.tColor!, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, () => gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]));
-    this.tFace = blit(this.tFace!, gl.R8I, gl.RED_INTEGER, gl.BYTE, () => gl.clearBufferiv(gl.COLOR, 0, [-1, 0, 0, 0]));
-    if (this.tSky) this.tSky = blit(this.tSky, gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE, () => gl.clearBufferuiv(gl.COLOR, 0, [SKY_RAYS, 0, 0, 0]));
+    this.tColor = blit('color', this.tColor!, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, () => gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]));
+    this.tFace = blit('face', this.tFace!, gl.R8I, gl.RED_INTEGER, gl.BYTE, () => gl.clearBufferiv(gl.COLOR, 0, [-1, 0, 0, 0]));
+    if (this.tSky) this.tSky = blit('sky', this.tSky, gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE, () => gl.clearBufferuiv(gl.COLOR, 0, [SKY_RAYS, 0, 0, 0]));
     const p = this.shiftF;
-    const pass = (src: WebGLTexture, delta: number, empty: number): WebGLTexture => {
-      const dst = tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null);
+    const pass = (k: string, src: WebGLTexture, delta: number, empty: number): WebGLTexture => {
+      const dst = this.takeSpare(k, b, () => tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null));
       gl.bindFramebuffer(gl.FRAMEBUFFER, dr);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
       gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
@@ -688,11 +723,11 @@ export class GpuCompositor {
       gl.uniform1f(p.u.uEmpty, empty);
       gl.bindVertexArray(this.vao);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
-      gl.deleteTexture(src);
+      keep(k, src);
       return dst;
     };
-    this.tDepth = pass(this.tDepth!, ls.dd, Infinity);
-    this.tWorldY = pass(this.tWorldY!, ls.dy, 0);
+    this.tDepth = pass('depth', this.tDepth!, ls.dd, Infinity);
+    this.tWorldY = pass('worldY', this.tWorldY!, ls.dy, 0);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.deleteFramebuffer(rd); gl.deleteFramebuffer(dr);
     this.shiftMs = performance.now() - t0;

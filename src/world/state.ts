@@ -157,7 +157,7 @@ export class StaticVoxels implements VoxelSource {
   // Los oyentes de cambios del mundo (changes.ts; lo pone WorldState): cada vóxel que cambia de verdad se les avisa
   feed: ChangeFeed | null = null;
   // Altura de la cara de arriba del vóxel sólido más alto de cada columna (índice y * width + x); zMin si no hay
-  readonly height: Int16Array;
+  height: Int16Array;
 
   constructor(public palette: Palette, readonly width: number, readonly depth: number, readonly zMin: number, readonly zMax: number) {
     this.cols = Math.ceil(width / CHUNK);
@@ -268,6 +268,12 @@ export class StaticVoxels implements VoxelSource {
       shiftGrid(q.floor, W, D, 1, DX, DY, 0); shiftGrid(q.walk, W, D, 1, DX, DY, 0); shiftGrid(q.noClimb, W, D, 1, DX, DY, 0);
       shiftGrid(q.dirty, W, D, 1, DX, DY, 1);
     }
+    this.finishShift(dcx, dcy);
+  }
+
+  // Lo que entra y el borde nuevo, tras correr (shift o shiftJob)
+  private finishShift(dcx: number, dcy: number): void {
+    const C = this.cols, R = this.rows, nz = this.nz, W = this.width, D = this.depth;
     // Los que entran: versión nueva y su caja entera; los del borde nuevo (un vecino que estaba dentro ahora queda fuera: su
     // máscara se hizo con él, y con aire fuera se ven caras que antes no), también cambiados y sin máscaras. Un vecino que
     // entra vacío tiene versión nueva, y eso ya rehace la máscara
@@ -290,6 +296,63 @@ export class StaticVoxels implements VoxelSource {
       if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
     }
   }
+
+  // MOVER LA VENTANA POR PASOS: lo mismo que shift, pero lo que más cuesta (las referencias de las losas, las alturas y las
+  // cajas de lo cambiado) se prepara en otros búferes por filas de trozos (step: una fila por llamada; true al acabar)
+  // mientras el mundo sigue; commit hace el cambio: vuelve a copiar los trozos que cambiaron mientras tanto, cambia los
+  // búferes, corre lo pequeño en su sitio y da la rejilla de pisar por sucia (se rehace al pedirla)
+  shiftJob(dcx: number, dcy: number): { step(): boolean; commit(): void } {
+    if (this.width % CHUNK || this.depth % CHUNK) throw new Error(`shift: el ancho y el fondo tienen que ser múltiplos de ${CHUNK}`);
+    const C = this.cols, R = this.rows, nz = this.nz, W = this.width, D = this.depth, DX = dcx * CHUNK, DY = dcy * CHUNK;
+    const start = this.clock;
+    let bk = this.backBufs;
+    if (!bk || bk.data.length !== this.data.length) bk = this.backBufs = { data: new Array(this.data.length).fill(null), pal: new Array(this.pal.length).fill(null), height: new Int16Array(this.height.length), seg: new Int32Array(this.seg.length), segN: new Uint8Array(this.segN.length) };
+    const B = bk;
+    const inside = (sx: number, sy: number) => sx >= 0 && sy >= 0 && sx < C && sy < R;
+    // El trozo c (destino) desde su origen en los búferes de ahora
+    const copyChunk = (cx: number, cy: number) => {
+      const c = cy * C + cx, sx = cx + dcx, sy = cy + dcy, ok = inside(sx, sy), sc = sy * C + sx;
+      for (let s = 0; s < nz; s++) { B.data[c * nz + s] = ok ? this.data[sc * nz + s]! : null; B.pal[c * nz + s] = ok ? this.pal[sc * nz + s]! : null; }
+      const o = c * SEGS * 7;
+      if (!ok) { B.segN[c] = 0; B.seg.fill(0, o, o + SEGS * 7); }
+      else {
+        B.segN[c] = this.segN[sc]!;
+        B.seg.set(this.seg.subarray(sc * SEGS * 7, (sc + 1) * SEGS * 7), o);
+        for (let k = 0; k < B.segN[c]!; k++) { const q = o + k * 7; B.seg[q + 1] = B.seg[q + 1]! - DX; B.seg[q + 2] = B.seg[q + 2]! - DY; B.seg[q + 4] = B.seg[q + 4]! - DX; B.seg[q + 5] = B.seg[q + 5]! - DY; }
+      }
+      for (let ly = 0; ly < CHUNK; ly++) {
+        const y = cy * CHUNK + ly, o2 = y * W + cx * CHUNK;
+        if (!ok) { B.height.fill(this.zMin, o2, o2 + CHUNK); continue; }
+        const so = (y + DY) * W + cx * CHUNK + DX;
+        B.height.set(this.height.subarray(so, so + CHUNK), o2);
+      }
+    };
+    let row = 0;
+    return {
+      step: () => { if (row < R) { for (let cx = 0; cx < C; cx++) copyChunk(cx, row); row++; } return row >= R; },
+      commit: () => {
+        while (row < R) { for (let cx = 0; cx < C; cx++) copyChunk(cx, row); row++; }
+        // Lo que cambió mientras se preparaba (su versión es de después de empezar), otra vez
+        for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
+          const sx = cx + dcx, sy = cy + dcy;
+          if (inside(sx, sy) && this.versions[sy * C + sx]! > start) copyChunk(cx, cy);
+        }
+        // El cambio de búferes (los de antes quedan para la próxima vez)
+        const old = { data: this.data, pal: this.pal, height: this.height, seg: this.seg, segN: this.segN };
+        this.data = B.data; this.pal = B.pal; this.height = B.height; this.seg = B.seg; this.segN = B.segN;
+        this.backBufs = old;
+        // Lo pequeño, en su sitio (copias de memoria)
+        const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
+        g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
+        g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
+        this.expoAt.fill(-1); this.expoFAt.fill(-1);
+        if (this.fgrid) this.fgrid.dirty.fill(1);
+        void D;
+        this.finishShift(dcx, dcy);
+      },
+    };
+  }
+  private backBufs: { data: Array<Uint8Array | Uint16Array | null>; pal: Array<Uint16Array | null>; height: Int16Array; seg: Int32Array; segN: Uint8Array } | null = null;
 
   // Escribe de una vez TODAS las losas del trozo c (un trozo nuevo: lo que tuviera se pierde). slabs[s]: los valores de
   // la losa s en el orden de dentro de la losa ((z & 15) << 8 | (y & 15) << 4 | x & 15), o null si toda es aire. Para

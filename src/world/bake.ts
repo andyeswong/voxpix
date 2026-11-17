@@ -73,6 +73,8 @@ export interface Baked {
   lastShift?: { serial: number; dx: number; rows: number; dd: number; dy: number };
   // Entre que se corren los vóxeles y se cambia la imagen (shiftBakedJob, dos cuadros): lo que escribe en la imagen espera
   shiftHold?: boolean;
+  // Mientras se prepara un corrimiento (shiftBakedJob): las copias pueden ir preparando lo suyo (la GPU, sus texturas)
+  shifting?: boolean;
 }
 
 // Lo mínimo que necesita el horneado de un mundo
@@ -1243,7 +1245,11 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
       }
     }
   };
-  const restart = () => { next = 0; halo = 0; start = b.published.serial; P = par(); gx0 = W; gy0 = H; gx1 = -1; gy1 = -1; };
+  // Los vóxeles, preparados también por pasos en otros búferes (StaticVoxels.shiftJob): en el cambio solo se cambian
+  let vox = s.shiftJob(tx, ty);
+  b.shifting = true;
+  const voxPerBand = Math.ceil(s.rows / Math.ceil(H / band)) + 1;        // filas de trozos por banda: acaban con las bandas
+  const restart = () => { next = 0; halo = 0; start = b.published.serial; P = par(); gx0 = W; gy0 = H; gx1 = -1; gy1 = -1; vox = s.shiftJob(tx, ty); };
   // Lo rehorneado en la imagen de ahora desde que se copió: se vuelve a copiar (con su contorno); false si ya no se sabe
   const recopy = (): boolean => {
     const pub = b.published;
@@ -1277,6 +1283,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
         if (next < H) {
           copyRows(next, next + band - 1);
           next += band;
+          for (let k = 0; k < voxPerBand; k++) vox.step();
           // El contorno de las filas cuyas vecinas ya están
           haloRows(halo, Math.min(H, next) - 2);
           halo = Math.max(halo, Math.min(H, next) - 1);
@@ -1291,7 +1298,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
           job.ms.recopy = performance.now() - r0;
           if (b.rectsBusy?.size || b.lightWork?.size || b.pendingLights?.size) return false;
           const v0 = performance.now();
-          s.shift(tx, ty);
+          vox.commit();
           job.ms.voxels = performance.now() - v0;
           held = true; b.shiftHold = true;
           return false;
@@ -1315,6 +1322,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     b.lastShift = { serial: b.published.serial, dx: DX, rows, dd: P.dd, dy: DY };
     b.shifts = (b.shifts ?? 0) + 1;
     b.shiftHold = false;
+    b.shifting = false;
     done = true;
   };
   return job;

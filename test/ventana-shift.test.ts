@@ -65,6 +65,27 @@ describe('StaticVoxels.shift', () => {
     }
   });
 
+  it('por pasos (shiftJob), con cambios en los vóxeles a mitad de preparar: lo mismo que la ventana hecha de nuevo', () => {
+    const live = fresh(0, 0);
+    exposed(live); live.floorAt(5, 5);
+    const job = live.shiftJob(TB * B / 16, 0);
+    for (let k = 0; k < 3; k++) job.step();
+    // Picar en un trozo que se queda (ya copiado y sin copiar) y en uno que sale
+    const holes: Array<[number, number, number]> = [];
+    for (const [x, y] of [[40, 5], [70, 90], [10, 50]] as const) for (let z = 20; z < 40; z++) { live.set(x, y, z, 0); holes.push([x, y, z]); }
+    while (!job.step());
+    live.set(75, 20, 30, 0); holes.push([75, 20, 30]);                     // después de preparar, antes del cambio
+    job.commit();
+    for (let j = 0; j < N; j++) stamp(live, 1 + N - 1, j, N - 1, j);        // lo que entra (la columna de trozos del este)
+    const ref = fresh(1, 0);
+    for (const [x, y, z] of holes) if (x - TV >= 0) ref.set(x - TV, y, z, 0);
+    for (let z = 0; z <= ZT; z += 2) for (let y = 0; y < WV; y++) for (let x = 0; x < WV; x++)
+      if (live.get(x, y, z) !== ref.get(x, y, z)) expect(`${x},${y},${z} = ${live.get(x, y, z)}`).toBe(`${ref.get(x, y, z)}`);
+    expect(Array.from(live.height)).toEqual(Array.from(ref.height));
+    for (let y = 0; y < WV; y += 3) for (let x = 0; x < WV; x += 3) expect(live.floorAt(x, y)).toBe(ref.floorAt(x, y));
+    expect(exposed(live)).toEqual(exposed(ref));
+  });
+
   it('lo que entra y el borde nuevo quedan cambiados (versión nueva y su caja entera) y lo demás, no', () => {
     const live = fresh(0, 0), v0 = live.clock;
     live.shift(2, 0);
