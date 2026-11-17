@@ -216,7 +216,7 @@ export class BlockGrid implements StatePart {
   }
 
   // Las celdas de una región generada en `at` (solo la rejilla, y las luces de lo que emite, como write), sin los
-  // vóxeles. El paso 1 de stampRegionJob; también para quien recibe los vóxeles ya hechos (EXPERIMENTO worker-exp: los
+  // vóxeles. El paso 1 de stampRegionJob; también para quien recibe los vóxeles ya hechos (los
   // trozos escritos en un worker, LiveWindow prepareTrozo)
   stampCells(r: GeneratedRegion, at: readonly [number, number, number] = [0, 0, 0], opts: { skip?: readonly number[] } = {}): void {
     const N = this.N, { width: W, depth: D, height: H } = r.region, [gx, gy, gz] = at, skip = new Set(opts.skip ?? []);

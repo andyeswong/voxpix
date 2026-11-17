@@ -1,4 +1,4 @@
-// EXPERIMENTO (rama worker-exp): el worker que pinta los recuadros de los trozos que entran en la ventana viva de
+// El worker que pinta los recuadros de los trozos que entran en la ventana viva de
 // viva.html (?worker=1). Lleva su copia de los vóxeles de la ventana: genera y estampa él cada trozo que escribe el
 // principal (la generación es determinista) y se corre con él; pinta el recuadro que le piden y lo manda transferido.
 // Con freno N, tras pintar espera N - 1 veces lo que tardó (el CDP no frena los workers: la puerta del 6x)

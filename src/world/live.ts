@@ -91,7 +91,7 @@ export interface LiveWindowOptions {
   // El corte se corre con la ventana (WorldView.shift, antes de onShift); un cutJob a medias sigue en la cola
   view?: WorldViewOptions;
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
-  // EXPERIMENTO (worker-exp): escribir un trozo fuera (un worker que lo genera y lo estampa en su copia): pide el trozo t
+  // Escribir un trozo fuera (un worker que lo genera y lo estampa en su copia): pide el trozo t
   // para su sitio `at` (celda de la rejilla) y da un vale; result() trae sus celdas y sus trozos de vóxeles ya hechos
   // (los de writeChunkPrepared), y aquí solo se ponen. Sin fill; el constructor escribe aquí (no puede esperar)
   prepareTrozo?(t: Trozo, at: readonly [number, number]): { result(): PreparedTrozo | null };

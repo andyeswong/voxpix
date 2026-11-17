@@ -47,7 +47,7 @@ void (async () => {
   const spec = ext ? ext.spec : spec0;
   const CENTER: [number, number] = ext?.center ?? [0, 0];
   const NXW = ext?.nx ?? NX, NYW = ext?.ny ?? NY;
-  // EXPERIMENTO (worker-exp): ?worker=1 pinta los recuadros de lo que entra en un worker con su copia de la ventana
+  // ?worker=1 pinta los recuadros de lo que entra en un worker con su copia de la ventana
   // (hornero.ts); ?freno=N, su freno propio
   const WORKER = q.get('worker') === '1', FRENO = Number(q.get('freno') ?? 1);
   const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;

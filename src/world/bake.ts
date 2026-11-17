@@ -59,7 +59,7 @@ export interface Baked {
   // Los recuadros en marcha, por key (con la ficha del último trabajo que la usa: uno nuevo con la misma key sustituye
   // al viejo en la cola). Las luces y el cielo esperan a que no quede en marcha ninguno de los suyos
   rectsBusy?: Map<string, object>;
-  // EXPERIMENTO (worker-exp): quien pinta los recuadros fuera (un worker con su copia de los vóxeles). ask(rect) da un
+  // Quien pinta los recuadros fuera (un worker con su copia de los vóxeles). ask(rect) da un
   // vale (o null: se pinta aquí) y result() el recuadro cuando llega; se publica si ningún trozo suyo cambió desde que se
   // pidió, y si no, se pinta aquí
   remote?: RemoteRects;
@@ -852,7 +852,7 @@ function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8A
 }
 const PUBLISHED_KEEP = 32;
 
-// EXPERIMENTO (rama worker-exp): el recuadro de unos trozos pintado aparte (en un worker con su copia de la ventana) y
+// El recuadro de unos trozos pintado aparte (en un worker con su copia de la ventana) y
 // publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
 // rebakeJobs, de una vez); publishRectBuffers: lo que hace el hilo principal con lo que le llega
 export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
@@ -896,7 +896,7 @@ const LIGHT_CHECK = 4;    // píxeles entre dos miradas al reloj dentro de un pa
 //   en vez de un recuadro por columna de 16 con su margen de 3 por lado)
 // - rows: filas por paso (en pasos de band columnas x rows filas). Sin rows, la franja entera: en un recuadro alto (una
 //   columna de la ventana viva, cientos de filas) un paso de 4 columnas costaba 13 ms sin freno
-// tile (EXPERIMENTO worker-exp): los trozos cambiados se agrupan antes por baldosas de tile x tile trozos de vóxeles (un
+// tile: los trozos cambiados se agrupan antes por baldosas de tile x tile trozos de vóxeles (un
 // trozo de la ventana viva: T / 16), y cada baldosa da sus recuadros: trabajo acotado (y poco que tirar al cancelar)
 export interface RebakeShape { band?: number; merge?: boolean; rows?: number; tile?: number }
 
@@ -947,7 +947,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     pp.set(token, [plan]);
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
-    // (EXPERIMENTO worker-exp: el recuadro pedido fuera, y el reloj de cuando se pidió)
+    // (el recuadro pedido fuera, y el reloj de cuando se pidió)
     let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría

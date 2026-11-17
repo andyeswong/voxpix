@@ -61,7 +61,7 @@ import type { PreparedTrozo } from '../src/world/live';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockGrid } from '../src/world/blocks';
 
-describe('recuadros pintados fuera (Baked.remote, experimento worker-exp)', () => {
+describe('recuadros pintados fuera (Baked.remote)', () => {
   it('uno que llega tarde, después del de un picado posterior, no lo pisa: algo suyo cambió y se pinta aquí', () => {
     const win = make([0, 0]), ref = make([0, 0]);
     const queue: Array<{ o: RectOut; at: number }> = [];

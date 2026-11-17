@@ -745,7 +745,7 @@ export class StaticVoxels implements VoxelSource {
     return n;
   }
 
-  // EXPERIMENTO (worker-exp): el trozo c tal como está, en la forma de writeChunkPrepared (copiado), con las alturas de sus
+  // El trozo c tal como está, en la forma de writeChunkPrepared (copiado), con las alturas de sus
   // columnas: para mandar a otro store lo escrito aquí. null si alguna losa va a 2 bytes sin paleta (no cabe en esa forma)
   exportChunkPrepared(c: number): { slabs: Array<PreparedSlab | null>; tops: Int16Array } | null {
     const slabs: Array<PreparedSlab | null> = new Array(this.nz).fill(null);
