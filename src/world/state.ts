@@ -619,6 +619,16 @@ export class StaticVoxels implements VoxelSource {
     this.copyRotatedSlabs(src, quarter, c * nz, (c + 1) * nz);
   }
 
+  // Marca el trozo c como cambiado entero para quien hornea (su versión y su caja: el trozo entero, con toda la altura)
+  // sin tocar un vóxel ni la versión del mundo (worldChangedSince). LiveWindow.turnTo: lo que queda por hornear de una
+  // vista nueva fuera de lo visible lo rehace después el rehorneado de siempre
+  touch(c: number): void {
+    const X = (c % this.cols) * CHUNK, Y = Math.floor(c / this.cols) * CHUNK;
+    this.versions[c] = ++this.clock;
+    this.segN[c] = 1;
+    this.seg.set([this.clock, X, Y, this.zMin, Math.min(this.width, X + CHUNK) - 1, Math.min(this.depth, Y + CHUNK) - 1, this.zMax], c * SEGS * 7);
+  }
+
   // Después de copiar las losas del trozo c: la altura de sus columnas (lo más alto lleno), y, si tiene algo, su versión
   // y su caja de cambios
   private finishChunk(c: number): void {

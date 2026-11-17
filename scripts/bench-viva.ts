@@ -33,3 +33,23 @@ for (let s = 0; s < N; s++) {
   const tot = [...by.values()].reduce((a, b) => a + b, 0);
   console.log(`corrimiento ${s + 1} (tx0 ${win.tx0}): total ${tot.toFixed(0)} ms; ` + [...by].map(([k, v]) => `${k} ${v.toFixed(0)}`).join(', ') + `; cambio ${win.lastSwitchMs.toFixed(1)} ms; trozos ${win.stats.loadMs.slice(-11).map((v) => v.toFixed(0)).join(' ')}; llamada más larga (plazo 3 ms): ` + [...most].map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', '));
 }
+
+// GIRAR=1: girar con fundido (turnTo, sin los otros giros horneados), 0 -> 1 -> 2 -> 3 -> 0, con el recuadro de la
+// página (384 x 216): el núcleo (hasta el cambio: ms de CPU, llamadas con plazo de 3 ms y la más larga) y lo demás
+// (la copia y el rehorneado de la cola, hasta que no queda nada)
+if (process.env.GIRAR === '1') {
+  const w2 = new LiveWindow({ blocks: set, spec, nx: 9, ny: 11, chunk: 16, center: [0, 0], margin: { x: 4, n: 6, s: 4 }, viewport: [384, 216], bake: { incline: 0.5, sky: true, outline: 'both' } });
+  const x = T / 2, y = T / 2;
+  for (const g of [1, 2, 3, 0] as const) {
+    w2.turnTo(g);
+    let calls = 0, most = 0, core = 0, rest = 0;
+    let guard = 0;
+    do {
+      w2.update(x, y, budget);
+      const jobs = q2(); 
+      for (const j of jobs) for (;;) { const c = performance.now(), wasCore = w2.turning?.phase === 'core', ok = j.run(c + 3), d = performance.now() - c; if (wasCore) { calls++; most = Math.max(most, d); core += d; } else rest += d; if (ok) break; }
+    } while ((w2.busy || q.length) && ++guard < 100000);
+    console.log(`giro a ${g}: núcleo ${core.toFixed(0)} ms de CPU (turnMs ${w2.stats.turnMs.at(-1)!.toFixed(0)}) en ${calls} llamadas de 3 ms, la más larga ${most.toFixed(1)}; lo demás ${rest.toFixed(0)} ms; ${JSON.stringify(w2.lastTurn, (k, v) => typeof v === 'number' ? Math.round(v) : v)}`);
+  }
+}
+function q2(): ViewJob[] { const j = q; q = []; return j; }

@@ -44,9 +44,10 @@ const make = (center: Trozo, log?: { unload: string[]; load: string[] }) => new 
     for (const k of dug) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (Math.floor(x / TV) === t[0] && Math.floor(y / TV) === t[1]) ctx.write(x, y, z, 0); }
   },
 });
-const diff = (b: Baked, r: Baked) => {
+const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y1: number }) => {
   let n = 0;
   for (let i = 0; i < r.width * r.height; i++) {
+    if (rect) { const x = i % r.width, y = Math.floor(i / r.width); if (x < rect.x0 || x > rect.x1 || y < rect.y0 || y > rect.y1) continue; }
     let d = b.face[i] !== r.face[i] || !(b.pick[i] === r.pick[i] || (Number.isNaN(b.pick[i]!) && Number.isNaN(r.pick[i]!))) || b.sky![i] !== r.sky![i];
     for (let c = 0; c < 4 && !d; c++) d = b.rgba[i * 4 + c] !== r.rgba[i * 4 + c];
     if (d) n++;
@@ -162,5 +163,70 @@ describe('ventana viva', () => {
     }
     win.turn(2);
     expect(win.baked).toBe(win.viewOf(2)!.baked);
+  });
+
+  it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
+    const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
+    const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });
+    for (let z = 20; z < 40; z++) for (let y = 5; y < 15; y++) for (let x = TV + 4; x < TV + 14; x++) { const [lx, ly] = win.toLocal(x, y); win.store.set(lx, ly, z, 0); }
+    // Una luz fija, para que el giro la hornee
+    const LW = [3 * TV + 5, 2 * TV + 7] as const;
+    { const [lx, ly] = win.toLocal(LW[0], LW[1]); win.state.lights.addFixed({ id: 'antorcha', kind: 'torch', x: lx + 0.5, y: ly + 0.5, z: 44 }); }
+    const budget = new FrameBudget(1, undefined, { ms: 1, below: 64 });
+    // El juego: cada cuadro, lo cambiado en el giro de ahora
+    // Una ventana hecha de nuevo donde está win, en el giro q, con lo mismo picado y la misma luz
+    const refAt = (q: 0 | 2) => {
+      const ref = new LiveWindow({ ...opts([win.tx0 + 2, win.ty0 + 2]), ...(q ? { quarters: [q] } : {}) });
+      for (let z = 20; z < 40; z++) for (let y2 = 5; y2 < 15; y2++) for (let x2 = TV + 4; x2 < TV + 14; x2++) {
+        const [lx, ly] = ref.toLocal(x2, y2);
+        if (lx >= 0 && ly >= 0 && lx < ref.store.width && ly < ref.store.depth) ref.store.set(lx, ly, z, 0);
+      }
+      { const [lx, ly] = ref.toLocal(LW[0], LW[1]); ref.state.lights.addFixed({ id: 'antorcha', kind: 'torch', x: lx + 0.5, y: ly + 0.5, z: 44 }); }
+      if (q) ref.turn(q);
+      for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+      return ref;
+    };
+    const frame = (x: number, y: number) => { win.update(x, y, budget); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); budget.run(); };
+    let x = TV / 2, y = TV / 2, frames = 0, swapAt = -1;
+    for (let s = 0; s < 5 * 8; s++) {
+      if (s < 24) x += TV / 8; else y += TV / 8;
+      if (s === 10) {
+        win.turnTo(1);
+        // Q otra vez durante el fundido: el destino pasa a 2
+        frame(x, y); frame(x, y);
+        expect(win.turning).toEqual({ to: 1, phase: 'core' });
+        win.turnTo(((win.turnTarget + 1) % 4) as 2);
+        expect(win.turning).toEqual({ to: 2, phase: 'core' });
+        for (frames = 0; win.turning?.phase === 'core' && frames < 5000; frames++) frame(x, y);
+        swapAt = frames;
+        expect(win.quarter).toBe(2);
+        // Al cambiar, lo que se ve ya está como en una ventana hecha de nuevo en ese giro
+        const now = refAt(2), [lx, ly] = win.toLocal(x, y), [vx, vy] = win.view.camera.pointToView(lx, ly);
+        const [px, py] = win.baked.cam.project(vx, vy, win.store.height[Math.floor(ly) * win.store.width + Math.floor(lx)]!);
+        const X0 = Math.max(0, Math.min(win.baked.width - 64, Math.round(px) - 32)), Y0 = Math.max(0, Math.min(win.baked.height - 40, Math.round(py) - 20));
+        expect(diff(win.baked, now.baked, { x0: X0, y0: Y0, x1: X0 + 63, y1: Y0 + 39 })).toBe(0);
+        // Solo vive el giro de ahora
+        expect(win.quarters).toEqual([2]);
+        expect(win.turning?.phase).toBe('rest');
+      }
+      frame(x, y);
+      for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y);
+    }
+    expect(swapAt).toBeGreaterThan(0);
+    for (let k = 0; k < 3; k++) { frame(x, y); for (let k = 0; k < 400 && (win.busy || budget.pending); k++) frame(x, y); }
+    expect(win.tx0).toBeGreaterThan(-2);
+    // Una ventana hecha de nuevo ahí, en el giro 2, con lo mismo picado y la misma luz
+    const ref = refAt(2), r = ref.viewOf(2)!;
+    // (los vóxeles del mundo también: sin el giro 0, la ventana los corre aparte)
+    let nv = 0;
+    for (let z = win.store.zMin; z <= win.store.zMax; z++) for (let y2 = 0; y2 < win.store.depth; y2++) for (let x2 = 0; x2 < win.store.width; x2++) if (win.store.get(x2, y2, z) !== ref.store.get(x2, y2, z)) nv++;
+    expect(nv).toBe(0);
+    expect(diff(win.baked, r.baked)).toBe(0);
+    // Y volver al 0 (sin copia: lo demás se marca en el mundo)
+    win.turnTo(0);
+    for (let k = 0; k < 4000 && (win.busy || budget.pending); k++) frame(x, y);
+    const ref0 = refAt(0);
+    expect(win.quarters).toEqual([0]);
+    expect(diff(win.baked, ref0.baked)).toBe(0);
   });
 });

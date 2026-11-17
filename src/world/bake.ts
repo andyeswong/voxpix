@@ -650,7 +650,7 @@ export function rebake(b: Baked, chunks: readonly number[], lights: readonly Wor
 // Con la cámara sin girar, la columna de vóxeles x cae exactamente en la columna de píxeles x: cada franja de
 // columnas se puede renderizar por separado (con sus vóxeles, y los vecinos del mundo entero para caras y oclusión)
 // y el resultado es el mismo que de una vez.
-interface ScreenRect { x0: number; x1: number; y0: number; y1: number }
+export interface ScreenRect { x0: number; x1: number; y0: number; y1: number }
 interface RectBuffers { rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number }
 
 function rectBuffers(r: ScreenRect): RectBuffers {
@@ -682,6 +682,19 @@ function chunkRect(b: Baked, chunks: readonly number[], boxes?: ReadonlyMap<numb
     y0: Math.max(0, Math.floor(O - a * (Y1 + 1) - (Z1b + 1)) - 1), y1: Math.min(b.height - 1, Math.ceil(O - a * Y0 - Z0b) + 1),
   };
   return { rect, plan: { X0, Y0, X1, Y1, Z0: Z0b, Z1: Z1b } };
+}
+
+// Los trozos de vóxeles de b.source cuyo recuadro de pantalla (su caja de boxes, o el trozo entero con toda su altura,
+// como chunkRect) toca el recuadro r de la imagen: lo que hay que hornear para que r quede bien (LiveWindow.turnTo, lo
+// visible primero)
+// within: solo los que caen enteros dentro de r
+export function chunksInScreen(b: Baked, r: ScreenRect, boxes?: ReadonlyMap<number, Box3>, within = false): number[] {
+  const s = b.source, out: number[] = [];
+  for (let c = 0; c < s.cols * s.rows; c++) {
+    const { rect } = chunkRect(b, [c], boxes);
+    if (within ? rect.x0 >= r.x0 && rect.x1 <= r.x1 && rect.y0 >= r.y0 && rect.y1 <= r.y1 : rect.x1 >= r.x0 && rect.x0 <= r.x1 && rect.y1 >= r.y0 && rect.y0 <= r.y1) out.push(c);
+  }
+  return out;
 }
 
 // Los trozos cambiados, en grupos que se rehornean cada uno con su recuadro: por columna de trozos, los tramos
@@ -841,7 +854,9 @@ const LIGHT_CHECK = 4;    // píxeles entre dos miradas al reloj dentro de un pa
 //   columna de la ventana viva, cientos de filas) un paso de 4 columnas costaba 13 ms sin freno
 export interface RebakeShape { band?: number; merge?: boolean; rows?: number }
 
-export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>, shape: RebakeShape = {}): ViewJob[] {
+// clip: solo los píxeles de ese recuadro de la imagen (LiveWindow.turnTo: lo que se ve). Lo de su borde (1 píxel) puede
+// quedar sin contorno bien hecho: quien recorta rehornea después los trozos que se salen de él
+export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly WorldLight[], boxes?: ReadonlyMap<number, Box3>, shape: RebakeShape = {}, clip?: ScreenRect): ViewJob[] {
   const BAND = shape.band ?? RECT_BAND;
   const fixed = new Map<LightId, WorldLight>();
   for (const l of lights) if (l.baked !== false) fixed.set(l.id, l);
@@ -872,7 +887,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
   const waiting = () => myKeys.some((k) => busy.has(k));
   for (const g of chunkGroups(b, chunks, shape.merge)) {
-    const { rect, plan } = chunkRect(b, g, boxes);
+    const { rect: whole, plan } = chunkRect(b, g, boxes);
+    const rect = clip ? { x0: Math.max(whole.x0, clip.x0), y0: Math.max(whole.y0, clip.y0), x1: Math.min(whole.x1, clip.x1), y1: Math.min(whole.y1, clip.y1) } : whole;
+    if (rect.x0 > rect.x1 || rect.y0 > rect.y1) continue;
     plans.push(plan); rects.push(rect);
     const key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`, token = {};
     busy.set(key, token); myKeys.push(key);
@@ -1034,7 +1051,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   // 3) el cielo de lo que alcanza el cambio (después de los recuadros: lee qué cara se ve en cada píxel). Se calcula
   // aparte y se publica de una vez (lo publicado es lo viejo hasta acabar)
   if (b.sky) for (const p of plans) {
-    const r = skyRect(b, p), w = r.x1 - r.x0 + 1, out = new Uint8Array(w * (r.y1 - r.y0 + 1));
+    const sr = skyRect(b, p), r = clip ? { x0: Math.max(sr.x0, clip.x0), y0: Math.max(sr.y0, clip.y0), x1: Math.min(sr.x1, clip.x1), y1: Math.min(sr.y1, clip.y1) } : sr;
+    if (r.x0 > r.x1 || r.y0 > r.y1) continue;
+    const w = r.x1 - r.x0 + 1, out = new Uint8Array(w * (r.y1 - r.y0 + 1));
     let row = r.y0;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
