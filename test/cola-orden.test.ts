@@ -87,4 +87,25 @@ describe('cola: el orden de push', () => {
     for (let f = 0; f < 60; f++) { budget.run(); t += 16; }
     expect(sectionRuns).toBe(60);
   });
+
+  // Lo que vio FERN con 204f7a6: varios recuadros sin prioridad, de varias llamadas cada uno, en la fase normal. Con la
+  // salvaguarda adelantándolos por turnos, ninguno acababa de una vez: avanzaban a trozos, uno por cuadro, y cada uno que
+  // acababa tarde se publicaba encima de la sección y la hacía repintar
+  it('salvaguarda: recuadros sin prioridad de varias llamadas acaban en orden, sin turnarse (el que avanza no cede ante los que esperan)', () => {
+    let t = 0;
+    const budget = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    for (let k = 0; k < 8; k++) { budget.push({ key: `rect:a${k}`, run: () => { t += 3.5; return true; } }); budget.run(); t += 16; }
+    // (con la sección en la fase cercana, como en el juego: lo normal no se lleva lo que sobra de lo cercano)
+    budget.push({ key: 'section', priority: 0, run: () => { t += 7; return false; } });
+    const done: Array<[string, number]> = [];
+    let f = 0;
+    for (const name of ['r1', 'r2', 'r3', 'r4']) {
+      let left = 8;
+      budget.push({ key: `rect:${name}`, run: () => { t += 3.5; if (--left > 0) return false; done.push([name, f]); return true; } });
+    }
+    for (; f < 200 && done.length < 4; f++) { budget.run(); t += 16; }
+    expect(done.map((d) => d[0])).toEqual(['r1', 'r2', 'r3', 'r4']);
+    // (8 llamadas cada uno, una por cuadro: el primero en el cuadro 7, el último hacia el 31)
+    expect(done[0]![1]).toBeLessThanOrEqual(8);
+  });
 });

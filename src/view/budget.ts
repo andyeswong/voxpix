@@ -120,6 +120,9 @@ export class FrameBudget {
   // clase puede caber), y el resto se queda para el cuadro siguiente
   private phase(deadline: number, inPhase: (j: ViewJob) => boolean, from = 0): void {
     let ran = 0;
+    // (¿acabaron todos los que gastaron algo en esta fase? Si alguno sigue, lo que se come el plazo es trabajo en marcha, en
+    // orden, y no se cuenta salto a los de detrás)
+    let allDone = true;
     // Uno que lleva STARVE_FRAMES cuadros seguidos saltado por no caber va el primero de la fase (la primera llamada
     // es la que puede no caber). Si no, cuando delante siempre corre algo antes (una espera que el reloj del navegador,
     // de 0,1 ms, mide como trabajo), una clase que no cabe nunca sería la primera y no correría nunca
@@ -131,7 +134,7 @@ export class FrameBudget {
       const t = this.now(), r = this.call(job, deadline, t);
       this.starvedRuns++;
       if (r.done) this.removeAt(k);
-      if (r.ms >= MIN_SAMPLE_MS) ran++;
+      if (r.ms >= MIN_SAMPLE_MS) { ran++; if (!r.done) allDone = false; }
       break;
     }
     let i = from;
@@ -149,8 +152,11 @@ export class FrameBudget {
         // cada llamada, el bucle no llegaba nunca y la racha se rompía: un recuadro cercano esperaba a que lo de delante
         // acabara entero (1,1 s en el juego de FERN con el worker, detrás de recuadros del worker sin prioridad como él).
         // Solo su escalón: si contaban todos, a los 4 cuadros se adelantaban por delante de los de más prioridad, uno por
-        // cuadro, y la sección (prioridad 0) perdía su turno (204f7a6: la franja con huecos en 40-67 cuadros de ~300)
-        for (let k = i; k < this.queue.length; k++) {
+        // cuadro, y la sección (prioridad 0) perdía su turno (204f7a6: la franja con huecos en 40-67 cuadros de ~300).
+        // Y solo si lo que se comió el plazo acabó (los del worker que se publican de una vez): si es un trabajo en marcha,
+        // adelantar a los de detrás los hace avanzar por turnos, a trozos, y ninguno acaba de una vez (los recuadros que
+        // en el juego de FERN se publicaban tarde encima de la sección)
+        if (allDone) for (let k = i; k < this.queue.length; k++) {
           const q = this.queue[k]!;
           if (!inPhase(q)) break;
           if (q.priority === tier && !q.waiting?.()) this.noteSkip(q);
@@ -170,7 +176,7 @@ export class FrameBudget {
       // Una llamada que no gasta nada medible (una espera, o un trabajo que ya no tenía nada que hacer) no cuenta como la
       // llamada de la fase: lo de detrás, aunque sea de una clase sin estimación, todavía puede empezar (si no, una luz
       // que espera a su recuadro dejaría el recuadro sin correr)
-      if (r.ms >= MIN_SAMPLE_MS) ran++;
+      if (r.ms >= MIN_SAMPLE_MS) { ran++; if (!r.done) allDone = false; }
       if (r.done) this.removeAt(i);
       else i++;
     }
