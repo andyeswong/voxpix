@@ -2,7 +2,9 @@
 // app/viva.html): preparar el corrimiento, el cambio, escribir cada trozo que entra y rehornearlo, por clase de trabajo.
 //   bun scripts/bench-viva.ts [giros 1|4] [corrimientos 3]
 import { LiveWindow } from '../src/world/live';
-import { set, SPEC } from './ventana-mundo';
+import { readFileSync } from 'node:fs';
+import { set as SET, SPEC } from './ventana-mundo';
+import { BlockSet } from '../src/world/blocks';
 import type { ViewJob } from '../src/world/bake';
 
 const GIROS = Number(process.argv[2] ?? 1), N = Number(process.argv[3] ?? 3);
@@ -10,9 +12,15 @@ const GIROS = Number(process.argv[2] ?? 1), N = Number(process.argv[3] ?? 3);
 // sin ninguna, la forma por defecto de LiveWindow; ANTES=1, la de antes (franjas de 4 de alto entero, por columna)
 const shape = { ...(process.env.BANDA ? { band: Number(process.env.BANDA) } : {}), ...(process.env.JUNTAR === '1' ? { merge: true } : {}), ...(process.env.FILAS ? { rows: Number(process.env.FILAS) } : {}) };
 // El paso más largo de la cola (ms) por clase
-const spec = { ...SPEC, height: 12, surface: { base: 6, amplitude: 2, scale: 9 }, seaLevel: 5, veins: (SPEC.veins ?? []).map((v) => ({ ...v, z: [1, 4] as [number, number] })), caves: { ...SPEC.caves!, z: [1, 4] as [number, number] } };
+// MUNDO=<fichero JSON { voxset, spec, bake?, center? }> (como viva.html?mundo=): otro mundo, sin meterlo en el repo
+const ext = process.env.MUNDO ? JSON.parse(readFileSync(process.env.MUNDO, 'utf8')) : null;
+const set = ext ? BlockSet.fromJSON(ext.voxset) : SET;
+const BAKE = ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' };
+const CENTER: [number, number] = ext?.center ?? [0, 0];
+const spec0 = { ...SPEC, height: 12, surface: { base: 6, amplitude: 2, scale: 9 }, seaLevel: 5, veins: (SPEC.veins ?? []).map((v) => ({ ...v, z: [1, 4] as [number, number] })), caves: { ...SPEC.caves!, z: [1, 4] as [number, number] } };
 let t = performance.now();
-const win = new LiveWindow({ blocks: set, spec, nx: 9, ny: 11, chunk: 16, center: [0, 0], margin: { x: 4, n: 6, s: 4 }, quarters: GIROS === 4 ? [0, 1, 2, 3] : [0], ...(Object.keys(shape).length || process.env.ANTES ? { rebake: shape } : {}), bake: { incline: 0.5, sky: true, outline: 'both' } });
+const spec = ext ? ext.spec : spec0;
+const win = new LiveWindow({ blocks: set, spec, nx: 9, ny: 11, chunk: 16, center: CENTER, margin: { x: 4, n: 6, s: 4 }, quarters: GIROS === 4 ? [0, 1, 2, 3] : [0], ...(Object.keys(shape).length || process.env.ANTES ? { rebake: shape } : {}), bake: BAKE });
 console.log(`arranque (99 trozos, ${GIROS} giro(s)): ${(performance.now() - t).toFixed(0)} ms`);
 // La cola: cada trabajo hasta acabar, sumando el tiempo por clase (la key hasta ":" o "#", sin el g<q>/)
 const by = new Map<string, number>(), most = new Map<string, number>();
@@ -38,7 +46,7 @@ for (let s = 0; s < N; s++) {
 // página (384 x 216): el núcleo (hasta el cambio: ms de CPU, llamadas con plazo de 3 ms y la más larga) y lo demás
 // (la copia y el rehorneado de la cola, hasta que no queda nada)
 if (process.env.GIRAR === '1') {
-  const w2 = new LiveWindow({ blocks: set, spec, nx: 9, ny: 11, chunk: 16, center: [0, 0], margin: { x: 4, n: 6, s: 4 }, viewport: [384, 216], bake: { incline: 0.5, sky: true, outline: 'both' } });
+  const w2 = new LiveWindow({ blocks: set, spec, nx: 9, ny: 11, chunk: 16, center: CENTER, margin: { x: 4, n: 6, s: 4 }, viewport: [384, 216], bake: BAKE });
   const x = T / 2, y = T / 2;
   for (const g of [1, 2, 3, 0] as const) {
     w2.turnTo(g);
