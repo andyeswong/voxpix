@@ -187,6 +187,14 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
   mismo que una de 4 (~1,7 ms). Repetido con las máscaras de lo expuesto, en el corte de casa de muñecas con contorno:
   con franjas de 2 y de 1 columna el p95 de la llamada baja de 11,2 a 9,4 y 8,5 ms (a 6x), pero el máximo sigue en
   ~19-23 y lo cortado tarda en aparecer el doble y el triple (73 y 110 cuadros contra 49).
+- **Correr las máscaras de lo expuesto con el mundo al correrse la ventana viva** (como las losas, por pasos en los
+  búferes de atrás de `StaticVoxels.shiftJob`, en vez de darlas todas por caducadas): funciona (la columna de trozos a
+  2 de cada borde no rehace ninguna fila, y lo expuesto es igual que en un mundo nuevo ahí), pero no gana nada medible
+  porque las máscaras son poco del coste y lo que entra las necesita nuevas igual. En Bun, con el mundo de FERN en 9 x
+  11: picar junto al objetivo justo tras correrse, 4,8-6,9 ms con y 4,9-7,0 sin; un corte de casa de muñecas hondo de
+  81 x 81 justo tras correrse, 50-104 ms con y 53-105 sin; el rehorneado de cada corrimiento (`bench-viva.ts`), igual.
+  No entró (2026-11-17, la noche antes de una entrega, y tocando `shift`); el parche, con su test, en
+  `~/claude-sessions/voxpix-mascaras-corridas.patch` del nodo alienware.
 - **Invalidar lo expuesto vóxel a vóxel** (al cambiar uno, borrar solo sus filas y las de sus vecinos), en vez de por
   la versión del trozo y sus vecinos: menos filas que rehacer, pero `set` cuesta un 30 % más y el corte, que escribe
   miles de vóxeles, va más lento (aparece en 62-71 cuadros contra 47-49).
