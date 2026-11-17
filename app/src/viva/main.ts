@@ -43,6 +43,8 @@ const frames: number[] = [], heap: number[] = [], shots: string[] = [], queueMs:
 const turns: Array<{ ms: number; frames: number; over25: number; worst: number }> = [];
 let turnAt = -1, turnFrames = 0, turnOver = 0, turnWorst = 0, nextTurn = GIRAR * 1000, lastBaked = win.baked, fade = 1, swapMs = -1;
 let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
+const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
+let heapBefore = -1;
 const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
 function loop(now: number): void {
@@ -53,6 +55,8 @@ function loop(now: number): void {
   x += dir * 6 * B * dt;
   if (x > 64 + BLOCKS * B) dir = -1; else if (x < 64) dir = 1;
   // Girar: Q cada GIRAR segundos; mientras dura el núcleo, el presupuesto cercano es PRESU
+  // El montón antes del primer giro (con el recolector forzado si Edge lo da: --js-flags=--expose-gc)
+  if (GIRAR && heapBefore < 0 && now - start >= nextTurn) heapBefore = gcHeap();
   if (GIRAR && now - start >= nextTurn) { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
   if (turnAt >= 0) { turnFrames++; const f = frames[frames.length - 1]!; if (f > 25) turnOver++; turnWorst = Math.max(turnWorst, f); }
   budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
@@ -67,7 +71,10 @@ function loop(now: number): void {
   state_move(lx, ly);
   // El cambio de giro: subir el horneado nuevo y apuntar lo que tardó
   if (win.baked !== lastBaked) {
-    compositor.upload(win.baked); lastBaked = win.baked;
+    compositor.upload(win.baked);
+    // (el de antes ya no se pinta: con giros con fundido, uno nuevo por giro)
+    if (GIRAR) compositor.release(lastBaked);
+    lastBaked = win.baked;
     if (turnAt >= 0 && swapMs < 0 && (!win.turning || win.turning.phase === 'rest')) swapMs = now - turnAt;
   }
   // El fundido: a negro mientras se hace el núcleo, y de vuelta al cambiar (150 ms cada uno)
@@ -103,6 +110,7 @@ function loop(now: number): void {
     trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
     shiftMs: { n: win.stats.shiftMs.length, p50: pq(win.stats.shiftMs, 0.5), max: pq(win.stats.shiftMs, 1) },
     switchMs: { p50: pq(win.stats.switchMs, 0.5), max: pq(win.stats.switchMs, 1) },
+    heapGc: { before: heapBefore, after: gcHeap(), forced: typeof (window as unknown as { gc?: unknown }).gc === 'function' },
     turns, turnMs: { p50: pq(turns.map((t) => t.ms), 0.5), max: pq(turns.map((t) => t.ms), 1) }, turnOver25: turns.reduce((n, t) => n + t.over25, 0), turnCpuMs: win.stats.turnMs.map((v) => +v.toFixed(0)), quarter: win.quarter,
     heapMB: { min1: +(avg(heap.slice(55, 65)) / 1e6).toFixed(1), min5: +(avg(heap.slice(295, 305)) / 1e6).toFixed(1), max: +(Math.max(...heap) / 1e6).toFixed(1) },
     shots,

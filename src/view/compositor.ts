@@ -29,6 +29,10 @@ export interface Compositor {
   // Sube un horneado sin pintar (en la GPU: sus texturas y los pesos de sus luces), para hacerlo fuera de la partida.
   // La GPU guarda los últimos 4 horneados subidos: volver a uno (otro giro de la cámara) no lo vuelve a subir.
   upload(b: Baked): void;
+  // Suelta lo que guarda de un horneado que ya no se va a pintar (sus texturas en la GPU y la referencia): la ventana viva
+  // que gira con fundido (LiveWindow.turnTo) hace uno nuevo por giro, y la caché de 4 retendría sus copias giradas. El
+  // de este cuadro no se suelta
+  release(b: Baked): void;
   // El atlas de sprites de la GPU (sprites distintos en el último cuadro, en el atlas, tope y desalojos); null en la CPU
   atlasStats(): AtlasStats | null;
   // Lo que subió a la GPU el último cuadro: sprites nuevos, crecimientos del atlas de sprites y de los atlas 3D (cuerpos y
@@ -73,8 +77,9 @@ class CpuPath implements Compositor {
     this.stats.frameMs = performance.now() - t0;
   }
 
-  // La CPU no sube nada
+  // La CPU no sube nada (ni guarda nada)
   upload(_b: Baked): void { /* nada */ }
+  release(_b: Baked): void { /* nada */ }
   atlasStats(): null { return null; }
   uploadStats(): null { return null; }
 
@@ -105,6 +110,12 @@ export class WarmMemory {
     this.calls.push({ b, o: { ...o }, list: [...list] });
   }
   saw(b: Baked, o: Frame2DOptions): void { this.last = { b, o }; }
+  // Un horneado soltado (release): las llamadas que lo guardaban pasan al último visto
+  forget(b: Baked): void {
+    if (this.last?.b === b) this.last = null;
+    this.calls = this.calls.filter((c) => c.b !== b || this.last);
+    for (const c of this.calls) if (c.b === b) c.b = this.last!.b;
+  }
   get size(): number { return this.calls.reduce((n, c) => n + c.list.length, 0); }
   // Vuelve a precalentar todo en `into` (el compositor nuevo). Devuelve cuántos sprites no cupieron (como prewarm)
   replay(into: Pick<Compositor, 'prewarm'>): number {
@@ -154,6 +165,7 @@ class GpuPath implements Compositor {
   get canvas(): HTMLCanvasElement { return this.cpu?.canvas ?? this.glCanvas; }
 
   upload(b: Baked): void { this.gpu?.upload(b); }
+  release(b: Baked): void { this.warm.forget(b); this.gpu?.release(b); }
   atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
   uploadStats(): UploadStats | null { return this.gpu ? { ...this.gpu.lastUploads } : null; }
 

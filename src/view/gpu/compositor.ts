@@ -527,6 +527,14 @@ export class GpuCompositor {
     }
   }
 
+  // Suelta lo guardado de un horneado que no es el de ahora (Compositor.release)
+  release(b: Baked): void {
+    const e = this.bakedCache.get(b);
+    if (!e) return;
+    for (const t of [e.tColor, e.tDepth, e.tFace, e.tWorldY, e.tWeights, e.tSky]) if (t) this.gl.deleteTexture(t);
+    this.bakedCache.delete(b);
+  }
+
   private syncBaked(b: Baked): void {
     const gl = this.gl;
     const pub = b.published;
