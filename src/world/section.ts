@@ -10,7 +10,7 @@
 // En qué difiere del corte horneado (WorldView.setCut + rehorneado): la luz de las luces fijas en los píxeles de la
 // sección llega sin sombras (como la de las dinámicas), y el tono (AO) de los vóxeles horneados que tocan la caja es
 // el de antes de cortar. El cielo de cueva y el contorno de la costura sí son los del corte.
-import { render, unkey, decode, innerGapFor, rgbOf, materialsOf, type VoxelSource, DIR_VECTORS } from '../core';
+import { render, unkey, key, KEY_SPAN, KEY_OFF, decode, innerGapFor, rgbOf, materialsOf, type VoxelSource, DIR_VECTORS } from '../core';
 import { SKY_RAYS, SKY_REACH, unprojector, rowP, worldYAt, type Baked } from './bake';
 import type { FaceSet } from './state';
 import { frontFaces } from '../core';
@@ -357,13 +357,63 @@ export class SectionPainter {
     // delante) y puede acabar hasta STRIP filas detrás; nunca corta más de un vóxel por debajo de los pies (el suelo) y
     // puede empezar hasta 4 por encima. Fuera de eso, a los pies de ahora. (Redondear a bloques de 8 no vale: en un mundo
     // cuyos pies no caen en múltiplos de 8, cortaba el suelo)
+    // Mientras se prepara un corrimiento, lo pintado se pone al día cada cuadro (fresh apunta el serial): al cambiar solo se
+    // corre lo que estaba al día justo antes
+    if (this.b.shifting) for (const i of this.strips.keys()) this.fresh(i);
+    // La ventana se corrió (shiftBakedJob): lo pintado se corre con la imagen en vez de tirarlo
+    const sh = this.b.shifts ?? 0;
+    if (sh !== this.seenShifts) {
+      if (sh === this.seenShifts + 1 && this.b.lastShift && this.cut) this.shiftStrips(this.b.lastShift);
+      else this.clearAll();
+      this.seenShifts = sh;
+    }
     const prev = this.cut;
     const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + STRIP ? prev.y1 : cut.y1;
     const zMin = prev && prev.zMin >= cut.zMin - 1 && prev.zMin <= cut.zMin + 4 ? prev.zMin : cut.zMin;
     this.cut = { ...cut, x0, x1, y1, zMin };
-    // (y si la ventana se corrió, todo lo pintado está en las coordenadas de antes)
-    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}:${this.b.shifts ?? 0}`;
-    if (track !== this.track) { this.track = track; this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
+    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
+    if (track !== this.track) { this.track = track; this.clearAll(); }
+  }
+
+  private seenShifts = 0;
+  private clearAll(): void { this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
+
+  // Corre lo pintado como shiftBakedJob corrió la imagen, en x (en y no: ver abajo): el píxel nuevo x es el viejo x + DX
+  // y el vóxel de cada píxel, corrido (key - dk). Se
+  // queda lo que estaba al día justo antes del corrimiento (su serial era el de entonces: el corrimiento suma 2) y sigue
+  // en la imagen; queda con el serial de antes del recuadro que publicó el corrimiento (lo borrado), así que una franja
+  // que lo toque se repinta. La caja y su seguimiento, en las coordenadas nuevas. Lo demás (lo compuesto, el anillo, los
+  // cielos de los bordes, lo que se pintaba a medias), de nuevo
+  private shiftStrips(ls: { serial: number; dx: number; dy: number }): void {
+    const b = this.b, DX = ls.dx, before = ls.serial - 2;
+    const dk = key(DX, 0, 0) - key(0, 0, 0), maxI = Math.floor((b.source.width - 1) / UNIT), sw = b.source.width;
+    const old = this.strips;
+    this.strips = new Map();
+    this.clearAll();
+    // Solo en x: al correrse en y el objetivo se movió en y, y la caja con él (su seguimiento cambia y se repinta igual)
+    if (DX % UNIT || ls.dy !== 0) return;
+    for (const [i, st] of old) {
+      const ni = i - DX / UNIT;
+      if (st.serial !== before || ni < 0 || ni > maxI) continue;
+      const L = st.layer;
+      if (!L) { this.strips.set(ni, { layer: null, serial: ls.serial - 1, id: st.id }); continue; }
+      // (la profundidad, la y del mundo y lo demás no cambian: misma fila, misma profundidad)
+      const pick = new Float64Array(L.w * L.h);
+      let out = false;
+      for (let q = 0; q < pick.length && !out; q++) {
+        const k = L.pick[q]!;
+        // (solo los píxeles de la capa llevan vóxel)
+        if (!L.mask[q] || k !== k) { pick[q] = k; continue; }
+        const k2 = k - dk, vx = Math.floor(Math.floor(k2 / KEY_SPAN) / KEY_SPAN) - KEY_OFF;
+        if (vx < 0 || vx >= sw) out = true;
+        pick[q] = k2;
+      }
+      // (un vóxel suyo salió de la ventana: se repinta)
+      if (out) continue;
+      this.strips.set(ni, { layer: { ...L, x: L.x - DX, pick }, serial: ls.serial - 1, id: st.id });
+    }
+    const c = this.cut!;
+    this.cut = { ...c, x0: c.x0 - DX, x1: c.x1 - DX };
   }
 
   // ¿La franja i está pintada y al día con la imagen?

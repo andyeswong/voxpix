@@ -245,7 +245,7 @@ describe('ventana viva', () => {
         if (a.mask[l] !== r.mask[q]) return false;
         if (!r.mask[q]) continue;
         for (let c = 0; c < 4; c++) if (a.rgba[l * 4 + c] !== r.rgba[q * 4 + c]) return false;
-        if (a.depth[l] !== r.depth[q] || a.sky![l] !== r.sky![q] || a.face[l] !== r.face[q]) return false;
+        if (a.depth[l] !== r.depth[q] || a.sky![l] !== r.sky![q] || a.face[l] !== r.face[q] || !Object.is(a.pick[l], r.pick[q]) || a.wy[l] !== r.wy[q]) return false;
       }
       return true;
     };
@@ -264,6 +264,11 @@ describe('ventana viva', () => {
     for (let s = 0; s < 3 * 8; s++) { x += TV / 8; for (let k = 0; k < 6; k++) frame(x, y, 1); }
     expect(win.tx0).toBeGreaterThan(-2);
     check(x, y, 1, 0);
+    // Y al norte (corrimientos en y: filas y profundidad, con lo pintado corrido)
+    const ty0 = win.ty0;
+    for (let s = 0; s < 2 * 8; s++) { y += TV / 8; for (let k = 0; k < 6; k++) frame(x, y, 0); }
+    expect(win.ty0).toBeGreaterThan(ty0);
+    check(x, y, 0, 0);
     // Girar: el horneado es otro, y el pintor va atado al suyo (el juego hace uno nuevo)
     win.turnTo(1);
     for (let k = 0; k < 20000 && win.turning; k++) frame(x, y, 0);
@@ -272,6 +277,62 @@ describe('ventana viva', () => {
     for (let s = 0; s < 2 * 8; s++) { y += TV / 8; for (let k = 0; k < 6; k++) frame(x, y, 0); }
     expect(win.ty0).toBeGreaterThan(ty);
     check(x, y, 0, 1);
+  });
+
+  it('capa de sección: al correrse la ventana, lo pintado se corre con la imagen (la caja sigue pintada en el cuadro del cambio, sin repintar)', () => {
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
+    const budget = stepBudget();
+    const painter = new SectionPainter(win.baked, { ahead: 2, behind: 1 });
+    const cutOf = (x: number, y: number) => { const [lx, ly] = win.toLocal(x, y); return sectionAround(win.view.camera, lx, ly, win.store.height[Math.floor(ly) * win.store.width + Math.floor(lx)]! - 12, 24); };
+    let x = TV / 2;
+    const y = TV / 2;
+    const frame = (paint: boolean) => {
+      win.update(x, y, budget);
+      for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+      painter.set(cutOf(x, y), 1);
+      const j = paint ? painter.job() : null;
+      if (j) budget.push(j);
+      budget.run();
+    };
+    // Quieto hasta tenerlo todo pintado
+    for (let k = 0; k < 20000 && (win.busy || budget.pending || !painter.ready()); k++) frame(true);
+    let kept = 0;
+    // Andando al este, un paso por cuadro, hasta 3 corrimientos: en el cuadro de cada cambio la caja ya está pintada
+    for (let s = 0; s < 400 && kept < 3; s++) {
+      x += 1;
+      frame(false);
+      if (win.shifting) {
+        // Mientras se corre, sin pintar nada; en cuanto cambia, la caja tiene que seguir pintada
+        const shifts = win.baked.shifts ?? 0, before = painter.painted;
+        for (let k = 0; k < 20000 && (win.baked.shifts ?? 0) === shifts; k++) frame(false);
+        expect(win.baked.shifts).toBe(shifts + 1);
+        painter.set(cutOf(x, y), 1);
+        expect(painter.painted).toBe(before);
+        expect(painter.ready()).toBe(true);
+        // Y lo corrido es lo que se pintaría ahora de nuevo con la imagen corrida (menos las columnas de los bordes de la
+        // caja y las de fuera junto a ellas, que por diseño llevan el tono del corte que sigue)
+        const c = cutOf(x, y), x0 = Math.floor(c.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((c.x1 - c.x0 + 1) / STRIP) * STRIP - 1;
+        const A = painter.layer()!, R = sectionLayer(win.baked, { ...c, x0, x1 })!;
+        expect(R.count).toBeGreaterThan(50);
+        expect([A.x, A.y, A.w, A.h, A.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
+        let off = 0;
+        for (let q = 0; q < R.w * R.h; q++) {
+          const gx = R.x + (q % R.w);
+          if (gx === x0 - 1 || gx === x0 || gx === x1 || gx === x1 + 1) continue;
+          const l = secIdx(A, gx, Math.floor(q / R.w));
+          if (A.mask[l] !== R.mask[q]) { off++; continue; }
+          if (!R.mask[q]) continue;
+          let d = false;
+          for (let ch = 0; ch < 4; ch++) if (A.rgba[l * 4 + ch] !== R.rgba[q * 4 + ch]) d = true;
+          if (d || A.depth[l] !== R.depth[q] || A.face[l] !== R.face[q] || !Object.is(A.pick[l], R.pick[q]) || A.wy[l] !== R.wy[q] || A.sky![l] !== R.sky![q]) off++;
+        }
+        expect(off).toBe(0);
+        kept++;
+      }
+      // Que todo vuelva a estar al día antes del siguiente paso
+      for (let k = 0; k < 20000 && (win.busy || budget.pending || !painter.ready()); k++) frame(true);
+    }
+    expect(kept).toBe(3);
   });
 
   it('el salto (el objetivo aparece fuera de la ventana, a mitad de escribir): un solo cambio, onUnload solo de lo escrito, lo de alrededor antes que todo, e igual que hecha de nuevo ahí', () => {
