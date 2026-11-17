@@ -554,24 +554,33 @@ objetivo, que se corre por la cola cuando el objetivo se acerca a un borde.
 ```ts
 import { LiveWindow } from '@voxpix/world/live';
 const win = new LiveWindow({
-  blocks, spec, nx: 8, ny: 13, chunk: 16, center: [0, 0], margin: 2, bake: { incline: 0.5, sky: true, outline: 'both' },
-  onUnload(t, read) { /* guardar las diferencias del trozo t; read(x, y, z) en coordenadas del mundo */ },
-  onLoad(t, write) { /* poner las diferencias guardadas del trozo t, antes de hornearlo */ },
-  onShift(dx, dy) { /* el origen local se corrió dx, dy vóxeles */ },
+  blocks, spec, nx: 9, ny: 11, chunk: 16, center: startTrozo, margin: { x: 4, n: 6, s: 4 },
+  bake: { incline: 0.5, sky: true, outline: 'both' },
+  fill(t, ctx) { /* opcional: el juego escribe el trozo (lo generado y lo guardado) y devuelve un trabajo de la cola */ },
+  onUnload(t, ctx) { /* el trozo t sale: guardar sus diferencias (ctx.cell, ctx.read) y quitar sus entidades */ },
+  onLoad(t, ctx) { /* sin fill: poner lo guardado (ctx.setCell, ctx.write), antes de hornearlo */ },
+  onShift({ cells, voxels }) { /* lo que estaba en la x local pasa a x - voxels[0] (en celdas, - cells[0]) */ },
 });
 // cada cuadro
 win.update(objetivoX, objetivoY, budget);       // coordenadas del mundo; mete el trabajo en la FrameBudget
 compositor.frame(win.state, win.baked, opts);
 ```
 
-- Al quedar el trozo del objetivo a menos de `margin` trozos del borde: `onUnload` de los que salen (con lo suyo aún
-  en el store), `shiftBakedJob` (imagen y vóxeles por pasos, cambio en dos cuadros), las entidades y las luces del
-  `state` corridas al marco nuevo, y por cada trozo que entra (del centro hacia fuera), un trabajo que lo genera
-  (`generateRegion`), lo escribe por pasos (`stampRegionJob`) y llama a `onLoad`; después, `rebakeChangedJobs`.
-- `toLocal` / `toWorld`, `trozoOf`, `isLoaded`, `busy`.
-- `test/ventana-viva.test.ts`: un objetivo que anda 6 trozos al este y 3 al norte y vuelve; lo picado (en coordenadas
-  del mundo) se pone con `onLoad` al volver a entrar su trozo; lo horneado queda igual que una ventana hecha de nuevo
-  ahí, y una entidad sigue en su sitio del mundo.
+- El arranque (el constructor) escribe y hornea toda la ventana de una vez (detrás de una pantalla de carga); después,
+  todo por la cola.
+- `margin`: trozos entre el del objetivo y el borde; al quedar menos, se corre un trozo. Por lado (`{ x, n, s }`): en
+  la vista oblicua lo visible llega más lejos al norte (lo alto de allí sube a la imagen) que al sur. Para una vista de
+  384 x 216 con 96 de alto y 2 trozos más allá de lo visible: 4 a los lados, 6 al norte y 4 al sur, ventana de 9 x 11.
+- Al correrse: `onUnload` de los que salen (aún en la rejilla), `shiftBakedJob` (imagen y vóxeles por pasos), y en el
+  cambio, de una vez, la rejilla de bloques (`BlockGrid.shift`: celdas, giros; las luces de los bloques que salen se
+  quitan), las entidades y las luces del `state` y `onShift`. Después, por cada trozo que entra (del centro hacia
+  fuera), `fill` del juego o lo de siempre (`generateRegion`, `stampRegionJob`, `onLoad`), y `rebakeChangedJobs`.
+- El contexto de cada trozo (`TrozoCtx`) va en coordenadas del MUNDO: `read`/`write` (vóxeles), `cell`/`setCell`
+  (celdas, con el giro en grados), y `grid` con `at` (la celda local de la esquina del trozo).
+- `toLocal` / `toWorld`, `trozoOf`, `isLoaded`, `busy`, `ctx(t)`.
+- `test/ventana-viva.test.ts`: un objetivo que anda y vuelve, con lo picado puesto por `onLoad`; y con `fill` (celdas
+  guardadas con giro) y `onShift`. Lo horneado y la rejilla quedan como en una ventana hecha de nuevo ahí, y una
+  entidad sigue en su sitio del mundo.
 - Aún no: el agua, los giros y los caminos por ventana; el banco de 200 bloques.
 
 ## Caminos por niveles

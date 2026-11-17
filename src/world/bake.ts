@@ -1179,7 +1179,9 @@ export interface ShiftJob {
 type ImageBuffers = { rgba: Uint8ClampedArray<ArrayBuffer>; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | undefined };
 const BACK = new WeakMap<Baked, ImageBuffers>();
 
-export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?: number; priority?: number } = {}): ShiftJob {
+// opts.onSwitch: se llama en el cambio, con los vóxeles y la imagen ya corridos, para correr en el mismo momento lo que va
+// en coordenadas de la ventana (la rejilla de bloques, las entidades, las luces): el juego nunca ve un cuadro mezclado
+export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?: number; priority?: number; onSwitch?(dcx: number, dcy: number): void } = {}): ShiftJob {
   const W = b.width, H = b.height, a = b.options.oblique?.y ?? 1, band = opts.band ?? 64;
   let tx = dcx, ty = dcy, next = 0, halo = 0, start = b.published.serial, done = false, held = false;
   // El búfer de atrás: el de la imagen de antes del último cambio, si lo hay (se turnan)
@@ -1291,20 +1293,19 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
         }
         if (halo < H) { haloRows(halo, H - 1); halo = H; continue; }
         // Lo rehorneado mientras tanto; y el cambio, cuando no quede rehorneado a medias
-        // El cambio, en dos cuadros: los vóxeles (lo que escribe en la imagen espera) y, en la llamada siguiente, la imagen
-        if (!held) {
-          const r0 = performance.now();
-          if (!recopy()) continue;
-          job.ms.recopy = performance.now() - r0;
-          if (b.rectsBusy?.size || b.lightWork?.size || b.pendingLights?.size) return false;
-          const v0 = performance.now();
-          vox.commit();
-          job.ms.voxels = performance.now() - v0;
-          held = true; b.shiftHold = true;
-          return false;
-        }
+        // El cambio, de una vez (los vóxeles, la imagen y lo de onSwitch): un estado a medias (vóxeles corridos y entidades
+        // sin correr) haría que el juego leyera mal un cuadro. Con los vóxeles preparados en el otro búfer, cuesta poco
+        const r0 = performance.now();
+        if (!recopy()) continue;
+        job.ms.recopy = performance.now() - r0;
+        if (b.rectsBusy?.size || b.lightWork?.size || b.pendingLights?.size) return false;
+        const v0 = performance.now();
+        vox.commit();
+        job.ms.voxels = performance.now() - v0;
+        held = true;
         const w0 = performance.now();
         swap();
+        opts.onSwitch?.(tx, ty);
         job.ms.swap = performance.now() - w0;
         return true;
       } while (performance.now() < deadline);

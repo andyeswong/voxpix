@@ -144,6 +144,12 @@ export class BlockGrid implements StatePart {
     return i < 0 ? 0 : this.cells[i]!;
   }
 
+  // El giro (en grados, como set) del bloque de esa celda (se guarda en cuartos de vuelta)
+  yawOf(bx: number, by: number, bz: number): Yaw {
+    const i = this.at(bx, by, bz);
+    return ((i < 0 ? 0 : this.yaws[i]!) * 90) as Yaw;
+  }
+
   props(bx: number, by: number, bz: number): BlockProps {
     const t = this.get(bx, by, bz);
     return t ? this.blocks.get(t).props : AIR;
@@ -369,6 +375,33 @@ export class BlockGrid implements StatePart {
     return e;
   }
   private bounds(type: number, q: number): number[] { return this.stampEntry(type, q).bounds; }
+
+  // La ventana viva (live.ts): corre la rejilla dcx, dcy celdas como StaticVoxels.shift corre los vóxeles (la celda
+  // (bx, by) pasa a tener lo de (bx + dcx, by + dcy); lo que entra, aire). Las luces de los bloques que salen se quitan
+  // del mundo; las de los que se quedan siguen con su celda (sus coordenadas las corre quien corre las luces)
+  shift(dcx: number, dcy: number): void {
+    if (!dcx && !dcy) return;
+    const C = this.cols, R = this.rows, L = this.layers, next = new Map<number, LightId>();
+    for (const [i, id] of this.lightOf) {
+      const bx = i % C, by = Math.floor(i / C) % R, bz = Math.floor(i / (C * R)), nx = bx - dcx, ny = by - dcy;
+      if (nx < 0 || ny < 0 || nx >= C || ny >= R) { if (this.state.lights.get(id)) this.state.lights.removeFixed(id); continue; }
+      next.set((bz * R + ny) * C + nx, id);
+    }
+    this.lightOf = next;
+    // Por capa, fila a fila, en el orden que no pisa lo que falta por leer
+    const run = C - Math.abs(dcx), sx = Math.max(0, dcx), tx = Math.max(0, -dcx);
+    for (let z = 0; z < L; z++) {
+      const o = z * R * C;
+      for (let k = 0; k < R; k++) {
+        const y = dcy > 0 ? k : R - 1 - k, sy = y + dcy, d = o + y * C;
+        for (const a of [this.cells, this.yaws]) {
+          if (sy < 0 || sy >= R || run <= 0) { a.fill(0, d, d + C); continue; }
+          a.copyWithin(d + tx, o + sy * C + sx, o + sy * C + sx + run);
+          if (dcx > 0) a.fill(0, d + run, d + C); else if (dcx < 0) a.fill(0, d, d + tx);
+        }
+      }
+    }
+  }
 
   // ---- parte del estado del mundo (WorldState.addPart)
   exportState(): BlockGridState {

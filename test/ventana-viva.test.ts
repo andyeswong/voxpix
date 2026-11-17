@@ -39,9 +39,9 @@ const dug = new Set<string>();
 const make = (center: Trozo, log?: { unload: string[]; load: string[] }) => new LiveWindow({
   blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS,
   onUnload: (t) => log?.unload.push(`${t[0]},${t[1]}`),
-  onLoad: (t, write) => {
+  onLoad: (t, ctx) => {
     log?.load.push(`${t[0]},${t[1]}`);
-    for (const k of dug) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (Math.floor(x / TV) === t[0] && Math.floor(y / TV) === t[1]) write(x, y, z, 0); }
+    for (const k of dug) { const [x, y, z] = k.split(',').map(Number) as [number, number, number]; if (Math.floor(x / TV) === t[0] && Math.floor(y / TV) === t[1]) ctx.write(x, y, z, 0); }
   },
 });
 const diff = (b: Baked, r: Baked) => {
@@ -92,8 +92,42 @@ describe('ventana viva', () => {
     const ref = make([win.tx0 + 2, win.ty0 + 2]);
     expect([ref.tx0, ref.ty0]).toEqual([win.tx0, win.ty0]);
     expect(diff(win.baked, ref.baked)).toBe(0);
+    // La rejilla de bloques también (celdas, giros y luces)
+    const ga = win.grid.exportState(), gb = ref.grid.exportState();
+    expect(Array.from(ga.cells)).toEqual(Array.from(gb.cells));
+    expect(Array.from(ga.yaw)).toEqual(Array.from(gb.yaw));
     // La entidad, en el mismo sitio del mundo
     const e = win.state.entities.find((q) => q.id === id)!;
     expect(win.toWorld(e.x, e.y)).toEqual([40, 40]);
+  });
+
+  it('con fill (el juego escribe el trozo: lo generado y sus celdas guardadas, con giro) y onShift en celdas y vóxeles', () => {
+    // El "juego": por trozo, celdas guardadas [x, y, z, bloque, giro] en celdas del mundo
+    const saved = new Map<string, Array<[number, number, number, number, 0 | 90 | 180 | 270]>>();
+    const shifts: Array<{ cells: readonly [number, number]; voxels: readonly [number, number] }> = [];
+    const opts = (center: Trozo) => ({
+      blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS,
+      fill: (t: Trozo, ctx: import('../src/world/live').TrozoCtx) => {
+        const r = generateRegion(SPEC, { x0: t[0] * TB, y0: t[1] * TB, z0: 0, width: TB, depth: TB, height: H });
+        const job = ctx.grid.stampRegionJob(r, ctx.at);
+        return { run: (d: number) => { if (!job.run(d)) return false; for (const [x, y, z, b, yaw] of saved.get(`${t[0]},${t[1]}`) ?? []) ctx.setCell(x, y, z, b, yaw); return true; } };
+      },
+      onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => shifts.push(d),
+    });
+    // Una flor girada en el trozo (1, 1): celda del mundo (TB + 1, TB + 2, 5)
+    saved.set('1,1', [[TB + 1, TB + 2, 5, T('flor'), 90]]);
+    const win = new LiveWindow(opts([0, 0]));
+    expect(win.ctx([1, 1]).cell(TB + 1, TB + 2, 5)).toEqual([T('flor'), 90]);
+    const budget = new FrameBudget(1e6);
+    const settle = () => { for (let k = 0; k < 2000 && (win.busy || budget.pending); k++) budget.run(); };
+    let x = TV / 2;
+    for (let s = 0; s < 3 * 8; s++) { x += TV / 8; win.update(x, TV / 2, budget); settle(); win.update(x, TV / 2, budget); settle(); }
+    expect(shifts.length).toBeGreaterThan(0);
+    expect(shifts[0]).toEqual({ cells: [TB, 0], voxels: [TV, 0] });
+    // La flor sigue en su celda del mundo (con su giro), y la rejilla es la de una ventana hecha de nuevo ahí
+    expect(win.ctx([1, 1]).cell(TB + 1, TB + 2, 5)).toEqual([T('flor'), 90]);
+    const ref = new LiveWindow(opts([win.tx0 + 2, win.ty0 + 2]));
+    expect(Array.from(win.grid.exportState().cells)).toEqual(Array.from(ref.grid.exportState().cells));
+    expect(diff(win.baked, ref.baked)).toBe(0);
   });
 });
