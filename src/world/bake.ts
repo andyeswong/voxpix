@@ -47,7 +47,8 @@ export interface Baked {
   topZ: number;
   // Lo que se ha publicado desde el horneado (para quien guarda una copia, p. ej. las texturas de la GPU): cada
   // recuadro rehorneado con su número de serie. Solo se guardan los últimos; quien se quede atrás lo recarga todo.
-  published: { serial: number; rects: Array<{ serial: number; x0: number; y0: number; x1: number; y1: number }> };
+  // (sky: true en lo que solo cambió el cielo, no la cara ni el vóxel de los píxeles)
+  published: { serial: number; rects: Array<{ serial: number; x0: number; y0: number; x1: number; y1: number; sky?: true }> };
   // Las fijas nuevas que se están horneando (rebakeJobs): no se vuelven a pedir, y si se quitan antes de acabar, su
   // trabajo no las publica
   pendingLights?: Set<LightId>;
@@ -1156,7 +1157,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     { const s = b.source, m2 = 2 * SKY_REACH + 2;
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
-    let skyStarted = -1, skyRestarts = 0;
+    let skyStarted = -1, skySerial = -1, skyRestarts = 0;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
@@ -1164,17 +1165,21 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       run(deadline) {
         if (stale()) return true;
         if (b.shiftHold || waiting()) return false;
-        if (skyStarted < 0) skyStarted = b.source.clock;
+        if (skyStarted < 0) { skyStarted = b.source.clock; skySerial = b.published.serial; }
         do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
         if (row <= r.y1) return false;
         if (skyRestarts < 2) {
           const moved = b.source.changedSince(skyStarted);
-          if (moved.length && reads.some((c) => moved.includes(c))) { skyRestarts++; row = r.y0; skyStarted = -1; return false; }
+          // (y lo que lee de la imagen: la cara y el vóxel de cada píxel, que pone un recuadro; uno de otro rehorneado
+          // publicado mientras sobre lo suyo cambia el cielo de esos píxeles, y el cielo de ese rehorneado puede acabar antes)
+          const pub = b.published, oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
+          const repainted = pub.serial !== skySerial && (skySerial < oldest - 1 || pub.rects.some((q) => q.serial > skySerial && !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1));
+          if (repainted || (moved.length && reads.some((c) => moved.includes(c)))) { skyRestarts++; row = r.y0; skyStarted = -1; return false; }
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
         const pub = b.published;
-        pub.rects.push({ serial: ++pub.serial, ...r });
+        pub.rects.push({ serial: ++pub.serial, ...r, sky: true });
         if (pub.rects.length > PUBLISHED_KEEP) pub.rects.shift();
         return true;
       },
