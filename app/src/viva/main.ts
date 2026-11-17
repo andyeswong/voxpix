@@ -92,6 +92,7 @@ void (async () => {
   let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
   const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
   let heapBefore = -1;
+  const HEAPGIRO = q.get('heapgiro') === '1', turnHeap: number[] = [];
   const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
   // Un error en un cuadro para el banco y queda en window.__viva (si no, el que mide espera hasta su tope)
@@ -110,6 +111,8 @@ void (async () => {
     // Girar: Q cada GIRAR segundos; mientras dura el núcleo, el presupuesto cercano es PRESU
     // El montón antes del primer giro (con el recolector forzado si Edge lo da: --js-flags=--expose-gc)
     if (GIRAR && heapBefore < 0 && now - start >= nextTurn) heapBefore = gcHeap();
+    // ?heapgiro=1: el montón (con el recolector forzado) antes de cada giro, para ver si crece de giro en giro
+    if (GIRAR && HEAPGIRO && now - start >= nextTurn) turnHeap.push(gcHeap());
     if (GIRAR && now - start >= nextTurn) { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
     if (turnAt >= 0) { turnFrames++; const f = frames[frames.length - 1]!; if (f > 25) turnOver++; turnWorst = Math.max(turnWorst, f); }
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
@@ -206,7 +209,7 @@ void (async () => {
       switchMs: { p50: pq(win.stats.switchMs, 0.5), max: pq(win.stats.switchMs, 1) },
       shiftWallMs: { p50: pq(win.stats.shiftWallMs, 0.5), p95: pq(win.stats.shiftWallMs, 0.95), max: pq(win.stats.shiftWallMs, 1) },
       loadWallMs: { p50: pq(win.stats.loadWallMs, 0.5), p95: pq(win.stats.loadWallMs, 0.95), max: pq(win.stats.loadWallMs, 1) },
-      heapGc: { before: heapBefore, after: gcHeap(), forced: typeof (window as unknown as { gc?: unknown }).gc === 'function' },
+      turnHeap, heapGc: { before: heapBefore, after: gcHeap(), forced: typeof (window as unknown as { gc?: unknown }).gc === 'function' },
       turns, turnMs: { p50: pq(turns.map((t) => t.ms), 0.5), max: pq(turns.map((t) => t.ms), 1) }, turnOver25: turns.reduce((n, t) => n + t.over25, 0), turnCpuMs: win.stats.turnMs.map((v) => +v.toFixed(0)), quarter: win.quarter,
       heapMB: { min1: +(avg(heap.slice(55, 65)) / 1e6).toFixed(1), min5: +(avg(heap.slice(295, 305)) / 1e6).toFixed(1), max: +(Math.max(...heap) / 1e6).toFixed(1) },
       shots,
