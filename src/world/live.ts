@@ -160,15 +160,23 @@ export class LiveWindow {
       this.loading.push(...all);
       this.preloading = true;
       this.at = [(cx + 0.5) * this.T, (cy + 0.5) * this.T];
-    } else for (let ty = this.ty0; ty < this.ty0 + opts.ny; ty++) for (let tx = this.tx0; tx < this.tx0 + opts.nx; tx++) {
-      const job = this.loadTrozoJob([tx, ty]);
-      while (!job.run(Infinity));
+    } else {
+      const t0 = performance.now();
+      for (let ty = this.ty0; ty < this.ty0 + opts.ny; ty++) for (let tx = this.tx0; tx < this.tx0 + opts.nx; tx++) {
+        const job = this.loadTrozoJob([tx, ty]);
+        while (!job.run(Infinity));
+      }
+      this.startup.loadMs = Math.round(performance.now() - t0);
     }
+    const t1 = performance.now();
     for (const q of new Set<Quarter>([0, ...(opts.quarters ?? [])])) {
       const view = new WorldView(this.state, q, opts.view ?? {});
       this.views.set(q, { view, baked: bakeWorld(view.bakeable(), { topZ: this.store.zMax + 1, ...(opts.bake ?? {}) }) });
     }
+    this.startup.bakeMs = Math.round(performance.now() - t1);
   }
+  // (para medir) lo que costó el constructor: escribir los trozos (sin preload por la cola) y hornear las vistas
+  readonly startup = { loadMs: 0, bakeMs: 0 };
 
   /**
    * Cambia al giro q, ya horneado y al día (uno de `quarters`, o el 0): view y baked pasan a ser los suyos, sin esperar.

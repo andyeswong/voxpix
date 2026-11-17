@@ -27,6 +27,8 @@ import type { Baked } from '../../../src/world/bake';
 
 // (todo dentro de una función async: el mundo de ?mundo= se lee con fetch antes de empezar)
 void (async () => {
+  // El arranque, por fases (ms desde que se abrió la página: performance.now cuenta desde la navegación)
+  const boot: Record<string, number> = { script: Math.round(performance.now()) };
   const VW = 384, VH = 216, B = 8;
   const q = new URLSearchParams(location.search);
   const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11), GIROS = Number(q.get('giros') ?? 1);
@@ -43,7 +45,9 @@ void (async () => {
   type World = { voxset: VoxsetFile; spec: RegionSpec; bake?: Record<string, unknown>; center?: [number, number]; nx?: number; ny?: number; margin?: { x: number; n: number; s: number } };
   const MUNDO = q.get('mundo');
   const ext: World | null = MUNDO ? await (await fetch(MUNDO)).json() as World : null;
+  boot.mundo = Math.round(performance.now());
   const set = ext ? BlockSet.fromJSON(ext.voxset) : SET;
+  boot.bloques = Math.round(performance.now());
   const spec0 = { ...SPEC, height: 12, surface: { base: 6, amplitude: 2, scale: 9 }, seaLevel: 5, veins: (SPEC.veins ?? []).map((v) => ({ ...v, z: [1, 4] as [number, number] })), caves: { ...SPEC.caves!, z: [1, 4] as [number, number] } };
   const t0 = performance.now();
   const spec = ext ? ext.spec : spec0;
@@ -82,10 +86,13 @@ void (async () => {
       onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => { hornero.postMessage({ kind: 'epoch', epoch: win.baked.rebakeEpoch ?? 0 }); hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }); },
     } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
+  boot.ventana = Math.round(performance.now());
   let rid = 0;
   if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; }, ready: () => results.has(id) }; } };
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
+  boot.compositor = Math.round(performance.now());
   compositor.upload(win.baked);
+  boot.subida = Math.round(performance.now());
   const walk = walkFrames(Model.fromJSON(maiaFile as unknown as ModelFile));
   const T = 128, X0 = CENTER[0] * T + 64, Y = CENTER[1] * T + 64.5;
   let x = X0 + 0.5, dir = 1;
@@ -151,6 +158,8 @@ void (async () => {
     try { step(now); } catch (e) { (window as unknown as { __viva: unknown }).__viva = { error: String((e as Error)?.stack ?? e), frames: frames.length }; }
   }
   function step(now: number): void {
+    if (!boot.raf) boot.raf = Math.round(performance.now());
+    else if (!boot.segundoRaf) boot.segundoRaf = Math.round(performance.now());
     // (medio milisegundo de holgura: los rAF no caen exactos)
     if (HZ && last > 0 && now - last < 1000 / HZ - 0.5) { requestAnimationFrame(loop); return; }
     const tPaso = performance.now();
@@ -276,8 +285,10 @@ void (async () => {
       if (x1 >= o.vx && x0 < o.vx + VW && y1 >= o.vy && y0 < o.vy + VH) { viewPending++; break; }
     }
     // ?prewarm=1: los 8 cuadros de andar de MAIA, a este y oeste, precalentados la primera vez (como el juego)
-    if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; }
+    if (!boot.primerCuadro) boot.primerPaso = Math.round(performance.now());
+    if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     compositor.frame(win.view.frame(), win.baked, o);
+    if (!boot.primerCuadro) boot.primerCuadro = Math.round(performance.now());
     espera('componer');
     const t5 = performance.now();
     // Lo que subió este cuadro: sprites nuevos y cuerpos de sombra (el primer cuadro de cada modelo y giro)
@@ -319,7 +330,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
@@ -338,5 +349,6 @@ void (async () => {
     win.state.entities.setModel(id, walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
     win.state.step();
   }
+  boot.antesDelPrimerRaf = Math.round(performance.now());
   requestAnimationFrame(loop);
 })();

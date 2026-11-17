@@ -40,7 +40,7 @@ export interface Baked {
   cam: Camera;
   lights: BakedLight[];
   version: number;              // versión del mundo horneada (para rebakeChanged)
-  ms: { render: number; light: number };
+  ms: { render: number; light: number; sky?: number };
   // Para rehornear: el mundo, su rejilla de sombras y el alto máximo
   source: StaticVoxels;
   occ: Uint8Array;              // OBSOLETO, vacío: las sombras leen los vóxeles (source) directamente
@@ -137,7 +137,7 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
     if (bl) b.lights.push(bl);
   }
   b.ms.light = Math.round(performance.now() - t1);
-  if (opts.sky) { b.sky = new Uint8Array(b.width * b.height); fillSky(b, 0, 0, b.width - 1, b.height - 1); }
+  if (opts.sky) { const t2 = performance.now(); b.sky = new Uint8Array(b.width * b.height); fillSky(b, 0, 0, b.width - 1, b.height - 1); b.ms.sky = Math.round(performance.now() - t2); }
   warmUp(b);
   if (opts.warmExposure !== false) b.exposurePending = true;
   return b;
