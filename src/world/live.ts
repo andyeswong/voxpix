@@ -42,10 +42,10 @@
 // durante el fundido cambia el destino (lo hecho se tira; volver al de ahora lo cancela); después del cambio empieza
 // otro giro. turnTarget es el giro al que se va (para sumarle Q / E).
 import type { Palette } from '../core';
-import { StaticVoxels, WorldState, CHUNK } from './state';
+import { StaticVoxels, WorldState, CHUNK, type PreparedSlab } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
-import { generateRegion, type RegionSpec } from './regiongen';
+import { generateRegion, type RegionSpec, type GeneratedRegion } from './regiongen';
 import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, chunksInScreen, SKY_RAYS, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
@@ -87,9 +87,19 @@ export interface LiveWindowOptions {
   // El corte se corre con la ventana (WorldView.shift, antes de onShift); un cutJob a medias sigue en la cola
   view?: WorldViewOptions;
   fill?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
+  // EXPERIMENTO (worker-exp): escribir un trozo fuera (un worker que lo genera y lo estampa en su copia): pide el trozo t
+  // para su sitio `at` (celda de la rejilla) y da un vale; result() trae sus celdas y sus trozos de vóxeles ya hechos
+  // (los de writeChunkPrepared), y aquí solo se ponen. Sin fill; el constructor escribe aquí (no puede esperar)
+  prepareTrozo?(t: Trozo, at: readonly [number, number]): { result(): PreparedTrozo | null };
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
   onShift?(d: { cells: readonly [number, number]; voxels: readonly [number, number] }): void;
+}
+
+export interface PreparedTrozo {
+  cells: GeneratedRegion;
+  chunks: Array<{ c: number; slabs: Array<PreparedSlab | null>; tops: Int16Array }>;
+  local?: boolean;                     // no se pudo preparar (una losa con más de 256 valores): se estampa aquí
 }
 
 export class LiveWindow {
@@ -517,7 +527,7 @@ export class LiveWindow {
   // El siguiente trozo por escribir: generarlo, escribirlo por pasos y, al acabar, lo del juego y el rehorneado
   private nextLoad(): void {
     const t = this.loading.shift()!;
-    const job = this.loadTrozoJob(t);
+    const job = this.loadTrozoJob(t, true);
     let spent = 0;
     this.loadJob = { key: `trozo:${t[0]},${t[1]}`, priority: this.preloading ? 0 : 70, run: (deadline: number) => {
       const a = performance.now(), ok = job.run(deadline);
@@ -534,7 +544,7 @@ export class LiveWindow {
   private pendingRebake = false;
 
   // Generar y escribir el trozo t (en su sitio de la ventana), y lo del juego
-  private loadTrozoJob(t: Trozo): { run(deadline: number): boolean } {
+  private loadTrozoJob(t: Trozo, remote = false): { run(deadline: number): boolean } {
     const C = this.C, [tx, ty] = t, spec = this.o.spec;
     if (this.o.fill) {
       // Lo escribe el juego
@@ -547,6 +557,26 @@ export class LiveWindow {
       } };
     }
     let stamp: { run(deadline: number): boolean } | null = null;
+    // (fuera, si se puede: se pide y se espera sin gastar; al llegar, las celdas y un trozo de vóxeles por paso)
+    let ticket: { result(): PreparedTrozo | null } | null = this.o.prepareTrozo && remote ? this.o.prepareTrozo(t, [(tx - this.tx0) * C, (ty - this.ty0) * C]) : null;
+    let prep: PreparedTrozo | null = null, k = -1;
+    if (ticket) return { run: (deadline: number) => {
+      if (!prep) { prep = ticket!.result(); if (!prep) return false; ticket = null; }
+      if (prep.local) {
+        stamp ??= this.grid.stampRegionJob(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0]);
+        if (!stamp.run(deadline)) return false;
+        k = prep.chunks.length;
+      }
+      if (k < 0) { this.grid.stampCells(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0]); k = 0; }
+      for (; k < prep.chunks.length; k++) {
+        if (k && performance.now() >= deadline) return false;
+        const ch = prep.chunks[k]!;
+        this.store.writeChunkPrepared(ch.c, ch.slabs, ch.tops);
+      }
+      this.o.onLoad?.(t, this.ctx(t));
+      this.loaded.add(`${tx},${ty}`);
+      return true;
+    } };
     return { run: (deadline: number) => {
       if (!stamp) {
         const r = generateRegion(spec, { x0: tx * C, y0: ty * C, z0: 0, width: C, depth: C, height: spec.height });

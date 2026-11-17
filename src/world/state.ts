@@ -745,6 +745,23 @@ export class StaticVoxels implements VoxelSource {
     return n;
   }
 
+  // EXPERIMENTO (worker-exp): el trozo c tal como está, en la forma de writeChunkPrepared (copiado), con las alturas de sus
+  // columnas: para mandar a otro store lo escrito aquí. null si alguna losa va a 2 bytes sin paleta (no cabe en esa forma)
+  exportChunkPrepared(c: number): { slabs: Array<PreparedSlab | null>; tops: Int16Array } | null {
+    const slabs: Array<PreparedSlab | null> = new Array(this.nz).fill(null);
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, n = this.count[si]!;
+      if (!n) continue;
+      const d = this.data[si], p = this.pal[si];
+      if (!d) { const pal = new Uint16Array(256); pal[1] = this.uni[si]!; slabs[s] = { d: new Uint8Array(SLAB_CELLS).fill(1), pal, palN: 2, count: n }; continue; }
+      if (!p || !(d instanceof Uint8Array)) return null;
+      slabs[s] = { d: d.slice(), pal: p.slice(), palN: this.palN[si]!, count: n };
+    }
+    const X = (c % this.cols) * CHUNK, Y = Math.floor(c / this.cols) * CHUNK, tops = new Int16Array(CHUNK * CHUNK);
+    for (let y = 0; y < CHUNK; y++) for (let x = 0; x < CHUNK; x++) tops[(y << 4) | x] = this.height[(Y + y) * this.width + X + x]!;
+    return { slabs, tops };
+  }
+
   // ¿El trozo c no tiene ningún vóxel? (todas sus losas vacías)
   chunkEmpty(c: number): boolean {
     for (let s = 0; s < this.nz; s++) if (this.count[c * this.nz + s]) return false;

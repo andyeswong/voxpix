@@ -12,7 +12,7 @@
 import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
 import { FrameBudget } from '../../../src/view/budget';
-import { LiveWindow } from '../../../src/world/live';
+import { LiveWindow, type PreparedTrozo } from '../../../src/world/live';
 import { LevelPathField } from '../../../src/world/levelpaths';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import { set as SET, SPEC } from '../../../scripts/ventana-mundo';
@@ -50,18 +50,30 @@ void (async () => {
   // (hornero.ts); ?freno=N, su freno propio
   const WORKER = q.get('worker') === '1', FRENO = Number(q.get('freno') ?? 1);
   const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;
-  const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0, skipped: 0 };
+  const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0, skipped: 0, preps: 0, prepMs: 0 };
+  const preps = new Map<number, PreparedTrozo>(), prepped = new Set<string>();
+  let pid = 0;
   let lastView: [number, number] = [-1e9, -1e9], viewPending = 0;
   const results = new Map<number, RectOut>();
   if (hornero) {
     hornero.postMessage({ kind: 'init', voxset: ext ? ext.voxset : null, spec: ext ? ext.spec : spec0, chunk: 16, width: NXW * 128, depth: NYW * 128, bake: ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' } });
-    hornero.onmessage = (e) => { const d = e.data as { id: number; ms: number; busyMs: number; skipped: number; o: RectOut }; results.set(d.id, d.o); remote.got++; remote.workerMs += d.ms; remote.busyMs = d.busyMs; remote.skipped = d.skipped; };
+    hornero.onmessage = (e) => {
+      const d = e.data as { kind: string; id: number; ms: number; busyMs: number; skipped: number; o: RectOut; p: PreparedTrozo };
+      if (d.kind === 'prep') { preps.set(d.id, d.p); remote.prepMs += d.ms; return; }
+      results.set(d.id, d.o); remote.got++; remote.workerMs += d.ms; remote.busyMs = d.busyMs; remote.skipped = d.skipped;
+    };
   }
   const win = new LiveWindow({
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
     ...(hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
     ...(hornero ? {
-      onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }),
+      // (los que escribió el worker ya están en su copia; los del constructor, no)
+      onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => { if (!prepped.delete(`${t[0]},${t[1]}`)) hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }); },
+      prepareTrozo: (t: readonly [number, number], at: readonly [number, number]) => {
+        const id = ++pid; prepped.add(`${t[0]},${t[1]}`); remote.preps++;
+        hornero.postMessage({ kind: 'prep', id, t, at, brake: FRENO });
+        return { result: () => { const p = preps.get(id); if (p) preps.delete(id); return p ?? null; } };
+      },
       // (la tanda nueva antes que el corrimiento: lo pedido antes se salta en el worker)
       onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => { hornero.postMessage({ kind: 'epoch', epoch: win.baked.rebakeEpoch ?? 0 }); hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }); },
     } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });

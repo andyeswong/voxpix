@@ -2,7 +2,7 @@
 // viva.html (?worker=1). Lleva su copia de los vóxeles de la ventana: genera y estampa él cada trozo que escribe el
 // principal (la generación es determinista) y se corre con él; pinta el recuadro que le piden y lo manda transferido.
 // Con freno N, tras pintar espera N - 1 veces lo que tardó (el CDP no frena los workers: la puerta del 6x)
-import { StaticVoxels, WorldState } from '../../../src/world/state';
+import { StaticVoxels, WorldState, type PreparedSlab } from '../../../src/world/state';
 import { BlockSet, BlockGrid, type VoxsetFile } from '../../../src/world/blocks';
 import { generateRegion, type RegionSpec } from '../../../src/world/regiongen';
 import { bakeWorldJob, renderRect, type Baked, type ScreenRect } from '../../../src/world/bake';
@@ -47,6 +47,25 @@ self.onmessage = (e: MessageEvent) => {
   } else if (m.kind === 'gen') {
     const [tx, ty] = m.t as [number, number], [bx, by] = m.at as [number, number];
     grid.stampRegion(generateRegion(spec, { x0: tx * C, y0: ty * C, z0: 0, width: C, depth: C, height: spec.height }), [bx, by, 0]);
+  } else if (m.kind === 'prep') {
+    // Escribir un trozo: generarlo y estamparlo en la copia, y mandar sus trozos de vóxeles tal como quedan (con lo
+    // sembrado desde fuera que lo toca, que el estampado escribe con set) para que el principal solo los ponga
+    const a = performance.now(), [tx, ty] = m.t as [number, number], [bx, by] = m.at as [number, number];
+    const r = generateRegion(spec, { x0: tx * C, y0: ty * C, z0: 0, width: C, depth: C, height: spec.height });
+    grid.stampRegion(r, [bx, by, 0]);
+    const chunks: Array<{ c: number; slabs: Array<PreparedSlab | null>; tops: Int16Array }> = [];
+    let local = false;
+    const B = grid.blocks.size, k0x = (bx * B) / 16, k0y = (by * B) / 16, k = (C * B) / 16;
+    for (let cy = k0y; cy < k0y + k && !local; cy++) for (let cx = k0x; cx < k0x + k; cx++) {
+      const c = cy * store.cols + cx, e = store.exportChunkPrepared(c);
+      if (!e) { local = true; break; }
+      chunks.push({ c, ...e });
+    }
+    const ms = performance.now() - a, brake = (m.brake as number) || 1;
+    if (brake > 1) { const until = performance.now() + ms * (brake - 1); while (performance.now() < until); }
+    const tr: Transferable[] = [];
+    for (const ch of chunks) { tr.push(ch.tops.buffer); for (const sl of ch.slabs) if (sl) tr.push(sl.d.buffer, sl.pal.buffer); }
+    (self as unknown as { postMessage(x: unknown, t: Transferable[]): void }).postMessage({ kind: 'prep', id: m.id, ms, p: { cells: r, chunks: local ? [] : chunks, ...(local ? { local: true } : {}) } }, tr);
   } else if (m.kind === 'shift') {
     const [dcx, dcy] = m.chunks as [number, number], [cx, cy] = m.cells as [number, number];
     store.shift(dcx, dcy);

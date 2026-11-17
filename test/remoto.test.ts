@@ -57,6 +57,9 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
 };
 
 import { renderRect, type RectOut } from '../src/world/bake';
+import type { PreparedTrozo } from '../src/world/live';
+import { StaticVoxels, WorldState } from '../src/world/state';
+import { BlockGrid } from '../src/world/blocks';
 
 describe('recuadros pintados fuera (Baked.remote, experimento worker-exp)', () => {
   it('uno que llega tarde, después del de un picado posterior, no lo pisa: algo suyo cambió y se pinta aquí', () => {
@@ -116,5 +119,41 @@ describe('recuadros pintados fuera (Baked.remote, experimento worker-exp)', () =
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
     const c = run(true, true), d = run(false, true);
     expect(diff(c.win.baked, d.win.baked)).toBe(0);
+  });
+
+  it('trozos escritos fuera (prepareTrozo): la copia del "worker" los estampa y el principal solo pone sus losas; igual que escribirlos aquí', () => {
+    const win0 = make([0, 0]);
+    // La copia: un store y una rejilla como los de la ventana, con lo que escribió el constructor
+    const mirror = new StaticVoxels(set.palette, win0.store.width, win0.store.depth, win0.store.zMin, win0.store.zMax);
+    const mgrid = new BlockGrid(new WorldState(mirror, [], null), set);
+    let mtx0 = win0.tx0, mty0 = win0.ty0;
+    for (let ty = mty0; ty < mty0 + 5; ty++) for (let tx = mtx0; tx < mtx0 + 5; tx++) mgrid.stampRegion(generateRegion(SPEC, { x0: tx * TB, y0: ty * TB, z0: 0, width: TB, depth: TB, height: H }), [(tx - mtx0) * TB, (ty - mty0) * TB, 0]);
+    let preps = 0;
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS,
+      onShift: (d) => { mirror.shift(d.voxels[0] / 16, d.voxels[1] / 16); mgrid.shift(d.cells[0], d.cells[1]); },
+      prepareTrozo: (t, at) => {
+        preps++;
+        const r = generateRegion(SPEC, { x0: t[0] * TB, y0: t[1] * TB, z0: 0, width: TB, depth: TB, height: H });
+        mgrid.stampRegion(r, [at[0], at[1], 0]);
+        const chunks: PreparedTrozo['chunks'] = [];
+        const k0x = (at[0] * B) / 16, k0y = (at[1] * B) / 16, k = (TB * B) / 16;
+        for (let cy = k0y; cy < k0y + k; cy++) for (let cx = k0x; cx < k0x + k; cx++) { const c = cy * mirror.cols + cx; chunks.push({ c, ...mirror.exportChunkPrepared(c)! }); }
+        let calls = 0;
+        return { result: () => (++calls >= 2 ? { cells: r, chunks } : null) };
+      } });
+    void mtx0; void mty0;
+    const budget = new FrameBudget(1e6);
+    let x = TV / 2;
+    for (let s = 0; s < 3 * 8; s++) { x += TV / 8; for (let k = 0; k < 50; k++) { win.update(x, TV / 2, budget); budget.run(); if (!win.busy && !budget.pending) break; } }
+    expect(preps).toBeGreaterThan(5);
+    // La copia, igual que el store del principal
+    let nv = 0;
+    for (let z = mirror.zMin; z <= mirror.zMax; z += 3) for (let y = 0; y < mirror.depth; y += 2) for (let xx = 0; xx < mirror.width; xx += 2) if (mirror.get(xx, y, z) !== win.store.get(xx, y, z)) nv++;
+    expect(nv).toBe(0);
+    // Y lo horneado, igual que una ventana hecha de nuevo ahí
+    const ref = make([win.tx0 + 2, win.ty0 + 2]);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(win.baked, ref.baked)).toBe(0);
   });
 });

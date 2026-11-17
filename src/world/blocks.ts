@@ -215,16 +215,12 @@ export class BlockGrid implements StatePart {
     return { key, run: (deadline: number) => { do { steps[k++]!(); } while (k < steps.length && performance.now() < deadline); return k >= steps.length; } };
   }
 
-  private stampSteps(r: GeneratedRegion, at: readonly [number, number, number], opts: { skip?: readonly number[] }): Array<() => void> {
-    const s = this.state.solid, N = this.N, o = this.origin, { width: W, depth: D, height: H } = r.region, [gx, gy, gz] = at;
-    const vx0 = o.x + gx * N, vy0 = o.y + gy * N;
-    const aligned = CHUNK_V % N === 0 && vx0 % CHUNK_V === 0 && vy0 % CHUNK_V === 0 && (W * N) % CHUNK_V === 0 && (D * N) % CHUNK_V === 0
-      && gz === 0 && H === this.layers && o.z === s.zMin && !s.onSet && gx >= 0 && gy >= 0 && gx + W <= this.cols && gy + D <= this.rows;
-    if (!aligned) return [() => applyRegion(r, this, at, opts)];
-    const skip = new Set(opts.skip ?? []);
-    const steps: Array<() => void> = [];
-    // 1) las celdas (y las luces de lo que emite, como write)
-    steps.push(() => { for (let bz = 0; bz < H; bz++) for (let by = 0; by < D; by++) for (let bx = 0; bx < W; bx++) {
+  // Las celdas de una región generada en `at` (solo la rejilla, y las luces de lo que emite, como write), sin los
+  // vóxeles. El paso 1 de stampRegionJob; también para quien recibe los vóxeles ya hechos (EXPERIMENTO worker-exp: los
+  // trozos escritos en un worker, LiveWindow prepareTrozo)
+  stampCells(r: GeneratedRegion, at: readonly [number, number, number] = [0, 0, 0], opts: { skip?: readonly number[] } = {}): void {
+    const N = this.N, { width: W, depth: D, height: H } = r.region, [gx, gy, gz] = at, skip = new Set(opts.skip ?? []);
+    for (let bz = 0; bz < H; bz++) for (let by = 0; by < D; by++) for (let bx = 0; bx < W; bx++) {
       let type = r.cells[(bz * D + by) * W + bx]!;
       if (skip.has(type)) type = 0;
       const i = this.at(gx + bx, gy + by, gz + bz), old = this.cells[i]!;
@@ -239,7 +235,19 @@ export class BlockGrid implements StatePart {
         const b = this.box(gx + bx, gy + by, gz + bz), ep = e.at ?? [N / 2, N / 2, N];
         this.lightOf.set(i, this.state.lights.addFixed({ kind: e.kind, x: b.x0 + ep[0], y: b.y0 + ep[1], z: b.z0 + ep[2], ...(e.radius !== undefined ? { radius: e.radius } : {}), ...(e.intensity !== undefined ? { intensity: e.intensity } : {}), ...(e.color ? { color: e.color } : {}) }));
       }
-    } });
+    }
+  }
+
+  private stampSteps(r: GeneratedRegion, at: readonly [number, number, number], opts: { skip?: readonly number[] }): Array<() => void> {
+    const s = this.state.solid, N = this.N, o = this.origin, { width: W, depth: D, height: H } = r.region, [gx, gy, gz] = at;
+    const vx0 = o.x + gx * N, vy0 = o.y + gy * N;
+    const aligned = CHUNK_V % N === 0 && vx0 % CHUNK_V === 0 && vy0 % CHUNK_V === 0 && (W * N) % CHUNK_V === 0 && (D * N) % CHUNK_V === 0
+      && gz === 0 && H === this.layers && o.z === s.zMin && !s.onSet && gx >= 0 && gy >= 0 && gx + W <= this.cols && gy + D <= this.rows;
+    if (!aligned) return [() => applyRegion(r, this, at, opts)];
+    const skip = new Set(opts.skip ?? []);
+    const steps: Array<() => void> = [];
+    // 1) las celdas (y las luces de lo que emite, como write)
+    steps.push(() => this.stampCells(r, at, opts));
     // 2) los vóxeles, trozo a trozo: cada losa se compone ya con índices de 1 byte y su paleta (la entrada 0, el aire),
     // desde las plantillas de sus bloques; un bloque cae entero en una losa (N divide a 16)
     const per = CHUNK_V / N;                                   // bloques por lado de un trozo de vóxeles
