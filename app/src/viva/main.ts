@@ -122,6 +122,7 @@ void (async () => {
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
   const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0);
+  let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
@@ -292,6 +293,17 @@ void (async () => {
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     compositor.frame(win.view.frame(), win.baked, o);
     if (!boot.primerCuadro) boot.primerCuadro = Math.round(performance.now());
+    // Cuadros (uno de cada 5) con algo de la pantalla en trozos de vóxeles aún por rehornear (cambiados desde el horneado):
+    // lo que se vería a medio hacer
+    if (frameNo % 5 === 0) {
+      const ch = win.baked.source.changedSince(win.baked.version);
+      if (ch.length) {
+        const vis = bakeMod.chunksInScreen(win.baked, { x0: o.vx, y0: o.vy, x1: o.vx + VW - 1, y1: o.vy + VH - 1 });
+        const set2 = new Set(ch);
+        if (vis.some((c) => set2.has(c))) { sinHornear++; if (sinHornearPrimero < 0) sinHornearPrimero = Math.round((now - start) / 100) / 10; }
+        muestras++;
+      } else muestras++;
+    }
     // ?nucleo=1 (con ?quieto=1): el primer cuadro y el mismo cuadro con la cola vacía (todo horneado), para compararlos
     if (CAPTURA) {
       if (!captura.primero) captura.primero = canvas.toDataURL('image/png');
@@ -338,6 +350,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
+      vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
