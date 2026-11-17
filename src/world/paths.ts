@@ -14,7 +14,7 @@ export interface PathOptions {
   radius?: number;      // radio del cuerpo, en vóxeles: cabe si todas las columnas a esa distancia se pisan (0: el centro)
   step?: number;        // lo más que sube de una celda a otra, y lo más que puede sobresalir el suelo bajo el cuerpo (2)
   maxDrop?: number;     // lo más que baja de una celda a otra (Infinity)
-  reach?: number;       // hasta cuántos pasos de la meta se busca (Infinity); más lejos, sin camino. Ver LevelPathField
+  reach?: number;       // hasta cuántos pasos de la meta se busca (40; Infinity: todo); más lejos, sin camino. Ver LevelPathField
 }
 
 const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const;
@@ -35,7 +35,7 @@ export class PathField {
 
   constructor(readonly state: WorldState, o: PathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.step = o.step ?? 2; this.maxDrop = o.maxDrop ?? Infinity;
-    this.reach = o.reach ?? Infinity;
+    this.reach = o.reach ?? 40;
     this.cols = Math.ceil(state.width / this.cell); this.rows = Math.ceil(state.depth / this.cell);
     this.floor = new Float64Array(this.cols * this.rows);
     this.dist = new Int32Array(this.cols * this.rows).fill(-1);
@@ -193,6 +193,7 @@ export class PathField {
 
 // Un camino suelto (sin guardar el campo): para pocas consultas. Para muchos cuerpos hacia la misma meta, un PathField
 export function findPath(state: WorldState, from: Point, to: Point, o: PathOptions & { near?: number } = {}): Array<{ x: number; y: number; z: number }> | null {
-  const f = new PathField(state, o);
+  // (sin tope por defecto: un camino suelto es para llegar, esté donde esté)
+  const f = new PathField(state, { reach: Infinity, ...o });
   try { return f.path(from, to, o.near ?? 0); } finally { f.close(); }
 }

@@ -19,7 +19,8 @@ export interface LevelPathOptions {
   levels?: number;      // suelos por celda como mucho, de arriba abajo (4)
   // Búsqueda repartida: nodos por advance() (sin él, cada meta nueva se busca entera al pedirla). Ver advance()
   budget?: number;
-  // Hasta dónde se busca: los nodos a más de `reach` pasos de la meta no tienen camino (dir null). Sin él, todo el campo.
+  // Hasta dónde se busca: los nodos a más de `reach` pasos de la meta no tienen camino (dir null). 40 por defecto
+  // (MAIA, para los bichos de noche en la ventana viva); Infinity, todo el campo.
   // En una ventana viva grande (288 x 352 celdas en 9 x 11 trozos), una meta que se mueve cuesta una búsqueda de todo
   // el campo cada vez que cambia de celda; con reach, ~π·reach² nodos
   reach?: number;
@@ -57,7 +58,7 @@ export class LevelPathField {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
     this.maxDrop = o.maxDrop ?? Infinity; this.L = o.levels ?? 4;
     this.budget = o.budget;
-    this.reach = o.reach ?? Infinity;
+    this.reach = o.reach ?? 40;
     this.cols = Math.ceil(state.width / this.cell); this.rows = Math.ceil(state.depth / this.cell);
     this.floor = new Float64Array(this.cols * this.rows * this.L).fill(NO_FOOT);
     this.ceil = new Float64Array(this.cols * this.rows * this.L);

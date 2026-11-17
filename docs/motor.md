@@ -607,7 +607,15 @@ compositor.frame(win.state, win.baked, opts);
   Sin freno, en la ventana de 9 x 11 con el recuadro de 384 x 216, el núcleo cuesta 300-350 ms de CPU (unos 30 de
   copia, el resto recuadro y cielo). Lo demás, unos 3,5 s por la cola normal (`bun scripts/bench-viva.ts 1 0` con
   `GIRAR=1`). En el navegador: `viva.html?girar=6` (Q cada 6 s; `presu=ms`, el presupuesto cercano durante el fundido).
-- Aún no: el agua y los caminos por ventana.
+- Caminos: `PathField` y `LevelPathField` se enganchan con `win.attach(campo)` y se corren en el cambio (sus celdas,
+  pasos guardados y distancias; lo que entra, sin suelo hasta que se escribe su trozo). Además, en el cambio la ventana
+  corre lo apuntado y sin tomar de todos los `watchChanges` (`ChangeWatch.shift`), así que también vale para los del
+  juego. Con una ventana grande, una meta que se mueve costaría una búsqueda de todo el campo cada vez que cambia de
+  celda: `reach` (40 pasos por defecto) para la búsqueda a esa distancia de la meta, y más lejos no hay camino (`dir`
+  da null). `findPath` sigue sin tope.
+- Carga del principio por la cola: `preload: 'queue'` (la ventana vacía, los trozos del centro hacia fuera con prioridad
+  0 y su rehorneado cercano) y `win.ready(x, y, anillo)` para quitar la pantalla de carga.
+- Aún no: el agua por ventana.
 
 ## Caminos por niveles
 

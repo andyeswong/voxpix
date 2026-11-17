@@ -116,4 +116,21 @@ describe('caminos en la ventana viva', () => {
     expect(inside).toBeGreaterThan(5);
     expect(outside).toBeGreaterThan(5);
   });
+
+  it('reach por defecto (40): un bicho a menos llega con el mismo camino que sin tope; uno a más, dir null', () => {
+    // (una ventana de 9 x 9 trozos: 72 celdas de lado, para que haya caminos de más de 40 pasos)
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 9, ny: 9, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
+    const def = new LevelPathField(win.state, LV), all = new LevelPathField(win.state, { ...LV, reach: Infinity });
+    expect(def.reach).toBe(40);
+    const goal = { x: 6, y: 80, z: 40 };
+    let near = 0, far = 0;
+    for (let y = 2; y < win.store.depth; y += 5) for (let x = 2; x < win.store.width; x += 5) {
+      const p = all.path({ x, y, z: 40 }, goal, 2);
+      if (!p) continue;
+      if (p.length - 1 <= 40) { expect(def.path({ x, y, z: 40 }, goal, 2)).toEqual(p); expect(def.dir({ x, y, z: 40 }, goal, 2)).toEqual(all.dir({ x, y, z: 40 }, goal, 2)); near++; }
+      else { expect(def.dir({ x, y, z: 40 }, goal, 2)).toBeNull(); far++; }
+    }
+    expect(near).toBeGreaterThan(5);
+    expect(far).toBeGreaterThan(5);
+  });
 });
