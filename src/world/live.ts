@@ -360,7 +360,8 @@ export class LiveWindow {
     this.storeShift = this.views.has(0) ? null : { job: this.store.shiftJob(dx * k, dy * k), ready: false };
     // Un trabajo de la cola: prepara los giros (el que se ve, primero) y, cuando están todos, el cambio
     this.shiftSpent = 0;
-    this.shiftJob = { key: 'shift', run: (deadline: number) => {
+    // (con la prioridad de los trozos: sin ella iba detrás de todo el rehorneado de la cola, en orden de llegada)
+    this.shiftJob = { key: 'shift', priority: 70, run: (deadline: number) => {
       const a = performance.now();
       try {
         const st = this.storeShift;
