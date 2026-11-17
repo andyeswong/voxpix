@@ -40,7 +40,7 @@ void (async () => {
   // ?entrar=T: a los T segundos, entrar bajo tierra: un corte (win.view.cutJob) de una caja de 2 x ?corte=N vóxeles
   // alrededor de MAIA, que esconde desde ?cortez=Z vóxeles por debajo de sus pies, y su rehorneado sin prioridad en cada
   // cuadro (rebakeChangedJobs sin near); una captura a los 800 ms y otra con la cola vacía, y cuándo se abrió
-  const ENTRAR = Number(q.get('entrar') ?? 0), CORTE = Number(q.get('corte') ?? 48), CORTEZ = Number(q.get('cortez') ?? 8);
+  const ENTRAR = Number(q.get('entrar') ?? 0), CORTE = Number(q.get('corte') ?? 48), CORTEZ = Number(q.get('cortez') ?? 8), ENTRARNEAR = q.get('entrarnear') === '1';
   // ?hz=60: un cuadro cada 1000/hz ms como mucho, como una pantalla con vsync. Edge sin ventana no tiene vsync y da ~180
   // cuadros por segundo: la cola (~6 ms por cuadro) avanzaba 3 veces más por segundo que en el juego
   const HZ = Number(q.get('hz') ?? 0);
@@ -130,7 +130,7 @@ void (async () => {
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
-  const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[]; seccionMs?: number } = {};
+  const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[]; seccionMs?: number; cola800?: string[] } = {};
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
   let secRun = 0;
@@ -197,7 +197,9 @@ void (async () => {
       entrada.a = now;
     }
     if (ENTRAR && entrada.a !== undefined && win.baked.source.changedSince(win.baked.version).length) {
-      for (const j of bakeMod.rebakeChangedJobs(win.baked, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } })) timed.push(j);
+      // (?entrarnear=1: con near en MAIA, como el rehorneado de lo editado en el juego: prioridad por distancia en pantalla)
+      const [nx, ny] = win.view.camera.pointToView(...win.toLocal(x, Y));
+      for (const j of bakeMod.rebakeChangedJobs(win.baked, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true }, ...(ENTRARNEAR ? { near: { x: nx, y: ny } } : {}) })) timed.push(j);
     }
     espera('update');
     const t1 = performance.now();
@@ -329,7 +331,8 @@ void (async () => {
       if (entrada.corteMs === undefined && !qk.includes('view-cut')) entrada.corteMs = Math.round(ms);
       if (SECCION && entrada.seccionMs === undefined && painter?.ready()) entrada.seccionMs = Math.round(ms);
       if (entrada.abiertoMs === undefined && !left.length && !changed) entrada.abiertoMs = Math.round(ms);
-      if (!entrada.c800 && ms >= 800) { entrada.c800 = canvas.toDataURL('image/png'); entrada.rects800 = left.length + changed; entrada.pendientes800 = qk.slice(0, 30); }
+      if (!entrada.c800 && ms >= 800) {
+        entrada.cola800 = (budget as unknown as { queue: ViewJob[] }).queue.slice(0, 30).map((j) => `${j.key}|${j.priority === undefined ? '-' : +j.priority.toFixed(1)}${j.waiting?.() ? '|espera' : ''}`); entrada.c800 = canvas.toDataURL('image/png'); entrada.rects800 = left.length + changed; entrada.pendientes800 = qk.slice(0, 30); }
       else if (entrada.c800 && !entrada.final && !win.busy && !budget.pending) { entrada.final = canvas.toDataURL('image/png'); entrada.finalMs = Math.round(ms); }
     }
     // ?nucleo=1 (con ?quieto=1): el primer cuadro y el mismo cuadro con la cola vacía (todo horneado), para compararlos
@@ -379,7 +382,7 @@ void (async () => {
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
-      entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
+      entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
