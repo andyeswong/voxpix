@@ -44,6 +44,7 @@ void (async () => {
   const t0 = performance.now();
   const spec = ext ? ext.spec : spec0;
   const CENTER: [number, number] = ext?.center ?? [0, 0];
+  const NXW = ext?.nx ?? NX, NYW = ext?.ny ?? NY;
   const win = new LiveWindow({ blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
   const loadMs = performance.now() - t0;
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
@@ -68,7 +69,8 @@ void (async () => {
     }
     budget.push(w);
   } };
-  let ringHoles = 0;
+  let ringHoles = 0, ringOut = 0, ringUnloaded = 0;
+  const posHist: Record<number, number> = {};
 
   const frames: number[] = [], heap: number[] = [], shots: string[] = [], queueMs: number[] = [], lag: number[] = [];
   // Por giro: ms desde que se pide hasta el cambio, cuadros, cuadros de más de 25 ms en ese tiempo y CPU del núcleo
@@ -130,7 +132,11 @@ void (async () => {
     }
     if (hole) holes++;
     // La vara de FERN: el anillo tx ± 3, ty - 3 .. + 5 alrededor del trozo de MAIA
-    { const [mtx, mty] = win.trozoOf(x, Y); let r = false; for (let ty = mty - 3; ty <= mty + 5 && !r; ty++) for (let tx = mtx - 3; tx <= mtx + 3 && !r; tx++) if (!win.isLoaded([tx, ty])) r = true; if (r) ringHoles++; }
+    // (y por qué: algún trozo del anillo fuera de la ventana, o dentro sin escribir; y dónde va MAIA en la ventana)
+    { const [mtx, mty] = win.trozoOf(x, Y); let r = false, out = false, unl = false;
+      for (let ty = mty - 3; ty <= mty + 5; ty++) for (let tx = mtx - 3; tx <= mtx + 3; tx++) if (!win.isLoaded([tx, ty])) { r = true; if (tx < win.tx0 || tx >= win.tx0 + NXW || ty < win.ty0 || ty >= win.ty0 + NYW) out = true; else unl = true; }
+      if (r) ringHoles++; if (out) ringOut++; if (unl) ringUnloaded++;
+      const ix = mtx - win.tx0; posHist[ix] = (posHist[ix] ?? 0) + 1; }
     compositor.frame(win.view.frame(), win.baked, o);
     if (now - start >= nextHeap) { heap.push(mem()); nextHeap += 1000; }
     if (frameNo % 1200 === 600 && shots.length < 6) shots.push(canvas.toDataURL('image/png'));
@@ -141,7 +147,7 @@ void (async () => {
     const avg = (a: number[]) => a.length ? a.reduce((u, v) => u + v, 0) / a.length : 0;
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
-      ringHoles, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
