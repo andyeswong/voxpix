@@ -546,6 +546,34 @@ win.get(x, y, z);                                                // coordenadas 
     2,3-2,4 ms, p95 3,8-4,8.
 - Aún no: `LiveWindow` y el banco de andar.
 
+## La ventana viva, 3: LiveWindow
+
+`src/world/live.ts` junta todo lo anterior: una ventana de nx x ny trozos de un mundo por regiones alrededor de un
+objetivo, que se corre por la cola cuando el objetivo se acerca a un borde.
+
+```ts
+import { LiveWindow } from '@voxpix/world/live';
+const win = new LiveWindow({
+  blocks, spec, nx: 8, ny: 13, chunk: 16, center: [0, 0], margin: 2, bake: { incline: 0.5, sky: true, outline: 'both' },
+  onUnload(t, read) { /* guardar las diferencias del trozo t; read(x, y, z) en coordenadas del mundo */ },
+  onLoad(t, write) { /* poner las diferencias guardadas del trozo t, antes de hornearlo */ },
+  onShift(dx, dy) { /* el origen local se corrió dx, dy vóxeles */ },
+});
+// cada cuadro
+win.update(objetivoX, objetivoY, budget);       // coordenadas del mundo; mete el trabajo en la FrameBudget
+compositor.frame(win.state, win.baked, opts);
+```
+
+- Al quedar el trozo del objetivo a menos de `margin` trozos del borde: `onUnload` de los que salen (con lo suyo aún
+  en el store), `shiftBakedJob` (imagen y vóxeles por pasos, cambio en dos cuadros), las entidades y las luces del
+  `state` corridas al marco nuevo, y por cada trozo que entra (del centro hacia fuera), un trabajo que lo genera
+  (`generateRegion`), lo escribe por pasos (`stampRegionJob`) y llama a `onLoad`; después, `rebakeChangedJobs`.
+- `toLocal` / `toWorld`, `trozoOf`, `isLoaded`, `busy`.
+- `test/ventana-viva.test.ts`: un objetivo que anda 6 trozos al este y 3 al norte y vuelve; lo picado (en coordenadas
+  del mundo) se pone con `onLoad` al volver a entrar su trozo; lo horneado queda igual que una ventana hecha de nuevo
+  ahí, y una entidad sigue en su sitio del mundo.
+- Aún no: el agua, los giros y los caminos por ventana; el banco de 200 bloques.
+
 ## Caminos por niveles
 
 `PathField` tiene un suelo por celda (el de arriba). Para bichos que entren en túneles, cuevas o pisos,
