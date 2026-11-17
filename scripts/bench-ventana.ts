@@ -51,3 +51,16 @@ for (let i = 0; i < TIMES; i++) for (const [dx, dy] of [[k, 0], [0, k], [-k, 0],
   a = performance.now(); s.shift(dx, dy); ms.push(performance.now() - a);
 }
 console.log(`shift de un trozo (${ms.length}): p50 ${f(p(ms, 0.5))} ms, p95 ${f(p(ms, 0.95))} ms, máx ${f(p(ms, 1))} ms`);
+
+// Con la imagen: la ventana horneada (sin luces) y shiftBaked (vóxeles e imagen, sin rehornear lo que entra)
+if (process.env.IMAGEN !== '0') {
+  const { bakeWorld, shiftBaked } = await import('../src/world/bake');
+  a = performance.now();
+  const b = bakeWorld({ model: s, lights: [], width: s.width, depth: s.depth }, { topZ: H * B, incline: 0.5, sky: true, outline: 'both' });
+  console.log(`hornear la ventana: ${((performance.now() - a) / 1000).toFixed(1)} s; imagen ${b.width} x ${b.height} (${((b.width * b.height) / 1e6).toFixed(2)} Mpx)`);
+  const sb: number[] = [];
+  for (let i = 0; i < TIMES; i++) for (const [dx, dy] of [[k, 0], [0, k], [-k, 0], [0, -k]] as const) {
+    a = performance.now(); shiftBaked(b, dx, dy); sb.push(performance.now() - a);
+  }
+  console.log(`shiftBaked de un trozo (vóxeles e imagen, ${sb.length}): p50 ${f(p(sb, 0.5))} ms, p95 ${f(p(sb, 0.95))} ms, máx ${f(p(sb, 1))} ms`);
+}

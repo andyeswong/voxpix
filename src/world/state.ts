@@ -218,7 +218,8 @@ export class StaticVoxels implements VoxelSource {
   // estaba en el trozo (cx, cy) pasa al (cx - dcx, cy - dcy)), como si el mundo de dentro se viera desde un origen
   // dcx * CHUNK, dcy * CHUNK más allá. Las losas se mueven por referencia (no se copia ningún vóxel); se copian las
   // alturas y la rejilla de pisar. Los trozos que entran quedan vacíos, con versión nueva y su caja entera cambiada (para
-  // rehornearlos); los del borde nuevo pierden las máscaras de lo expuesto (su vecino de fuera ahora es aire). Hace falta
+  // rehornearlos); los del borde nuevo pierden las máscaras de lo expuesto (su vecino de fuera ahora es aire) y también
+  // cuentan como cambiados enteros (se ven caras que antes no). Hace falta
   // un ancho y un fondo múltiplos de CHUNK. Un get, set o forEachExposed después ve el mundo corrido; nada más cambia
   shift(dcx: number, dcy: number): void {
     if (!dcx && !dcy) return;
@@ -263,12 +264,15 @@ export class StaticVoxels implements VoxelSource {
         const nx = cx + ex, ny = cy + ey, ox = nx + dcx, oy = ny + dcy;
         return (nx < 0 || ny < 0 || nx >= C || ny >= R) && ox >= 0 && oy >= 0 && ox < C && oy < R;
       });
-      if (entered) {
+      // (los del borde nuevo también cuentan como cambiados enteros: con el vecino de fuera en aire, se ven caras que antes
+      // no; el horneado los rehace)
+      if (entered || edge) {
         this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
         const o = c * SEGS * 7;
         this.seg.set([this.clock, cx * CHUNK, cy * CHUNK, this.zMin, Math.min(W, (cx + 1) * CHUNK) - 1, Math.min(D, (cy + 1) * CHUNK) - 1, this.zMax], o);
         this.segN[c] = 1;
-      } else if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
+      }
+      if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
     }
   }
 

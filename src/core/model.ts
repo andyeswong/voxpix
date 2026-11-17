@@ -3,8 +3,11 @@ import { validatePalette, type Palette } from './palette';
 // Modelo disperso de tamaño libre: solo se guardan los vóxeles llenos. Ejes: x hacia el este, y hacia el
 // norte (lejos de la cámara en la vista frontal), z hacia arriba. El pivote (los pies) está en el origen.
 
-const OFF = 1024;          // coordenadas válidas: -1024..1023 en cada eje
-const SPAN = 2048;
+// coordenadas válidas: -2048..2047 en cada eje (una ventana viva de 13 trozos de 128 tiene 1664 de fondo); las claves
+// llegan a 4096^3 ~ 6,9e10, exactas en un double
+export const KEY_OFF = 2048;
+export const KEY_SPAN = 4096;
+const OFF = KEY_OFF, SPAN = KEY_SPAN;
 
 export const key = (x: number, y: number, z: number): number => ((x + OFF) * SPAN + (y + OFF)) * SPAN + (z + OFF);
 

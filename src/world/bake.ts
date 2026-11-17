@@ -5,7 +5,7 @@
 // Si cambian vóxeles a mitad de partida, rebake() rehace SOLO lo afectado: el recuadro de pantalla de los trozos
 // cambiados, la rejilla de sombras de esas columnas y los pesos de las luces que los alcanzan. El resultado es el
 // mismo, byte a byte, que hornear el mundo entero de nuevo (hay prueba).
-import { render, camera, unkey, decode, DIR_VECTORS, facingOf, materialsOf, frontFaces, type RenderOptions, type Camera, type VoxelSource } from '../core';
+import { render, camera, key, unkey, KEY_OFF, KEY_SPAN, decode, DIR_VECTORS, facingOf, materialsOf, frontFaces, type RenderOptions, type Camera, type VoxelSource } from '../core';
 import { resolveLight } from './lightutil';
 import { CHUNK, type StaticVoxels, type FaceSet } from './state';
 import type { Box3 } from './changes';
@@ -126,7 +126,7 @@ function skyOf(b: Baked, idx: number): number {
   const k = b.pick[idx]!;
   if (Number.isNaN(k)) return SKY_RAYS;
   const s = b.source, f = b.face[idx]!, n = DIR_VECTORS[f]!;
-  const vz = (k % 2048) - 1024, rr = Math.floor(k / 2048), vy = (rr % 2048) - 1024, vx = Math.floor(rr / 2048) - 1024;
+  const vz = (k % KEY_SPAN) - KEY_OFF, rr = Math.floor(k / KEY_SPAN), vy = (rr % KEY_SPAN) - KEY_OFF, vx = Math.floor(rr / KEY_SPAN) - KEY_OFF;
   const cx = vx + n[0], cy = vy + n[1], cz = vz + n[2];
   let open = 0;
   if (cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth || s.height[cy * s.width + cx]! <= cz) open++;
@@ -407,7 +407,7 @@ function touchedBy(l: WorldLight, plans: readonly Plan[]): CellFilter {
   return (_px, _py, k, f) => {
     if (Number.isNaN(k)) return false;
     // unkey sin crear nada (es por píxel)
-    const vz = (k % 2048) - 1024, rr = Math.floor(k / 2048), vy = (rr % 2048) - 1024, vx = Math.floor(rr / 2048) - 1024;
+    const vz = (k % KEY_SPAN) - KEY_OFF, rr = Math.floor(k / KEY_SPAN), vy = (rr % KEY_SPAN) - KEY_OFF, vx = Math.floor(rr / KEY_SPAN) - KEY_OFF;
     // El vóxel mismo dentro de lo cambiado (pudo cambiar su material: cuánta luz recibe por detrás)
     for (let q = 0; q < plans.length; q++) {
       const p = plans[q]!;
@@ -1134,6 +1134,82 @@ function changedBoxes(b: Baked): { chunks: number[]; boxes: Map<number, Box3> } 
   s.cut();
   b.version = s.clock;
   return { chunks, boxes };
+}
+
+// MOVER LA VENTANA (la ventana viva): corre el mundo horneado dcx, dcy trozos de vóxeles hacia atrás (b.source.shift) y
+// su imagen con él, sin rehornear lo que se queda: la imagen se corre -dcx * CHUNK columnas y +a * dcy * CHUNK filas (lo
+// que entra, vacío), la profundidad y las claves de vóxel (pick) se ponen en las coordenadas nuevas, y cada luz fija
+// pasa a su sitio nuevo con su zona recortada otra vez y sus pesos (la que gana píxeles por el borde se hornea de nuevo). Lo que entra y el borde nuevo
+// quedan como cambiados: rebakeChanged / rebakeChangedJobs con las luces ya corridas los rehace. Las luces del estado
+// las corre quien llama (las mismas -dcx * CHUNK, -dcy * CHUNK). Las copias de la imagen (la GPU) la vuelven a subir
+export function shiftBaked(b: Baked, dcx: number, dcy: number): void {
+  if (!dcx && !dcy) return;
+  const a = b.options.oblique?.y ?? 1, DX = dcx * CHUNK, DY = dcy * CHUNK, rows = a * DY;
+  if (!Number.isInteger(rows)) throw new Error(`shiftBaked: el corrimiento en filas (${rows}) no es entero`);
+  b.source.shift(dcx, dcy);
+  const W = b.width, H = b.height;
+  // La imagen: el píxel (x, y) pasa a tener lo del (x + DX, y - rows)
+  const move = <A extends { copyWithin(t: number, s: number, e: number): unknown; fill(v: never, s?: number, e?: number): unknown; length: number }>(arr: A, per: number, fill: number) => {
+    const row = W * per, run = (W - Math.abs(DX)) * per, sx = Math.max(0, DX) * per, tx = Math.max(0, -DX) * per, f = fill as never;
+    if (run <= 0 || Math.abs(rows) >= H) { arr.fill(f); return; }
+    const y0 = rows > 0 ? H - 1 : 0, y1 = rows > 0 ? -1 : H, st = rows > 0 ? -1 : 1;
+    for (let y = y0; y !== y1; y += st) {
+      const sy = y - rows, o = y * row;
+      if (sy < 0 || sy >= H) { arr.fill(f, o, o + row); continue; }
+      arr.copyWithin(o + tx, sy * row + sx, sy * row + sx + run);
+      if (DX > 0) arr.fill(f, o + run, o + row); else if (DX < 0) arr.fill(f, o, o + tx);
+    }
+  };
+  move(b.rgba, 4, 0); move(b.depth, 1, Infinity); move(b.face, 1, -1); move(b.pick, 1, NaN);
+  if (b.sky) move(b.sky, 1, SKY_RAYS);
+  // Profundidad y claves, en las coordenadas nuevas (y - DY, x - DX): la profundidad baja DY * fwd[1]; la clave es lineal
+  const dd = DY * b.cam.fwd[1], dk = key(DX, DY, 0) - key(0, 0, 0);
+  // Lo que se ve de un vóxel que ya no está (salió de la ventana: al correr en y, su píxel sigue dentro de la imagen) se
+  // borra, y el contorno de fuera pegado a eso (no tiene vóxel); lo de su alrededor que sí está cae en el borde nuevo y
+  // se rehornea
+  const s = b.source, sw = s.width, sd = s.depth, gone = new Uint8Array(W * H);
+  const clear = (i: number) => { b.rgba[i * 4] = 0; b.rgba[i * 4 + 1] = 0; b.rgba[i * 4 + 2] = 0; b.rgba[i * 4 + 3] = 0; b.depth[i] = Infinity; b.face[i] = -1; b.pick[i] = NaN; if (b.sky) b.sky[i] = SKY_RAYS; gone[i] = 1; };
+  for (let i = 0; i < W * H; i++) {
+    if (b.depth[i] !== Infinity) b.depth[i] = b.depth[i]! - dd;
+    const k = b.pick[i]!;
+    if (k !== k) continue;
+    const k2 = k - dk;
+    b.pick[i] = k2;
+    // (unkey sin crear nada: es por píxel)
+    const r = Math.floor(k2 / KEY_SPAN), y = (r % KEY_SPAN) - KEY_OFF, x = Math.floor(r / KEY_SPAN) - KEY_OFF;
+    if (x < 0 || y < 0 || x >= sw || y >= sd) clear(i);
+  }
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const i = y * W + x;
+    if (gone[i] || b.pick[i] === b.pick[i] || !b.rgba[i * 4 + 3]) continue;
+    if ((x > 0 && gone[i - 1]) || (x < W - 1 && gone[i + 1]) || (y > 0 && gone[i - W]) || (y < H - 1 && gone[i + W])) clear(i);
+  }
+  // Las luces fijas: en su sitio nuevo, la zona recortada otra vez y los pesos que siguen dentro (lo nuevo, a 0: cae en lo
+  // que entra, que se rehornea)
+  const kept: BakedLight[] = [];
+  for (const bl of b.lights) {
+    const l = { ...bl.light, x: bl.light.x - DX, y: bl.light.y - DY };
+    const z = lightZone(b, l);
+    if (!z) continue;
+    const o = bl.rect;
+    // Si la zona nueva tiene píxeles que la vieja (corrida) no tenía (estaba recortada por el borde), la luz se hornea de
+    // nuevo entera (el rehorneado la ve como nueva); si no, se quedan sus pesos
+    if (z.rect.x + DX < o.x || z.rect.y - rows < o.y || z.rect.x + z.rect.w + DX > o.x + o.w || z.rect.y + z.rect.h - rows > o.y + o.h) continue;
+    for (let j = 0; j < z.rect.h; j++) {
+      const oy = z.rect.y + j - rows - o.y;
+      if (oy < 0 || oy >= o.h) continue;
+      for (let i = 0; i < z.rect.w; i++) {
+        const ox = z.rect.x + i + DX - o.x;
+        if (ox >= 0 && ox < o.w) z.weight[j * z.rect.w + i] = bl.weight[oy * o.w + ox]!;
+      }
+    }
+    kept.push(z);
+  }
+  b.lights = kept;
+  b.lightWork?.clear();
+  // Quien tenga una copia la recarga entera
+  b.published.serial += 2;
+  b.published.rects = [];
 }
 
 // Rehornea lo que haya cambiado (solo vóxeles) desde el último horneado

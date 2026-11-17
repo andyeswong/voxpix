@@ -65,13 +65,13 @@ describe('StaticVoxels.shift', () => {
     }
   });
 
-  it('lo que entra queda cambiado (versión nueva y su caja entera) y lo que se queda, no', () => {
+  it('lo que entra y el borde nuevo quedan cambiados (versión nueva y su caja entera) y lo demás, no', () => {
     const live = fresh(0, 0), v0 = live.clock;
     live.shift(2, 0);
     const C = live.cols;
     for (let cy = 0; cy < live.rows; cy++) for (let cx = 0; cx < C; cx++) {
       const changed = live.changedSince(v0).includes(cy * C + cx);
-      expect(changed).toBe(cx >= C - 2);
+      expect(changed).toBe(cx >= C - 2 || cx === 0);                         // los que entran, y el borde nuevo del oeste
     }
   });
 });

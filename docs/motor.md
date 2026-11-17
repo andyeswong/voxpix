@@ -506,7 +506,20 @@ win.get(x, y, z);                                                // coordenadas 
 - Pruebas: `test/ventana-shift.test.ts` (correrse y escribir lo que entra da lo mismo que la ventana hecha de nuevo:
   vóxeles, alturas, suelo de pisar y lo expuesto, con las máscaras hechas antes de correrla) y
   `test/ventana-voxeles.test.ts` (la ventana moviéndose, también en negativo, contra el mundo fijo generado de una vez).
-- Aún no: el horneado de la ventana (la imagen en toro), `LiveWindow` y el banco de andar.
+- La imagen horneada se corre con ella: `shiftBaked(b, dcx, dcy)` (`bake.ts`) llama a `shift` y corre la imagen
+  (-dcx·CHUNK columnas, +a·dcy·CHUNK filas), resta a la profundidad dcy·CHUNK·fwd[1] y a las claves de vóxel (`pick`,
+  lineales) la del corrimiento, borra lo que se ve de vóxeles que salieron (al correr en y siguen dentro de la imagen) y
+  su contorno, y pone cada luz fija en su sitio nuevo con su zona recortada otra vez y sus pesos (la que gana píxeles por
+  el borde se hornea de nuevo). Lo que entra y el borde nuevo quedan cambiados: `rebakeChanged` con las luces corridas
+  los rehace. Las copias (la GPU) recargan la imagen entera. `test/ventana-horneado.test.ts`: correr (también dos veces
+  en sentidos contrarios) y rehornear = hornear de nuevo ahí, en imagen, cara, vóxel, cielo, profundidad (a 1e-3) y
+  pesos de las luces, con antorchas a los dos lados del borde.
+- Las claves de vóxel (`key`) cubren -2048..2047 por eje (`KEY_OFF`, `KEY_SPAN`; antes -1024..1023, que no llegaba a
+  una ventana de 13 trozos de 128).
+- Coste en la ventana de 8 x 13 (imagen 1026 x 1036): `shiftBaked` de un trozo, p50 9,7 ms y p95 17 ms en Bun sin freno.
+  A 6x no cabe en un cuadro: pendiente repartirlo (doble búfer copiado por bandas en varios cuadros, cambiando de golpe
+  al acabar), y la copia en la GPU sin volver a subir.
+- Aún no: `LiveWindow` y el banco de andar.
 
 ## Caminos por niveles
 
