@@ -340,6 +340,31 @@ describe('ventana viva', () => {
     expect(diff(win.baked, ref.baked)).toBe(0);
   });
 
+  it('girar con fundido: el rehorneado en la cola de la vista que se suelta acaba sin hacer nada (no la guarda en memoria)', () => {
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
+    const budget = stepBudget();
+    const frame = () => { win.update(TV / 2, TV / 2, budget); budget.run(); };
+    const settle = () => { frame(); for (let k = 0; k < 20000 && (win.busy || budget.pending || win.turning); k++) frame(); };
+    settle();
+    win.turnTo(1); settle();
+    // En el giro 1: una torre junto a MAIA, y su rehorneado queda en la cola sin correr
+    const old = win.baked;
+    for (let y = TV / 2 - 3; y < TV / 2 + 3; y++) for (let x = TV / 2 + 4; x < TV / 2 + 10; x++) {
+      const [lx, ly] = win.toLocal(x, y), h = win.store.height[ly * win.store.width + lx]!;
+      for (let z = h; z < h + 12; z++) win.store.set(lx, ly, z, 1);
+    }
+    win.view.frame();
+    const held = rebakeChangedJobs(old, win.view.bakeable().lights);
+    expect(held.length).toBeGreaterThan(0);
+    const before = old.rgba.slice();
+    win.turnTo(2);
+    for (let n = 0; win.turning?.phase === 'core' && n < 200000; n++) frame();
+    expect(win.quarter).toBe(2);
+    // Cada uno acaba a la primera, sin tocar la imagen de la vista soltada
+    for (const j of held) expect(j.run(Infinity)).toBe(true);
+    expect(Buffer.compare(Buffer.from(old.rgba.buffer), Buffer.from(before.buffer))).toBe(0);
+  });
+
   it('girar con fundido (turnTo): lo visible primero, el cambio, lo demás después; cambiar de destino durante el fundido; queda como hecha de nuevo en ese giro', () => {
     const opts = (center: Trozo) => ({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS });
     const win = new LiveWindow({ ...opts([0, 0]), viewport: [64, 40] });

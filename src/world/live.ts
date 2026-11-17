@@ -46,7 +46,7 @@ import { StaticVoxels, WorldState, CHUNK } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec } from './regiongen';
-import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
+import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, cancelRebakes, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
 export type Trozo = readonly [number, number];
@@ -282,7 +282,9 @@ export class LiveWindow {
       baked.version = V1;
       this.views.set(q, { view, baked });
       this.quarter = q;
-      if (!this.live.has(old)) this.views.delete(old);
+      // La vista que se suelta: su rehorneado en la cola (recuadros, cielo, luces) acaba sin hacer nada. Si no, se quedaba
+      // en la cola, que no lo alcanza con giros seguidos, y guardaba su imagen y su copia girada (~220 MB por giro con 11 x 13)
+      if (!this.live.has(old)) { const v = this.views.get(old); this.views.delete(old); if (v && v.baked !== baked) cancelRebakes(v.baked); }
       this.turnPrep = null;
       // Un corrimiento a medias: el de la vista que se soltó sobra, la nueva prepara el suyo, y los vóxeles del mundo los
       // corre el giro 0 si está (su horneado es del mundo) o, si no, aparte
