@@ -10,26 +10,34 @@ import file from '../models/corazones/corazones.voxset.json';
 const f = file as unknown as VoxsetFile;
 const set = BlockSet.fromJSON(f);
 const IDS = ['corazon_lleno', 'corazon_medio', 'corazon_vacio'];
+const HASH8 = ['be336bfa', 'fe8b899a', 'e52d4385'];
 const items = IDS.map((id) => ({ id, model: set.get(set.index(id)).model }));
 const OUT = [7, 7, 10];
-// Por icono: la silueta, y los píxeles rojos y del hueco oscuro de cada mitad (sin el contorno)
+// El contraste (WCAG) de un color contra el fondo oscuro de las capturas (40, 40, 48: el mundo de noche o en una cueva)
+const lin = (c: number) => { const s = c / 255; return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4; };
+const lumW = (r: number, g: number, b: number) => 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+const contrast = (r: number, g: number, b: number) => (lumW(r, g, b) + 0.05) / (lumW(40, 40, 48) + 0.05);
+// Por icono: la silueta, los píxeles rojos y del hueco de cada mitad (sin el contorno), los del brillo (rosa), y el
+// contraste más bajo del hueco contra el fondo oscuro
 function measure(scale: number) {
   const s = iconSheet(items, { yaw: 0, elevation: 20, cell: 8, scale, outline: 'both', outlineColor: '#07070a' });
-  const out: Record<string, { w: number; h: number; red: [number, number]; dark: [number, number]; hash: string }> = {};
+  const out: Record<string, { w: number; h: number; red: [number, number]; dark: [number, number]; shine: number; minContrast: number; hash: string }> = {};
   for (const id of IDS) {
     const r = s.icons[id]!;
     let x0 = Infinity, x1 = -1, y0 = Infinity, y1 = -1;
     const red: [number, number] = [0, 0], dark: [number, number] = [0, 0];
+    let shine = 0, minContrast = Infinity;
     for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) {
       const i = (y * s.width + x) * 4, R = s.rgba[i]!, G = s.rgba[i + 1]!, B = s.rgba[i + 2]!;
       if (!s.rgba[i + 3]) continue;
       x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
       if (R === OUT[0] && G === OUT[1] && B === OUT[2]) continue;
       const half = x - r.x < r.w / 2 ? 0 : 1;
-      if (R > 120 && R > 2 * G) red[half]++;
-      else if (0.299 * R + 0.587 * G + 0.114 * B < 45) dark[half]++;
+      if (R > 230 && G > 90) shine++;                                       // el brillo: rosa
+      else if (R > 120 && R > 2 * G) red[half]++;
+      else { dark[half]++; minContrast = Math.min(minContrast, contrast(R, G, B)); }   // el hueco
     }
-    out[id] = { w: x1 - x0 + 1, h: y1 - y0 + 1, red, dark, hash: r.hash };
+    out[id] = { w: x1 - x0 + 1, h: y1 - y0 + 1, red, dark, shine, minContrast, hash: r.hash };
   }
   return out;
 }
@@ -60,7 +68,13 @@ describe('ejemplo: corazones de vida', () => {
     expect(m.corazon_medio!.red[0]).toBeGreaterThan(0);                     // y rojo a la izquierda
     expect(m.corazon_vacio!.red).toEqual([0, 0]);                           // el vacío: sin rojo
     expect(m.corazon_vacio!.dark[0] + m.corazon_vacio!.dark[1]).toBeGreaterThanOrEqual(20);
-    expect(IDS.map((id) => m[id]!.hash)).toEqual(['0da012a5', '19e05d95', '600ec415']);
+    // El hueco se ve sobre un fondo oscuro (el HUD va sobre el mundo, de noche o en una cueva): 3:1 o más
+    expect(m.corazon_vacio!.minContrast).toBeGreaterThanOrEqual(3);
+    expect(m.corazon_medio!.minContrast).toBeGreaterThanOrEqual(3);
+    // El brillo del lleno: 2-3 píxeles, no una mancha
+    expect(m.corazon_lleno!.shine).toBeGreaterThanOrEqual(2);
+    expect(m.corazon_lleno!.shine).toBeLessThanOrEqual(3);
+    expect(IDS.map((id) => m[id]!.hash)).toEqual(HASH8);
   });
 
   it('a 16 px (scale 2): lo mismo, cada píxel doble', () => {

@@ -54,6 +54,14 @@ icono, cada píxel doble). Con el contorno, el ancho es el de la silueta más 2:
 `scripts/corazones.js` (lleno, medio y vacío), y su prueba `test/corazones.test.ts` mide en cada mitad del icono los
 píxeles rojos y los del hueco: el medio no tiene nada rojo a la derecha.
 
+Dos cosas que salieron al mirarlos (MAIA, a x6):
+- Lo que va en el HUD se ve sobre el mundo, que de noche o en una cueva es oscuro: un hueco oscuro con contorno oscuro
+  desaparece. El hueco es un gris-marrón medio, y la prueba mide su contraste (WCAG, luminancia relativa) contra un
+  fondo oscuro: 3:1 o más.
+- El render sube un tono lo que le da la luz (la parte de arriba a la izquierda de la losa): si ese tono de la rampa ya
+  es el del brillo, el brillo se come un tercio del icono. El tono de encima del de la cara tiene que seguir siendo del
+  mismo color, y el brillo, el siguiente, solo en dos vóxeles (2-3 píxeles a 8 px; la prueba los cuenta).
+
 ## Medirlo sin verlo
 
 Los agentes de la Alienware no pueden abrir imágenes, así que el icono se mide sobre sus píxeles. Antes de entregar:
