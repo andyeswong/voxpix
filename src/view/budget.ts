@@ -135,19 +135,25 @@ export class FrameBudget {
       break;
     }
     let i = from;
+    // (la prioridad del primero que podía correr en la fase: el escalón de lo que se adelanta por el plazo)
+    let tier: number | undefined | null = null;
     while (i < this.queue.length) {
       const job = this.queue[i]!;
       if (!inPhase(job)) break;
       if (job.waiting?.()) { i++; continue; }
+      if (tier === null) tier = job.priority;
       const t = this.now();
       if (ran > 0 && t >= deadline) {
-        // Lo que queda de la fase y podía correr (no espera) también se salta este cuadro: cuenta para la salvaguarda. Si
-        // no, detrás de algo que se come el plazo en cada llamada, el bucle no llegaba nunca y la racha se rompía: un
-        // recuadro cercano esperaba a que lo de delante acabara entero (1,1 s en el juego de FERN con el worker)
+        // Lo que queda de la fase y podía correr (no espera), del mismo escalón de prioridad que el primero que podía
+        // correr, también se salta este cuadro: cuenta para la salvaguarda. Si no, detrás de algo que se come el plazo en
+        // cada llamada, el bucle no llegaba nunca y la racha se rompía: un recuadro cercano esperaba a que lo de delante
+        // acabara entero (1,1 s en el juego de FERN con el worker, detrás de recuadros del worker sin prioridad como él).
+        // Solo su escalón: si contaban todos, a los 4 cuadros se adelantaban por delante de los de más prioridad, uno por
+        // cuadro, y la sección (prioridad 0) perdía su turno (204f7a6: la franja con huecos en 40-67 cuadros de ~300)
         for (let k = i; k < this.queue.length; k++) {
           const q = this.queue[k]!;
           if (!inPhase(q)) break;
-          if (!q.waiting?.()) this.noteSkip(q);
+          if (q.priority === tier && !q.waiting?.()) this.noteSkip(q);
         }
         break;
       }

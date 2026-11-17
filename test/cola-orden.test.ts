@@ -57,25 +57,34 @@ describe('cola: el orden de push', () => {
     expect(budget.pending).toBe(0);
   });
 
-  it('la salvaguarda contra el hambre cuenta también los cuadros en que el bucle para en el plazo antes de llegar: un recuadro detrás de algo que se come el plazo en cada llamada corre en pocos cuadros', () => {
-    // Un reloj que avanza lo que cuesta cada llamada; lo cercano (la sección) se lleva 7 de sus 8 ms, lo normal tiene 3
+  // Lo del juego de FERN con el worker: la fase normal tiene 3 ms; delante del recuadro cercano (sin prioridad), los recuadros
+  // del worker (sin prioridad, más viejos) que cada cuadro dejan de esperar (2 por cuadro) y se publican; cada uno se come
+  // el plazo
+  it('salvaguarda: un recuadro cercano sin prioridad detrás de recuadros del worker sin prioridad que se publican y se comen el plazo corre en pocos cuadros', () => {
     let t = 0;
     const budget = new FrameBudget(3, () => t, { ms: 8, below: 64 });
-    // (las clases con su estimación: un recuadro cuesta 9 ms; el cielo, 4 por llamada)
     for (let k = 0; k < 8; k++) { budget.push({ key: `rect:a${k}`, run: () => { t += 9; return true; } }); budget.run(); t += 16; }
-    for (let k = 0; k < 8; k++) { budget.push({ key: `sky:a${k}`, priority: 100, run: () => { t += 4; return true; } }); budget.run(); t += 16; }
     budget.push({ key: 'section', priority: 0, run: () => { t += 7; return false; } });
-    // Delante: un cielo con prioridad de 60 llamadas de 4 ms (más que el plazo de lo normal en cada una)
-    let left = 60;
-    budget.push({ key: 'sky:largo', priority: 100, run: () => { t += 4; return --left <= 0; } });
-    // Detrás, sin prioridad: el recuadro cercano
-    let ran = -1;
+    // 60 del worker, que van llegando de 2 en 2 por cuadro; publicar uno cuesta 4 ms
+    const ready = new Set<number>();
+    for (let k = 0; k < 60; k++) budget.push({ key: `rect:w${k}`, waiting: () => !ready.has(k), run: () => { t += 4; return true; } });
+    let ran = -1, f = 0, next = 0;
     budget.push({ key: 'rect:cerca', run: () => { t += 9; ran = f; return true; } });
-    let f = 0;
-    for (; f < 200 && ran < 0; f++) { budget.run(); t += 16; }
-    // (antes de contar esos cuadros, corría en el 60: cuando el cielo acababa)
+    for (; f < 200 && ran < 0; f++) { ready.add(next++); ready.add(next++); budget.run(); t += 16; }
     expect(ran).toBeGreaterThanOrEqual(0);
     expect(ran).toBeLessThanOrEqual(6);
-    expect(left).toBeGreaterThan(40);
+  });
+
+  it('salvaguarda: lo que el plazo deja sin mirar no pasa delante de uno con más prioridad (la sección, con prioridad 0, que se come el plazo de lo cercano, corre en cada cuadro)', () => {
+    let t = 0;
+    const budget = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    for (let k = 0; k < 8; k++) { budget.push({ key: `rect:a${k}`, priority: 20, run: () => { t += 3; return true; } }); budget.run(); t += 16; }
+    let sectionRuns = 0;
+    // (la sección se come todo el plazo de lo cercano: el bucle para ahí sin llegar a los de detrás)
+    budget.push({ key: 'section', priority: 0, run: () => { t += 8.5; sectionRuns++; return false; } });
+    // Cercanos de más prioridad numérica (detrás de la sección), que nunca acaban
+    for (let k = 0; k < 4; k++) budget.push({ key: `rect:n${k}`, priority: 20 + k, run: () => { t += 3; return false; } });
+    for (let f = 0; f < 60; f++) { budget.run(); t += 16; }
+    expect(sectionRuns).toBe(60);
   });
 });
