@@ -31,7 +31,7 @@ const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget } from '../src/view/budget';
 import { LiveWindow, type Trozo } from '../src/world/live';
-import { rebakeChangedJobs, SKY_REACH, type Baked } from '../src/world/bake';
+import { rebakeChangedJobs, pushPublished, publishedSince, SKY_REACH, type Baked } from '../src/world/bake';
 import { sectionAround, sectionLayer, sectionRows, SectionPainter, STRIP, secIdx, type SectionLayer } from '../src/world/section';
 
 const OPTS = { incline: 0.5, sky: true, outline: 'both' as const };
@@ -353,6 +353,37 @@ describe('ventana viva', () => {
     // En sus filas: ya no
     pub.rects.push({ serial: ++pub.serial, x0: cx, y0: fy1 - 2, x1: cx + 3, y1: fy1 });
     expect(painter.ready()).toBe(false);
+  });
+
+  it('capa de sección: una ráfaga de más de 32 recuadros lejanos (los que se guardan) no tira lo pintado; uno sobre ella olvidado entre ellos, sí', () => {
+    const make = () => {
+      const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
+      const painter = new SectionPainter(win.baked, { ahead: 0, behind: 0 });
+      const [lx, ly] = win.toLocal(TV / 2, TV / 2);
+      const cut = sectionAround(win.view.camera, lx, ly, win.store.height[ly * win.store.width + lx]! - 12, 24);
+      painter.set(cut, 0); painter.paintAll();
+      expect(painter.ready()).toBe(true);
+      return { b: win.baked, painter, cx: (win.baked.options.originX ?? 0) + cut.x0 + 8 };
+    };
+    // 40 recuadros lejos de la caja (otras columnas, a más de SKY_REACH + 1)
+    const burst = (b: Baked, far: number) => { for (let k = 0; k < 40; k++) pushPublished(b, { serial: ++b.published.serial, x0: far, y0: 0, x1: far + 3, y1: 20 }); };
+    { const { b, painter, cx } = make(); burst(b, cx + 60); expect(painter.ready()).toBe(true); }
+    // El primero de la ráfaga, sobre la caja: se olvida, pero su tanda lo une
+    { const { b, painter, cx } = make(); pushPublished(b, { serial: ++b.published.serial, x0: cx, y0: 0, x1: cx + 3, y1: b.height - 1 }); burst(b, cx + 60); expect(painter.ready()).toBe(false); }
+  });
+
+  it('publishedSince: lo guardado y las tandas olvidadas (unidas), null si llega más atrás de lo que se recuerda', () => {
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
+    const b = win.baked, s0 = b.published.serial;
+    for (let k = 0; k < 100; k++) pushPublished(b, { serial: ++b.published.serial, x0: k, y0: k, x1: k + 1, y1: k + 1 });
+    // Desde el principio: los 32 guardados (68..99) y las tandas que unen 0..67, sin dejar fuera ninguno
+    const all = publishedSince(b, s0)!;
+    for (let k = 0; k < 100; k++) expect(all.some((r) => r.x0 <= k && r.x1 >= k + 1 && r.y0 <= k && r.y1 >= k + 1)).toBe(true);
+    expect(publishedSince(b, s0 + 99)!.length).toBe(1);
+    expect(publishedSince(b, b.published.serial)).toEqual([]);
+    // Más de 16 tandas atrás ya no se sabe
+    for (let k = 0; k < 32 * 20; k++) pushPublished(b, { serial: ++b.published.serial, x0: 0, y0: 0, x1: 1, y1: 1 });
+    expect(publishedSince(b, s0)).toBeNull();
   });
 
   it('el salto (el objetivo aparece fuera de la ventana, a mitad de escribir): un solo cambio, onUnload solo de lo escrito, lo de alrededor antes que todo, e igual que hecha de nuevo ahí', () => {

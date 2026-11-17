@@ -11,7 +11,7 @@
 // sección llega sin sombras (como la de las dinámicas), y el tono (AO) de los vóxeles horneados que tocan la caja es
 // el de antes de cortar. El cielo de cueva y el contorno de la costura sí son los del corte.
 import { render, unkey, key, KEY_SPAN, KEY_OFF, decode, innerGapFor, rgbOf, materialsOf, type VoxelSource, DIR_VECTORS } from '../core';
-import { SKY_RAYS, SKY_REACH, unprojector, rowP, worldYAt, type Baked } from './bake';
+import { SKY_RAYS, SKY_REACH, unprojector, rowP, worldYAt, publishedSince, type Baked } from './bake';
 import type { FaceSet } from './state';
 import { frontFaces } from '../core';
 
@@ -439,9 +439,10 @@ export class SectionPainter {
     if (!st) return false;
     const pub = this.b.published;
     if (pub.serial === st.serial) return true;
-    const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
-    if (st.serial < oldest - 1) return false;                             // ya no se sabe qué cambió
-    for (const r of pub.rects) if (r.serial > st.serial && this.touches(r, i, st.rows[0], st.rows[1])) return false;
+    // (lo publicado desde entonces: lo que se guarda y, de lo olvidado, lo que une cada tanda; null, ya no se sabe)
+    const since = publishedSince(this.b, st.serial);
+    if (!since) return false;
+    for (const r of since) if (this.touches(r, i, st.rows[0], st.rows[1])) return false;
     st.serial = pub.serial;
     return true;
   }
@@ -606,13 +607,12 @@ export class SectionPainter {
   }
   // ¿Nada rehorneado cerca de la unidad i desde serial?
   private unchangedSince(i: number, serial: number): boolean {
-    const pub = this.b.published;
-    if (pub.serial === serial) return true;
-    const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
-    if (serial < oldest - 1) return false;
+    if (this.b.published.serial === serial) return true;
+    const since = publishedSince(this.b, serial);
+    if (!since) return false;
     const p = this.pending.get(i);
     const [ry0, ry1] = p ? [p.fy0, p.fy1] : [-Infinity, Infinity];
-    for (const r of pub.rects) if (r.serial > serial && this.touches(r, i, ry0, ry1)) return false;
+    for (const r of since) if (this.touches(r, i, ry0, ry1)) return false;
     return true;
   }
   // ¿Un recuadro publicado toca lo que pinta la unidad i en las filas ry0..ry1? Lo que pinta depende de sus columnas y, por

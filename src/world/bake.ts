@@ -48,7 +48,10 @@ export interface Baked {
   // Lo que se ha publicado desde el horneado (para quien guarda una copia, p. ej. las texturas de la GPU): cada
   // recuadro rehorneado con su número de serie. Solo se guardan los últimos; quien se quede atrás lo recarga todo.
   // (sky: true en lo que solo cambió el cielo, no la cara ni el vóxel de los píxeles)
-  published: { serial: number; rects: Array<{ serial: number; x0: number; y0: number; x1: number; y1: number; sky?: true }> };
+  published: { serial: number; rects: Array<{ serial: number; x0: number; y0: number; x1: number; y1: number; sky?: true }>;
+    // Lo que se olvidó de rects (más de PUBLISHED_KEEP): por tandas de PUBLISHED_KEEP, el recuadro que las une y sus
+    // seriales [from, to]; como mucho FORGOTTEN_KEEP tandas (publishedSince)
+    forgotten?: Array<{ from: number; to: number; x0: number; y0: number; x1: number; y1: number; sky: boolean }> };
   // Las fijas nuevas que se están horneando (rebakeJobs): no se vuelven a pedir, y si se quitan antes de acabar, su
   // trabajo no las publica
   pendingLights?: Set<LightId>;
@@ -848,10 +851,49 @@ function publishRect(b: Baked, r: ScreenRect, buf: RectBuffers, changed?: Uint8A
     b.rgba.set(buf.rgba.subarray(src * 4, (src + w) * 4), dst * 4);
   }
   const pub = b.published;
-  pub.rects.push({ serial: ++pub.serial, ...r });
-  if (pub.rects.length > PUBLISHED_KEEP) pub.rects.shift();
+  pushPublished(b, { serial: ++pub.serial, ...r });
 }
-const PUBLISHED_KEEP = 32;
+const PUBLISHED_KEEP = 32, FORGOTTEN_KEEP = 16;
+// Publica un recuadro; lo que sale de los PUBLISHED_KEEP se une en la tanda olvidada de ahora (cada tanda, como mucho
+// PUBLISHED_KEEP recuadros; como mucho FORGOTTEN_KEEP tandas)
+export function pushPublished(b: Baked, r: { serial: number; x0: number; y0: number; x1: number; y1: number; sky?: true }): void {
+  const pub = b.published;
+  pub.rects.push(r);
+  if (pub.rects.length <= PUBLISHED_KEEP) return;
+  const o = pub.rects.shift()!, f = (pub.forgotten ??= []);
+  const last = f[f.length - 1];
+  if (last && o.serial - last.from < PUBLISHED_KEEP) {
+    last.to = o.serial; last.x0 = Math.min(last.x0, o.x0); last.y0 = Math.min(last.y0, o.y0); last.x1 = Math.max(last.x1, o.x1); last.y1 = Math.max(last.y1, o.y1);
+    last.sky &&= !!o.sky;
+  } else {
+    f.push({ from: o.serial, to: o.serial, x0: o.x0, y0: o.y0, x1: o.x1, y1: o.y1, sky: !!o.sky });
+    if (f.length > FORGOTTEN_KEEP) f.shift();
+  }
+}
+// Lo publicado después de `serial`: los recuadros que se guardan y, de lo olvidado, el recuadro que une cada tanda (más
+// grande que lo que cambió, nunca más pequeño). null si ni eso llega tan atrás (no se sabe qué cambió). Lo de solo cielo va
+// con sky: true
+export function publishedSince(b: Baked, serial: number): Array<{ x0: number; y0: number; x1: number; y1: number; sky?: boolean }> | null {
+  const pub = b.published;
+  if (serial >= pub.serial) return [];
+  const out: Array<{ x0: number; y0: number; x1: number; y1: number; sky?: boolean }> = [];
+  // (sin recuadros guardados, como antes: lo de antes del último serial no se sabe, el corrimiento suma 2 sin recuadro)
+  const oldest = pub.rects.length ? pub.rects[0]!.serial : pub.serial;
+  if (serial < oldest - 1) {
+    // Lo que falta, (serial, oldest): tiene que estar entero en las tandas olvidadas, seguidas hasta oldest - 1
+    const f = pub.forgotten ?? [];
+    let need = oldest - 1;
+    for (let k = f.length - 1; k >= 0 && need > serial; k--) {
+      const t = f[k]!;
+      if (t.to < need) return null;                                       // un hueco: algo se perdió sin tanda
+      if (t.to > serial) out.push(t);
+      need = t.from - 1;
+    }
+    if (need > serial) return null;
+  }
+  for (const r of pub.rects) if (r.serial > serial) out.push(r);
+  return out;
+}
 
 // El recuadro de unos trozos pintado aparte (en un worker con su copia de la ventana) y
 // publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
@@ -1179,8 +1221,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
         const pub = b.published;
-        pub.rects.push({ serial: ++pub.serial, ...r, sky: true });
-        if (pub.rects.length > PUBLISHED_KEEP) pub.rects.shift();
+        pushPublished(b, { serial: ++pub.serial, ...r, sky: true });
         return true;
       },
     });
@@ -1549,6 +1590,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     shiftLights(b, DX, DY, rows);
     b.published.serial += 2;
     b.published.rects = gx1 >= 0 ? [{ serial: b.published.serial, x0: gx0, y0: gy0, x1: gx1, y1: gy1 }] : [];
+    b.published.forgotten = [];
     b.lastShift = { serial: b.published.serial, dx: DX, rows, dd: P.dd, dy: DY };
     b.shifts = (b.shifts ?? 0) + 1;
     b.shiftHold = false;
