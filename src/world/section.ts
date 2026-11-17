@@ -372,8 +372,24 @@ export class SectionPainter {
     const zMin = prev && prev.zMin >= cut.zMin - 1 && prev.zMin <= cut.zMin + 4 ? prev.zMin : cut.zMin;
     this.cut = { ...cut, x0, x1, y1, zMin };
     const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
-    if (track !== this.track) { this.track = track; this.clearAll(); }
+    if (track !== this.track) { if (this.track) this.resets++; this.track = track; this.clearAll(); }
   }
+  // (para medir) veces que lo pintado se tiró por moverse la caja en y o en z
+  resets = 0;
+  // (para medir) las franjas de la caja de ahora que no están al día: sin pintar nunca (o tiradas) y pintadas pero viejas
+  // (un rehorneado las tocó); y si la caja cambió de franja desde la llamada anterior
+  boxState(): { missing: number; stale: number; moved: boolean } {
+    const c = this.cut;
+    let missing = 0, stale = 0;
+    if (c) for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
+      if (i < 0 || i * UNIT >= this.b.source.width) continue;
+      if (!this.strips.has(i)) missing++; else if (!this.fresh(i)) stale++;
+    }
+    const moved = !!c && this.lastBoxX !== c.x0;
+    this.lastBoxX = c ? c.x0 : null;
+    return { missing, stale, moved };
+  }
+  private lastBoxX: number | null = null;
 
   private seenShifts = 0;
   private clearAll(): void { this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }

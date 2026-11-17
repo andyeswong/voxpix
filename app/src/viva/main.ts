@@ -111,7 +111,9 @@ void (async () => {
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
   const SECCION = Number(q.get('seccion') ?? 0);
-  let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0;
+  let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
+  const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
+  let secRun = 0;
   const worst: Array<Record<string, number | boolean> & { iv: number }> = [];
   // La cola por clase de trabajo (la key hasta ":" o "#", sin el g<q>/): ms y llamadas, envolviendo cada trabajo una vez
   const byKind = new Map<string, { ms: number; calls: number }>();
@@ -218,7 +220,23 @@ void (async () => {
       const pj = painter.job();
       if (pj) timed.push(pj);
       o.sectionLayer = painter.layer();
-      if (frames.length > 60) { secFrames++; if (!painter.ready()) secUnready++; }
+      if (frames.length > 60) {
+        secFrames++;
+        const st = painter.boxState();
+        if (st.moved) secMoves++;
+        const ready = painter.ready();
+        if (!ready) secRun++;
+        else if (secRun) { secRuns.push(secRun); secRun = 0; }
+        if (!ready) {
+          secUnready++;
+          // Por qué: la caja acaba de cambiar de franja (este cuadro o en los SEC_RECENT anteriores), franjas sin pintar,
+          // franjas viejas por un rehorneado, lo tirado por moverse en y o en z
+          if (st.moved) secMoved = SEC_RECENT;
+          const k = `${secMoved > 0 ? 'tras-avanzar' : 'quieta'}:${st.missing ? 'sin-pintar' : ''}${st.missing && st.stale ? '+' : ''}${st.stale ? 'viejas' : ''}`;
+          secWhy[k] = (secWhy[k] ?? 0) + 1;
+        }
+        if (secMoved > 0) secMoved--;
+      }
     }
     // ¿Algún trozo de lo que cae en la vista sin escribir? Las columnas de la vista (de 32 en 32) por las filas de trozos que
     // se ven: de 2 al sur a 4 al norte del de MAIA
@@ -287,7 +305,7 @@ void (async () => {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
       remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
-      viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0 } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
