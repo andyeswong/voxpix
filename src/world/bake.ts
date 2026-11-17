@@ -1148,6 +1148,15 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const w = r.x1 - r.x0 + 1, out = new Uint8Array(w * (r.y1 - r.y0 + 1)), st = {};
     pp.set(st, [p]);
     let row = r.y0;
+    // Lo que lee: el cielo de cada píxel mira SKY_REACH vóxeles a su alrededor, y los píxeles llegan a SKY_REACH + 1 del
+    // cambio. Si un trozo de ahí cambia mientras se calcula por filas, lo calculado antes ya no vale; y si el cielo del
+    // rehorneado de ese cambio acaba antes, este lo pisaría con lo de antes al publicar. Se apunta el reloj al empezar y,
+    // si algo de eso cambió, se vuelve a calcular (dos veces como mucho, como los recuadros)
+    const reads: number[] = [];
+    { const s = b.source, m2 = 2 * SKY_REACH + 2;
+      for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
+        for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
+    let skyStarted = -1, skyRestarts = 0;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
@@ -1155,8 +1164,13 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       run(deadline) {
         if (stale()) return true;
         if (b.shiftHold || waiting()) return false;
+        if (skyStarted < 0) skyStarted = b.source.clock;
         do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
         if (row <= r.y1) return false;
+        if (skyRestarts < 2) {
+          const moved = b.source.changedSince(skyStarted);
+          if (moved.length && reads.some((c) => moved.includes(c))) { skyRestarts++; row = r.y0; skyStarted = -1; return false; }
+        }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
         const pub = b.published;
