@@ -67,6 +67,26 @@ cola. `perf.ps1` solo recoge `window.__frames` y el HUD; `window.__seccion` lo r
         -Url 'http://<host>:5197/seccion.html?medir=4,16,24&n=360' -Out 'C:\...\seccion.png' < /dev/null
     # primera línea: "resultado: {json}"; con ?mundo=768, el mundo el doble de ancho (para 48 bloques)
 
+### Reglas de los bancos del navegador (lo que costó una noche de medidas, 2026-11-16/17)
+
+- **Edge arranca y espera 150 s antes de medir** (MAIA). Edge sin ventana deja de mandar un cuadro durante ~70 ms una
+  vez, a los ~2 minutos de arrancar, haga lo que haga la página: en la traza de V8 el hilo principal del render está
+  vacío en el hueco. Salía como "el cuadro de 345 / 68 / 72 ms" a los 113-116 s de cada tirada. No se descartan datos a
+  posteriori: se espera antes. `viva.ps1 -Calentar 150` (por defecto).
+- **Con `?hz=60`.** Edge sin ventana no tiene vsync y va a ~180 cuadros por segundo: la cola (~6 ms por cuadro)
+  avanza tres veces más por segundo que en el juego. Así se escondió que la ventana viva se quedaba atrás en la página
+  de FERN.
+- **Desde un worktree congelado, con vite reiniciado tras cada checkout** (`pkill -f "[v]ite app ..."` en una llamada
+  aparte), y un banco corto de humo (15-20 s) antes del largo. Tres bancos seguidos midieron módulos viejos (huecos del
+  65-74 % que desaparecieron al reiniciar vite) y otros se colgaron. `grep "page reload"` en el log de vite antes de
+  dar un número por bueno.
+- **Un Edge que se quede vivo tras un timeout ocupa el puerto**: matarlo (`Get-CimInstance Win32_Process` con su perfil)
+  antes del siguiente.
+- **Un error en un cuadro cierra el banco** con el error en `window.__viva` (si no, el que mide espera hasta su tope).
+- **Lo que no es de nuestro JS se ve por fases**: `viva.html` deja los 8 peores intervalos con lo de cada fase del
+  cuadro y lo que queda "fuera" (el navegador, el recolector, la GPU). Si "fuera" es casi todo, mirar la traza de V8
+  (`gctrace-viva.ps1`) antes de culpar al código.
+
 ## 3. El oráculo: la GPU contra la CPU
 
 `app/oraculo.html` (código: `app/src/oraculo/main.ts`) compone cada escena por la CPU (`frame2DParts` + `shadeLayers` +
