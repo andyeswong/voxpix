@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView, type Quarter } from '../src/world/view';
-import { bakeWorld } from '../src/world/bake';
+import { bakeWorld, rebakeChangedJobs } from '../src/world/bake';
 import { frame2D, sectionFor, type Frame2DOptions } from '../src/world/frame2d';
 import { sectionAround, sectionLayer, SectionPainter, STRIP, UNIT, secIdx, type SectionLayer } from '../src/world/section';
 import type { WorldLight } from '../src/world/build';
@@ -171,6 +171,49 @@ describe('corte al componer', () => {
     let open = 0;
     for (let q = 0; q < L2.w * L2.h; q++) if (L2.mask[q] === 1 && !L2.rgba[q * 4 + 3]) open++;
     expect(open).toBeGreaterThan(20);
+  });
+
+  // Lo de entrar bajo tierra en el juego: el corte de la vista (view-cut) escribe los vóxeles enseguida, la sección se pinta
+  // con ellos, y los recuadros del corte se publican cientos de ms después. Esos recuadros cambian el pick horneado de las
+  // franjas, pero no lo que pintan (o casi): antes las dejaban todas viejas, y la caja quedaba con huecos ~15 cuadros
+  it('los recuadros del corte de la vista, publicados después de pintar con él, no dejan viejas las franjas que no cambian (igual que pintadas de nuevo); un vóxel cambiado cerca, sí', () => {
+    const run = (q: Quarter, gx: number, edit: boolean) => {
+      const st = new WorldState(build(null), [], null), view = new WorldView(st, q, { cut: true });
+      const b = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, outline: 'both', sky: true });
+      const gy = 60, [vx, vy] = view.camera.cellToView(gx, gy), cut = sectionAround(view.camera, gx, gy, TZ0, 16);
+      view.setCut({ x0: vx - 16, y0: vy - 16, x1: vx + 16, y1: vy + 16, zTop: TZ1 + 1 });
+      const p = new SectionPainter(b, { ahead: 0, behind: 0 });
+      p.set(cut, 0); p.paintAll();
+      expect(p.ready()).toBe(true);
+      // (un vóxel picado junto al túnel, en la copia de la vista, antes de rehornear)
+      if (edit) { const [ex, ey] = view.camera.cellToView(gx, 50); expect(view.static.get(ex, ey, TZ0 + 2)).not.toBe(0); view.static.set(ex, ey, TZ0 + 2, 0); }
+      for (const j of rebakeChangedJobs(b, [])) while (!j.run(Infinity));
+      const ref = new SectionPainter(b, { ahead: 0, behind: 0 });
+      ref.set(cut, 0); ref.paintAll();
+      return { p, L: p.layer(), R: ref.layer()! };
+    };
+    for (const gx of [30, 45, 90]) {
+      const { p, L, R } = run(0, gx, false);
+      expect(p.revalidated).toBe(4);
+      expect(p.ready()).toBe(true);
+      // Igual que pintada de nuevo, píxel a píxel
+      expect(L).not.toBeNull();
+      expect([L!.x, L!.y, L!.w, L!.h, L!.count]).toEqual([R.x, R.y, R.w, R.h, R.count]);
+      let diff = 0;
+      for (let j = 0; j < R.h; j++) for (let x = R.x; x < R.x + R.w; x++) {
+        const a = secIdx(L!, x, j), r = secIdx(R, x, j);
+        if (L!.mask[a] !== R.mask[r]) { diff++; continue; }
+        if (!R.mask[r]) continue;
+        let d = L!.sky![a] !== R.sky![r] || !(L!.depth[a] === R.depth[r]) || !(L!.pick[a] === R.pick[r] || (L!.pick[a] !== L!.pick[a] && R.pick[r] !== R.pick[r]));
+        for (let c = 0; c < 4 && !d; c++) d = L!.rgba[a * 4 + c] !== R.rgba[r * 4 + c];
+        if (d) diff++;
+      }
+      expect(diff).toBe(0);
+    }
+    // Con un vóxel cambiado en la caja: las franjas de cerca, viejas
+    const { p } = run(0, 45, true);
+    expect(p.ready()).toBe(false);
+    expect(p.boxState().stale).toBeGreaterThan(0);
   });
 
   it('sin sección, el cuadro de siempre', () => {

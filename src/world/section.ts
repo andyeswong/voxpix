@@ -12,7 +12,7 @@
 // el de antes de cortar. El cielo de cueva y el contorno de la costura sí son los del corte.
 import { render, unkey, key, KEY_SPAN, KEY_OFF, decode, innerGapFor, rgbOf, materialsOf, type VoxelSource, DIR_VECTORS } from '../core';
 import { SKY_RAYS, SKY_REACH, unprojector, rowP, worldYAt, publishedSince, type Baked } from './bake';
-import type { FaceSet } from './state';
+import { CHUNK, type FaceSet } from './state';
 import { frontFaces } from '../core';
 
 export interface SectionCut {
@@ -323,9 +323,14 @@ function copyCols(from: SectionLayer, to: Raw, gx0: number, gx1: number): void {
   }
 }
 
+// Una franja pintada (una unidad de UNIT columnas). rows: las filas de la imagen que pintó, fy0..fy1 de sectionRows (lo
+// que la invalida tiene que caer cerca de ellas). clock y snap: la versión de los vóxeles y el pick horneado de su
+// recuadro con que se pintó (revalidate); sin ellos (corrida con la imagen), un recuadro que la toca la deja vieja
+interface Strip { layer: SectionLayer | null; serial: number; id: number; rows: readonly [number, number]; clock?: number; snap?: Float64Array }
+
 export class SectionPainter {
-  // (rows: las filas de la imagen que pintó, fy0..fy1 de sectionRows: lo que la invalida tiene que caer cerca de ellas)
-  private strips = new Map<number, { layer: SectionLayer | null; serial: number; id: number; rows: readonly [number, number] }>();
+  // (clock y snap: la versión de los vóxeles y el pick horneado de su recuadro con que se pintó, para revalidate)
+  private strips = new Map<number, Strip>();
   private track = '';
   private cut: SectionCut | null = null;
   private dir = 0;
@@ -341,6 +346,9 @@ export class SectionPainter {
   behind: number;
   // Franjas pintadas (para medir)
   painted = 0;
+  // (para medir) franjas que un recuadro publicado no dejó viejas porque no cambió nada de lo que pintan (revalidate)
+  revalidated = 0;
+  private ids = 0;
 
   constructor(readonly b: Baked, opts: { ahead?: number; behind?: number } = {}) {
     this.ahead = opts.ahead ?? 4; this.behind = opts.behind ?? 1;
@@ -445,8 +453,68 @@ export class SectionPainter {
     // (lo que solo cambió el cielo del horneado, sky: true, no la deja vieja: la franja hace su cielo con los vóxeles, cutSky,
     // y no lee b.sky. Si no, el cielo de cueva que acaba tras el último recuadro de un corte dejaba viejas las franjas que
     // acababan de repintarse, y la caja quedaba con huecos ~10 cuadros)
-    for (const r of since) if (!r.sky && this.touches(r, i, st.rows[0], st.rows[1])) return false;
+    let hit = false;
+    for (const r of since) if (!r.sky && this.touches(r, i, st.rows[0], st.rows[1])) { hit = true; break; }
+    if (hit && !this.revalidate(i, st)) return false;
     st.serial = pub.serial;
+    return true;
+  }
+
+  // Un recuadro publicado tocó la franja i: ¿cambió algo de lo que pinta? Lo que pinta sale de los vóxeles de cerca (de
+  // la fuente) y, de la imagen horneada, del pick de su recuadro: qué píxeles se sustituyen (su vóxel en la caja), el borde
+  // (los de fuera junto a ellos, con su vóxel) y la costura (la profundidad de los de fuera junto a lo pintado). Si los
+  // vóxeles de cerca no cambiaron desde que se pintó, se rehace la máscara con el pick de ahora y vale si: lo sustituido ya
+  // lo estaba (de lo demás no se pintó la caja); cada borde es un píxel que la franja ya pintó con su vóxel de ahora (el
+  // render de la sección pinta todo el recuadro con el mundo cortado: sin la caja delante se ve lo mismo); y cada uno de
+  // fuera junto a lo pintado tiene el vóxel de antes, o el que pintó la franja. Entonces la franja queda como pintada de
+  // nuevo (con la máscara de ahora). Si no, vieja. Es lo de entrar bajo tierra: el corte de la vista (view-cut) escribe los
+  // vóxeles enseguida, la franja se pinta con ellos, y los recuadros del corte se publican cientos de ms después y la
+  // dejaban vieja sin cambiar lo que pinta
+  private revalidate(i: number, st: Strip): boolean {
+    const b = this.b, s = b.source, c = this.cut, snap = st.snap;
+    if (!snap || st.clock === undefined || !c) return false;
+    // (los vóxeles que lee: su render, el contorno y el borde a 2 columnas, el cielo a SKY_REACH + 1; en y, todos)
+    const m = SKY_REACH + 3, vx0 = i * UNIT - m, vx1 = i * UNIT + UNIT - 1 + m;
+    for (const ch of s.changedSince(st.clock)) { const cx = (ch % s.cols) * CHUNK; if (cx + CHUNK - 1 >= vx0 && cx <= vx1) return false; }
+    const ox = b.options.originX ?? 0, rx = Math.max(0, ox + i * UNIT - 1), rx1 = Math.min(b.width - 1, ox + i * UNIT + UNIT), w = rx1 - rx + 1;
+    const [fy0, fy1] = st.rows, h = fy1 - fy0 + 1, L = st.layer;
+    if (snap.length !== w * h || (L && (L.x !== rx || L.y !== fy0 || L.w !== w || L.h !== h))) return false;
+    const Y0 = Math.max(0, c.y0), Y1 = Math.min(s.depth - 1, c.y1), zMin = c.zMin, n = w * h;
+    // La máscara con el pick de ahora (como sectionLayer: 1 en la caja; 2, fuera junto a uno de la caja)
+    const now = new Float64Array(n), nm = new Uint8Array(n);
+    for (let j = 0; j < h; j++) now.set(b.pick.subarray((fy0 + j) * b.width + rx, (fy0 + j) * b.width + rx + w), j * w);
+    for (let q = 0; q < n; q++) { const k = now[q]!; if (k !== k) continue; const [, y, z] = unkey(k); if (y >= Y0 && y <= Y1 && z >= zMin) nm[q] = 1; }
+    const near = (mk: Uint8Array, q: number, v: (m: number) => boolean) => {
+      const j = Math.floor(q / w), k = q - j * w;
+      return (k > 0 && v(mk[q - 1]!)) || (k < w - 1 && v(mk[q + 1]!)) || (j > 0 && v(mk[q - w]!)) || (j < h - 1 && v(mk[q + w]!));
+    };
+    for (let q = 0; q < n; q++) if (!nm[q] && now[q] === now[q] && near(nm, q, (m) => m === 1)) nm[q] = 2;
+    const M = L ? L.mask : new Uint8Array(n);
+    let same = true;
+    for (let q = 0; q < n; q++) {
+      const nk = now[q]!, changed = !(nk === snap[q] || (nk !== nk && snap[q] !== snap[q]));
+      if (nm[q] !== M[q]) same = false;
+      // Sustituido: tiene que estarlo ya (lo de la caja no se pintó en los que no lo estaban)
+      if (nm[q] === 1) { if (M[q] !== 1) return false; continue; }
+      // Borde: lo pintado ahí tiene que ser su vóxel de ahora
+      if (nm[q] === 2) { if (M[q] === 0 || (changed || M[q] === 1) && L!.pick[q] !== nk) return false; continue; }
+      // Fuera junto a lo pintado (la costura mira su profundidad): el mismo vóxel que antes, o el que pintó la franja
+      if (near(nm, q, (m) => m !== 0) && (M[q] !== 0 ? L!.pick[q] !== nk : changed)) return false;
+    }
+    st.snap = now;
+    if (same) return true;
+    const mask = nm, rgba = L!.rgba.slice(), depth = L!.depth.slice(), face = L!.face.slice(), pick = L!.pick.slice();
+    const sky = L!.sky ? L!.sky.slice() : null, wy = L!.wy.slice(), back = L!.back.slice();
+    let count = 0;
+    for (let q = 0; q < n; q++) {
+      if (mask[q] === 1) count++;
+      if (mask[q] || !M[q]) continue;
+      rgba.fill(0, q * 4, q * 4 + 4); depth[q] = Infinity; face[q] = -1; pick[q] = NaN; wy[q] = 0; back[q] = 0;
+      if (sky) sky[q] = 0;
+    }
+    st.layer = count ? { x: L!.x, y: L!.y, w, h, mask, rgba, depth, face, pick, sky, wy, back, count } : null;
+    st.id = ++this.ids;
+    this.revalidated++;
     return true;
   }
 
@@ -593,21 +661,27 @@ export class SectionPainter {
 
   // Un paso: la banda siguiente de filas de la unidad i (BAND filas). Con la última, la unidad queda pintada. Las bandas
   // de una unidad se pintan con la misma imagen: si se rehornea algo cerca a medias, se empieza de nuevo
-  private pending = new Map<number, { serial: number; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
+  private pending = new Map<number, { serial: number; clock: number; snap: Float64Array; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
   private paintStep(i: number): void {
     const c = this.cut!, b = this.b;
     const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9 };
     const [fy0, fy1] = sectionRows(b, wide);
     let p = this.pending.get(i);
     if (p && (!this.unchangedSince(i, p.serial) || p.fy0 !== fy0 || p.fy1 !== fy1)) p = undefined;
-    if (!p) { p = { serial: b.published.serial, next: fy0, fy0, fy1, parts: [] }; this.pending.set(i, p); }
+    if (!p) {
+      // (el pick horneado de su recuadro, con el que se pinta: revalidate lo compara con el de después)
+      const ox = b.options.originX ?? 0, rx = Math.max(0, ox + i * UNIT - 1), rx1 = Math.min(b.width - 1, ox + i * UNIT + UNIT), w = rx1 - rx + 1;
+      const snap = new Float64Array(w * (fy1 - fy0 + 1));
+      for (let j = fy0; j <= fy1; j++) snap.set(b.pick.subarray(j * b.width + rx, j * b.width + rx1 + 1), (j - fy0) * w);
+      p = { serial: b.published.serial, clock: b.source.clock, snap, next: fy0, fy0, fy1, parts: [] }; this.pending.set(i, p);
+    }
     // Con una columna de margen a cada lado (el contorno, el borde y la costura miran a los vecinos); se copian sus UNIT
     const y1 = Math.min(fy1, p.next + BAND - 1);
     p.parts.push(sectionLayer(b, wide, { x0: i * UNIT - 1, x1: i * UNIT + UNIT }, { y0: p.next, y1 }));
     p.next = y1 + 1;
     if (p.next <= fy1) return;
     this.pending.delete(i);
-    this.strips.set(i, { layer: joinRows(p.parts, fy0, fy1), serial: p.serial, id: this.painted + 1, rows: [fy0, fy1] });
+    this.strips.set(i, { layer: joinRows(p.parts, fy0, fy1), serial: p.serial, id: ++this.ids, rows: [fy0, fy1], clock: p.clock, snap: p.snap });
     this.painted++;
   }
   // ¿Nada rehorneado cerca de la unidad i desde serial?

@@ -60,6 +60,13 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
   return n;
 };
 
+// Un recuadro publicado que cambia de verdad la imagen: sus píxeles pierden el vóxel (pick NaN). Uno que no cambia nada
+// de lo que pinta una franja no la deja vieja (SectionPainter.revalidate)
+const changed = <R extends { x0: number; y0: number; x1: number; y1: number }>(b: Baked, r: R): R => {
+  for (let y = Math.max(0, r.y0); y <= Math.min(b.height - 1, r.y1); y++) for (let x = Math.max(0, r.x0); x <= Math.min(b.width - 1, r.x1); x++) b.pick[y * b.width + x] = NaN;
+  return r;
+};
+
 describe('ventana viva', () => {
   it('andando: se corre por la cola, avisa al juego, y queda como hecha de nuevo; las entidades siguen en su sitio del mundo', () => {
     const log = { unload: [] as string[], load: [] as string[] };
@@ -344,14 +351,14 @@ describe('ventana viva', () => {
     painter.set(cut, 0);
     painter.paintAll();
     expect(painter.ready()).toBe(true);
-    const [, fy1] = sectionRows(b, { ...cut, x0: -1e9, x1: 1e9 }), a = b.options.oblique?.y ?? 1, mr = Math.ceil((a + 1) * (SKY_REACH + 1)) + 1;
+    const [fy0, fy1] = sectionRows(b, { ...cut, x0: -1e9, x1: 1e9 }), a = b.options.oblique?.y ?? 1, mr = Math.ceil((a + 1) * (SKY_REACH + 1)) + 1;
     expect(fy1 + mr + 4).toBeLessThan(b.height - 1);
     const pub = b.published, cx = (b.options.originX ?? 0) + cut.x0 + 8;
     // Al sur, en las mismas columnas y por debajo de sus filas (más el margen del cielo): sigue al día
-    pub.rects.push({ serial: ++pub.serial, x0: cx, y0: fy1 + mr + 1, x1: cx + 3, y1: b.height - 1 });
+    pub.rects.push(changed(b, { serial: ++pub.serial, x0: cx, y0: fy1 + mr + 1, x1: cx + 3, y1: b.height - 1 }));
     expect(painter.ready()).toBe(true);
-    // En sus filas: ya no
-    pub.rects.push({ serial: ++pub.serial, x0: cx, y0: fy1 - 2, x1: cx + 3, y1: fy1 });
+    // En sus filas (y cambiando la imagen): ya no
+    pub.rects.push(changed(b, { serial: ++pub.serial, x0: cx, y0: fy0, x1: cx + 3, y1: fy1 }));
     expect(painter.ready()).toBe(false);
   });
 
@@ -369,7 +376,7 @@ describe('ventana viva', () => {
     const burst = (b: Baked, far: number) => { for (let k = 0; k < PUBLISHED_KEEP + 40; k++) pushPublished(b, { serial: ++b.published.serial, x0: far, y0: 0, x1: far + 3, y1: 20 }); };
     { const { b, painter, cx } = make(); burst(b, cx + 60); expect(painter.ready()).toBe(true); }
     // El primero de la ráfaga, sobre la caja: se olvida, pero su tanda lo une
-    { const { b, painter, cx } = make(); pushPublished(b, { serial: ++b.published.serial, x0: cx, y0: 0, x1: cx + 3, y1: b.height - 1 }); burst(b, cx + 60); expect(painter.ready()).toBe(false); }
+    { const { b, painter, cx } = make(); pushPublished(b, changed(b, { serial: ++b.published.serial, x0: cx, y0: 0, x1: cx + 3, y1: b.height - 1 })); burst(b, cx + 60); expect(painter.ready()).toBe(false); }
   });
 
   it('capa de sección: lo que solo cambió el cielo (sky: true) no deja viejas las franjas; sobre la columna de fuera de un borde, sí recompone', () => {
@@ -393,7 +400,7 @@ describe('ventana viva', () => {
     expect(painter.ready()).toBe(true);
     expect(painter.layer()).not.toBe(L0);
     // Un recuadro de verdad (caras y vóxeles) en las mismas columnas sí las deja viejas
-    pushPublished(b, { serial: ++b.published.serial, x0: ox + box.x0 + 2, y0: 0, x1: ox + box.x0 + 5, y1: b.height - 1 });
+    pushPublished(b, changed(b, { serial: ++b.published.serial, x0: ox + box.x0 + 2, y0: 0, x1: ox + box.x0 + 5, y1: b.height - 1 }));
     expect(painter.ready()).toBe(false);
   });
 
