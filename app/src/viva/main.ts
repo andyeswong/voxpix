@@ -161,6 +161,10 @@ void (async () => {
   const HEAPGIRO = q.get('heapgiro') === '1', turnHeap: number[] = [];
   const HEAPCADA = Number(q.get('heapcada') ?? 0), heapEvery: Array<{ s: number; mb: number }> = [];
   let nextHeapGc = HEAPCADA * 1000;
+  // ?entrar: los 4 s antes de entrar y los 4 s tras entrar, cuadro a cuadro (el intervalo, sus fases, lo de fuera de
+  // nuestro JS, los recuadros publicados en el cuadro y sus píxeles, y si el montón cayó: el recolector)
+  const ventanas: { antes: Array<Record<string, number>>; tras: Array<Record<string, number>> } = { antes: [], tras: [] };
+  let prevExtra: Record<string, number> | null = null, pubSeen = -1, pubOf: unknown = null, heapSeen = 0;
   const mem = () => (performance as unknown as { memory?: { usedJSHeapSize: number } }).memory?.usedJSHeapSize ?? 0;
 
   // Un error en un cuadro para el banco y queda en window.__viva (si no, el que mide espera hasta su tope)
@@ -369,6 +373,23 @@ void (async () => {
     const t6 = performance.now();
     if (frameNo % 1200 === 600 && shots.length < 6) shots.push(canvas.toDataURL('image/png'));
     const t7 = performance.now();
+    if (ENTRAR && prevPhases && prevExtra) {
+      const rel = entrada.a === undefined ? now - start - ENTRAR * 1000 : now - entrada.a;
+      const w = rel >= -4000 && rel < 0 ? 'antes' : rel >= 0 && rel < 4000 ? 'tras' : null;
+      const iv = frames[frames.length - 1]!;
+      if (w) ventanas[w].push({ iv: +iv.toFixed(1), ...prevPhases, paso: +prevPaso.toFixed(1), fuera: +(iv - prevPaso).toFixed(1), ...prevExtra });
+    }
+    {
+      const pb = win.baked.published;
+      if (pubOf !== win.baked) { pubOf = win.baked; pubSeen = pb.serial; }
+      let rects = 0, px = 0;
+      for (const r of pb.rects) if (r.serial > pubSeen) { rects++; px += (r.x1 - r.x0 + 1) * (r.y1 - r.y0 + 1); }
+      const sky = pb.rects.filter((r) => r.serial > pubSeen && r.sky).length;
+      pubSeen = pb.serial;
+      const m = mem(), gc = heapSeen - m > 2e6 ? 1 : 0;
+      heapSeen = m;
+      prevExtra = { rects, sky, kpx: +(px / 1000).toFixed(1), gc, heapMB: +(m / 1e6).toFixed(1) };
+    }
     prevPhases = { update: +(t1 - t0).toFixed(1), caminos: +(b0 - t1).toFixed(1), cola: +(t2 - b0).toFixed(1), mover: +(t3 - t2).toFixed(1), resto: +(t4 - t3).toFixed(1), componer: +(t5 - t4).toFixed(1), captura: +(t7 - t6).toFixed(1) };
     prevShift = shifts !== shiftsSeen; shiftsSeen = shifts;
     hud.textContent = `ventana viva · ${(now - start) / 1000 | 0} s · giro ${win.quarter}${win.turning ? ' (' + win.turning.phase + ')' : ''} · trozo ${win.trozoOf(x, Y).join(',')} · corrimientos ${shifts} · huecos ${holes}`;
@@ -396,6 +417,20 @@ void (async () => {
       turns, turnMs: { p50: pq(turns.map((t) => t.ms), 0.5), max: pq(turns.map((t) => t.ms), 1) }, turnOver25: turns.reduce((n, t) => n + t.over25, 0), turnCpuMs: win.stats.turnMs.map((v) => +v.toFixed(0)), quarter: win.quarter,
       heapMB: { min1: +(avg(heap.slice(55, 65)) / 1e6).toFixed(1), min5: +(avg(heap.slice(295, 305)) / 1e6).toFixed(1), max: +(Math.max(...heap) / 1e6).toFixed(1) },
       shots,
+      ventanas: ENTRAR ? Object.fromEntries((['antes', 'tras'] as const).map((w) => {
+        const a = ventanas[w];
+        if (!a.length) return [w, null];
+        const keys = Object.keys(a[0]!), stat: Record<string, unknown> = { n: a.length, over25: a.filter((r) => r.iv! > 25).length };
+        for (const k of keys) {
+          const v = a.map((r) => r[k] ?? 0);
+          stat[k] = ['rects', 'sky', 'kpx', 'gc'].includes(k) ? +v.reduce((u, z) => u + z, 0).toFixed(1) : k === 'heapMB' ? [Math.min(...v), Math.max(...v)] : { m: +avg(v).toFixed(2), p90: pq(v, 0.9), max: pq(v, 1) };
+        }
+        // (los cuadros de más de 25 ms, por la fase que más pesó)
+        const by: Record<string, number> = {};
+        for (const r of a) if (r.iv! > 25) { const top = ['update', 'cola', 'resto', 'componer', 'fuera', 'captura'].map((k) => [k, r[k] ?? 0] as const).sort((u, v) => v[1] - u[1])[0]![0]; by[top] = (by[top] ?? 0) + 1; }
+        stat.over25By = by;
+        return [w, stat];
+      })) : null,
     };
   }
   function state_move(lx: number, ly: number): void {
