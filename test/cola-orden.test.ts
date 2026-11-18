@@ -108,4 +108,20 @@ describe('cola: el orden de push', () => {
     // (8 llamadas cada uno, una por cuadro: el primero en el cuadro 7, el último hacia el 31)
     expect(done[0]![1]).toBeLessThanOrEqual(8);
   });
+  // Lo que vio FERN en el juego al entrar bajo tierra: la sección pinta por pasos hasta el plazo, así que lo que gastan sus
+  // llamadas es la fase entera (~8 ms). Cuando la salvaguarda adelantaba un recuadro cercano (1,5 ms), la sección ya "no
+  // cabía" con 6,5 ms libres y perdía ese cuadro: 7-12 cuadros por entrada. Con unit (lo que cuesta un paso), cabe
+  it('unit: un trabajo que llena el plazo por pasos sigue cabiendo detrás de uno adelantado (la sección tras los recuadros cercanos)', () => {
+    let t = 0;
+    const budget = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    let secRuns = 0, secFrames = 0;
+    const section: ViewJob = { key: 'section', priority: 0, unit: () => 0.7, run: (d: number) => { let did = false; while (t + 0.7 <= d) { t += 0.7; did = true; } if (did) secRuns++; return false; } };
+    let rectCalls = 0;
+    for (let k = 0; k < 4; k++) { let left = 30; budget.push({ key: `rect:n${k}`, priority: 2 + k * 16, run: () => { t += 1.5; rectCalls++; return --left <= 0; } }); }
+    for (let f = 0; f < 60; f++) { const before = secRuns; budget.push(section); budget.run(); if (secRuns > before) secFrames++; t += 16; }
+    // (sin unit: 48 de 60)
+    expect(secFrames).toBe(60);
+    // (y los recuadros siguen avanzando, adelantados por la salvaguarda)
+    expect(rectCalls).toBeGreaterThan(0);
+  });
 });

@@ -921,7 +921,7 @@ export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, 
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
 // al viejo (lo hace la cola).
-export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean }
+export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number }
 
 // Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
 // contorno no cambia nada); 'auto', solo con contorno

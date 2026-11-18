@@ -465,7 +465,7 @@ export class SectionPainter {
   // un paso solo empieza si cabe (lo que suelen costar los pasos): puede no dar ninguno si no hay margen (devuelve false
   // sin gastar tiempo, como un trabajo que espera). Mientras falta algo de la caja va con priority 0 (lo cercano de la
   // cola); si solo queda lo de delante (y el cielo de los bordes de la caja siguiente), sin prioridad: con lo que sobre
-  job(): { key: string; priority?: number; run(deadline: number): boolean } | null {
+  job(): { key: string; priority?: number; run(deadline: number): boolean; unit(): number } | null {
     const w = this.wanted();
     if (!w.length && !this.nextEdge()) return null;
     // Sin prioridad solo con la caja hecha y AHEAD_MIN franjas pintadas por delante (si no, al andar se ven huecos)
@@ -492,7 +492,9 @@ export class SectionPainter {
         this.paintStep(i); this.noteStep(performance.now() - now);
       }
     };
-    return boxDone ? { key: 'section', run } : { key: 'section', priority: 0, run };
+    // (unit: lo que cuesta un paso; la cola mira eso para saber si cabe, no lo que gastó la llamada, que llena el plazo)
+    const unit = () => this.stepEstimate();
+    return boxDone ? { key: 'section', run, unit } : { key: 'section', priority: 0, run, unit };
   }
 
   // Las unidades seguidas ya pintadas por delante de la caja (en la dirección en que anda)

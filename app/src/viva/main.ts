@@ -143,7 +143,7 @@ void (async () => {
     let w = wrapped.get(j);
     if (!w) {
       const kind = kindOf(j.key);
-      w = { key: j.key, ...(j.priority !== undefined ? { priority: j.priority } : {}), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), run(d: number) { const a = performance.now(), ok = j.run(d), e = byKind.get(kind) ?? { ms: 0, calls: 0 }; e.ms += performance.now() - a; e.calls++; byKind.set(kind, e); return ok; } };
+      w = { key: j.key, ...(j.priority !== undefined ? { priority: j.priority } : {}), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), ...(j.unit ? { unit: () => j.unit!() } : {}), run(d: number) { const a = performance.now(), ok = j.run(d), e = byKind.get(kind) ?? { ms: 0, calls: 0 }; e.ms += performance.now() - a; e.calls++; byKind.set(kind, e); return ok; } };
       wrapped.set(j, w);
     }
     budget.push(w);

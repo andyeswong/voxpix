@@ -16,6 +16,10 @@ export interface ViewJob {
   // run devolviera false sin gastar, pero sin la llamada (con miles esperando al worker, eran ~10 000 llamadas por
   // segundo)
   waiting?(): boolean;
+  // Opcional: lo que cuesta su paso más pequeño, para un trabajo que avanza por pasos mirando el plazo y llena lo que le
+  // den (la sección). La cola decide si cabe con esto y no con lo que suelen gastar sus llamadas: lo que gasta uno así es
+  // el sitio que tuvo (la fase entera), y con cualquier cosa delante no cabía nunca
+  unit?(): number;
 }
 
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
@@ -167,7 +171,8 @@ export class FrameBudget {
       // (si no, empezaría sin sitio y se pasaría una unidad entera). Si no cabe se salta, y se cuentan los cuadros
       // seguidos que lleva saltado
       const cost = this.costs.get(this.costKey(job));
-      if (ran > 0 && (!cost || t + cost.p95 > deadline)) {
+      const need = job.unit ? job.unit() : cost?.p95;
+      if (ran > 0 && (need === undefined || t + need > deadline)) {
         this.noteSkip(job);
         i++;
         continue;
