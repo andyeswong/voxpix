@@ -329,7 +329,7 @@ export class SectionPainter {
   private track = '';
   private cut: SectionCut | null = null;
   private dir = 0;
-  private composed: { key: string; layer: SectionLayer | null } | null = null;
+  private composed: { key: string; layer: SectionLayer | null; serial: number } | null = null;
   // Lo copiado de las unidades para la caja de ahora, sin los arreglos de los bordes (se lleva al mover la caja)
   private raw: Raw | null = null;
   private last: SectionLayer | null = null;      // la última capa compuesta (la base de la siguiente)
@@ -442,7 +442,10 @@ export class SectionPainter {
     // (lo publicado desde entonces: lo que se guarda y, de lo olvidado, lo que une cada tanda; null, ya no se sabe)
     const since = publishedSince(this.b, st.serial);
     if (!since) return false;
-    for (const r of since) if (this.touches(r, i, st.rows[0], st.rows[1])) return false;
+    // (lo que solo cambió el cielo del horneado, sky: true, no la deja vieja: la franja hace su cielo con los vóxeles, cutSky,
+    // y no lee b.sky. Si no, el cielo de cueva que acaba tras el último recuadro de un corte dejaba viejas las franjas que
+    // acababan de repintarse, y la caja quedaba con huecos ~10 cuadros)
+    for (const r of since) if (!r.sky && this.touches(r, i, st.rows[0], st.rows[1])) return false;
     st.serial = pub.serial;
     return true;
   }
@@ -614,7 +617,7 @@ export class SectionPainter {
     if (!since) return false;
     const p = this.pending.get(i);
     const [ry0, ry1] = p ? [p.fy0, p.fy1] : [-Infinity, Infinity];
-    for (const r of since) if (this.touches(r, i, ry0, ry1)) return false;
+    for (const r of since) if (!r.sky && this.touches(r, i, ry0, ry1)) return false;
     return true;
   }
   // ¿Un recuadro publicado toca lo que pinta la unidad i en las filas ry0..ry1? Lo que pinta depende de sus columnas y, por
@@ -638,10 +641,22 @@ export class SectionPainter {
     // (lo que cambia la capa: la caja, qué unidades están al día y lo pintado; no la imagen entera: un rehorneado lejos
     // no la toca, y el de cerca deja su unidad sin estar al día)
     const key = `${c.x0},${c.x1}:${ready}`;
-    if (this.composed && this.composed.key === key) return this.composed.layer;
+    const serial = this.b.published.serial;
+    if (this.composed && this.composed.key === key && !this.edgeSkyChanged(c, this.composed.serial)) { this.composed.serial = serial; return this.composed.layer; }
     const layer = this.compose(c);
-    this.composed = { key, layer };
+    this.composed = { key, layer, serial };
     return layer;
+  }
+
+  // ¿Cambió el cielo horneado (sky: true) de la columna de fuera de algún borde desde serial? La composición la copia de
+  // b.sky en los bordes en x (lo demás de la capa sale de las franjas)
+  private edgeSkyChanged(c: SectionCut, serial: number): boolean {
+    if (this.b.published.serial === serial || !this.b.sky) return false;
+    const since = publishedSince(this.b, serial);
+    if (!since) return true;
+    const ox = this.b.options.originX ?? 0, rows = this.rows(c), xs = [ox + c.x0 - 1, ox + c.x1 + 1];
+    if (!rows) return false;
+    return since.some((r) => r.sky && xs.some((x) => r.x0 <= x && r.x1 >= x) && r.y1 >= rows.ry && r.y0 <= rows.ry + rows.h - 1);
   }
 
   // Lo que pisan los arreglos de los bordes: el píxel y todo lo suyo, para deshacerlo en la composición siguiente

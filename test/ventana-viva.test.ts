@@ -372,6 +372,31 @@ describe('ventana viva', () => {
     { const { b, painter, cx } = make(); pushPublished(b, { serial: ++b.published.serial, x0: cx, y0: 0, x1: cx + 3, y1: b.height - 1 }); burst(b, cx + 60); expect(painter.ready()).toBe(false); }
   });
 
+  it('capa de sección: lo que solo cambió el cielo (sky: true) no deja viejas las franjas; sobre la columna de fuera de un borde, sí recompone', () => {
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
+    const b = win.baked, painter = new SectionPainter(b, { ahead: 0, behind: 0 });
+    const [lx, ly] = win.toLocal(TV / 2, TV / 2);
+    const cut = sectionAround(win.view.camera, lx, ly, win.store.height[ly * win.store.width + lx]! - 12, 24);
+    painter.set(cut, 0); painter.paintAll();
+    expect(painter.ready()).toBe(true);
+    // (la caja que pinta: la pedida, alineada a sus unidades)
+    const box = (painter as unknown as { cut: { x0: number; x1: number } }).cut;
+    const ox = b.options.originX ?? 0, L0 = painter.layer();
+    expect(L0).not.toBeNull();
+    // (lo que hizo el cielo de cueva tras el último recuadro del corte en el juego: sobre toda la caja)
+    pushPublished(b, { serial: ++b.published.serial, x0: ox + box.x0 + 2, y0: 0, x1: ox + box.x1 - 2, y1: b.height - 1, sky: true });
+    expect(painter.ready()).toBe(true);
+    expect(painter.boxState().stale).toBe(0);
+    expect(painter.layer()).toBe(L0);
+    // Sobre la columna de fuera del borde (la composición copia ahí b.sky): recompone, y las franjas siguen al día
+    pushPublished(b, { serial: ++b.published.serial, x0: ox + box.x0 - 1, y0: 0, x1: ox + box.x0 - 1, y1: b.height - 1, sky: true });
+    expect(painter.ready()).toBe(true);
+    expect(painter.layer()).not.toBe(L0);
+    // Un recuadro de verdad (caras y vóxeles) en las mismas columnas sí las deja viejas
+    pushPublished(b, { serial: ++b.published.serial, x0: ox + box.x0 + 2, y0: 0, x1: ox + box.x0 + 5, y1: b.height - 1 });
+    expect(painter.ready()).toBe(false);
+  });
+
   it('publishedSince: lo guardado y las tandas olvidadas (unidas), null si llega más atrás de lo que se recuerda', () => {
     const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS });
     const b = win.baked, s0 = b.published.serial;
