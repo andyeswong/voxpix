@@ -97,6 +97,9 @@ export interface Baked {
   // misma lleva otra, para que la cola no lo tome por el mismo y lo sustituya)
   rebakeBatches?: Set<RebakeBatch>;
   movedKeys?: Set<string>;
+  // El trabajo vigente de cada clave de recuadro o cielo: uno nuevo con la misma clave sustituye al de antes en la cola (que
+  // ya no corre), y aquí se le avisa para que su tanda no lo espere ni shiftRebakes lo traslade
+  liveKeys?: Map<string, () => void>;
   // Mientras se prepara un corrimiento (shiftBakedJob): las copias pueden ir preparando lo suyo (la GPU, sus texturas)
   shifting?: boolean;
 }
@@ -990,7 +993,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   const doneOne = () => { if (--batch.left <= 0) b.rebakeBatches?.delete(batch); };
   (b.rebakeBatches ??= new Set()).add(batch);
   const stale = () => (b.rebakeEpoch ?? 0) !== batch.epoch;
-  const movedKeys = (b.movedKeys ??= new Set());
+  const movedKeys = (b.movedKeys ??= new Set()), liveKeys = (b.liveKeys ??= new Map<string, () => void>());
+  // (vigente de su clave: el de antes, sustituido; al acabar, deja de serlo)
+  const claim = (k: string, superseded: () => void) => { liveKeys.get(k)?.(); liveKeys.set(k, superseded); };
+  const release = (k: string, superseded: () => void) => { if (liveKeys.get(k) === superseded) liveKeys.delete(k); };
   // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
   const waiting = () => myKeys.some((k) => busy.has(k));
   const tiles = new Map<string, number[]>();
@@ -1018,7 +1024,11 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // (los trozos del plan, con el margen que chunkRect le sumó, y sin él: el núcleo, lo que cambió de verdad)
     let planChunks = chunksOfPlan(b, plan, 0), coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
     // (edge: el margen ya cambió antes de un corrimiento; se recuerda, porque tras trasladarlo se cuenta desde ahí)
-    let started = -1, restarts = 0, finished = false, dirty = false, out = false, pubAt = -1, edge = false;
+    let started = -1, restarts = 0, finished = false, dirty = false, out = false, pubAt = -1, edge = false, counted = false;
+    // (acabado, descartado o sustituido: cuenta una vez para su tanda, y deja su clave)
+    const settle = () => { if (counted) return; counted = true; movedKeys.delete(key); release(key, superseded); doneOne(); };
+    const superseded = () => { out = true; settle(); };
+    claim(key, superseded);
     // ¿Lo que pintó ya no vale? Si cambió algo del núcleo, sí. Si solo cambió el margen (un vecino escrito: al andar, el
     // trozo que entra al lado), solo si desde que empezó se publicó otro recuadro encima (si no, el rehorneado de ese vecino,
     // que va detrás, publica después y arregla el borde)
@@ -1038,7 +1048,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     batch.left++;
     const rectMover: RebakeMover = {
       plan,
-      kill() { out = true; movedKeys.delete(key); },
+      kill() { out = true; settle(); },
       can(P) {
         if (finished || gone()) return 'gone';
         if (ticket) return false;
@@ -1068,9 +1078,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
       waiting: () => !gone() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
       run(deadline) {
-        if (gone()) { finished = true; movedKeys.delete(key); doneOne(); return true; }   // descartado al correrse la ventana
+        if (gone()) { finished = true; settle(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
-        if (col > rect.x1) { finished = true; movedKeys.delete(key); doneOne(); return true; }
+        if (col > rect.x1) { finished = true; settle(); return true; }
         if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; ticket = b.remote.ask(rect); }
         if (ticket) {
           const r = ticket.result();
@@ -1085,7 +1095,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             masks.set(rect, mask);
             if (busy.get(key) === token) busy.delete(key);
             pp.delete(token);
-            finished = true; movedKeys.delete(key); doneOne();
+            finished = true; settle();
             return true;
           }
           // (algo suyo cambió mientras: se pinta aquí)
@@ -1115,7 +1125,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         buf = null;
         if (busy.get(key) === token) busy.delete(key);
         pp.delete(token);
-        finished = true; movedKeys.delete(key); doneOne();
+        finished = true; settle();
         return true;
       },
     });
@@ -1265,15 +1275,18 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     { const s = b.source, m2 = 2 * SKY_REACH + 2;
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
-    let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false;
+    let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false, skyCounted = false;
     const skyGone = () => skyOut || stale();
     let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
     if (movedKeys.has(skyKey)) skyKey += `#${++movedSerial}`;
+    const skySettle = () => { if (skyCounted) return; skyCounted = true; movedKeys.delete(skyKey); release(skyKey, skySuperseded); doneOne(); };
+    const skySuperseded = () => { skyOut = true; skySettle(); };
+    claim(skyKey, skySuperseded);
     // (al correrse la ventana: el recuadro y lo que lee, a su sitio nuevo, y se calcula de nuevo; es barato)
     batch.left++;
     batch.movers.push({
       plan: p,
-      kill() { skyOut = true; movedKeys.delete(skyKey); },
+      kill() { skyOut = true; skySettle(); },
       can(P) {
         if (skyDone || skyGone()) return 'gone';
         return planInside(b, p, P, Math.ceil((2 * SKY_REACH + 2) / CHUNK)) && rectInside(b, r, P);
@@ -1293,7 +1306,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
       waiting: () => !skyGone() && (!!b.shiftHold || waiting()),
       run(deadline) {
-        if (skyGone()) { skyDone = true; movedKeys.delete(skyKey); doneOne(); return true; }
+        if (skyGone()) { skyDone = true; skySettle(); return true; }
         if (b.shiftHold || waiting()) return false;
         if (skyStarted < 0) { skyStarted = b.source.clock; skySerial = b.published.serial; }
         const t0 = performance.now(), r0 = row;
@@ -1311,7 +1324,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
-        skyDone = true; movedKeys.delete(skyKey); doneOne();
+        skyDone = true; skySettle();
         const pub = b.published;
         pushPublished(b, { serial: ++pub.serial, ...r, sky: true });
         sst.published += w * (r.y1 - r.y0 + 1);

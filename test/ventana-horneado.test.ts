@@ -30,7 +30,7 @@ const SPEC: RegionSpec = {
 };
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
-import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, rebakeChangedJobs, exposureFaults, type Baked } from '../src/world/bake';
+import { bakeWorld, shiftBaked, shiftBakedJob, rebakeChanged, rebakeChangedJobs, rebakeJobs, exposureFaults, type Baked } from '../src/world/bake';
 import type { WorldLight } from '../src/world/build';
 import { unkey } from '../src/core';
 
@@ -276,4 +276,33 @@ describe('ventana viva: correr lo horneado', () => {
     rebakeChanged(b, []);
     expect(diff(b, freshNL(2, 0, [], NX))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
   });
+  it('un recuadro sustituido por otro con su misma clave (la cola se queda con el nuevo) no se espera ni se traslada, y al acabar no queda nada apuntado', () => {
+    const b = freshNL(0, 0);
+    // (los mismos trozos dos veces, sin cajas: el mismo recuadro, la misma clave)
+    const cs = [2 * (b.source.cols) + 4];
+    const first = rebakeJobs(b, cs, [], undefined, SHAPE), second = rebakeJobs(b, cs, [], undefined, SHAPE);
+    const r1 = first.find((j) => j.key.startsWith('rect:'))!, r2 = second.find((j) => j.key.startsWith('rect:'))!;
+    expect(r1.key).toBe(r2.key);
+    expect(r1.dead!()).toBe(true);
+    expect(r2.dead!()).toBe(false);
+    for (const j of second) while (!j.run(Infinity));
+    expect(b.rebakeBatches!.size).toBe(0);
+    expect(b.liveKeys!.size).toBe(0);
+    expect(b.movedKeys!.size).toBe(0);
+    // Con un corrimiento: el sustituido no se traslada; el vigente, a medias, sí
+    const third = rebakeJobs(b, cs, [], undefined, SHAPE), fourth = rebakeJobs(b, cs, [], undefined, SHAPE);
+    const r4 = fourth.find((j) => j.key.startsWith('rect:'))!;
+    expect(r4.run(-Infinity)).toBe(false);
+    // (al este: el trozo 4 de 6 queda en el 2, dentro)
+    const job = shiftBakedJob(b, K, 0);
+    while (!job.run(Infinity));
+    expect(third.every((j) => j.dead!())).toBe(true);
+    expect(r4.dead!()).toBe(false);
+    expect([...b.movedKeys!]).toEqual(fourth.filter((j) => !j.dead!()).map((j) => j.key));
+    for (const j of fourth) while (!j.run(Infinity));
+    expect(b.rebakeBatches!.size).toBe(0);
+    expect(b.liveKeys!.size).toBe(0);
+    expect(b.movedKeys!.size).toBe(0);
+  });
+
 });
