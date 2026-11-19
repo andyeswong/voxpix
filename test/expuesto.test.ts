@@ -3,7 +3,7 @@
 // nada por hacer; no rehace lo que ya hizo una franja (ni él mismo); y un rehorneado con las máscaras hechas da lo
 // mismo, byte a byte, que hornear de cero. Con warmExposure: false, no hay trabajo
 import { describe, it, expect } from 'vitest';
-import { material } from '../src/core';
+import { material, frontFaces } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView } from '../src/world/view';
 import { bakeWorld, bakeWorldJob, rebakeChanged, rebakeChangedJobs, type Baked , exposureFaults } from '../src/world/bake';
@@ -113,5 +113,39 @@ describe('preparar lo expuesto después del horneado', () => {
       expect([ms, done]).toEqual([ms, true]);
     }
     expect(exposureFaults.slice(before)).toEqual([]);
+  });
+  it('al correrse, las máscaras de lo expuesto se corren con su trozo y dan lo mismo que rehacerlas (con y sin juego de caras); lo que entra y el borde nuevo se rehacen', () => {
+    // Un mundo de 128 x 128 con relieve y un hueco, desde la columna ox del mundo
+    const W = 128, D = 128, top = (x: number, y: number) => 20 + ((x >> 2) + 3 * (y >> 3)) % 7;
+    const fill = (s: StaticVoxels, ox: number, oy: number, x0 = 0, y0 = 0, x1 = W - 1, y1 = D - 1) => {
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+        const wx = x + ox, wy = y + oy, t = top(wx, wy);
+        for (let z = 0; z < t; z++) if (!(wx >= 30 && wx < 50 && wy >= 20 && wy < 34 && z >= 8 && z < 16)) s.set(x, y, z, material(0, 1 + ((wx + wy + z) & 1)));
+      }
+    };
+    const faces = frontFaces({ incline: 0.5 } as never);
+    const exposed = (s: StaticVoxels, f?: typeof faces) => { const out: string[] = []; s.forEachExposed((x, y, z, v) => out.push(`${x},${y},${z},${v}`), { x0: 0, y0: 0, x1: W - 1, y1: D - 1 }, true, f); return out.sort(); };
+    // (de una vez, shift, y por pasos, shiftJob: el de la ventana viva)
+    for (const [dcx, dcy, byJob] of [[1, 0, false], [0, 1, false], [-1, 0, false], [1, -1, false], [1, 0, true], [-1, 1, true]] as const) {
+      const s = new StaticVoxels(PAL, W, D, 0, 47);
+      fill(s, 0, 0);
+      // (las máscaras hechas antes de correr, con y sin caras)
+      exposed(s); exposed(s, faces);
+      const full = s.exposureRows;
+      if (byJob) { const j = s.shiftJob(dcx, dcy); while (!j.step()); j.commit(); } else s.shift(dcx, dcy);
+      // Lo que entra, escrito en su sitio nuevo
+      const DX = dcx * 16, DY = dcy * 16;
+      const ex0 = DX > 0 ? W - DX : 0, ex1 = DX > 0 ? W - 1 : DX < 0 ? -DX - 1 : -1;
+      const ey0 = DY > 0 ? D - DY : 0, ey1 = DY > 0 ? D - 1 : DY < 0 ? -DY - 1 : -1;
+      if (ex1 >= ex0) fill(s, DX, DY, ex0, 0, ex1, D - 1);
+      if (ey1 >= ey0) fill(s, DX, DY, 0, ey0, W - 1, ey1);
+      const ref = new StaticVoxels(PAL, W, D, 0, 47);
+      fill(ref, DX, DY);
+      expect({ at: [dcx, dcy, byJob], n: exposed(s).join('|') === exposed(ref).join('|') }).toEqual({ at: [dcx, dcy, byJob], n: true });
+      expect({ at: [dcx, dcy, byJob], f: exposed(s, faces).join('|') === exposed(ref, faces).join('|') }).toEqual({ at: [dcx, dcy, byJob], f: true });
+      // Y se rehizo solo lo que entró y el borde nuevo, con sus vecinos (no todas: antes se daban por caducadas). En 8 x 8
+      // trozos: un corrimiento por un eje rehace 4 columnas de 8 (la mitad); en diagonal, el 75 %; tirándolas, el 100 %
+      expect(s.exposureRows - full).toBeLessThan(0.9 * full);
+    }
   });
 });

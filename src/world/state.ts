@@ -249,9 +249,10 @@ export class StaticVoxels implements VoxelSource {
     const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
     g(this.data, nz, null); g(this.pal, nz, null);
     g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
-    // Las máscaras de lo expuesto no se mueven: se dan por caducadas todas (se rehacen al pedirlas, como tras importChunks).
-    // Moverlas eran 4 arrays de referencias más en el cuadro del corrimiento; después solo se piden donde se rehornea
-    this.expoAt.fill(-1); this.expoFAt.fill(-1);
+    // Las máscaras de lo expuesto, con su trozo (y su versión de cuando se hicieron: siguen valiendo donde no cambió nada
+    // alrededor; lo que entra y el borde nuevo tienen versión nueva, y se rehacen). Antes se daban por caducadas todas, y
+    // todo lo que se rehorneaba tras cada corrimiento las rehacía (a 6x, andando, más que el propio rehorneado)
+    this.shiftExposure(g);
     g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
     // Las cajas de lo cambiado van en coordenadas: se corren con el contenido (en su sitio, y se restan las coordenadas)
     const DX = dcx * CHUNK, DY = dcy * CHUNK;
@@ -269,6 +270,13 @@ export class StaticVoxels implements VoxelSource {
       shiftGrid(q.dirty, W, D, 1, DX, DY, 1);
     }
     this.finishShift(dcx, dcy);
+  }
+
+  // Las máscaras de lo expuesto, corridas con su trozo (lo que entra, sin máscara)
+  private shiftExposure(g: (a: CopyArr, per: number, fill: number | null) => void): void {
+    const nz = this.nz;
+    g(this.expo as unknown as CopyArr, nz, null); g(this.expoOk as unknown as CopyArr, nz, null); g(this.expoAt, nz, -1);
+    g(this.expoF as unknown as CopyArr, nz, null); g(this.expoFOk as unknown as CopyArr, nz, null); g(this.expoFAt, nz, -1);
   }
 
   // Lo que entra y el borde nuevo, tras correr (shift o shiftJob)
@@ -345,7 +353,7 @@ export class StaticVoxels implements VoxelSource {
         const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
         g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
         g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
-        this.expoAt.fill(-1); this.expoFAt.fill(-1);
+        this.shiftExposure(g);
         if (this.fgrid) this.fgrid.dirty.fill(1);
         void D;
         this.finishShift(dcx, dcy);
@@ -618,6 +626,7 @@ export class StaticVoxels implements VoxelSource {
     for (let s = 0; s < nz; s++) { const di = dc * nz + s; this.data[di] = null; this.pal[di] = null; this.palN[di] = 0; this.uni[di] = 0; this.count[di] = 0; }
     this.copyRotatedSlabs(src, quarter, c * nz, (c + 1) * nz);
   }
+
 
   // Marca el trozo c como cambiado entero para quien hornea (su versión y su caja: el trozo entero, con toda la altura)
   // sin tocar un vóxel ni la versión del mundo (worldChangedSince). LiveWindow.turnTo: lo que queda por hornear de una
