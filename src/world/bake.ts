@@ -921,7 +921,7 @@ export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, 
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
 // al viejo (lo hace la cola).
-export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number }
+export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number; dead?(): boolean }
 
 // Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
 // contorno no cambia nada); 'auto', solo con contorno
@@ -1006,6 +1006,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let started = -1, restarts = 0;
     jobs.push({
       key,
+      // (descartado al correrse la ventana o al soltarse su horneado: correrlo ya no haría nada)
+      dead: stale,
       // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
       waiting: () => !stale() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
       run(deadline) {
@@ -1209,6 +1211,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     sst.jobs++;
     jobs.push({
       key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
+      dead: stale,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
       waiting: () => !stale() && (!!b.shiftHold || waiting()),
       run(deadline) {
@@ -1248,6 +1251,7 @@ function lightJob(b: Baked, l: WorldLight): ViewJob {
   const epoch = b.rebakeEpoch ?? 0;
   return {
     key: `light:${l.id}`,
+    dead: () => (b.rebakeEpoch ?? 0) !== epoch,
     run(deadline) {
       // (descartada al correrse la ventana: ya no está en pendingLights y el rehorneado siguiente la vuelve a pedir)
       if ((b.rebakeEpoch ?? 0) !== epoch) return true;
@@ -1316,7 +1320,8 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
         p = (opts.nearLights === false || !byWorld ? LIGHT_PRIORITY : 0) + Math.hypot(lx - px, ly - py);
       }
     }
-    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}) } as ViewJob;
+    // (con lo opcional del trabajo: sin dead, la cola no quitaba los de una vista ya soltada y retenían su horneado)
+    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), ...(j.dead ? { dead: () => j.dead!() } : {}), ...(j.unit ? { unit: () => j.unit!() } : {}) } as ViewJob;
   }).concat(extra);
 }
 
@@ -1338,11 +1343,14 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
   // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
   // con su plazo. Antes seguía, contaba las tandas de antes del corrimiento contra el tope del trozo y acababa en "lo
   // expuesto no acaba" (FERN, abierto a 1x: el trabajo duraba ~6 s y cruzaba una docena de corrimientos)
-  const shifts = b.shifts ?? 0;
+  // (y si se suelta su horneado, cancelRebakes: lo de la cola se descarta)
+  const shifts = b.shifts ?? 0, epoch = b.rebakeEpoch ?? 0;
+  const dead = () => (b.shifts ?? 0) !== shifts || (b.rebakeEpoch ?? 0) !== epoch;
   return {
     key: `exposure:${++exposureSerial}`,
+    dead,
     run(deadline) {
-      if ((b.shifts ?? 0) !== shifts) return true;
+      if (dead()) return true;
       if (b.shiftHold) return false;
       while (k < order.length) {
         const c = order[k]!, x0 = (c % s.cols) * CHUNK, y0 = Math.floor(c / s.cols) * CHUNK;

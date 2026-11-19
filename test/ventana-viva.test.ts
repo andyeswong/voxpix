@@ -510,6 +510,53 @@ describe('ventana viva', () => {
     expect(Buffer.compare(Buffer.from(old.rgba.buffer), Buffer.from(before.buffer))).toBe(0);
   });
 
+  it('girar con fundido: lo encolado de la vista que se suelta queda muerto (dead) y la cola lo quita sin correrlo; el horneado soltado no queda retenido por la cola', async () => {
+    const v8 = await import('node:v8'), vm = await import('node:vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
+    const budget = stepBudget();
+    const frame = () => { win.update(TV / 2, TV / 2, budget); budget.run(); };
+    const settle = () => { frame(); for (let k = 0; k < 20000 && (win.busy || budget.pending || win.turning); k++) frame(); };
+    settle();
+    win.turnTo(1); settle();
+    // En el giro 1: una torre junto a MAIA; su rehorneado (con lo expuesto por preparar) va a una cola llena que no llega
+    // a él antes del giro siguiente. (Aparte, para que nada de esta función quede en la pila al recoger)
+    const full = new FrameBudget(3, () => 0);
+    const queueOld = (): { ref: WeakRef<Baked>; n: number } => {
+      const ref = new WeakRef(win.baked);
+      for (let y = TV / 2 - 3; y < TV / 2 + 3; y++) for (let x = TV / 2 + 4; x < TV / 2 + 10; x++) {
+        const [lx, ly] = win.toLocal(x, y), h = win.store.height[ly * win.store.width + lx]!;
+        for (let z = h; z < h + 12; z++) win.store.set(lx, ly, z, 1);
+      }
+      win.view.frame();
+      win.baked.exposurePending = true;
+      // (con near, como el juego con lo editado: la prioridad por distancia en pantalla envuelve cada trabajo)
+      const held = rebakeChangedJobs(win.baked, win.view.bakeable().lights, { near: { x: 32, y: 32 } });
+      expect(held.some((j) => j.key.startsWith('rect:'))).toBe(true);
+      expect(held.some((j) => j.key.startsWith('exposure:'))).toBe(true);
+      expect(held.every((j) => !j.dead?.())).toBe(true);
+      held.forEach((j) => full.push(j));
+      win.turnTo(2);
+      for (let n = 0; win.turning?.phase === 'core' && n < 200000; n++) frame();
+      expect(win.quarter).toBe(2);
+      // Muertos todos
+      expect(held.every((j) => j.dead?.())).toBe(true);
+      return { ref, n: held.length };
+    };
+    const { ref, n } = queueOld();
+    // La cola los quita sin correrlos
+    full.run();
+    expect(full.pending).toBe(0);
+    expect(full.dropped).toBe(n);
+    settle();
+    // Y el horneado soltado se recoge (fuera de la tarea que tocó la referencia débil)
+    await new Promise((r) => setTimeout(r, 0));
+    gc();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ref.deref()).toBeUndefined();
+  });
+
   it('girar con fundido: beforeTurnSwap corre por pasos tras los recuadros del núcleo, con el horneado nuevo, y el cambio lo espera', () => {
     const calls: Baked[] = [];
     let steps = 0, done = false, sawVisible = false;

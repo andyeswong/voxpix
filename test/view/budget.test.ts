@@ -299,4 +299,31 @@ describe('presupuesto de la vista por cuadro', () => {
     e.push(unit('sky:e', 100));
     t = 0; expect(e.run()).toBe(3);
   });
+
+  it('lo muerto (dead) sale de la cola sin llamarlo ni contar lo que cuesta, aunque sea el primero o el cercano; lo vivo sigue igual', () => {
+    const { clock, log, job } = harness();
+    const b = new FrameBudget(3, clock.now, { ms: 8, below: 64 });
+    let killed = false;
+    const doomed = (key: string, priority?: number): ViewJob => ({ key, ...(priority !== undefined ? { priority } : {}), dead: () => killed, run: () => { log.push(key); clock.advance(50); return false; } });
+    b.push(doomed('rect:cerca', 0));
+    b.push(doomed('rect:lejos'));
+    const live = job('rect:vivo', 2);
+    b.push(live);
+    // (vivos aún: corren como siempre)
+    b.run();
+    expect(log).toContain('rect:cerca');
+    log.length = 0;
+    killed = true;
+    while (b.pending) b.run();
+    expect(log.filter((k) => k !== 'rect:vivo')).toEqual([]);
+    expect(live.left).toBe(0);
+    expect(b.dropped).toBe(2);
+    // Solo muertos: fuera, y sin mirar el reloj (como sin trabajos)
+    let reads = 0;
+    const c = new FrameBudget(3, () => { reads++; return 0; });
+    c.push(doomed('rect:a')); c.push(doomed('sky:b'));
+    expect(c.run()).toBe(0);
+    expect(c.pending).toBe(0);
+    expect(reads).toBe(0);
+  });
 });

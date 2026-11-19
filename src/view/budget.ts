@@ -20,6 +20,9 @@ export interface ViewJob {
   // den (la sección). La cola decide si cabe con esto y no con lo que suelen gastar sus llamadas: lo que gasta uno así es
   // el sitio que tuvo (la fase entera), y con cualquier cosa delante no cabía nunca
   unit?(): number;
+  // Opcional: true si correrlo ya no haría nada (lo descartó otro: un rehorneado de antes de correrse la ventana, o de
+  // una vista ya soltada al girar)
+  dead?(): boolean;
 }
 
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
@@ -44,6 +47,8 @@ export class FrameBudget {
   // de 25 ms pasaban de 8-10 a 28-43 por tirada
   constructor(public ms = 3, private readonly now: () => number = () => performance.now(), public near: { ms: number; below: number } | null = null, public spare?: number) {}
 
+  // (para medir) trabajos quitados de la cola por muertos (dead), sin correr
+  dropped = 0;
   get pending(): number {
     return this.queue.length;
   }
@@ -206,7 +211,16 @@ export class FrameBudget {
   // Una vez por cuadro. spentMs: lo que ya se llevó la vista en este cuadro de lo que cuenta contra el mismo
   // presupuesto. Devuelve los ms gastados aquí.
   run(spentMs = 0): number {
-    if (!this.queue.length) return 0;
+    // Lo que otro ya descartó (dead), fuera sin llamarlo ni contar lo que cuesta, también de byKey. Si no, con la cola
+    // llena no se llegaba nunca a ello (se juzgaba por lo que cuesta su clase: no cabía), se amontonaba y retenía lo suyo
+    // (el horneado de una vista ya soltada al girar). El orden de lo que queda no cambia
+    const live = this.queue.filter((j) => {
+      if (!j.dead?.()) return true;
+      if (this.byKey.get(j.key) === j) this.byKey.delete(j.key);
+      return false;
+    });
+    if (live.length !== this.queue.length) { this.dropped += this.queue.length - live.length; this.queue = live; }
+    if (!this.queue.length) { this.sorted = true; return 0; }
     this.frameNo++;
     const start = this.now();
     // 1) lo cercano, con su presupuesto (va delante en la cola: está ordenada por prioridad)
