@@ -56,7 +56,7 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
   return n;
 };
 
-import { renderRect, type RectOut } from '../src/world/bake';
+import { renderRect, REMOTE_RETRIES, type RectOut } from '../src/world/bake';
 import type { PreparedTrozo } from '../src/world/live';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockGrid } from '../src/world/blocks';
@@ -144,6 +144,36 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     dig(ref, A); dig(ref, B2);
     for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
     expect(diff(b, ref.baked)).toBe(0);
+  });
+
+  it('uno que llega caducado se vuelve a pedir fuera (con lo de ahora), y tras REMOTE_RETRIES veces caducado se pinta aquí; igual que hornear de nuevo', () => {
+    const run = (digs: number) => {
+      const win = make([0, 0]), ref = make([0, 0]);
+      const b = win.baked;
+      let asks = 0;
+      b.remote = { ask: (rect) => { asks++; const o = renderRect(b, rect); let n = 0; return { result: () => (++n >= 2 ? o : null) }; } };
+      // (en el núcleo del recuadro: cada vez que se pinta fuera, se pica un poco más mientras tanto)
+      const dig = (w: LiveWindow, k: number) => { for (let z = 30 - k * 3; z < 64; z++) for (let y = 70; y < 76; y++) for (let x = 70; x < 76; x++) w.store.set(x, y, z, 0); };
+      dig(win, 0);
+      const jobs = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+      let k = 0;
+      for (let it = 0; it < 50 && jobs.some((j) => !j.run(Infinity)); it++) {
+        // (pedido y aún fuera: se pica otra vez, hasta `digs` veces)
+        if (k < digs && asks > k) dig(win, ++k);
+      }
+      for (let i = 0; i <= k; i++) dig(ref, i);
+      for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+      return { asks, stale: b.remoteStats?.stale ?? 0, d: diff(b, ref.baked) };
+    };
+    // Una vez caducado: se vuelve a pedir (2 pedidos), nada se pinta aquí
+    const one = run(1);
+    expect([one.stale, one.d]).toEqual([1, 0]);
+    expect(one.asks).toBe(2);
+    // Caducado cada vez: 1 + REMOTE_RETRIES pedidos, y después aquí
+    const all = run(10);
+    expect(all.asks).toBe(1 + REMOTE_RETRIES);
+    expect(all.stale).toBe(1 + REMOTE_RETRIES);
+    expect(all.d).toBe(0);
   });
 
   it('trozos escritos fuera (prepareTrozo): la copia del "worker" los estampa y el principal solo pone sus losas; igual que escribirlos aquí', () => {

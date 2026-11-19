@@ -912,6 +912,8 @@ export function publishedSince(b: Baked, serial: number): Array<{ x0: number; y0
 // publicado en el horneado del hilo principal. renderRectFor: el recuadro y sus búferes (lo que hace un trabajo rect de
 // rebakeJobs, de una vez); publishRectBuffers: lo que hace el hilo principal con lo que le llega
 export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
+// Cuántas veces se vuelve a pedir fuera un recuadro que llegó caducado antes de pintarlo aquí
+export const REMOTE_RETRIES = 2;
 export interface RemoteRects { ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean } | null }
 export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
 export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
@@ -1016,7 +1018,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
     // (el recuadro pedido fuera, y el reloj de cuando se pidió)
-    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0, askedPub = 0;
+    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
@@ -1084,7 +1086,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (gone()) { finished = true; settle(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) { finished = true; settle(); return true; }
-        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); }
+        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); if (ticket) asks++; }
         if (ticket) {
           const r = ticket.result();
           if (!r) return false;                                            // espera (sin gastar)
@@ -1105,8 +1107,11 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             finished = true; settle();
             return true;
           }
-          // (algo suyo cambió mientras: se pinta aquí)
+          // (algo suyo cambió mientras: se vuelve a pedir fuera, con lo de ahora, hasta REMOTE_RETRIES veces; después se pinta
+          // aquí. Andando, el trozo de al lado se escribe mientras: con la regla de los trozos que lee, ~23 % llegaba caducado,
+          // y pintarlo aquí devolvía al principal ~110 ms/s en viva)
           st.stale++;
+          if (asks <= REMOTE_RETRIES) { ticket = undefined; reads = readChunks(b, rect); return false; }
         }
         if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; reads = readChunks(b, rect); }
         // (trasladado con lo pintado: lo que cambie del plan y lo que se publique, desde ahora)
