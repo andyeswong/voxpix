@@ -932,11 +932,15 @@ export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float3
 // Cuántas veces se vuelve a pedir fuera un recuadro que llegó caducado antes de pintarlo aquí
 export const REMOTE_RETRIES = 2;
 export interface RemoteRects {
-  // (failed, opcional: ya no va a llegar; lo pedido se hace aquí)
-  ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean; failed?(): boolean } | null;
+  // (failed, opcional: ya no va a llegar; lo pedido se hace aquí. cancel, opcional: ya no hace falta, que no se pinte)
+  ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null;
   // (opcional) el cielo del recuadro rect fuera, con el pick y el face del horneado en él (fila a fila, su ancho): devuelve
   // el cielo de cada píxel, en el mismo orden
-  sky?(rect: ScreenRect, pick: Float64Array, face: Int8Array): { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean } | null;
+  sky?(rect: ScreenRect, pick: Float64Array, face: Int8Array): { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null;
+  // (opcional) lo pedido sigue al correrse la ventana: quien lo pinta lo traslada como la imagen (el recuadro, y en el cielo
+  // las claves de vóxel del pick), y lo que ya no puede trasladar lo da por fallido (failed). Sin esto, lo que está fuera
+  // al correrse se descarta y se vuelve a pedir: con quien pinta atrasado, en cada corrimiento se tiraba todo lo de fuera
+  shifts?: boolean;
 }
 export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
 export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
@@ -1048,7 +1052,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
     // (el recuadro pedido fuera, y el reloj de cuando se pidió)
-    let ticket: { result(): RectOut | null; ready?(): boolean; failed?(): boolean } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
+    let ticket: { result(): RectOut | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
+    // (pedido fuera y trasladado al correrse la ventana (remote.shifts): las versiones de datos de lo que lee, de cuando se
+    // comprobó al correrse, y si algo que lee ya había cambiado antes, como edge)
+    let vers: Map<number, number> | null = null, vedge = false;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
@@ -1059,7 +1066,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // (edge: el margen ya cambió antes de un corrimiento; se recuerda, porque tras trasladarlo se cuenta desde ahí)
     let started = -1, restarts = 0, finished = false, dirty = false, out = false, pubAt = -1, edge = false, counted = false;
     // (acabado, descartado o sustituido: cuenta una vez para su tanda, y deja su clave)
-    const settle = () => { if (counted) return; counted = true; movedKeys.delete(key); release(key, superseded); doneOne(); };
+    // (lo pedido fuera que ya no hace falta: que no se pinte)
+    const settle = () => { if (counted) return; counted = true; if (ticket) { ticket.cancel?.(); ticket = null; } movedKeys.delete(key); release(key, superseded); doneOne(); };
     const superseded = () => { out = true; settle(); };
     claim(key, superseded);
     // ¿Lo que pintó ya no vale? Si cambió algo del núcleo, sí. Si solo cambió el margen (un vecino escrito: al andar, el
@@ -1071,6 +1079,18 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       if (!edge && !moved.some((c) => reads.includes(c))) return false;
       const since = pubAt >= 0 ? publishedSince(b, pubAt) : null;
       return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
+    };
+    // ¿Lo pedido fuera ya no vale? La regla de stalePaint, contada desde que se pidió; si se trasladó al correrse la ventana,
+    // con las versiones de datos de lo que lee (el reloj de la fuente no sirve: al correrse se vuelve a marcar lo descartado)
+    const remoteStale = (): boolean => {
+      if (vers) {
+        if (versionsChanged(b, vers, g) || versionsChanged(b, vers, coreChunks)) return true;
+        if (!vedge && !versionsChanged(b, vers, reads)) return false;
+        const since = publishedSince(b, askedPub);
+        return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
+      }
+      started = askedAt; pubAt = askedPub; edge = false;
+      return g.some((c) => b.source.changedSince(askedAt).includes(c)) || stalePaint();
     };
     // (descartado: el de toda la tanda, o solo este al correrse la ventana si no podía seguir)
     const gone = () => out || stale();
@@ -1084,13 +1104,23 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       kill() { out = true; settle(); },
       can(P) {
         if (finished || gone()) return 'gone';
-        if (ticket) return false;
+        // (pedido fuera: sigue si quien lo pinta lo traslada, aún no llegó y lo que lee no cambió; si no, se descarta)
+        if (ticket && (!b.remote?.shifts || ticket.failed?.() || ticket.ready?.() || remoteStale())) return false;
         if (!planInside(b, plan, P, 1) || !rectInside(b, rect, P)) return false;
+        if (ticket) { dirty = false; return true; }
         dirty = !!buf && started >= 0 && stalePaint();
         if (buf && started >= 0 && !dirty && b.source.changedSince(started).some((c) => reads.includes(c))) edge = true;
         return true;
       },
       move(P) {
+        if (ticket) {
+          // (con los índices de antes: lo que lee, su grupo y su núcleo; y lo que se publique desde el cambio: swap suma 2 y
+          // deja solo la caja de lo borrado, que no se lee desde dentro)
+          const edgeNow = !vers && b.source.changedSince(askedAt).some((c) => reads.includes(c));
+          vers = shiftVersions(b, vers ?? dataVersionsOf(b, new Set([...reads, ...g, ...coreChunks])), P);
+          vedge ||= edgeNow;
+          askedPub = b.published.serial + 2;
+        }
         rect.x0 -= P.DX; rect.x1 -= P.DX; rect.y0 += P.rows; rect.y1 += P.rows;
         coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
         // (con los índices de antes: la fuente aún no se corrió; lo que lee en el sitio nuevo se recalcula al empezar a pintar)
@@ -1117,18 +1147,18 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) { finished = true; settle(); return true; }
         if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); if (ticket) asks++; }
-        if (ticket?.failed?.()) ticket = null;                            // ya no llega: se pinta aquí
+        if (ticket?.failed?.()) { ticket = null; vers = null; vedge = false; }   // ya no llega: se pinta aquí
         if (ticket) {
           const r = ticket.result();
           if (!r) return false;                                            // espera (sin gastar)
           ticket = null;
-          const moved = b.source.changedSince(askedAt);
           const st = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 });
           // (la misma regla que al acabar de pintarlo aquí, stalePaint, contada desde que se pidió: si cambió el núcleo, o un
           // trozo que lee y desde entonces se publicó otro recuadro encima, lo que llega es de antes y lo pisaría. Antes solo
           // se miraba su grupo, y un vecino rehorneado antes quedaba tapado por lo viejo)
-          started = askedAt; pubAt = askedPub; edge = false;
-          if (!g.some((c) => moved.includes(c)) && !stalePaint()) {
+          const old = remoteStale();
+          vers = null; vedge = false; started = -1; pubAt = -1; edge = false;
+          if (!old) {
             st.published++;
             const mask = new Uint8Array(r.w * r.h);
             publishRect(b, rect, r, mask);
@@ -1324,11 +1354,21 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // (espera a los recuadros de este rehorneado que pintan en su recuadro: lee su pick y su face)
     const skyWaiting = waitingIn(() => r);
     // (el cielo pedido fuera, b.remote.sky: como los recuadros, y cuántas veces se pidió)
-    let skyTicket: { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean } | null | undefined, skyAsks = 0;
+    let skyTicket: { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null | undefined, skyAsks = 0;
+    // (pedido fuera y trasladado al correrse la ventana: las versiones de datos de lo que lee, como en los recuadros)
+    let skyVers: Map<number, number> | null = null;
+    // ¿Lo pedido fuera ya no vale? (repainted: se publicó un recuadro encima; vox: cambió algo que lee)
+    const skyRemoteStale = (): { repainted: boolean; vox: boolean } => {
+      const since = publishedSince(b, skySerial);
+      const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
+      if (skyVers) return { repainted, vox: versionsChanged(b, skyVers, reads) };
+      const moved = b.source.changedSince(skyStarted);
+      return { repainted, vox: moved.length > 0 && reads.some((c) => moved.includes(c)) };
+    };
     const skyGone = () => skyOut || stale();
     let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
     if (movedKeys.has(skyKey)) skyKey += `#${++movedSerial}`;
-    const skySettle = () => { if (skyCounted) return; skyCounted = true; movedKeys.delete(skyKey); release(skyKey, skySuperseded); doneOne(); };
+    const skySettle = () => { if (skyCounted) return; skyCounted = true; if (skyTicket) { skyTicket.cancel?.(); skyTicket = null; } movedKeys.delete(skyKey); release(skyKey, skySuperseded); doneOne(); };
     const skySuperseded = () => { skyOut = true; skySettle(); };
     claim(skyKey, skySuperseded);
     // (al correrse la ventana: el recuadro y lo que lee, a su sitio nuevo, y se calcula de nuevo; es barato)
@@ -1338,10 +1378,16 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       kill() { skyOut = true; skySettle(); },
       can(P) {
         if (skyDone || skyGone()) return 'gone';
-        if (skyTicket) return false;
+        if (skyTicket) {
+          if (!b.remote?.shifts || skyTicket.failed?.() || skyTicket.ready?.()) return false;
+          const { repainted, vox } = skyRemoteStale();
+          if (repainted || vox) return false;
+        }
         return planInside(b, p, P, Math.ceil((2 * SKY_REACH + 2) / CHUNK)) && rectInside(b, r, P);
       },
       move(P) {
+        // (pedido fuera: con los índices de antes, y lo que se publique desde el cambio, como en los recuadros)
+        if (skyTicket) { skyVers = shiftVersions(b, skyVers ?? dataVersionsOf(b, reads), P); skySerial = b.published.serial + 2; }
         r.x0 -= P.DX; r.x1 -= P.DX; r.y0 += P.rows; r.y1 += P.rows;
         reads.splice(0, reads.length, ...chunksOfPlan(b, p, 2 * SKY_REACH + 2));
         row = r.y0; skyStarted = -1;
@@ -1367,14 +1413,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           skyTicket = b.remote.sky(r, pk, fc);
           if (skyTicket) skyAsks++; else skyTicket = null;
         }
-        if (skyTicket?.failed?.()) { skyTicket = null; skyStarted = -1; }
+        if (skyTicket?.failed?.()) { skyTicket = null; skyStarted = -1; skyVers = null; }
         if (skyTicket) {
           const o = skyTicket.result();
           if (!o) return false;
           skyTicket = null;
-          const moved = b.source.changedSince(skyStarted), since = publishedSince(b, skySerial);
-          const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
-          if (repainted || (moved.length > 0 && reads.some((c) => moved.includes(c)))) {
+          const { repainted, vox } = skyRemoteStale();
+          skyVers = null;
+          if (repainted || vox) {
             if (repainted) sst.restartPub++; else sst.restartVox++;
             if (skyAsks <= REMOTE_RETRIES) { const rs = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 }); rs.skyReasked = (rs.skyReasked ?? 0) + 1; skyTicket = undefined; return false; }
             skyStarted = -1;
@@ -1466,23 +1512,52 @@ function rectInside(b: Baked, r: ScreenRect, P: ShiftParams): boolean {
 // Lo pintado de un recuadro a medias, como la imagen al correrse: la profundidad y las claves de vóxel (false si algún
 // vóxel pintado sale de la fuente: se empieza de nuevo)
 // (lo que aún no se pintó tiene la clave a 0, que nunca es la de un vóxel: se deja, y se pintará en su sitio nuevo)
-function shiftBuffers(b: Baked, buf: RectBuffers, P: ShiftParams): boolean {
-  const sw = b.source.width, sd = b.source.depth, n = buf.w * buf.h;
+function shiftBuffers(b: Baked, buf: RectBuffers, P: ShiftParams): boolean { return shiftKeys(b, buf.pick, buf.depth, P); }
+// Las claves de vóxel de un pick (y la profundidad, si se da) en el marco corrido: false, sin tocar nada, si algún vóxel
+// sale de la fuente (BakeWorkerHost traslada así el pick de un cielo pedido antes de correrse)
+export function shiftKeys(b: Baked, pick: Float64Array, depth: Float32Array | null, P: Pick<ShiftParams, 'dk' | 'dd'>): boolean {
+  const sw = b.source.width, sd = b.source.depth, n = pick.length;
   for (let i = 0; i < n; i++) {
-    const k = buf.pick[i]!;
+    const k = pick[i]!;
     if (k !== k || k === 0) continue;
     const k2 = k - P.dk, r = Math.floor(k2 / KEY_SPAN), vy = (r % KEY_SPAN) - KEY_OFF, vx = Math.floor(r / KEY_SPAN) - KEY_OFF;
     if (vx < 0 || vy < 0 || vx >= sw || vy >= sd) return false;
   }
   for (let i = 0; i < n; i++) {
-    const k = buf.pick[i]!;
+    const k = pick[i]!;
     if (k === 0) continue;
-    if (k === k) buf.pick[i] = k - P.dk;
-    const d = buf.depth[i]!;
-    if (d !== Infinity) buf.depth[i] = d - P.dd;
+    if (k === k) pick[i] = k - P.dk;
+    if (!depth) continue;
+    const d = depth[i]!;
+    if (d !== Infinity) depth[i] = d - P.dd;
   }
   return true;
 }
+// Lo que se corre la imagen si su fuente se corre (tx, ty) trozos de vóxeles
+export function shiftParams(b: Baked, tx: number, ty: number): ShiftParams {
+  const DX = tx * CHUNK, DY = ty * CHUNK, rows = (b.options.oblique?.y ?? 1) * DY;
+  if (!Number.isInteger(rows)) throw new Error(`shiftBaked: el corrimiento en filas (${rows}) no es entero`);
+  return { tx, ty, DX, DY, rows, dd: DY * b.cam.fwd[1], dk: key(DX, DY, 0) - key(0, 0, 0) };
+}
+// Un trozo de la rejilla de la fuente en el marco corrido (tx, ty): -1 si sale
+function shiftChunk(b: Baked, c: number, P: Pick<ShiftParams, 'tx' | 'ty'>): number {
+  const s = b.source, cx = (c % s.cols) - P.tx, cy = Math.floor(c / s.cols) - P.ty;
+  return cx < 0 || cy < 0 || cx >= s.cols || cy >= s.rows ? -1 : cy * s.cols + cx;
+}
+// Las versiones de datos (StaticVoxels.dataVersions) de unos trozos: lo que tenía quien pinta fuera al pedirlo. Al correrse
+// la ventana se corren con los trozos (lo de antes del corrimiento ya se comprobó); al llegar, ¿cambió alguno?
+function dataVersionsOf(b: Baked, cs: Iterable<number>): Map<number, number> {
+  const m = new Map<number, number>();
+  for (const c of cs) m.set(c, b.source.dataVersions[c]!);
+  return m;
+}
+function shiftVersions(b: Baked, m: Map<number, number>, P: ShiftParams): Map<number, number> {
+  const o = new Map<number, number>();
+  for (const [c, v] of m) { const n = shiftChunk(b, c, P); if (n >= 0) o.set(n, v); }
+  return o;
+}
+// (un trozo que no estaba, o que salió al correrse: se da por cambiado)
+const versionsChanged = (b: Baked, m: Map<number, number>, cs: readonly number[]) => cs.some((c) => m.get(c) !== b.source.dataVersions[c]);
 
 // Al correrse la ventana (shiftBakedJob, en el cambio): lo que se puede seguir en su sitio nuevo se traslada (las tandas sin
 // luces cuyos recuadros y cielos, con lo que leen, siguen dentro); lo demás se descarta como en cancelRebakes. Devuelve los
@@ -1737,11 +1812,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
   let gx0 = W, gy0 = H, gx1 = -1, gy1 = -1;
   const mark = (x: number, y: number) => { if (x < gx0) gx0 = x; if (x > gx1) gx1 = x; if (y < gy0) gy0 = y; if (y > gy1) gy1 = y; };
   const s = b.source;
-  const par = () => {
-    const DX = tx * CHUNK, DY = ty * CHUNK, rows = a * DY;
-    if (!Number.isInteger(rows)) throw new Error(`shiftBaked: el corrimiento en filas (${rows}) no es entero`);
-    return { DX, DY, rows, dd: DY * b.cam.fwd[1], dk: key(DX, DY, 0) - key(0, 0, 0) };
-  };
+  const par = () => shiftParams(b, tx, ty);
   let P = par();
   // Copia las filas y0..y1 de la imagen nueva desde la de ahora (corrida, con la profundidad y las claves puestas al día,
   // y lo de vóxeles que salieron borrado)

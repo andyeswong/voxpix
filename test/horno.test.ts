@@ -68,8 +68,12 @@ function channel() {
   // (un trozo mandado otra vez con la misma versión y el mismo contenido: el espejo ya lo tenía, p. ej. tras correrse)
   const seen = new Set<string>();
   let again = 0;
+  // (lo pedido de cada recuadro y lo que se corrió cada espejo, en el orden en que se mandó)
+  const rects: Array<{ ticket: number; rect: { x0: number; y0: number; x1: number; y1: number } }> = [], shifts: Array<{ DX: number; rows: number }> = [];
   const port: BakeWorkerPort = { onmessage: null, postMessage: (m) => {
     kinds[m.kind] = (kinds[m.kind] ?? 0) + 1;
+    if (m.kind === 'rect') rects.push({ ticket: m.ticket, rect: { ...m.rect } });
+    if (m.kind === 'shift') shifts.push({ DX: m.DX, rows: m.rows });
     if (m.kind === 'chunks') for (const ch of m.list) {
       let h = 0;
       for (let i = 0; i < ch.tops.length; i++) h = Math.imul(h ^ ch.tops[i]!, 16777619);
@@ -81,13 +85,14 @@ function channel() {
   const host = new BakeWorkerHost((m) => toMain.push(structuredClone(m)), (fn) => tasks.push(fn));
   // (onStep: lo que hace el principal en cada cuadro antes de que el worker lea, p. ej. BakeWorker.frame)
   let onStep: (() => void) | null = null;
-  const step = (paint = 1) => {
+  // (deliver false: lo que contesta el worker se queda en camino, como un mensaje que aún no llegó al principal)
+  const step = (paint = 1, deliver = true) => {
     onStep?.();
     while (toHost.length) host.receive(toHost.shift()!);
     for (let k = 0; k < paint && tasks.length; k++) tasks.shift()!();
-    while (toMain.length) port.onmessage?.({ data: toMain.shift()! });
+    while (deliver && toMain.length) port.onmessage?.({ data: toMain.shift()! });
   };
-  return { port, host, step, kinds, again: () => again, held: () => held.length, setStep: (f: () => void) => { onStep = f; },
+  return { port, host, step, kinds, rects, shifts, inFlight: () => toMain.length, again: () => again, held: () => held.length, setStep: (f: () => void) => { onStep = f; },
     hold: (on: boolean) => { holdSky = on; }, release: () => { toHost.push(...held.splice(0)); },
     idle: () => !toHost.length && !tasks.length && !toMain.length && !held.length };
 }
@@ -141,12 +146,13 @@ const scenario = (ch: Ch | null, turnTo = false) => {
 };
 
 describe('BakeWorker: el horno en un worker', () => {
-  it('andar con corrimientos, picar con recuadros fuera y girar (turn): igual que hornear aquí; lo pedido antes de un corrimiento se salta', () => {
+  it('andar con corrimientos, picar con recuadros fuera y girar (turn): igual que hornear aquí; lo pedido antes de un corrimiento se traslada, no se salta', () => {
     const ch = channel();
     const a = scenario(ch), b = scenario(null);
     expect(a.bw!.stats.asked).toBeGreaterThan(20);
     expect(a.bw!.stats.got).toBeGreaterThan(10);
-    expect(a.bw!.stats.skipped).toBeGreaterThan(0);
+    expect(a.bw!.stats.skipped).toBe(0);
+    expect(a.bw!.stats.moved).toBeGreaterThan(0);
     // (el cielo también fuera: cada pedido de cielo llega o se salta como los recuadros)
     expect(a.bw!.stats.skies).toBeGreaterThan(10);
     expect(a.bw!.stats.skyMs).toBeGreaterThan(0);
@@ -161,7 +167,7 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
   });
 
-  it('un cielo pedido fuera cuando la ventana se corre no se traslada: se descarta (el worker lo salta) y nada se queda esperando', () => {
+  it('un cielo que llega al worker después del corrimiento (fuera de orden; un worker de verdad no reordena) se salta, falla y se pinta aquí: nada se queda esperando', () => {
     const ch = channel(), win = make([0, 0]), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
     bw.attach(win);
     ch.hold(true);
@@ -183,6 +189,150 @@ describe('BakeWorker: el horno en un worker', () => {
     const ref = make([0, 0]), rb = new FrameBudget(1e6);
     let rx = TV / 2;
     while (rx < x) { rx += TV / 16; ref.update(rx, Y, rb); for (let k = 0; k < 4; k++) { rb.run(); ref.update(rx, Y, rb); } }
+    drain(ref, null, rb, x);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  it('atasco: con el worker atrasado durante tres corrimientos, lo que está fuera se traslada (recuadros y cielos) y llega; nada se salta, lo descartado se cancela, y la imagen igual aunque se pique mientras', () => {
+    // (antes, en cada corrimiento se tiraba todo lo de fuera y se volvía a pedir: con el worker atrasado, no alcanzaba nunca)
+    const ch = channel(), win = make([0, 0]), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    drain(win, ch, budget, TV / 2);
+    const s0 = ch.kinds.shift ?? 0;
+    let x = TV / 2, n = 0, outAtShift = -1;
+    // Andar con el worker atrasado (recibe lo que se le manda, también los corrimientos, y pinta un recuadro o un cielo cada
+    // tres pasos), picando
+    for (; n < 400 && (ch.kinds.shift ?? 0) < s0 + 3; n++) {
+      x += TV / 16;
+      if (n % 5 === 2) pit(win, x + TV, Y + 5);
+      win.update(x, Y, budget);
+      for (let k = 0; k < 4; k++) { budget.run(); ch.step(k === 3 && n % 3 === 0 ? 1 : 0); win.update(x, Y, budget); }
+      if (outAtShift < 0 && (ch.kinds.shift ?? 0) > s0) outAtShift = bw.outstanding;
+    }
+    expect(ch.kinds.shift).toBe(s0 + 3);
+    drain(win, ch, budget, x);
+    expect(bw.stats.skipped).toBe(0);
+    expect(outAtShift).toBeGreaterThan(0);
+    expect(bw.stats.moved).toBeGreaterThan(0);
+    expect(bw.stats.movedSky).toBeGreaterThan(0);
+    expect(bw.stats.lateShift).toBe(0);
+    expect(ch.host.moved).toBe(bw.stats.moved + bw.stats.movedSky);
+    expect(bw.stats.canceled).toBeGreaterThan(0);
+    expect(win.baked.remoteStats!.published).toBeGreaterThan(bw.stats.moved / 2);
+    // La misma vuelta sin worker, con lo mismo picado
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    let rx = TV / 2, m = 0;
+    drain(ref, null, rb, rx);
+    while (rx < x) { rx += TV / 16; if (m++ % 5 === 2) pit(ref, rx + TV, Y + 5); ref.update(rx, Y, rb); for (let k = 0; k < 4; k++) { rb.run(); ref.update(rx, Y, rb); } }
+    drain(ref, null, rb, x);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  // Lo de fuera al correrse la ventana, con el worker parado: dos cielos en cola (sus recuadros llegaron), o un grupo de
+  // recuadros; luego se pica aquí, en lo suyo, antes o después del corrimiento, y lo nuevo se pinta y publica aquí antes de que
+  // llegue lo de fuera. Lo que llega es de antes: no se usa
+  const stalePit = (when: 'antes' | 'despues' | 'nunca', what: 'cielos' | 'recuadros') => {
+    const ch = channel(), win = make([0, 0]), budget = new FrameBudget(1e6);
+    // (local: lo que se pide desde ahora se pinta aquí)
+    let local = false;
+    const bw = new BakeWorker(ch.port, { near: () => local });
+    bw.attach(win);
+    let x = TV / 2;
+    drain(win, ch, budget, x);
+    const holes: Array<[number, number]> = [];
+    // (lo picado aquí se rehornea con otra forma: otras claves, para que no sustituya a lo de fuera)
+    const dig = (wx: number, wy: number) => { pit(win, wx, wy); holes.push([wx, wy]); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights, local ? { shape: { band: 16, rows: 24 } } : {})) budget.push(j); };
+    const run = (paint: number, n: number) => { for (let k = 0; k < n; k++) { ch.step(paint); budget.run(); win.update(x, Y, budget); } };
+    const A = TV + 4, sky0 = bw.stats.skies;
+    if (what === 'cielos') {
+      dig(x + A, Y - 30); dig(x + A, Y + 30);
+      for (let k = 0; k < 200 && bw.stats.skies < sky0 + 2; k++) run(1, 1);
+    } else dig(x + A, Y);
+    run(0, 6);
+    const out = bw.outstanding;
+    local = true;
+    const again = () => { for (const [hx, hy] of [...holes]) dig(hx - 3, hy); run(0, 10); };
+    if (when === 'antes') again();
+    const s0 = ch.kinds.shift ?? 0;
+    for (let n = 0; n < 200 && (ch.kinds.shift ?? 0) === s0; n++) { x += TV / 16; win.update(x, Y, budget); run(0, 4); }
+    const moved = { rects: bw.stats.moved, skies: bw.stats.movedSky };
+    const before = { stale: win.baked.remoteStats?.stale ?? 0 };
+    if (when === 'despues') again();
+    drain(win, ch, budget, x);
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    drain(ref, null, rb, TV / 2);
+    let rx = TV / 2;
+    while (rx < x) { rx += TV / 16; ref.update(rx, Y, rb); for (let k = 0; k < 4; k++) { rb.run(); ref.update(rx, Y, rb); } }
+    for (const [hx, hy] of holes) pit(ref, hx, hy);
+    drain(ref, null, rb, x);
+    return { out, shifts: (ch.kinds.shift ?? 0) - s0, moved, before, bw, win, diff: diff(win.baked, ref.baked) };
+  };
+
+  it('recuadros: lo trasladado sin que nada suyo cambie llega y se usa tal cual (sin volver a pedirlo), y la imagen igual', () => {
+    // (con cielos no: al correrse se vuelve a rehornear lo que quedaba marcado, y un recuadro publicado encima hace pedir otra vez el cielo)
+    const r = stalePit('nunca', 'recuadros');
+    expect(r.out).toBeGreaterThan(0);
+    expect(r.shifts).toBe(1);
+    expect(r.moved.rects).toBeGreaterThan(0);
+    expect(r.win.baked.remoteStats?.stale ?? 0).toBe(r.before.stale);
+    expect(r.diff).toBe(0);
+  });
+
+  for (const what of ['cielos', 'recuadros'] as const) {
+    it(`${what}: lo de fuera que ya no vale al correrse la ventana (se picó en lo suyo y lo nuevo se publicó aquí) no se traslada: se descarta y se cancela; la imagen igual`, () => {
+      const r = stalePit('antes', what);
+      expect(r.out).toBeGreaterThan(0);
+      expect(r.shifts).toBe(1);
+      expect(r.moved).toEqual({ rects: 0, skies: 0 });
+      expect(r.bw.stats.canceled).toBeGreaterThanOrEqual(r.out);
+      expect(r.diff).toBe(0);
+    });
+    it(`${what}: lo trasladado se comprueba al llegar: si se picó en lo suyo después del corrimiento y lo nuevo ya se publicó aquí, lo que llega es de antes y no se usa; la imagen igual`, () => {
+      const r = stalePit('despues', what);
+      expect(r.out).toBeGreaterThan(0);
+      expect(r.shifts).toBe(1);
+      expect(what === 'cielos' ? r.moved.skies : r.moved.rects).toBeGreaterThan(0);
+      expect(r.win.baked.remoteStats!.stale + (r.win.baked.skyStats?.restartVox ?? 0) + (r.win.baked.skyStats?.restartPub ?? 0)).toBeGreaterThan(0);
+      expect(r.diff).toBe(0);
+    });
+  }
+
+  it('lo pintado antes de que el worker supiera del corrimiento llega en el sitio de antes: no se usa, se hace aquí; y near pregunta por el sitio nuevo de lo trasladado', () => {
+    const ch = channel(), win = make([0, 0]), budget = new FrameBudget(1e6);
+    let target: { x0: number; y0: number; x1: number; y1: number } | null = null;
+    const bw = new BakeWorker(ch.port, { near: (r) => !!target && r.x0 === target.x0 && r.y0 === target.y0 && r.x1 === target.x1 && r.y1 === target.y1 });
+    bw.attach(win);
+    ch.setStep(() => bw.frame());
+    let x = TV / 2;
+    drain(win, ch, budget, x);
+    const holes: Array<[number, number]> = [];
+    const dig = (wx: number, wy: number) => { pit(win, wx, wy); holes.push([wx, wy]); for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j); };
+    const run = (paint: number, n: number, deliver: boolean) => { for (let k = 0; k < n; k++) { ch.step(paint, deliver); budget.run(); win.update(x, Y, budget); } };
+    const r0 = ch.rects.length;
+    dig(x + TV + 4, Y); dig(x + TV + 4, Y - 30);
+    run(0, 6, false);
+    const asked = ch.rects.slice(r0);
+    expect(asked.length).toBe(2);
+    // El primero se pinta, y lo que contesta se queda en camino; el segundo sigue en la cola del worker
+    ch.step(1, false);
+    expect(ch.inFlight()).toBe(1);
+    const s0 = ch.kinds.shift ?? 0;
+    for (let n = 0; n < 200 && (ch.kinds.shift ?? 0) === s0; n++) { x += TV / 16; win.update(x, Y, budget); run(0, 4, false); }
+    expect(ch.kinds.shift).toBe(s0 + 1);
+    // Llega lo pintado en el sitio de antes: falla
+    ch.step(0, true);
+    expect(bw.stats.lateShift).toBe(1);
+    // El segundo, trasladado: near con su sitio nuevo lo retira
+    const sh = ch.shifts[ch.shifts.length - 1]!, a = asked[1]!.rect;
+    target = { x0: a.x0 - sh.DX, x1: a.x1 - sh.DX, y0: a.y0 + sh.rows, y1: a.y1 + sh.rows };
+    ch.step(0, true);
+    expect(bw.stats.retired).toBe(1);
+    drain(win, ch, budget, x);
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    drain(ref, null, rb, TV / 2);
+    let rx = TV / 2;
+    while (rx < x) { rx += TV / 16; ref.update(rx, Y, rb); for (let k = 0; k < 4; k++) { rb.run(); ref.update(rx, Y, rb); } }
+    for (const [hx, hy] of holes) pit(ref, hx, hy);
     drain(ref, null, rb, x);
     expect(diff(win.baked, ref.baked)).toBe(0);
   });
