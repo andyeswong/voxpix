@@ -305,4 +305,27 @@ describe('ventana viva: correr lo horneado', () => {
     expect(b.movedKeys!.size).toBe(0);
   });
 
+  it('un recuadro a medias con su margen cambiado (un vecino) y el rehorneado del vecino publicado antes encima: empieza de nuevo y queda igual que hornear de nuevo', () => {
+    const b = freshNL(0, 0);
+    // A, junto al borde de su trozo de vóxeles (y 32..47); B, en el de al lado (48..63), delante (al sur): fuera del plan de A, pero
+    // el recuadro de A pinta lo que se ve en sus píxeles, y eso incluye 7 de B. Antes la comprobación de "algo cambió" miraba solo
+    // los trozos del plan, y A publicaba lo de antes de cavar B (también con la regla de antes de trasladar)
+    const A: Box = [40, 40, 14, 46, 46, 63], B2: Box = [40, 49, 14, 46, 54, 63];
+    // (cuántos pasos necesita el recuadro de A, en una copia; aquí se le dan todos menos uno: lo pintado incluye el borde)
+    const c = freshNL(0, 0);
+    dig(c.source, 0, 0, A);
+    const rc = rebakeChangedJobs(c, [], { shape: SHAPE }).find((j) => j.key.startsWith('rect:'))!;
+    let S = 1;
+    while (!rc.run(-Infinity)) S++;
+    dig(b.source, 0, 0, A);
+    const ja = rebakeChangedJobs(b, [], { shape: SHAPE });
+    const ra = ja.find((j) => j.key.startsWith('rect:'))!;
+    for (let k = 0; k < S - 1; k++) expect(ra.run(-Infinity)).toBe(false);
+    dig(b.source, 0, 0, B2);
+    const jb = rebakeChangedJobs(b, [], { shape: SHAPE });
+    for (const j of jb) while (!j.run(Infinity));
+    for (const j of ja) while (!j.run(Infinity));
+    rebakeChanged(b, []);
+    expect(diff(b, freshNL(0, 0, [A, B2]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+  });
 });

@@ -1021,8 +1021,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
     // como mucho: con cambios en cada cuadro, se publica y lo arregla el rehorneado de esos cambios, que va detrás)
-    // (los trozos del plan, con el margen que chunkRect le sumó, y sin él: el núcleo, lo que cambió de verdad)
-    let planChunks = chunksOfPlan(b, plan, 0), coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
+    // (los trozos del núcleo del plan, sin el margen que le sumó chunkRect: lo que cambió de verdad; y los que lee:
+    // el recuadro pinta lo que se ve en sus píxeles, también vóxeles de trozos vecinos al plan, delante o detrás)
+    let coreChunks = chunksOfPlan(b, planCore(b, plan), 0), reads = readChunks(b, rect);
     // (edge: el margen ya cambió antes de un corrimiento; se recuerda, porque tras trasladarlo se cuenta desde ahí)
     let started = -1, restarts = 0, finished = false, dirty = false, out = false, pubAt = -1, edge = false, counted = false;
     // (acabado, descartado o sustituido: cuenta una vez para su tanda, y deja su clave)
@@ -1035,7 +1036,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const stalePaint = (): boolean => {
       const moved = b.source.changedSince(started);
       if (moved.some((c) => coreChunks.includes(c))) return true;
-      if (!edge && !moved.some((c) => planChunks.includes(c))) return false;
+      if (!edge && !moved.some((c) => reads.includes(c))) return false;
       const since = pubAt >= 0 ? publishedSince(b, pubAt) : null;
       return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
     };
@@ -1054,12 +1055,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (ticket) return false;
         if (!planInside(b, plan, P, 1) || !rectInside(b, rect, P)) return false;
         dirty = !!buf && started >= 0 && stalePaint();
-        if (buf && started >= 0 && !dirty && b.source.changedSince(started).some((c) => planChunks.includes(c))) edge = true;
+        if (buf && started >= 0 && !dirty && b.source.changedSince(started).some((c) => reads.includes(c))) edge = true;
         return true;
       },
       move(P) {
         rect.x0 -= P.DX; rect.x1 -= P.DX; rect.y0 += P.rows; rect.y1 += P.rows;
-        planChunks = chunksOfPlan(b, plan, 0); coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
+        coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
+        // (con los índices de antes: la fuente aún no se corrió; lo que lee en el sitio nuevo se recalcula al empezar a pintar)
+        reads = reads.map((c) => ((Math.floor(c / b.source.cols) - P.ty) * b.source.cols) + (c % b.source.cols) - P.tx).filter((c) => c >= 0 && c < b.source.cols * b.source.rows);
         g = g.map((c) => ((Math.floor(c / b.source.cols) - P.ty) * b.source.cols) + (c % b.source.cols) - P.tx);
         // (lo que cambió del plan mientras: se empieza de nuevo, con el mismo tope que al acabar, dos veces; después se sigue
         // y se publica, y lo arregla el rehorneado de ese cambio, que va detrás)
@@ -1101,7 +1104,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // (algo suyo cambió mientras: se pinta aquí)
           st.stale++;
         }
-        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; }
+        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; reads = readChunks(b, rect); }
         // (trasladado con lo pintado: lo que cambie del plan y lo que se publique, desde ahora)
         if (started === -2) { started = b.source.clock; pubAt = b.published.serial; }
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
@@ -1354,6 +1357,12 @@ interface RebakeMover {
 export interface RebakeBatch { epoch: number; lights: boolean; movers: RebakeMover[]; left: number }
 let movedSerial = 0;
 
+// Los trozos de vóxeles que lee el recuadro r al pintarse: la región de stripRegion (lo que puede caer en sus píxeles), con 3
+// vóxeles alrededor (el tono suavizado y la oclusión miran a los vecinos)
+function readChunks(b: Baked, r: ScreenRect): number[] {
+  const { region } = stripRegion(b, r, r.x0, r.x1), m = 3;
+  return chunksOfPlan(b, { X0: region.x0 - m, X1: region.x1 + m, Y0: region.y0 - m, Y1: region.y1 + m, Z0: 0, Z1: 0 }, 0);
+}
 // El plan sin el margen que le sumó chunkRect (lo que cambió de verdad; el margen es lo que se lee alrededor)
 function planCore(b: Baked, p: Plan): Plan {
   const m = (b.options.smooth ?? 0.6) > 0 ? 3 : 1;
