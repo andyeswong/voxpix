@@ -3,7 +3,7 @@
 //
 // - BakeWorker (hilo principal): attach(win) una vez. La ventana pone su remote en el horneado del giro que se ve
 //   (LiveWindow.setRemote) y avisa de cada corrimiento con lo que se corrió cada fuente (attach, shiftSources). Nada se
-//   envuelve: las ediciones y los trozos que entran se ven en las versiones de la fuente (StaticVoxels.versions), y al
+//   envuelve: las ediciones y los trozos que entran se ven en las versiones de la fuente (StaticVoxels.dataVersions), y al
 //   pedir cada recuadro se mandan los trozos que lee cuya versión no se mandó todavía.
 // - BakeWorkerHost (el worker; horno-worker.ts es su entrada): un espejo por fuente (StaticVoxels del mismo tamaño y un
 //   horneado sin pintar con las mismas opciones), los trozos que llegan, los corrimientos, y un recuadro pintado por tarea
@@ -62,7 +62,9 @@ function shiftSent(a: Uint32Array, cols: number, rows: number, dcx: number, dcy:
 }
 
 export class BakeWorker {
-  readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0 };
+  readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0,
+    // (trozos mandados otra vez porque sus vóxeles cambiaron desde el último envío)
+    resent: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
   private readonly tickets = new Map<number, { out: RectOut | Uint8Array | null; ready: boolean }>();
   private readonly inbox: number[] = [];
@@ -100,10 +102,12 @@ export class BakeWorker {
     const s = b.source, t0 = performance.now(), list: SentChunk[] = [], transfer: Transferable[] = [];
     let ok = true;
     for (const c of chunks) {
-      const v = s.versions[c]!;
+      // (la versión de sus vóxeles: un touch, que solo marca para rehornear, no lo vuelve a mandar)
+      const v = s.dataVersions[c]!;
       if (m.sent[c] === v) continue;
       const e = s.exportChunkPrepared(c);
       if (!e) { ok = false; break; }
+      if (m.sent[c] !== 0) this.stats.resent++;
       list.push({ c, v, ...e });
       m.sent[c] = v;
       transfer.push(e.tops.buffer);

@@ -184,6 +184,29 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(diff(win.baked, ref.baked)).toBe(0);
   });
 
+  it('marcar para rehornear (touch) no vuelve a mandar trozos; picar manda solo los que cambian; y la imagen igual', () => {
+    const ch = channel(), win = make([0, 0]), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    drain(win, ch, budget, TV / 2); drain(ref, null, rb, TV / 2);
+    // Todo marcado: se rehornea todo (fuera), sin mandar ningún trozo más que los que el espejo aún no tenía
+    const s = win.view.static, n = s.cols * s.rows;
+    for (let c = 0; c < n; c++) { s.touch(c); ref.view.static.touch(c); }
+    drain(win, ch, budget, TV / 2); drain(ref, null, rb, TV / 2);
+    const sent = bw.stats.chunks, asked = bw.stats.asked;
+    for (let c = 0; c < n; c++) s.touch(c);
+    drain(win, ch, budget, TV / 2);
+    expect(bw.stats.asked).toBeGreaterThan(asked);
+    expect(bw.stats.chunks).toBe(sent);
+    expect(bw.stats.resent).toBe(0);
+    // Picar: solo lo que cambió se vuelve a mandar
+    pit(win, TV / 2 + 6, Y + 2); pit(ref, TV / 2 + 6, Y + 2);
+    drain(win, ch, budget, TV / 2); drain(ref, null, rb, TV / 2);
+    expect(bw.stats.resent).toBeGreaterThan(0);
+    expect(bw.stats.resent).toBeLessThanOrEqual(4);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
   it('girar no rehace el espejo: uno por fuente (giro 0 y giro 1), ninguno tirado, y al volver se mandan pocos trozos', () => {
     const ch = channel();
     const a = scenario(ch);

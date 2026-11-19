@@ -143,6 +143,10 @@ export class StaticVoxels implements VoxelSource {
   // Sello (valor del reloj) del último cambio de VÓXELES de cada trozo. El reloj lo comparten los cambios de agua y
   // entidades (WorldState.changedSince), así una versión dice "todo lo anterior a este momento"
   readonly versions: Uint32Array;
+  // Por trozo, la versión del último cambio de sus VÓXELES (escribir, estampar losas, copiar girado, escrituras de vista).
+  // versions sube además con touch (marcar para rehornear sin cambiar nada) y en el borde de un corrimiento; esta no. Quien
+  // guarda una copia de los vóxeles (BakeWorker) mira esta: un touch no le hace volver a mandar el trozo
+  readonly dataVersions: Uint32Array;
   // Por trozo, la versión del último cambio que vino del mundo (no de una escritura de vista: ver viewWrites)
   private worldVersions: Uint32Array;
   // Mientras está a true, set escribe como VISTA: cuenta para el rehorneado como cualquier cambio, pero no como cambio
@@ -174,6 +178,7 @@ export class StaticVoxels implements VoxelSource {
     this.seg = new Int32Array(this.cols * this.rows * SEGS * 7);
     this.segN = new Uint8Array(this.cols * this.rows);
     this.versions = new Uint32Array(this.cols * this.rows);
+    this.dataVersions = new Uint32Array(this.cols * this.rows);
     this.worldVersions = new Uint32Array(this.cols * this.rows);
     this.height = new Int16Array(width * depth).fill(zMin);
     this.expo = new Array(this.cols * this.rows * this.nz).fill(null);
@@ -218,7 +223,7 @@ export class StaticVoxels implements VoxelSource {
     else if (!value) this.count[si]!--;
     if (this.count[si] === 0) { this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; }
     else if (this.count[si] === this.cap(s)) this.tryUniform(si, s);
-    this.versions[c] = ++this.clock;
+    this.versions[c] = this.dataVersions[c] = ++this.clock;
     if (!this.viewWrites) this.worldVersions[c] = this.clock;
     this.note(c, x, y, z);
     const watchers = this.feed?.list;
@@ -253,7 +258,7 @@ export class StaticVoxels implements VoxelSource {
     // alrededor; lo que entra y el borde nuevo tienen versión nueva, y se rehacen). Antes se daban por caducadas todas, y
     // todo lo que se rehorneaba tras cada corrimiento las rehacía (a 6x, andando, más que el propio rehorneado)
     this.shiftExposure(g);
-    g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
+    g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0); g(this.dataVersions, 1, 0);
     // Las cajas de lo cambiado van en coordenadas: se corren con el contenido (en su sitio, y se restan las coordenadas)
     const DX = dcx * CHUNK, DY = dcy * CHUNK;
     g(this.seg, SEGS * 7, 0); g(this.segN, 1, 0);
@@ -352,7 +357,7 @@ export class StaticVoxels implements VoxelSource {
         // Lo pequeño, en su sitio (copias de memoria)
         const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
         g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
-        g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0);
+        g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0); g(this.dataVersions, 1, 0);
         this.shiftExposure(g);
         if (this.fgrid) this.fgrid.dirty.fill(1);
         void D;
@@ -430,7 +435,7 @@ export class StaticVoxels implements VoxelSource {
       this.height[y * this.width + x] = h;
       if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
     }
-    this.versions[c] = ++this.clock;
+    this.versions[c] = this.dataVersions[c] = ++this.clock;
     if (!this.viewWrites) this.worldVersions[c] = this.clock;
     this.note(c, x0, y0, this.zMin); this.note(c, x1, y1, this.zMax);
     const watchers = this.feed?.list;
@@ -562,6 +567,7 @@ export class StaticVoxels implements VoxelSource {
     cs.forEach((ch, c) => {
       this.versions[c] = ch.version;
       this.worldVersions[c] = ch.version;
+      this.dataVersions[c] = ch.version;
       this.alloc[c] = ch.data ? 1 : 0;
       // Lo cambiado en el trozo pasa a ser el trozo entero (no se sabe qué vóxeles eran)
       const cx = c % this.cols, cy = Math.floor(c / this.cols), o = c * SEGS * 7;
@@ -633,7 +639,7 @@ export class StaticVoxels implements VoxelSource {
     if (!had || any) return;
     const X = (dc % this.cols) * CHUNK, Y = Math.floor(dc / this.cols) * CHUNK;
     for (let y = Y; y < Math.min(this.depth, Y + CHUNK); y++) this.height.fill(this.zMin, y * this.width + X, y * this.width + Math.min(this.width, X + CHUNK));
-    this.versions[dc] = this.worldVersions[dc] = ++this.clock;
+    this.versions[dc] = this.worldVersions[dc] = this.dataVersions[dc] = ++this.clock;
     this.segN[dc] = 1;
     this.seg.set([this.clock, X, Y, this.zMin, Math.min(this.width, X + CHUNK) - 1, Math.min(this.depth, Y + CHUNK) - 1, this.zMax], dc * SEGS * 7);
   }
@@ -671,7 +677,7 @@ export class StaticVoxels implements VoxelSource {
       this.height[(Y + ly) * this.width + X + lx] = h;
     }
     this.alloc[c] = 1;
-    this.versions[c] = this.worldVersions[c] = ++this.clock;
+    this.versions[c] = this.worldVersions[c] = this.dataVersions[c] = ++this.clock;
     const o = c * SEGS * 7;
     this.segN[c] = 1;
     this.seg.set([this.clock, X, Y, this.zMin, Math.min(this.width, X + CHUNK) - 1, Math.min(this.depth, Y + CHUNK) - 1, this.zMax], o);
@@ -757,7 +763,7 @@ export class StaticVoxels implements VoxelSource {
 
   // Lo que ocupan los vóxeles en memoria (las losas con datos, sus paletas y las rejillas por columna)
   get byteLength(): number {
-    let n = this.height.byteLength + this.versions.byteLength + this.alloc.byteLength;
+    let n = this.height.byteLength + this.versions.byteLength + this.dataVersions.byteLength + this.alloc.byteLength;
     n += this.palN.byteLength + this.uni.byteLength + this.count.byteLength;
     for (const d of this.data) if (d) n += d.byteLength;
     for (const p of this.pal) if (p) n += p.byteLength;
