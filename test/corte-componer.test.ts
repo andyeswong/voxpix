@@ -216,6 +216,25 @@ describe('corte al componer', () => {
     expect(p.boxState().stale).toBeGreaterThan(0);
   });
 
+  it('una caja fuera de la vista en y (tras girar, la del giro de antes): franjas vacías, sin romperse; y un recuadro publicado después las deja como están', () => {
+    const st = new WorldState(build(null), [], null), view = new WorldView(st, 0, { cut: true });
+    const b = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, outline: 'both', sky: true });
+    // (las dos dan filas al revés en sectionRows: la caja muy por detrás, y una caja por encima del mundo)
+    for (const [y0, y1, zMin] of [[-200, -180, TZ0], [40, 60, 200]]) {
+      const p = new SectionPainter(b, { ahead: 1, behind: 1 });
+      p.set({ x0: 32, x1: 47, y0: y0!, y1: y1!, zMin: zMin! }, 1);
+      expect(() => p.paintAll()).not.toThrow();
+      expect(p.ready()).toBe(true);
+      expect(p.layer()).toBeNull();
+      // (lejos de sus columnas: no cambia ningún vóxel que lean)
+      view.setCut({ x0: 100, y0: 40, x1: 120, y1: 70, zTop: TZ1 + 1 });
+      for (const j of rebakeChangedJobs(b, [])) while (!j.run(Infinity));
+      expect(p.ready()).toBe(true);
+      view.setCut(null);
+      for (const j of rebakeChangedJobs(b, [])) while (!j.run(Infinity));
+    }
+  });
+
   it('sin sección, el cuadro de siempre', () => {
     expect(pair(0, 40, 59, 32).plainSame).toBe(true);
   });

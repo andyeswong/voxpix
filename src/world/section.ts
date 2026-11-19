@@ -477,7 +477,7 @@ export class SectionPainter {
     const m = SKY_REACH + 3, vx0 = i * UNIT - m, vx1 = i * UNIT + UNIT - 1 + m;
     for (const ch of s.changedSince(st.clock)) { const cx = (ch % s.cols) * CHUNK; if (cx + CHUNK - 1 >= vx0 && cx <= vx1) return false; }
     const ox = b.options.originX ?? 0, rx = Math.max(0, ox + i * UNIT - 1), rx1 = Math.min(b.width - 1, ox + i * UNIT + UNIT), w = rx1 - rx + 1;
-    const [fy0, fy1] = st.rows, h = fy1 - fy0 + 1, L = st.layer;
+    const [fy0, fy1] = st.rows, h = Math.max(0, fy1 - fy0 + 1), L = st.layer;
     if (snap.length !== w * h || (L && (L.x !== rx || L.y !== fy0 || L.w !== w || L.h !== h))) return false;
     const Y0 = Math.max(0, c.y0), Y1 = Math.min(s.depth - 1, c.y1), zMin = c.zMin, n = w * h;
     // La máscara con el pick de ahora (como sectionLayer: 1 en la caja; 2, fuera junto a uno de la caja)
@@ -671,7 +671,8 @@ export class SectionPainter {
     if (!p) {
       // (el pick horneado de su recuadro, con el que se pinta: revalidate lo compara con el de después)
       const ox = b.options.originX ?? 0, rx = Math.max(0, ox + i * UNIT - 1), rx1 = Math.min(b.width - 1, ox + i * UNIT + UNIT), w = rx1 - rx + 1;
-      const snap = new Float64Array(w * (fy1 - fy0 + 1));
+      // (con la caja fuera de la vista, p. ej. la de antes de un giro, las filas salen al revés: sin filas)
+      const snap = new Float64Array(w * Math.max(0, fy1 - fy0 + 1));
       for (let j = fy0; j <= fy1; j++) snap.set(b.pick.subarray(j * b.width + rx, j * b.width + rx1 + 1), (j - fy0) * w);
       p = { serial: b.published.serial, clock: b.source.clock, snap, next: fy0, fy0, fy1, parts: [] }; this.pending.set(i, p);
     }
