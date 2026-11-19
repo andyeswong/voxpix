@@ -101,8 +101,11 @@ void (async () => {
   boot.ventana = Math.round(performance.now());
   let rid = 0;
   if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; }, ready: () => results.has(id) }; } };
-  const motor = WORKER2 ? new BakeWorker(new Worker(new URL('../../../src/world/horno-worker.ts', import.meta.url), { type: 'module' }) as unknown as BakeWorkerPort, { brake: FRENO }) : null;
+  const motor = WORKER2 ? new BakeWorker(new Worker(new URL('../../../src/world/horno-worker.ts', import.meta.url), { type: 'module' }) as unknown as BakeWorkerPort, { brake: FRENO, ...(q.get('cerca') === '1' ? { near: (r: { x0: number; x1: number }) => !!cercaX && r.x1 >= cercaX[0] && r.x0 <= cercaX[1] } : {}) }) : null;
   motor?.attach(win);
+  // (?cerca=1, con el del motor y ?entrar: desde que se entra, lo que toca la columna del corte (su caja ± 32 px, toda la
+  // altura) es cercano y se pinta aquí; lo que estaba fuera y pasa a serlo se retira)
+  let cercaX: [number, number] | null = null;
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
   boot.compositor = Math.round(performance.now());
   compositor.upload(win.baked);
@@ -207,6 +210,7 @@ void (async () => {
       const [ex, ey] = win.toLocal(x, Y);
       timed.push(win.view.cutJob({ x0: Math.floor(ex) - CORTE, y0: Math.floor(ey) - CORTE, x1: Math.floor(ex) + CORTE, y1: Math.floor(ey) + CORTE, zTop: ground(x, Y) - CORTEZ }));
       entrada.a = now;
+      cercaX = [Math.floor(ex) - CORTE - 32, Math.floor(ex) + CORTE + 32];
     }
     if (ENTRAR && entrada.a !== undefined && win.baked.source.changedSince(win.baked.version).length) {
       // (?entrarnear=1: con near en MAIA, como el rehorneado de lo editado en el juego: prioridad por distancia en pantalla)
@@ -313,6 +317,7 @@ void (async () => {
     const t4 = performance.now();
     // (con el worker: dónde está la vista, para que pinte primero lo de cerca; y si lo que se ve tiene algún recuadro
     // pendiente, la puerta del 6x)
+    motor?.frame();
     if (hornero && (Math.abs(o.vx - lastView[0]) > 8 || Math.abs(o.vy - lastView[1]) > 8)) { lastView = [o.vx, o.vy]; hornero.postMessage({ kind: 'view', x: o.vx + VW / 2, y: o.vy + VH / 2 }); }
     for (const k of win.baked.rectsBusy?.keys() ?? []) {
       const [x0, y0, x1, y1] = k.slice(5).split(',').map(Number) as [number, number, number, number];
