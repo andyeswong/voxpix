@@ -159,7 +159,7 @@ void (async () => {
   const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
   let heapBefore = -1;
   const HEAPGIRO = q.get('heapgiro') === '1', turnHeap: number[] = [];
-  const HEAPCADA = Number(q.get('heapcada') ?? 0), heapEvery: Array<{ s: number; mb: number }> = [];
+  const HEAPCADA = Number(q.get('heapcada') ?? 0), heapEvery: Array<{ s: number; mb: number; cola: number; trozos: number }> = [];
   let nextHeapGc = HEAPCADA * 1000;
   // ?entrar: los 4 s antes de entrar y los 4 s tras entrar, cuadro a cuadro (el intervalo, sus fases, lo de fuera de
   // nuestro JS, los recuadros publicados en el cuadro y sus píxeles, y si el montón cayó: el recolector)
@@ -187,7 +187,8 @@ void (async () => {
     // El montón antes del primer giro (con el recolector forzado si Edge lo da: --js-flags=--expose-gc)
     if (GIRAR && heapBefore < 0 && now - start >= nextTurn) heapBefore = gcHeap();
     // ?heapcada=N: el montón (con el recolector forzado) cada N segundos, gire o no
-    if (HEAPCADA && now - start >= nextHeapGc) { heapEvery.push({ s: Math.round((now - start) / 1000), mb: gcHeap() }); nextHeapGc += HEAPCADA * 1000; }
+    // (y lo que queda en la cola y de trozos por rehornear: con ?nucleo, hasta cuándo dura el rehorneado de lo de fuera)
+    if (HEAPCADA && now - start >= nextHeapGc) { heapEvery.push({ s: Math.round((now - start) / 1000), mb: gcHeap(), cola: budget.pending, trozos: win.baked.source.changedSince(win.baked.version).length }); nextHeapGc += HEAPCADA * 1000; }
     // ?heapgiro=1: el montón (con el recolector forzado) antes de cada giro, para ver si crece de giro en giro
     if (GIRAR && HEAPGIRO && now - start >= nextTurn) turnHeap.push(gcHeap());
     if (GIRAR && now - start >= nextTurn) { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
