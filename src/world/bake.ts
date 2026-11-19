@@ -421,10 +421,9 @@ function lightWeights(b: Baked, l: WorldLight): BakedLight | null {
   return rows;
 }
 
-function lightZone(b: Baked, l: WorldLight, weight?: Float32Array): BakedLight | null {
-  const p = resolveLight(l, 0);
-  const r = p.radius;
-  // Zona de la imagen: la proyección de la caja que rodea la esfera de la luz
+// Zona de la imagen de una luz: la proyección de la caja que rodea su esfera (null si cae fuera)
+function lightRect(b: Baked, l: WorldLight): { x: number; y: number; w: number; h: number } | null {
+  const r = resolveLight(l, 0).radius;
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const dx of [-r, r]) for (const dy of [-r, r]) for (const z of [Z0, Math.min(b.topZ, l.z + r)]) {
     const [sx, sy] = b.cam.project(l.x + dx, l.y + dy, z);
@@ -432,7 +431,11 @@ function lightZone(b: Baked, l: WorldLight, weight?: Float32Array): BakedLight |
   }
   const rx = Math.max(0, Math.floor(x0)), ry = Math.max(0, Math.floor(y0));
   const rect = { x: rx, y: ry, w: Math.min(b.width, Math.ceil(x1)) - rx, h: Math.min(b.height, Math.ceil(y1)) - ry };
-  if (rect.w <= 0 || rect.h <= 0) return null;
+  return rect.w <= 0 || rect.h <= 0 ? null : rect;
+}
+function lightZone(b: Baked, l: WorldLight, weight?: Float32Array): BakedLight | null {
+  const p = resolveLight(l, 0), rect = lightRect(b, l);
+  if (!rect) return null;
   return { light: l, color: p.color, intensity: p.base, rect, weight: weight && weight.length === rect.w * rect.h ? weight : new Float32Array(rect.w * rect.h) };
 }
 
@@ -1007,7 +1010,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     }
     return (changed = Int32Array.from(new Set(out)));
   };
-  const busy = (b.rectsBusy ??= new Map()), myKeys: string[] = [];
+  const busy = (b.rectsBusy ??= new Map()), myRects: Array<{ key: string; rect: ScreenRect }> = [];
   const pp = (b.pendingPlans ??= new Map());
   // (la tanda: su época, que shiftRebakes pone al día si la traslada; si toca luces, y lo de cada trabajo para trasladarlo)
   const batch: RebakeBatch = { epoch: b.rebakeEpoch ?? 0, lights: false, movers: [], left: 0 };
@@ -1019,8 +1022,15 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   // (vigente de su clave: el de antes, sustituido; al acabar, deja de serlo)
   const claim = (k: string, superseded: () => void) => { liveKeys.get(k)?.(); liveKeys.set(k, superseded); };
   const release = (k: string, superseded: () => void) => { if (liveKeys.get(k) === superseded) liveKeys.delete(k); };
-  // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
-  const waiting = () => myKeys.some((k) => busy.has(k));
+  // ¿Queda en marcha alguno de los recuadros de este rehorneado que pinta en el recuadro de la imagen area() (quien lo
+  // acabe: este trabajo o el que lo sustituyó)? El cielo y las luces esperan solo a esos: antes esperaban a TODOS los del
+  // rehorneado, y con recuadros fuera (BakeWorker) lo cercano esperaba al último lejano que el worker tenía en cola.
+  // (area() y los recuadros se miran al preguntar: se corren con la imagen)
+  const waitingIn = (area: () => ScreenRect | null) => () => {
+    const a = area();
+    if (!a) return false;
+    return myRects.some((e) => busy.has(e.key) && e.rect.x1 >= a.x0 && e.rect.x0 <= a.x1 && e.rect.y1 >= a.y0 && e.rect.y0 <= a.y1);
+  };
   const tiles = new Map<string, number[]>();
   if (shape.tile) for (const c of chunks) { const k = `${Math.floor((c % b.source.cols) / shape.tile)},${Math.floor(Math.floor(c / b.source.cols) / shape.tile)}`; const l = tiles.get(k); if (l) l.push(c); else tiles.set(k, [c]); }
   const groupsAll = shape.tile ? [...tiles.values()].flatMap((cs) => chunkGroups(b, cs, shape.merge)) : chunkGroups(b, chunks, shape.merge);
@@ -1033,7 +1043,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`;
     if (movedKeys.has(key)) key += `#${++movedSerial}`;
     const token = {};
-    busy.set(key, token); myKeys.push(key);
+    busy.set(key, token); myRects.push({ key, rect });
     pp.set(token, [plan]);
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
@@ -1177,6 +1187,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const works = (b.lightWork ??= new Map());
     const queued = works.get(l.id);
     batch.lights = true;
+    // (espera a los recuadros de este rehorneado que pintan en su zona: la zona se calcula al preguntar, con la luz de ahora)
+    const waiting = waitingIn(() => { const z = lightRect(b, l); return z && { x0: z.x, y0: z.y, x1: z.x + z.w - 1, y1: z.y + z.h - 1 }; });
     if (queued && !queued.started) { queued.plans.push(...plans); queued.pixels.push(changedPixels); queued.waits.push(waiting); continue; }
     const work: LightWork = { plans: [...plans], pixels: [changedPixels], waits: [waiting], started: false };
     works.set(l.id, work);
@@ -1309,6 +1321,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
     let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false, skyCounted = false;
+    // (espera a los recuadros de este rehorneado que pintan en su recuadro: lee su pick y su face)
+    const skyWaiting = waitingIn(() => r);
     // (el cielo pedido fuera, b.remote.sky: como los recuadros, y cuántas veces se pidió)
     let skyTicket: { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean } | null | undefined, skyAsks = 0;
     const skyGone = () => skyOut || stale();
@@ -1340,10 +1354,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       key: skyKey,
       dead: skyGone,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
-      waiting: () => !skyGone() && (!!b.shiftHold || waiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready() && !skyTicket.failed?.())),
+      waiting: () => !skyGone() && (!!b.shiftHold || skyWaiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready() && !skyTicket.failed?.())),
       run(deadline) {
         if (skyGone()) { skyDone = true; skySettle(); return true; }
-        if (b.shiftHold || waiting()) return false;
+        if (b.shiftHold || skyWaiting()) return false;
         // Fuera (b.remote.sky): con el pick y el face de ahora; al llegar, la misma regla que al acabar aquí (lo que lee
         // cambió, o se publicó un recuadro encima desde que se pidió): se vuelve a pedir, REMOTE_RETRIES veces, y después aquí
         if (skyTicket === undefined && b.remote?.sky && row === r.y0) {

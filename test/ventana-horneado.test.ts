@@ -305,6 +305,59 @@ describe('ventana viva: correr lo horneado', () => {
     expect(b.movedKeys!.size).toBe(0);
   });
 
+  it('el cielo y las luces de un rehorneado esperan solo a sus recuadros (los que pintan en su recuadro o su zona), no a todos: lo cercano acaba con un recuadro lejano sin pintar, y al final igual que hornear de nuevo', () => {
+    // A, junto a una antorcha de radio 10 (su zona no llega a B); B, lejos. El mismo rehorneado, recuadros distintos
+    const A: Box = [54, 6, 14, 63, 16, 63], B2: Box = [4, 40, 14, 12, 48, 63];
+    const L: WorldLight[] = [{ id: 'p', kind: 'torch', x: 59.5, y: 11.5, z: 44, radius: 10 }];
+    const bake = (holes: Box[]) => {
+      const s = new StaticVoxels(pal, WV, WV, 0, ZT);
+      for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) stamp(s, i, j, i, j);
+      for (const h of holes) dig(s, 0, 0, h);
+      return bakeWorld({ model: s, lights: L, width: WV, depth: WV }, OPTS);
+    };
+    const b = bake([]);
+    dig(b.source, 0, 0, A); dig(b.source, 0, 0, B2);
+    const jobs = rebakeChangedJobs(b, L, { shape: SHAPE });
+    const rectOf = (k: string) => { const [x0, y0, x1, y1] = k.slice(k.indexOf(':') + 1).split('#')[0]!.split(',').map(Number); return { x0: x0!, y0: y0!, x1: x1!, y1: y1! }; };
+    const over = (a: { x0: number; x1: number; y0: number; y1: number }, c: { x0: number; x1: number; y0: number; y1: number }) => a.x1 >= c.x0 && a.x0 <= c.x1 && a.y1 >= c.y0 && a.y0 <= c.y1;
+    const rects = jobs.filter((j) => j.key.startsWith('rect:'));
+    // (el de B: el que pinta la columna x = 8)
+    const far = rects.filter((j) => rectOf(j.key).x0 <= 8 && rectOf(j.key).x1 >= 8);
+    const near = rects.filter((j) => !far.includes(j));
+    expect(far.length).toBeGreaterThan(0);
+    expect(near.length).toBeGreaterThan(0);
+    const skies = jobs.filter((j) => j.key.startsWith('sky:')), lights = jobs.filter((j) => j.key.startsWith('light:p#'));
+    // (la zona de la luz no toca el recuadro de B)
+    const z = b.lights[0]!.rect;
+    expect(far.some((r) => over(rectOf(r.key), { x0: z.x, y0: z.y, x1: z.x + z.w - 1, y1: z.y + z.h - 1 }))).toBe(false);
+    const nearSky = skies.filter((j) => near.some((r) => over(rectOf(j.key), rectOf(r.key))) && !far.some((r) => over(rectOf(j.key), rectOf(r.key))));
+    expect(nearSky.length).toBeGreaterThan(0);
+    expect(lights.length).toBe(1);
+    // Su recuadro sin publicar: el cielo espera (no se calcula con el pick de antes)
+    for (const j of nearSky) { expect(j.waiting?.()).toBe(true); expect(j.run(Infinity)).toBe(false); }
+    expect(lights[0]!.run(Infinity)).toBe(false);
+    // Lo cercano acaba; el recuadro de B, sin pintar
+    for (const j of near) while (!j.run(Infinity));
+    for (const j of nearSky) { expect(j.waiting?.()).toBe(false); expect(j.run(Infinity)).toBe(true); }
+    let k = 0;
+    while (!lights[0]!.run(Infinity)) if (++k > 200) throw new Error('la luz no acaba');
+    for (const j of far) expect(j.waiting?.() ?? false).toBe(false);
+    // Al final, todo: igual que hornear de nuevo (imagen y luces)
+    for (const j of jobs) while (!j.run(Infinity));
+    rebakeChanged(b, L);
+    const r = bake([A, B2]);
+    expect(diff(b, r)).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+    const byId = (x: Baked) => new Map(x.lights.map((l) => [l.light.id, l]));
+    const lb = byId(b), lr = byId(r);
+    expect([...lb.keys()].sort()).toEqual([...lr.keys()].sort());
+    for (const [id, z] of lr) {
+      const y = lb.get(id)!;
+      let off = 0;
+      for (let i = 0; i < z.weight.length; i++) if (Math.abs(y.weight[i]! - z.weight[i]!) > 1e-6) off++;
+      expect({ id, rect: y.rect, off }).toEqual({ id, rect: z.rect, off: 0 });
+    }
+  });
+
   it('un recuadro a medias con su margen cambiado (un vecino) y el rehorneado del vecino publicado antes encima: empieza de nuevo y queda igual que hornear de nuevo', () => {
     const b = freshNL(0, 0);
     // A, junto al borde de su trozo de vóxeles (y 32..47); B, en el de al lado (48..63), delante (al sur): fuera del plan de A, pero
