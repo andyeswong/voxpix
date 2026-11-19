@@ -929,10 +929,11 @@ export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float3
 // Cuántas veces se vuelve a pedir fuera un recuadro que llegó caducado antes de pintarlo aquí
 export const REMOTE_RETRIES = 2;
 export interface RemoteRects {
-  ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean } | null;
+  // (failed, opcional: ya no va a llegar; lo pedido se hace aquí)
+  ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean; failed?(): boolean } | null;
   // (opcional) el cielo del recuadro rect fuera, con el pick y el face del horneado en él (fila a fila, su ancho): devuelve
   // el cielo de cada píxel, en el mismo orden
-  sky?(rect: ScreenRect, pick: Float64Array, face: Int8Array): { result(): Uint8Array | null; ready?(): boolean } | null;
+  sky?(rect: ScreenRect, pick: Float64Array, face: Int8Array): { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean } | null;
 }
 export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
 export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
@@ -1037,7 +1038,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
     // (el recuadro pedido fuera, y el reloj de cuando se pidió)
-    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
+    let ticket: { result(): RectOut | null; ready?(): boolean; failed?(): boolean } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
@@ -1100,12 +1101,13 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       // (descartado al correrse la ventana o al soltarse su horneado: correrlo ya no haría nada)
       dead: gone,
       // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
-      waiting: () => !gone() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
+      waiting: () => !gone() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready() && !ticket.failed?.())),
       run(deadline) {
         if (gone()) { finished = true; settle(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) { finished = true; settle(); return true; }
         if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); if (ticket) asks++; }
+        if (ticket?.failed?.()) ticket = null;                            // ya no llega: se pinta aquí
         if (ticket) {
           const r = ticket.result();
           if (!r) return false;                                            // espera (sin gastar)
@@ -1308,7 +1310,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
     let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false, skyCounted = false;
     // (el cielo pedido fuera, b.remote.sky: como los recuadros, y cuántas veces se pidió)
-    let skyTicket: { result(): Uint8Array | null; ready?(): boolean } | null | undefined, skyAsks = 0;
+    let skyTicket: { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean } | null | undefined, skyAsks = 0;
     const skyGone = () => skyOut || stale();
     let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
     if (movedKeys.has(skyKey)) skyKey += `#${++movedSerial}`;
@@ -1338,7 +1340,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       key: skyKey,
       dead: skyGone,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
-      waiting: () => !skyGone() && (!!b.shiftHold || waiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready())),
+      waiting: () => !skyGone() && (!!b.shiftHold || waiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready() && !skyTicket.failed?.())),
       run(deadline) {
         if (skyGone()) { skyDone = true; skySettle(); return true; }
         if (b.shiftHold || waiting()) return false;
@@ -1351,6 +1353,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           skyTicket = b.remote.sky(r, pk, fc);
           if (skyTicket) skyAsks++; else skyTicket = null;
         }
+        if (skyTicket?.failed?.()) { skyTicket = null; skyStarted = -1; }
         if (skyTicket) {
           const o = skyTicket.result();
           if (!o) return false;

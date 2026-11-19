@@ -79,12 +79,15 @@ function channel() {
     (holdSky && m.kind === 'sky' ? held : toHost).push(structuredClone(m));
   } };
   const host = new BakeWorkerHost((m) => toMain.push(structuredClone(m)), (fn) => tasks.push(fn));
+  // (onStep: lo que hace el principal en cada cuadro antes de que el worker lea, p. ej. BakeWorker.frame)
+  let onStep: (() => void) | null = null;
   const step = (paint = 1) => {
+    onStep?.();
     while (toHost.length) host.receive(toHost.shift()!);
     for (let k = 0; k < paint && tasks.length; k++) tasks.shift()!();
     while (toMain.length) port.onmessage?.({ data: toMain.shift()! });
   };
-  return { port, host, step, kinds, again: () => again, held: () => held.length,
+  return { port, host, step, kinds, again: () => again, held: () => held.length, setStep: (f: () => void) => { onStep = f; },
     hold: (on: boolean) => { holdSky = on; }, release: () => { toHost.push(...held.splice(0)); },
     idle: () => !toHost.length && !tasks.length && !toMain.length && !held.length };
 }
@@ -205,6 +208,54 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(bw.stats.resent).toBeGreaterThan(0);
     expect(bw.stats.resent).toBeLessThanOrEqual(4);
     expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  it('lo que está fuera y pasa a ser cercano (near) se retira: el worker no lo pinta, se pinta aquí sin esperarlo, y la imagen igual', () => {
+    const ch = channel(), win = make([0, 0]), budget = new FrameBudget(1e6);
+    // (cercano: lo que toca la caja, solo desde que se "entra")
+    let inside = false;
+    const box = { x0: 0, y0: 0, x1: 4000, y1: 4000 };
+    const bw = new BakeWorker(ch.port, { near: (r) => inside && r.x1 >= box.x0 && r.x0 <= box.x1 && r.y1 >= box.y0 && r.y0 <= box.y1 });
+    bw.attach(win);
+    ch.setStep(() => bw.frame());
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    drain(win, ch, budget, TV / 2); drain(ref, null, rb, TV / 2);
+    // Picar: sus recuadros y su cielo se piden fuera; el worker no pinta nada todavía
+    pit(win, TV / 2 + 6, Y + 2); pit(ref, TV / 2 + 6, Y + 2);
+    // (lo que pica el juego lo rehornea él)
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+    for (let k = 0; k < 20; k++) { budget.run(); ch.step(0); win.update(TV / 2, Y, budget); }
+    const asked = bw.stats.asked + bw.stats.skies, got = bw.stats.got;
+    expect(asked).toBeGreaterThan(0);
+    // Se "entra": todo es cercano. Lo de fuera se retira; la cola lo pinta aquí sin que el worker pinte nada
+    inside = true;
+    for (let k = 0; k < 50 && (budget.pending || win.busy); k++) { ch.step(0); budget.run(); win.update(TV / 2, Y, budget); }
+    expect(budget.pending).toBe(0);
+    expect(bw.stats.retired).toBeGreaterThan(0);
+    expect(bw.stats.got).toBe(got);
+    // (el worker los quita de su cola sin pintarlos)
+    ch.step(4);
+    expect(ch.host.canceled).toBe(bw.stats.retired + bw.stats.retiredSky);
+    expect(ch.host.pending).toBe(0);
+    drain(ref, null, rb, TV / 2);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  it('lo que ya llegó del worker no se retira aunque ahora sea cercano: se usa', () => {
+    const ch = channel(), win = make([0, 0]), budget = new FrameBudget(1e6);
+    let inside = false;
+    // (perFrame 0: lo llegado se queda sin entregar, en la bandeja)
+    const bw = new BakeWorker(ch.port, { perFrame: 0, near: () => inside });
+    bw.attach(win);
+    ch.setStep(() => bw.frame());
+    drain(win, null, budget, TV / 2);
+    pit(win, TV / 2 + 6, Y + 2);
+    for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) budget.push(j);
+    for (let k = 0; k < 20; k++) { budget.run(); ch.step(4); win.update(TV / 2, Y, budget); }
+    expect(bw.stats.got).toBeGreaterThan(0);
+    inside = true;
+    ch.step(0);
+    expect(bw.stats.retired).toBe(0);
   });
 
   it('girar no rehace el espejo: uno por fuente (giro 0 y giro 1), ninguno tirado, y al volver se mandan pocos trozos', () => {

@@ -29,7 +29,9 @@ export type ToWorker =
   | { kind: 'chunks'; id: number; list: SentChunk[] }
   | { kind: 'shift'; id: number; dcx: number; dcy: number }
   | { kind: 'rect'; ticket: number; id: number; gen: number; rect: ScreenRect; brake: number }
-  | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number };
+  | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number }
+  // (lo pedido que ya no hace falta: si aún no se empezó, no se pinta)
+  | { kind: 'cancel'; ticket: number };
 export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number } | { kind: 'skip'; ticket: number };
 
 export interface BakeWorkerPort {
@@ -48,6 +50,9 @@ export interface BakeWorkerOptions {
   keep?: number;
 }
 
+// Lo pedido y aún no recogido: de qué horneado y qué recuadro (para volver a preguntar near), y lo que llegó
+interface Ticket { out: RectOut | Uint8Array | null; ready: boolean; failed: boolean; b: Baked; rect: ScreenRect; sky: boolean }
+
 // Un espejo, visto desde el principal: su fuente, la versión mandada de cada trozo y cuántos corrimientos lleva
 interface Mirror { id: number; source: StaticVoxels; sent: Uint32Array; gen: number; used: number }
 
@@ -64,9 +69,11 @@ function shiftSent(a: Uint32Array, cols: number, rows: number, dcx: number, dcy:
 export class BakeWorker {
   readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0,
     // (trozos mandados otra vez porque sus vóxeles cambiaron desde el último envío)
-    resent: 0 };
+    resent: 0,
+    // (lo retirado del worker porque pasó a ser cercano mientras estaba fuera: se pinta aquí sin esperarlo)
+    retired: 0, retiredSky: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
-  private readonly tickets = new Map<number, { out: RectOut | Uint8Array | null; ready: boolean }>();
+  private readonly tickets = new Map<number, Ticket>();
   private readonly inbox: number[] = [];
   private nextId = 0;
   private nextTicket = 0;
@@ -88,6 +95,7 @@ export class BakeWorker {
 
   // Cada cuadro: entrega hasta perFrame de los llegados
   frame(): void {
+    this.retire();
     for (let n = 0; n < (this.o.perFrame ?? Infinity) && this.inbox.length; n++) {
       const t = this.tickets.get(this.inbox.shift()!);
       if (t) t.ready = true;
@@ -118,8 +126,8 @@ export class BakeWorker {
     if (!ok) this.stats.unsendable++;
     return ok;
   }
-  private ticket<T extends RectOut | Uint8Array>(): { ticket: number; handle: { result(): T | null; ready(): boolean } } {
-    const ticket = ++this.nextTicket, entry = { out: null as RectOut | Uint8Array | null, ready: false };
+  private ticket<T extends RectOut | Uint8Array>(b: Baked, rect: ScreenRect, sky: boolean): { ticket: number; handle: { result(): T | null; ready(): boolean; failed(): boolean } } {
+    const ticket = ++this.nextTicket, entry: Ticket = { out: null, ready: false, failed: false, b, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, sky };
     this.tickets.set(ticket, entry);
     return { ticket, handle: {
       result: () => {
@@ -128,7 +136,22 @@ export class BakeWorker {
         return entry.out as T;
       },
       ready: () => entry.ready && !!entry.out,
+      failed: () => entry.failed,
     } };
+  }
+  // Lo que está fuera y ahora cumple near (entrar bajo tierra, el corte que se mueve): falla (su trabajo lo hace aquí) y
+  // se le dice al worker que no lo pinte si aún no empezó
+  private retire(): void {
+    const near = this.o.near;
+    if (!near) return;
+    for (const [ticket, t] of this.tickets) {
+      // (lo que ya llegó vale: se usa, aunque ahora sea cercano)
+      if (t.out || !near(t.rect, t.b)) continue;
+      t.failed = true;
+      this.tickets.delete(ticket);
+      this.port.postMessage({ kind: 'cancel', ticket });
+      if (t.sky) this.stats.retiredSky++; else this.stats.retired++;
+    }
   }
 
   private ask(b: Baked, rect: ScreenRect): ReturnType<RemoteRects['ask']> {
@@ -136,7 +159,7 @@ export class BakeWorker {
     const m = this.mirror(b);
     // (los trozos que lee: uno que no cabe en la forma de mandar hace que este recuadro se pinte aquí)
     if (!this.sync(b, m, readChunks(b, rect))) return null;
-    const { ticket, handle } = this.ticket<RectOut>();
+    const { ticket, handle } = this.ticket<RectOut>(b, rect, false);
     this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1 });
     this.stats.asked++;
     return handle;
@@ -146,7 +169,7 @@ export class BakeWorker {
     if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
     const m = this.mirror(b);
     if (!this.sync(b, m, skyReadChunks(b, rect))) return null;
-    const { ticket, handle } = this.ticket<Uint8Array>();
+    const { ticket, handle } = this.ticket<Uint8Array>(b, rect, true);
     this.port.postMessage({ kind: 'sky', ticket, id: m.id, gen: m.gen, pick, face, brake: this.o.brake ?? 1 }, [pick.buffer, face.buffer]);
     this.stats.skies++;
     return handle;
@@ -210,6 +233,8 @@ export class BakeWorkerHost {
   private readonly queue: Array<Extract<ToWorker, { kind: 'rect' | 'sky' }>> = [];
   private scheduled = false;
   busyMs = 0;
+  // (lo pedido que se retiró antes de empezar a pintarlo)
+  canceled = 0;
 
   constructor(private readonly post: (m: FromWorker, transfer: Transferable[]) => void, private readonly schedule: (fn: () => void) => void = (fn) => { setTimeout(fn, 0); }) {}
 
@@ -235,6 +260,11 @@ export class BakeWorkerHost {
       case 'shift': {
         const x = this.mirrors.get(m.id);
         if (x) { x.store.shift(m.dcx, m.dcy); x.gen++; }
+        break;
+      }
+      case 'cancel': {
+        const k = this.queue.findIndex((q) => q.ticket === m.ticket);
+        if (k >= 0) { this.queue.splice(k, 1); this.canceled++; }
         break;
       }
       case 'rect':
