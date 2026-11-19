@@ -63,6 +63,9 @@ void (async () => {
   // ?worker=1 pinta los recuadros de lo que entra en un worker con su copia de la ventana
   // (hornero.ts); ?freno=N, su freno propio
   // ?worker=2: el del motor (BakeWorker, src/world/horno.ts), con los trozos escritos aquí
+  // ?negro=N: cada N s, la fracción casi negra de la pantalla y la vacía dentro del recuadro de la vista (huecos)
+  const NEGRO = Number(q.get('negro') ?? 0), negro: Array<Record<string, number>> = [];
+  let nextNegro = 0, negroCanvas: HTMLCanvasElement | null = null;
   const WORKER = q.get('worker') === '1', WORKER2 = q.get('worker') === '2', FRENO = Number(q.get('freno') ?? 1);
   const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;
   const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0, skipped: 0, preps: 0, prepMs: 0 };
@@ -319,6 +322,18 @@ void (async () => {
     if (!boot.primerCuadro) boot.primerPaso = Math.round(performance.now());
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     compositor.frame(win.view.frame(), win.baked, o);
+    // ?negro=N: cada N s, lo que se ve reducido a 64 x 36 y la fracción de píxeles casi negros (ningún canal > 25), con lo
+    // marcado como cambiado sin rehornear, la cola y los corrimientos (la pantalla negra andando a 6x)
+    if (NEGRO && now - start >= nextNegro) {
+      nextNegro += NEGRO * 1000;
+      const sc = (negroCanvas ??= Object.assign(document.createElement('canvas'), { width: 64, height: 36 })), cx = sc.getContext('2d', { willReadFrequently: true })!;
+      cx.drawImage(compositor.canvas, 0, 0, 64, 36);
+      const px = cx.getImageData(0, 0, 64, 36).data;
+      let dark = 0;
+      // (casi negro: ningún canal pasa de 25; el fondo de viva sin nada es (13, 12, 18))
+      for (let i = 0; i < px.length; i += 4) if (Math.max(px[i]!, px[i + 1]!, px[i + 2]!) < 25) dark++;
+      negro.push({ s: Math.round((now - start) / 1000), negro: +(dark / (64 * 36)).toFixed(3), cambiados: win.baked.source.changedSince(win.baked.version).length, cola: budget.pending, corrimientos: shifts, ocupada: win.busy ? 1 : 0, ...(() => { const w = win as unknown as { loading: unknown[]; loadJob: unknown; shiftJobs: unknown; storeShift: unknown }; return { muertos: (budget as unknown as { dropped?: number }).dropped ?? -1, publicados: win.baked.published.serial, porEscribir: w.loading?.length ?? -1, cargando: w.loadJob ? 1 : 0, corriendo: w.shiftJobs ? 1 : 0, almacen: w.storeShift ? 1 : 0 }; })(), vista: (() => { const b = win.baked; let e = 0, n = 0; for (let y = o.vy; y < o.vy + VH; y += 4) for (let x = o.vx; x < o.vx + VW; x += 4) { n++; if (b.face[y * b.width + x]! < 0) e++; } return +(e / n).toFixed(3); })(), vacio: (() => { const b = win.baked; let e = 0; for (let x = 0; x < b.width; x += 8) for (let y = 0; y < b.height; y += 8) if (b.face[y * b.width + x]! < 0) e++; return +(e / (Math.ceil(b.width / 8) * Math.ceil(b.height / 8))).toFixed(3); })() });
+    }
     if (!boot.primerCuadro) boot.primerCuadro = Math.round(performance.now());
     // Cuadros (uno de cada 5) con algo de la pantalla en trozos de vóxeles aún por rehornear (cambiados desde el horneado):
     // lo que se vería a medio hacer
@@ -410,7 +425,7 @@ void (async () => {
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
-      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
