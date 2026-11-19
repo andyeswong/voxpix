@@ -1363,7 +1363,9 @@ let movedSerial = 0;
 
 // Los trozos de vóxeles que lee el recuadro r al pintarse: la región de stripRegion (lo que puede caer en sus píxeles), con 3
 // vóxeles alrededor (el tono suavizado y la oclusión miran a los vecinos)
-function readChunks(b: Baked, r: ScreenRect): number[] {
+// Los trozos de vóxeles que lee pintar el recuadro r (su región y 3 vóxeles alrededor): lo que tiene que tener quien lo
+// pinte con su copia (BakeWorker)
+export function readChunks(b: Baked, r: ScreenRect): number[] {
   const { region } = stripRegion(b, r, r.x0, r.x1), m = 3;
   return chunksOfPlan(b, { X0: region.x0 - m, X1: region.x1 + m, Y0: region.y0 - m, Y1: region.y1 + m, Z0: 0, Z1: 0 }, 0);
 }

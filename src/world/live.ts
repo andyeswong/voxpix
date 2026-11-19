@@ -46,10 +46,15 @@ import { StaticVoxels, WorldState, CHUNK, type PreparedSlab } from './state';
 import { BlockGrid, type BlockSet } from './blocks';
 import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec, type GeneratedRegion } from './regiongen';
-import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, cancelRebakes, chunksInScreen, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
+import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, cancelRebakes, chunksInScreen, type RemoteRects, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
 
 export type Trozo = readonly [number, number];
+// Lo que se engancha a la ventana para correrse con ella (attach)
+export interface Attached {
+  shift(dx: number, dy: number): void;
+  shiftSources?(sources: ReadonlyArray<{ source: StaticVoxels; dcx: number; dcy: number }>): void;
+}
 // Lo que se le da al juego por trozo, en coordenadas del MUNDO
 export interface TrozoCtx {
   grid: BlockGrid;
@@ -255,10 +260,11 @@ export class LiveWindow {
     if (!this.views.has(q)) throw new Error(`LiveWindow: el giro ${q} no está horneado (quarters: ${this.quarters.join(', ')})`);
     const old = this.quarter;
     this.quarter = q;
-    if (old === q || this.live.has(old)) return;
+    if (old === q || this.live.has(old)) { this.applyRemote(); return; }
     const v = this.views.get(old);
     this.views.delete(old);
     if (v) cancelRebakes(v.baked);
+    this.applyRemote(v?.baked);
     // Un corrimiento a medias: el de la vista que se soltó sobra, y los vóxeles del mundo los corre el giro 0 si sigue o,
     // si no, aparte (como en el cambio de turnTo)
     if (this.shiftJobs) {
@@ -272,11 +278,25 @@ export class LiveWindow {
   // Engancha algo que va en coordenadas locales y sabe correrse (PathField, LevelPathField): en el cambio de cada
   // corrimiento, x.shift(dx, dy) con los vóxeles que se corrió (lo de x pasa a x - dx), antes de onShift. Devuelve con qué
   // soltarlo
-  attach(x: { shift(dx: number, dy: number): void }): () => void {
+  // (shiftSources, opcional: además, en el mismo momento, cada horneado vivo con lo que se corrió su fuente en trozos de
+  // vóxeles, en sus ejes: quien guarda una copia de esas fuentes, como BakeWorker, la corre igual)
+  attach(x: Attached): () => void {
     this.attached.add(x);
     return () => { this.attached.delete(x); };
   }
-  private readonly attached = new Set<{ shift(dx: number, dy: number): void }>();
+  private readonly attached = new Set<Attached>();
+
+  // Quien pinta fuera los recuadros (Baked.remote): la ventana lo pone en el horneado del giro que se ve y lo quita de los
+  // demás, también al girar (turn, y en el cambio de turnTo). null lo quita de todos
+  setRemote(remote: ((b: Baked) => RemoteRects | null) | null): void { this.remoteFor = remote; this.applyRemote(); }
+  private remoteFor: ((b: Baked) => RemoteRects | null) | null = null;
+  private applyRemote(released?: Baked): void {
+    if (released) delete released.remote;
+    for (const [q, { baked }] of this.views) {
+      const r = q === this.quarter && this.remoteFor ? this.remoteFor(baked) : null;
+      if (r) baked.remote = r; else delete baked.remote;
+    }
+  }
 
   // Pide girar a q con fundido (ver arriba). Si q se tiene siempre (opts.quarters), es turn(q), sin esperar
   turnTo(q: Quarter): void {
@@ -419,7 +439,9 @@ export class LiveWindow {
       this.quarter = q;
       // La vista que se suelta: su rehorneado en la cola (recuadros, cielo, luces) acaba sin hacer nada. Si no, se quedaba
       // en la cola, que no lo alcanza con giros seguidos, y guardaba su imagen y su copia girada (~220 MB por giro con 11 x 13)
-      if (!this.live.has(old)) { const v = this.views.get(old); this.views.delete(old); if (v && v.baked !== baked) cancelRebakes(v.baked); }
+      let released: Baked | undefined;
+      if (!this.live.has(old)) { const v = this.views.get(old); this.views.delete(old); if (v && v.baked !== baked) { cancelRebakes(v.baked); released = v.baked; } }
+      this.applyRemote(released);
       this.turnPrep = null;
       // Un corrimiento a medias: el de la vista que se soltó sobra, la nueva prepara el suyo, y los vóxeles del mundo los
       // corre el giro 0 si está (su horneado es del mundo) o, si no, aparte
@@ -668,7 +690,9 @@ export class LiveWindow {
     // Lo que oye los cambios del mundo (watchChanges: caminos, cachés del juego): lo apuntado sin tomar, corrido; y lo
     // enganchado (attach: los campos de caminos), corrido en el mismo momento
     for (const w of this.state.changes.list ?? []) w.shift(DX, DY, CHUNK);
-    for (const a of this.attached) a.shift(DX, DY);
+    const k = this.T / CHUNK;
+    const sources = [...this.views.values()].map(({ view, baked }) => { const [vx, vy] = view.camera.dirToView(dx, dy); return { source: baked.source, dcx: vx * k, dcy: vy * k }; });
+    for (const a of this.attached) { a.shift(DX, DY); a.shiftSources?.(sources); }
     this.o.onShift?.({ cells: [dx * this.C, dy * this.C], voxels: [DX, DY] });
   }
 
