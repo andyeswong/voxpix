@@ -29,7 +29,7 @@ const SPEC: RegionSpec = {
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
-import { FrameBudget } from '../src/view/budget';
+import { FrameBudget, type ViewJob } from '../src/view/budget';
 import { LiveWindow, type Trozo } from '../src/world/live';
 import { rebakeChangedJobs, pushPublished, publishedSince, PUBLISHED_KEEP, SKY_REACH, type Baked } from '../src/world/bake';
 import { sectionAround, sectionLayer, sectionRows, SectionPainter, STRIP, secIdx, type SectionLayer } from '../src/world/section';
@@ -556,6 +556,106 @@ describe('ventana viva', () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(ref.deref()).toBeUndefined();
   });
+
+  it('cola parada: detrás de un trabajo en marcha que se come la primera llamada de cada fase, lo de una vista soltada no corre nunca; la cola lo quita por muerto y el horneado se recoge', async () => {
+    const v8 = await import('node:v8'), vm = await import('node:vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
+    const budget = stepBudget();
+    const frame = () => { win.update(TV / 2, TV / 2, budget); budget.run(); };
+    const settle = () => { frame(); for (let k = 0; k < 20000 && (win.busy || budget.pending || win.turning); k++) frame(); };
+    settle();
+    win.turnTo(1); settle();
+    // Una cola con su reloj: cada cuadro empieza 1000/60 ms después del anterior. En cabeza de cada fase, un trabajo que no
+    // acaba nunca y se come el plazo entero (lo que corre siempre primero: la sección, un trozo a medias); y antes, un
+    // recuadro que costó 8 ms, para que la clase rect no quepa por lo que cuesta
+    let t = 0;
+    const starved = new FrameBudget(3, () => t, { ms: 8, below: 64 });
+    const hog = (key: string, priority: number): ViewJob => ({ key, priority, run: (d) => { t = Math.max(t + 0.5, d); return false; } });
+    starved.push({ key: 'rect:antes', run: () => { t += 8; return true; } });
+    starved.run();
+    starved.push(hog('section', 0));
+    starved.push(hog('trozo:0,0', 64));
+    // (aparte, para que nada de esta función quede en la pila al recoger)
+    const queueOld = (): { ref: WeakRef<Baked>; n: number } => {
+      const ref = new WeakRef(win.baked);
+      for (let y = TV / 2 - 3; y < TV / 2 + 3; y++) for (let x = TV / 2 + 4; x < TV / 2 + 10; x++) {
+        const [lx, ly] = win.toLocal(x, y), h = win.store.height[ly * win.store.width + lx]!;
+        for (let z = h; z < h + 12; z++) win.store.set(lx, ly, z, 1);
+      }
+      win.view.frame();
+      const held = rebakeChangedJobs(win.baked, win.view.bakeable().lights, { near: { x: 32, y: 32 } });
+      expect(held.filter((j) => j.key.startsWith('rect:')).length).toBeGreaterThan(0);
+      held.forEach((j) => starved.push(j));
+      // Girar: la vista 1 se suelta y lo suyo queda anulado
+      win.turnTo(2);
+      for (let n = 0; win.turning?.phase === 'core' && n < 200000; n++) frame();
+      expect(win.quarter).toBe(2);
+      return { ref, n: held.length };
+    };
+    const { ref, n } = queueOld();
+    expect(n).toBeGreaterThan(0);
+    let ran = 0;
+    for (let f = 0; f < 300; f++) { t = Math.ceil((t + 1e-9) / (1000 / 60)) * (1000 / 60); ran += starved.run() > 0 ? 1 : 0; }
+    expect(ran).toBe(300);
+    // Solo quedan los dos que no acaban nunca: lo anulado salió sin correr
+    expect(starved.pending).toBe(2);
+    expect(starved.dropped).toBe(n);
+    await new Promise((r) => setTimeout(r, 0));
+    gc();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(ref.deref()).toBeUndefined();
+  });
+
+  it('girar seguido con la cola corta y el juego cambiando cosas cada cuadro, y luego quieto: la cola se vacía y no queda ningún horneado de las vistas soltadas', async () => {
+    const v8 = await import('node:v8'), vm = await import('node:vm');
+    v8.setFlagsFromString('--expose_gc');
+    const gc = vm.runInNewContext('gc') as () => void;
+    const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
+    const budget = stepBudget();
+    // (aparte, para que nada de esta función quede en la pila al recoger)
+    const play = (): { seen: Array<WeakRef<Baked>>; turns: number; still: () => void } => {
+      const seen: Array<WeakRef<Baked>> = [];
+      let x = TV / 2, dir = 1, turns = 0;
+      const frame = (still: boolean) => {
+        if (!still) { x += dir * 0.7; if (x > TV * 1.5) dir = -1; else if (x < TV / 2) dir = 1; }
+        win.update(x, TV / 2, budget);
+        if (!still) {
+          // (el juego: algo cambia junto a MAIA, y su rehorneado a la cola con near, como lo editado)
+          const [fx, fy] = win.toLocal(x + 3, TV / 2 + (turns % 5)), lx = Math.floor(fx), ly = Math.floor(fy);
+          if (lx > 0 && ly > 0 && lx < win.store.width && ly < win.store.depth) { const h = win.store.height[ly * win.store.width + lx]!; if (h > 1) win.store.set(lx, ly, h - 1, (turns & 1) + 1); }
+          if (win.baked.source.changedSince(win.baked.version).length) for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights, { near: { x: 32, y: 32 } })) budget.push(j);
+        }
+        budget.run();
+        if (seen.at(-1)?.deref() !== win.baked) seen.push(new WeakRef(win.baked));
+      };
+      // Girando: el siguiente en cuanto el cambio está hecho (lo demás del giro anterior aún a medias)
+      for (let f = 0; f < 60000 && turns < 5; f++) {
+        frame(false);
+        if (f % 50 === 49 && win.turning?.phase !== 'core') { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); turns++; }
+      }
+      return { seen, turns, still: () => { for (let f = 0; f < 60000 && (budget.pending || win.busy || win.turning); f++) frame(true); } };
+    };
+    const { seen, turns, still } = play();
+    expect(turns).toBe(5);
+    expect(seen.length).toBeGreaterThan(3);
+    const oldAlive = async () => {
+      await new Promise((r) => setTimeout(r, 0));
+      gc();
+      await new Promise((r) => setTimeout(r, 0));
+      return seen.filter((r) => r.deref() && r.deref() !== win.baked).length;
+    };
+    // Recién acabado de girar, con la cola aún llena: ya no queda ningún horneado de las vistas soltadas
+    const pending = budget.pending;
+    expect(pending).toBeGreaterThan(0);
+    expect(await oldAlive()).toBe(0);
+    // Y quieto, la cola se vacía
+    still();
+    expect(budget.pending).toBe(0);
+    expect(win.busy).toBe(false);
+    expect(await oldAlive()).toBe(0);
+  }, 60000);
 
   it('girar con fundido: beforeTurnSwap corre por pasos tras los recuadros del núcleo, con el horneado nuevo, y el cambio lo espera', () => {
     const calls: Baked[] = [];
