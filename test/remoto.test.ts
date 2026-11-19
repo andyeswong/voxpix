@@ -121,6 +121,31 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     expect(diff(c.win.baked, d.win.baked)).toBe(0);
   });
 
+  it('uno que llega después de que un vecino que pinta en parte (no de su núcleo) cambió y se publicó encima: se pinta aquí, igual que hornear de nuevo', () => {
+    // Como el del vecino de ventana-horneado, pero el recuadro de A se pinta fuera con lo de antes de cavar B. A, junto al
+    // borde de su trozo de vóxeles (y 64..79); B, en el de al lado (80..95), al sur: fuera del plan de A, pero el recuadro de A
+    // pinta 14 píxeles de B. Antes, al llegar, solo se miraba el grupo de A, y A tapaba con lo viejo lo que B ya había publicado
+    const win = make([0, 0]), ref = make([0, 0]);
+    const b = win.baked;
+    b.remote = { ask: (rect) => { const o = renderRect(b, rect); let n = 0; return { result: () => (++n >= 2 ? o : null) }; } };
+    const dig = (w: LiveWindow, [x0, y0, z0, x1, y1, z1]: number[]) => { for (let z = z0!; z <= z1!; z++) for (let y = y0!; y <= y1!; y++) for (let x = x0!; x <= x1!; x++) w.store.set(x, y, z, 0); };
+    const A = [70, 70, 0, 78, 78, 63], B2 = [70, 80, 0, 78, 83, 63];
+    dig(win, A);
+    const ja = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+    // (cada uno pide el suyo fuera: se pinta ya, con lo de ahora, y llega a la llamada siguiente)
+    const left = ja.filter((j) => !j.run(Infinity));
+    expect(left.some((j) => j.key.startsWith('rect:'))).toBe(true);
+    dig(win, B2);
+    const jb = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+    for (const j of jb) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    const before = b.remoteStats?.stale ?? 0;
+    for (const j of left) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    expect((b.remoteStats?.stale ?? 0) - before).toBeGreaterThan(0);
+    dig(ref, A); dig(ref, B2);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(b, ref.baked)).toBe(0);
+  });
+
   it('trozos escritos fuera (prepareTrozo): la copia del "worker" los estampa y el principal solo pone sus losas; igual que escribirlos aquí', () => {
     const win0 = make([0, 0]);
     // La copia: un store y una rejilla como los de la ventana, con lo que escribió el constructor

@@ -1016,7 +1016,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
     const ROWS = shape.rows ?? Infinity;
     // (el recuadro pedido fuera, y el reloj de cuando se pidió)
-    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0;
+    let ticket: { result(): RectOut | null; ready?(): boolean } | null | undefined, askedAt = 0, askedPub = 0;
     // Lo que se pinta por franjas en varias llamadas: si un trozo del plan cambia entre medias (el corte que avanza, un
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
@@ -1084,14 +1084,18 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (gone()) { finished = true; settle(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) { finished = true; settle(); return true; }
-        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; ticket = b.remote.ask(rect); }
+        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); }
         if (ticket) {
           const r = ticket.result();
           if (!r) return false;                                            // espera (sin gastar)
           ticket = null;
           const moved = b.source.changedSince(askedAt);
           const st = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 });
-          if (!g.some((c) => moved.includes(c))) {
+          // (la misma regla que al acabar de pintarlo aquí, stalePaint, contada desde que se pidió: si cambió el núcleo, o un
+          // trozo que lee y desde entonces se publicó otro recuadro encima, lo que llega es de antes y lo pisaría. Antes solo
+          // se miraba su grupo, y un vecino rehorneado antes quedaba tapado por lo viejo)
+          started = askedAt; pubAt = askedPub; edge = false;
+          if (!g.some((c) => moved.includes(c)) && !stalePaint()) {
             st.published++;
             const mask = new Uint8Array(r.w * r.h);
             publishRect(b, rect, r, mask);
