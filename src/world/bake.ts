@@ -92,6 +92,11 @@ export interface Baked {
   lastShift?: { serial: number; dx: number; rows: number; dd: number; dy: number };
   // Entre que se corren los vóxeles y se cambia la imagen (shiftBakedJob, dos cuadros): lo que escribe en la imagen espera
   shiftHold?: boolean;
+  // Las tandas de rehorneado en marcha (rebakeJobs), para trasladar lo suyo al correrse la ventana (shiftRebakes) en vez de
+  // tirarlo; y las claves de los recuadros y cielos trasladados que siguen en la cola (con su clave de antes: uno nuevo con la
+  // misma lleva otra, para que la cola no lo tome por el mismo y lo sustituya)
+  rebakeBatches?: Set<RebakeBatch>;
+  movedKeys?: Set<string>;
   // Mientras se prepara un corrimiento (shiftBakedJob): las copias pueden ir preparando lo suyo (la GPU, sus texturas)
   shifting?: boolean;
 }
@@ -978,19 +983,28 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     return (changed = Int32Array.from(new Set(out)));
   };
   const busy = (b.rectsBusy ??= new Map()), myKeys: string[] = [];
-  const epoch = b.rebakeEpoch ?? 0, pp = (b.pendingPlans ??= new Map());
-  const stale = () => (b.rebakeEpoch ?? 0) !== epoch;
+  const pp = (b.pendingPlans ??= new Map());
+  // (la tanda: su época, que shiftRebakes pone al día si la traslada; si toca luces, y lo de cada trabajo para trasladarlo)
+  const batch: RebakeBatch = { epoch: b.rebakeEpoch ?? 0, lights: false, movers: [], left: 0 };
+  // (cuando acaba el último de sus recuadros y cielos, la tanda sale del registro)
+  const doneOne = () => { if (--batch.left <= 0) b.rebakeBatches?.delete(batch); };
+  (b.rebakeBatches ??= new Set()).add(batch);
+  const stale = () => (b.rebakeEpoch ?? 0) !== batch.epoch;
+  const movedKeys = (b.movedKeys ??= new Set());
   // ¿Queda en marcha alguno de los recuadros de este rehorneado? (quien lo acabe: este trabajo o el que lo sustituyó)
   const waiting = () => myKeys.some((k) => busy.has(k));
   const tiles = new Map<string, number[]>();
   if (shape.tile) for (const c of chunks) { const k = `${Math.floor((c % b.source.cols) / shape.tile)},${Math.floor(Math.floor(c / b.source.cols) / shape.tile)}`; const l = tiles.get(k); if (l) l.push(c); else tiles.set(k, [c]); }
   const groupsAll = shape.tile ? [...tiles.values()].flatMap((cs) => chunkGroups(b, cs, shape.merge)) : chunkGroups(b, chunks, shape.merge);
-  for (const g of groupsAll) {
+  for (const g0 of groupsAll) {
+    let g = g0;
     const { rect: whole, plan } = chunkRect(b, g, boxes);
     const rect = clip ? { x0: Math.max(whole.x0, clip.x0), y0: Math.max(whole.y0, clip.y0), x1: Math.min(whole.x1, clip.x1), y1: Math.min(whole.y1, clip.y1) } : whole;
     if (rect.x0 > rect.x1 || rect.y0 > rect.y1) continue;
     plans.push(plan); rects.push(rect);
-    const key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`, token = {};
+    let key = `rect:${rect.x0},${rect.y0},${rect.x1},${rect.y1}`;
+    if (movedKeys.has(key)) key += `#${++movedSerial}`;
+    const token = {};
     busy.set(key, token); myKeys.push(key);
     pp.set(token, [plan]);
     let buf: RectBuffers | null = null, col = rect.x0, row = rect.y0, est = 0;
@@ -1001,19 +1015,62 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // golpe), lo pintado antes ya no vale; y si su rehorneado (otro trabajo, más pequeño) acaba antes, este lo pisaría
     // con lo de antes al publicar. Se apunta el reloj al empezar y, si algo del plan cambió, se vuelve a pintar (dos veces
     // como mucho: con cambios en cada cuadro, se publica y lo arregla el rehorneado de esos cambios, que va detrás)
-    const planChunks: number[] = [];
-    { const s = b.source; for (let cy = Math.max(0, Math.floor(plan.Y0 / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor(plan.Y1 / CHUNK)); cy++) for (let cx = Math.max(0, Math.floor(plan.X0 / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor(plan.X1 / CHUNK)); cx++) planChunks.push(cy * s.cols + cx); }
-    let started = -1, restarts = 0;
+    // (los trozos del plan, con el margen que chunkRect le sumó, y sin él: el núcleo, lo que cambió de verdad)
+    let planChunks = chunksOfPlan(b, plan, 0), coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
+    // (edge: el margen ya cambió antes de un corrimiento; se recuerda, porque tras trasladarlo se cuenta desde ahí)
+    let started = -1, restarts = 0, finished = false, dirty = false, out = false, pubAt = -1, edge = false;
+    // ¿Lo que pintó ya no vale? Si cambió algo del núcleo, sí. Si solo cambió el margen (un vecino escrito: al andar, el
+    // trozo que entra al lado), solo si desde que empezó se publicó otro recuadro encima (si no, el rehorneado de ese vecino,
+    // que va detrás, publica después y arregla el borde)
+    const stalePaint = (): boolean => {
+      const moved = b.source.changedSince(started);
+      if (moved.some((c) => coreChunks.includes(c))) return true;
+      if (!edge && !moved.some((c) => planChunks.includes(c))) return false;
+      const since = pubAt >= 0 ? publishedSince(b, pubAt) : null;
+      return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
+    };
+    // (descartado: el de toda la tanda, o solo este al correrse la ventana si no podía seguir)
+    const gone = () => out || stale();
+    // Al correrse la ventana (shiftRebakes): ¿puede seguir en su sitio nuevo? Sí si lo que lee (el plan y un trozo alrededor)
+    // y su recuadro siguen dentro. Entonces se corre como la imagen: el recuadro y por dónde iba, y en lo ya pintado la
+    // profundidad (- dd) y las claves de vóxel (- dk); los píxeles no se mueven dentro del búfer. Si algo del plan cambió
+    // desde que empezó (lo pintado ya no vale), o algún vóxel pintado sale de la fuente, se empieza de nuevo, ya en su sitio
+    batch.left++;
+    const rectMover: RebakeMover = {
+      plan,
+      kill() { out = true; movedKeys.delete(key); },
+      can(P) {
+        if (finished || gone()) return 'gone';
+        if (ticket) return false;
+        if (!planInside(b, plan, P, 1) || !rectInside(b, rect, P)) return false;
+        dirty = !!buf && started >= 0 && stalePaint();
+        if (buf && started >= 0 && !dirty && b.source.changedSince(started).some((c) => planChunks.includes(c))) edge = true;
+        return true;
+      },
+      move(P) {
+        rect.x0 -= P.DX; rect.x1 -= P.DX; rect.y0 += P.rows; rect.y1 += P.rows;
+        planChunks = chunksOfPlan(b, plan, 0); coreChunks = chunksOfPlan(b, planCore(b, plan), 0);
+        g = g.map((c) => ((Math.floor(c / b.source.cols) - P.ty) * b.source.cols) + (c % b.source.cols) - P.tx);
+        // (lo que cambió del plan mientras: se empieza de nuevo, con el mismo tope que al acabar, dos veces; después se sigue
+        // y se publica, y lo arregla el rehorneado de ese cambio, que va detrás)
+        const again = dirty && restarts < 2;
+        if (again) restarts++;
+        if (buf && !again && shiftBuffers(b, buf, P)) { col -= P.DX; row += P.rows; started = -2; pubAt = -2; }
+        else { buf = null; col = rect.x0; row = rect.y0; started = -1; edge = false; }
+      },
+      held: () => ({ busy: busy.get(key) === token ? [[key, token] as const] : [], plans: pp.has(token) ? [[token, [plan]] as const] : [], key }),
+    };
+    batch.movers.push(rectMover);
     jobs.push({
       key,
       // (descartado al correrse la ventana o al soltarse su horneado: correrlo ya no haría nada)
-      dead: stale,
+      dead: gone,
       // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
-      waiting: () => !stale() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
+      waiting: () => !gone() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready())),
       run(deadline) {
-        if (stale()) return true;                                          // descartado al correrse la ventana
+        if (gone()) { finished = true; movedKeys.delete(key); doneOne(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
-        if (col > rect.x1) return true;
+        if (col > rect.x1) { finished = true; movedKeys.delete(key); doneOne(); return true; }
         if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; ticket = b.remote.ask(rect); }
         if (ticket) {
           const r = ticket.result();
@@ -1028,12 +1085,15 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
             masks.set(rect, mask);
             if (busy.get(key) === token) busy.delete(key);
             pp.delete(token);
+            finished = true; movedKeys.delete(key); doneOne();
             return true;
           }
           // (algo suyo cambió mientras: se pinta aquí)
           st.stale++;
         }
-        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; }
+        if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; }
+        // (trasladado con lo pintado: lo que cambie del plan y lo que se publique, desde ahora)
+        if (started === -2) { started = b.source.clock; pubAt = b.published.serial; }
         // Una franja por lo menos; otra solo si cabe antes del plazo según lo que tardó la anterior (si no, la
         // última se pasaba del plazo entera)
         let t = performance.now();
@@ -1048,16 +1108,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           est = now - t; t = now;
         } while (col <= rect.x1 && t + est < deadline);
         if (col <= rect.x1) return false;
-        if (restarts < 2) {
-          const moved = b.source.changedSince(started);
-          if (moved.length && planChunks.some((c) => moved.includes(c))) { restarts++; col = rect.x0; row = rect.y0; buf = null; return false; }
-        }
+        if (restarts < 2 && stalePaint()) { restarts++; col = rect.x0; row = rect.y0; buf = null; edge = false; return false; }
         const mask = new Uint8Array(buf.w * buf.h);
         publishRect(b, rect, buf, mask);
         masks.set(rect, mask);
         buf = null;
         if (busy.get(key) === token) busy.delete(key);
         pp.delete(token);
+        finished = true; movedKeys.delete(key); doneOne();
         return true;
       },
     });
@@ -1075,6 +1133,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // Si ya hay un trabajo de esta luz esperando en la cola, se le suma esto y no se crea otro
     const works = (b.lightWork ??= new Map());
     const queued = works.get(l.id);
+    batch.lights = true;
     if (queued && !queued.started) { queued.plans.push(...plans); queued.pixels.push(changedPixels); queued.waits.push(waiting); continue; }
     const work: LightWork = { plans: [...plans], pixels: [changedPixels], waits: [waiting], started: false };
     works.set(l.id, work);
@@ -1206,16 +1265,35 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     { const s = b.source, m2 = 2 * SKY_REACH + 2;
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
-    let skyStarted = -1, skySerial = -1, skyRestarts = 0;
+    let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false;
+    const skyGone = () => skyOut || stale();
+    let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
+    if (movedKeys.has(skyKey)) skyKey += `#${++movedSerial}`;
+    // (al correrse la ventana: el recuadro y lo que lee, a su sitio nuevo, y se calcula de nuevo; es barato)
+    batch.left++;
+    batch.movers.push({
+      plan: p,
+      kill() { skyOut = true; movedKeys.delete(skyKey); },
+      can(P) {
+        if (skyDone || skyGone()) return 'gone';
+        return planInside(b, p, P, Math.ceil((2 * SKY_REACH + 2) / CHUNK)) && rectInside(b, r, P);
+      },
+      move(P) {
+        r.x0 -= P.DX; r.x1 -= P.DX; r.y0 += P.rows; r.y1 += P.rows;
+        reads.splice(0, reads.length, ...chunksOfPlan(b, p, 2 * SKY_REACH + 2));
+        row = r.y0; skyStarted = -1;
+      },
+      held: () => ({ busy: [], plans: pp.has(st) ? [[st, [p]] as const] : [], key: skyKey }),
+    });
     const sst = (b.skyStats ??= { jobs: 0, pixels: 0, restartPub: 0, restartVox: 0, published: 0, ms: 0 });
     sst.jobs++;
     jobs.push({
-      key: `sky:${r.x0},${r.y0},${r.x1},${r.y1}`,
-      dead: stale,
+      key: skyKey,
+      dead: skyGone,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
-      waiting: () => !stale() && (!!b.shiftHold || waiting()),
+      waiting: () => !skyGone() && (!!b.shiftHold || waiting()),
       run(deadline) {
-        if (stale()) return true;
+        if (skyGone()) { skyDone = true; movedKeys.delete(skyKey); doneOne(); return true; }
         if (b.shiftHold || waiting()) return false;
         if (skyStarted < 0) { skyStarted = b.source.clock; skySerial = b.published.serial; }
         const t0 = performance.now(), r0 = row;
@@ -1233,6 +1311,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);
         pp.delete(st);
+        skyDone = true; movedKeys.delete(skyKey); doneOne();
         const pub = b.published;
         pushPublished(b, { serial: ++pub.serial, ...r, sky: true });
         sst.published += w * (r.y1 - r.y0 + 1);
@@ -1242,7 +1321,111 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
   }
   // Las fijas nuevas que no alcanzan lo cambiado
   for (const l of added) if (!jobs.some((j) => j.key.startsWith(`light:${l.id}#`))) jobs.push(lightJob(b, l));
+  if (!batch.movers.length) b.rebakeBatches.delete(batch);
   return jobs;
+}
+
+// Lo que se corre la ventana (shiftBakedJob): en trozos de vóxeles (tx, ty), en vóxeles (DX, DY), en filas de la imagen
+// (rows; las columnas son DX), y lo que se resta a la profundidad (dd) y a las claves de vóxel (dk)
+export interface ShiftParams { tx: number; ty: number; DX: number; DY: number; rows: number; dd: number; dk: number }
+interface RebakeMover {
+  readonly plan: Plan;
+  // Descartarlo solo a él (su tanda sigue: lo demás se trasladó)
+  kill(): void;
+  // ¿Sigue en marcha y puede seguir en su sitio nuevo? ('gone': ya acabó o la descartaron)
+  can(P: ShiftParams): boolean | 'gone';
+  move(P: ShiftParams): void;
+  // Lo que apunta en el horneado (rectsBusy, pendingPlans) y su clave en la cola
+  held(): { busy: ReadonlyArray<readonly [string, object]>; plans: ReadonlyArray<readonly [object, Plan[]]>; key: string };
+}
+export interface RebakeBatch { epoch: number; lights: boolean; movers: RebakeMover[]; left: number }
+let movedSerial = 0;
+
+// El plan sin el margen que le sumó chunkRect (lo que cambió de verdad; el margen es lo que se lee alrededor)
+function planCore(b: Baked, p: Plan): Plan {
+  const m = (b.options.smooth ?? 0.6) > 0 ? 3 : 1;
+  return { X0: Math.min(p.X1, p.X0 + m), X1: Math.max(p.X0, p.X1 - m), Y0: Math.min(p.Y1, p.Y0 + m), Y1: Math.max(p.Y0, p.Y1 - m), Z0: p.Z0, Z1: p.Z1 };
+}
+// Los trozos de vóxeles que caen en el plan con margin vóxeles alrededor
+function chunksOfPlan(b: Baked, p: Plan, margin: number): number[] {
+  const s = b.source, out: number[] = [];
+  for (let cy = Math.max(0, Math.floor((p.Y0 - margin) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + margin) / CHUNK)); cy++)
+    for (let cx = Math.max(0, Math.floor((p.X0 - margin) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + margin) / CHUNK)); cx++) out.push(cy * s.cols + cx);
+  return out;
+}
+// ¿El plan (con m trozos alrededor del lado que sale) sigue dentro de la fuente tras correrse? Lo que sale de la fuente
+// deja de existir; lo que entra estaba fuera y entra vacío, así que hacia ese lado no cambia lo que lee
+function planInside(b: Baked, p: Plan, P: ShiftParams, m: number): boolean {
+  const s = b.source;
+  const cx0 = Math.max(0, Math.floor(p.X0 / CHUNK)), cx1 = Math.min(s.cols - 1, Math.floor(p.X1 / CHUNK));
+  const cy0 = Math.max(0, Math.floor(p.Y0 / CHUNK)), cy1 = Math.min(s.rows - 1, Math.floor(p.Y1 / CHUNK));
+  if (P.tx > 0 && cx0 - m - P.tx < 0) return false;
+  if (P.tx < 0 && cx1 + m - P.tx > s.cols - 1) return false;
+  if (P.ty > 0 && cy0 - m - P.ty < 0) return false;
+  if (P.ty < 0 && cy1 + m - P.ty > s.rows - 1) return false;
+  return true;
+}
+function rectInside(b: Baked, r: ScreenRect, P: ShiftParams): boolean {
+  return r.x0 - P.DX >= 0 && r.x1 - P.DX < b.width && r.y0 + P.rows >= 0 && r.y1 + P.rows < b.height;
+}
+// Lo pintado de un recuadro a medias, como la imagen al correrse: la profundidad y las claves de vóxel (false si algún
+// vóxel pintado sale de la fuente: se empieza de nuevo)
+// (lo que aún no se pintó tiene la clave a 0, que nunca es la de un vóxel: se deja, y se pintará en su sitio nuevo)
+function shiftBuffers(b: Baked, buf: RectBuffers, P: ShiftParams): boolean {
+  const sw = b.source.width, sd = b.source.depth, n = buf.w * buf.h;
+  for (let i = 0; i < n; i++) {
+    const k = buf.pick[i]!;
+    if (k !== k || k === 0) continue;
+    const k2 = k - P.dk, r = Math.floor(k2 / KEY_SPAN), vy = (r % KEY_SPAN) - KEY_OFF, vx = Math.floor(r / KEY_SPAN) - KEY_OFF;
+    if (vx < 0 || vy < 0 || vx >= sw || vy >= sd) return false;
+  }
+  for (let i = 0; i < n; i++) {
+    const k = buf.pick[i]!;
+    if (k === 0) continue;
+    if (k === k) buf.pick[i] = k - P.dk;
+    const d = buf.depth[i]!;
+    if (d !== Infinity) buf.depth[i] = d - P.dd;
+  }
+  return true;
+}
+
+// Al correrse la ventana (shiftBakedJob, en el cambio): lo que se puede seguir en su sitio nuevo se traslada (las tandas sin
+// luces cuyos recuadros y cielos, con lo que leen, siguen dentro); lo demás se descarta como en cancelRebakes. Devuelve los
+// planes descartados, para volver a marcarlos. Antes se descartaba todo: a 6x un recuadro no acababa entre dos corrimientos
+// (~2,7 s andando) y lo que entraba no se horneaba nunca (la pantalla negra)
+export function shiftRebakes(b: Baked, P: ShiftParams): Plan[] {
+  // Cada recuadro y cada cielo por su cuenta; las tandas que tocan luces, enteras fuera
+  const kept: Array<{ bt: RebakeBatch; live: RebakeMover[] }> = [];
+  for (const bt of [...(b.rebakeBatches ?? [])]) {
+    const st = new Map(bt.movers.map((m) => [m, m.can(P)] as const));
+    if ([...st.values()].every((x) => x === 'gone')) { b.rebakeBatches!.delete(bt); continue; }
+    if (bt.lights) continue;
+    // (un cielo pide más margen que su recuadro y su recuadro en la imagen es más grande: si su recuadro no puede seguir, él
+    // tampoco)
+    const live = bt.movers.filter((m) => st.get(m) === true);
+    if (live.length) kept.push({ bt, live });
+  }
+  const held = kept.map(({ live }) => live.map((m) => m.held()));
+  for (const hs of held) for (const h of hs) { for (const [k] of h.busy) b.rectsBusy?.delete(k); for (const [t] of h.plans) b.pendingPlans?.delete(t); }
+  // (copias: un plan descartado (el cielo que no podía seguir) puede ser el de un recuadro que sí se traslada, y el corrimiento
+  // los vuelve a marcar con las coordenadas de antes)
+  const plans = cancelRebakes(b).map((p) => ({ ...p }));
+  const epoch = b.rebakeEpoch ?? 0, keep = new Set(kept.map((k) => k.bt));
+  for (const bt of [...(b.rebakeBatches ?? [])]) if (!keep.has(bt)) { for (const m of bt.movers) m.kill(); b.rebakeBatches!.delete(bt); }
+  // (cada plan se corre una vez, aunque lo compartan su recuadro y su cielo)
+  const plansMoved = new Set<Plan>();
+  kept.forEach(({ bt, live }, i) => {
+    for (const m of bt.movers) if (!live.includes(m)) m.kill();
+    for (const m of live) if (!plansMoved.has(m.plan)) { plansMoved.add(m.plan); const p = m.plan; p.X0 -= P.DX; p.X1 -= P.DX; p.Y0 -= P.DY; p.Y1 -= P.DY; }
+    for (const m of live) m.move(P);
+    bt.epoch = epoch;
+    for (const h of held[i]!) {
+      for (const [k, t] of h.busy) (b.rectsBusy ??= new Map()).set(k, t);
+      for (const [t, ps] of h.plans) (b.pendingPlans ??= new Map()).set(t, ps);
+      (b.movedKeys ??= new Set()).add(h.key);
+    }
+  });
+  return plans;
 }
 
 // Hornea una luz fija entera como trabajo (una puesta en partida)
@@ -1302,7 +1485,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
   const byId = new Map<string, WorldLight>(lights.map((l) => [`light:${l.id}`, l]));
   return jobs.map((j) => {
     let p = 0;
-    const m = j.key.match(/^rect:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/), sk = j.key.match(/^sky:(-?\d+),(-?\d+),(-?\d+),(-?\d+)$/);
+    const m = j.key.match(/^rect:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:#\d+)?$/), sk = j.key.match(/^sky:(-?\d+),(-?\d+),(-?\d+),(-?\d+)(?:#\d+)?$/);
     // El cielo, como las luces: detrás de los recuadros y sin contar como cercano
     if (sk) p = LIGHT_PRIORITY + Math.hypot(Math.max(0, +sk[1]! - px, px - +sk[3]!), Math.max(0, +sk[2]! - py, py - +sk[4]!));
     else if (m) p = Math.hypot(Math.max(0, +m[1]! - px, px - +m[3]!), Math.max(0, +m[2]! - py, py - +m[4]!));
@@ -1535,8 +1718,9 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
   };
   const commit = () => {
     const v0 = performance.now();
-    // Lo que quedaba por rehornear se descarta y se vuelve a marcar, en su sitio nuevo, como cambiado
-    const plans = cancelRebakes(b);
+    // Lo que quedaba por rehornear: lo que puede seguir, a su sitio nuevo (shiftRebakes); lo demás se descarta y se vuelve a
+    // marcar, en su sitio nuevo, como cambiado
+    const plans = shiftRebakes(b, { tx, ty, DX: P.DX, DY: P.DY, rows: P.rows, dd: P.dd, dk: P.dk });
     vox.commit();
     const marked = new Set<number>(), m = (b.options.smooth ?? 0.6) > 0 ? 3 : 1;   // (el margen que chunkRect sumó a la caja)
     for (const p of plans) {

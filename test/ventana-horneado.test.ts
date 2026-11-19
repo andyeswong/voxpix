@@ -201,4 +201,79 @@ describe('ventana viva: correr lo horneado', () => {
       expect({ id, off }).toEqual({ id, off: 0 });
     }
   });
+  // Sin luces: una tanda que toca luces se descarta y se vuelve a marcar, como antes (shiftRebakes)
+  // (nx trozos de ancho; los de N de alto)
+  const freshNL = (tx0: number, ty0: number, holes: Box[] = [], nx = N): Baked => {
+    const s = new StaticVoxels(pal, nx * TV, WV, 0, ZT);
+    for (let j = 0; j < N; j++) for (let i = 0; i < nx; i++) stamp(s, tx0 + i, ty0 + j, i, j);
+    for (const h of holes) dig(s, tx0, ty0, h);
+    return bakeWorld({ model: s, lights: [], width: nx * TV, depth: WV }, OPTS);
+  };
+  const SHAPE = { band: 16, rows: 16, merge: true };
+
+  it('el cambio traslada lo que puede seguir: recuadros a medias y su cielo siguen en el sitio nuevo, y al acabar queda igual que hornear de nuevo ahí', () => {
+    const b = freshNL(0, 0);
+    // (un hueco que, con lo que leen su recuadro y su cielo, sigue dentro tras correr un trozo al este)
+    const hole: Box = [66, 34, 20, 78, 44, 63];
+    dig(b.source, 0, 0, hole);
+    const jobs = rebakeChangedJobs(b, [], { shape: SHAPE });
+    const rects = jobs.filter((j) => j.key.startsWith('rect:')), skies = jobs.filter((j) => j.key.startsWith('sky:'));
+    expect(rects.length).toBeGreaterThan(0);
+    expect(skies.length).toBeGreaterThan(0);
+    // Los recuadros, a medias (dos pasos cada uno); el cielo, esperándolos
+    for (const j of rects) { expect(j.run(-Infinity)).toBe(false); expect(j.run(-Infinity)).toBe(false); }
+    const job = shiftBakedJob(b, K, 0);
+    while (!job.run(Infinity));
+    // Siguen vivos (trasladados), y sus claves quedan apartadas para los recuadros nuevos
+    expect(rects.every((j) => !j.dead!())).toBe(true);
+    expect(skies.every((j) => !j.dead!())).toBe(true);
+    expect(b.movedKeys!.size).toBe(rects.length + skies.length);
+    // Lo que entra, escrito; y lo que queda, hasta el final
+    for (let j = 0; j < N; j++) stamp(b.source, N, j, N - 1, j);
+    for (let k = 0; k < 10000 && jobs.some((j) => !j.dead!() && !done.has(j)); k++) for (const j of jobs) if (!done.has(j) && j.run(Infinity)) done.add(j);
+    rebakeChanged(b, []);
+    expect(diff(b, freshNL(1, 0, [hole]))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+    expect(b.movedKeys!.size).toBe(0);
+  });
+  const done = new Set<unknown>();
+
+  it('un corrimiento a mitad del recuadro de lo que entra (andando: corrimientos más seguidos que lo que tarda): sigue en su sitio nuevo sin empezar de nuevo, y acaba horneado', () => {
+    // (una ventana de NX trozos de ancho: lo que entra cruza en NX - 1 corrimientos)
+    const NX = 5;
+    // Lo que entra al correrse un trozo al este, y el recuadro de su rehorneado
+    const enter = (b: Baked, tx0: number) => {
+      const job = shiftBakedJob(b, K, 0);
+      while (!job.run(Infinity));
+      for (let j = 0; j < N; j++) stamp(b.source, tx0 + NX, j, NX - 1, j);
+      return rebakeChangedJobs(b, [], { shape: SHAPE });
+    };
+    const isEntering = (j: { key: string }) => /^rect:126,/.test(j.key);
+    // Cuántos pasos necesita, sin nada en medio
+    const c = freshNL(0, 0, [], NX), solo = enter(c, 0).find(isEntering)!;
+    let S = 1;
+    while (!solo.run(-Infinity)) S++;
+    expect(S).toBeGreaterThan(4);
+    // Andando: la mitad de los pasos, y otro corrimiento (con lo siguiente que entra escrito)
+    const b = freshNL(0, 0, [], NX), jobs = enter(b, 0), J = jobs.find(isEntering)!;
+    for (let k = 0; k < Math.floor(S / 2); k++) expect(J.run(-Infinity)).toBe(false);
+    const more = enter(b, 1);
+    expect(J.dead!()).toBe(false);
+    let T = Math.floor(S / 2), ok = false;
+    for (; T < 4 * S && !ok; T++) ok = J.run(-Infinity);
+    expect(ok).toBe(true);
+    expect(J.dead!()).toBe(false);
+    // (lo pintado no se tiró: le faltó como mucho lo que hay que preparar de nuevo junto a lo que entró al lado)
+    expect(T).toBeLessThan(Math.ceil(1.75 * S));
+    // Publicó en su sitio nuevo (un trozo más al oeste)
+    expect(b.published.rects.some((r) => !r.sky && r.x0 === 126 - TV && r.x1 === 161 - TV)).toBe(true);
+    // Y al acabar todo, igual que hornear de nuevo ahí
+    const all = [...jobs, ...more];
+    for (let k = 0; k < 100000 && all.length; k++) {
+      const i = all.findIndex((x) => !x.dead!() && !x.waiting?.());
+      if (i < 0) break;
+      if (all[i]!.run(-Infinity)) all.splice(i, 1);
+    }
+    rebakeChanged(b, []);
+    expect(diff(b, freshNL(2, 0, [], NX))).toEqual({ rgba: 0, face: 0, pick: 0, sky: 0, depth: 0 });
+  });
 });
