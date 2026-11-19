@@ -1436,6 +1436,15 @@ const BACK = new WeakMap<Baked, ImageBuffers>();
 
 // opts.onSwitch: se llama en el cambio, con los vóxeles y la imagen ya corridos, para correr en el mismo momento lo que va
 // en coordenadas de la ventana (la rejilla de bloques, las entidades, las luces): el juego nunca ve un cuadro mezclado
+// Lo que ShiftJob da con getters (done, shift, prepared), en el prototipo: sus funciones son de la clase y no cierran
+// sobre ningún corrimiento (ver shiftBakedJob)
+class ShiftJobState {
+  constructor(private readonly st: { done(): boolean; shift(): readonly [number, number]; prepared(): boolean }) {}
+  get done(): boolean { return this.st.done(); }
+  get shift(): readonly [number, number] { return this.st.shift(); }
+  get prepared(): boolean { return this.st.prepared(); }
+}
+
 export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?: number; priority?: number; key?: string; manual?: boolean; onSwitch?(dcx: number, dcy: number): void } = {}): ShiftJob {
   const W = b.width, H = b.height, a = b.options.oblique?.y ?? 1, band = opts.band ?? 64;
   let tx = dcx, ty = dcy, next = 0, halo = 0, start = b.published.serial, done = false, held = false;
@@ -1547,12 +1556,12 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
     opts.onSwitch?.(tx, ty);
     job.ms.swap = performance.now() - w0;
   };
-  const job: ShiftJob = {
+  // (done, shift y prepared, con getters en el prototipo de ShiftJobState y no en un literal: los accesores de un literal se
+  // guardan en la forma oculta del primer objeto creado aquí, con su contexto, y retenían para siempre el horneado del
+  // primer corrimiento; FERN, con una instantánea del montón)
+  const job: ShiftJob = Object.assign(new ShiftJobState({ done: () => done, shift: () => [tx, ty] as const, prepared: () => !done && (!tx && !ty || (next >= H && halo >= H)) }), {
     key: opts.key ?? 'shift',
     ...(opts.priority !== undefined ? { priority: opts.priority } : {}),
-    get done() { return done; },
-    get shift() { return [tx, ty] as const; },
-    get prepared() { return !done && (!tx && !ty || (next >= H && halo >= H)); },
     canCommit() {
       if (done || !job.prepared) return false;
       const r0 = performance.now();
@@ -1600,7 +1609,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
       } while (performance.now() < deadline);
       return false;
     },
-  };
+  });
   const swap = () => {
     const { DX, DY, rows } = P;
     const front: ImageBuffers = { rgba: b.rgba, depth: b.depth, face: b.face, pick: b.pick, sky: b.sky };
