@@ -355,15 +355,28 @@ export function finishRender(pal: Palette, o: RenderOptions, color: Int32Array, 
 
   const rgba = new Uint8ClampedArray(W * H * 4);
   const outlineRgb = o.outlineColor ? rgbOf(o.outlineColor) : pal.outline ? rgbOf(pal.outline) : null;
+  // (cada color de la paleta a RGB una vez por render: antes, una expresión regular por píxel, ~8 % del pintado de un
+  // recuadro)
+  const P = paletteRgb(pal);
   for (let p = 0; p < W * H; p++) {
     const c = final[p]!;
     if (c === -1) continue;
     let rgb: [number, number, number];
-    if (c === OUTLINE) rgb = outlineRgb ?? rgbOf(rampOf(pal, outlineOf[p]! >> 4).colors[0]!);
-    else rgb = rgbOf(rampOf(pal, c >> 4).colors[c & 15]!);
+    if (c === OUTLINE) rgb = outlineRgb ?? P.line(outlineOf[p]! >> 4);
+    else rgb = P.at(c);
     rgba[p * 4] = rgb[0]; rgba[p * 4 + 1] = rgb[1]; rgba[p * 4 + 2] = rgb[2]; rgba[p * 4 + 3] = 255;
   }
   return { width: W, height: H, rgba, depth, ...(pickKey ? { pickKey, pickFace: pickFace! } : {}) };
+}
+
+// Los colores de una paleta en RGB, convertidos la primera vez que se piden: at(rampa * 16 + tono), y line(rampa), el
+// del contorno de esa rampa (su primer tono). Para un render: la paleta no cambia mientras dura
+export function paletteRgb(pal: Palette): { at(c: number): [number, number, number]; line(ramp: number): [number, number, number] } {
+  const atC: Array<[number, number, number] | undefined> = [], lineC: Array<[number, number, number] | undefined> = [];
+  return {
+    at: (c) => atC[c] ??= rgbOf(rampOf(pal, c >> 4).colors[c & 15]!),
+    line: (r) => lineC[r] ??= rgbOf(rampOf(pal, r).colors[0]!),
+  };
 }
 
 // Comprueba que la imagen solo usa colores de la paleta (y alfa 0 o 255). Lanza si no.
