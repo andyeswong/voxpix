@@ -148,4 +148,22 @@ describe('preparar lo expuesto después del horneado', () => {
       expect(s.exposureRows - full).toBeLessThan(0.9 * full);
     }
   });
+  it('copia girada de un trozo que queda vacío (copyRotatedChunk): sus alturas y lo expuesto, como copiarlo todo de nuevo (antes se quedaban con lo de antes)', () => {
+    const W = 64;
+    const src = new StaticVoxels(PAL, W, W, 0, 31), dst = new StaticVoxels(PAL, W, W, 0, 31);
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) for (let z = 0; z < 10; z++) src.set(x, y, z, material(0, 1));
+    for (let c = 0; c < src.cols * src.rows; c++) dst.copyRotatedChunk(src, 1, c);
+    const exposed = (s: StaticVoxels) => { const out: string[] = []; s.forEachExposed((x, y, z, v) => out.push(`${x},${y},${z},${v}`)); return out.sort().join('|'); };
+    exposed(dst);
+    // Un trozo del mundo, vacío del todo, y copiado otra vez
+    for (let y = 16; y < 32; y++) for (let x = 16; x < 32; x++) for (let z = 0; z < 10; z++) src.set(x, y, z, 0);
+    const before = dst.clock;
+    dst.copyRotatedChunk(src, 1, 1 * src.cols + 1);
+    const ref = new StaticVoxels(PAL, W, W, 0, 31);
+    for (let c = 0; c < src.cols * src.rows; c++) ref.copyRotatedChunk(src, 1, c);
+    expect(exposed(dst)).toBe(exposed(ref));
+    expect([...dst.height]).toEqual([...ref.height]);
+    // (y queda como cambiado, para quien hornea)
+    expect(dst.changedSince(before).length).toBe(1);
+  });
 });

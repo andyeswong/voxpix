@@ -623,10 +623,20 @@ export class StaticVoxels implements VoxelSource {
   // vacían antes (copyRotatedSlabs supone el destino vacío). Para poner al día una copia girada por trozos
   copyRotatedChunk(src: StaticVoxels, quarter: number, c: number): void {
     const nz = this.nz, cx = c % src.cols, cy = Math.floor(c / src.cols), dc = rotChunk(quarter, cx, cy, src.cols, src.rows, this.cols);
-    for (let s = 0; s < nz; s++) { const di = dc * nz + s; this.data[di] = null; this.pal[di] = null; this.palN[di] = 0; this.uni[di] = 0; this.count[di] = 0; }
+    let had = false;
+    for (let s = 0; s < nz; s++) { const di = dc * nz + s; if (this.count[di]) had = true; this.data[di] = null; this.pal[di] = null; this.palN[di] = 0; this.uni[di] = 0; this.count[di] = 0; }
     this.copyRotatedSlabs(src, quarter, c * nz, (c + 1) * nz);
+    // (si tenía algo y queda vacío, finishChunk no hace nada: sus alturas, al suelo, y versión nueva, como al escribirlo; si
+    // no, sus máscaras de lo expuesto y las de sus vecinos seguían con lo de antes)
+    let any = false;
+    for (let s = 0; s < nz; s++) if (this.count[dc * nz + s]) { any = true; break; }
+    if (!had || any) return;
+    const X = (dc % this.cols) * CHUNK, Y = Math.floor(dc / this.cols) * CHUNK;
+    for (let y = Y; y < Math.min(this.depth, Y + CHUNK); y++) this.height.fill(this.zMin, y * this.width + X, y * this.width + Math.min(this.width, X + CHUNK));
+    this.versions[dc] = this.worldVersions[dc] = ++this.clock;
+    this.segN[dc] = 1;
+    this.seg.set([this.clock, X, Y, this.zMin, Math.min(this.width, X + CHUNK) - 1, Math.min(this.depth, Y + CHUNK) - 1, this.zMax], dc * SEGS * 7);
   }
-
 
   // Marca el trozo c como cambiado entero para quien hornea (su versión y su caja: el trozo entero, con toda la altura)
   // sin tocar un vóxel ni la versión del mundo (worldChangedSince). LiveWindow.turnTo: lo que queda por hornear de una
