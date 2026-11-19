@@ -12,6 +12,7 @@
 import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
 import { FrameBudget } from '../../../src/view/budget';
+import { BakeWorker, type BakeWorkerPort } from '../../../src/world/horno';
 import { LiveWindow, type PreparedTrozo } from '../../../src/world/live';
 import { LevelPathField } from '../../../src/world/levelpaths';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
@@ -61,7 +62,8 @@ void (async () => {
   const NXW = ext?.nx ?? NX, NYW = ext?.ny ?? NY;
   // ?worker=1 pinta los recuadros de lo que entra en un worker con su copia de la ventana
   // (hornero.ts); ?freno=N, su freno propio
-  const WORKER = q.get('worker') === '1', FRENO = Number(q.get('freno') ?? 1);
+  // ?worker=2: el del motor (BakeWorker, src/world/horno.ts), con los trozos escritos aquí
+  const WORKER = q.get('worker') === '1', WORKER2 = q.get('worker') === '2', FRENO = Number(q.get('freno') ?? 1);
   const hornero = WORKER ? new Worker(new URL('./hornero.ts', import.meta.url), { type: 'module' }) : null;
   const remote = { asked: 0, got: 0, workerMs: 0, busyMs: 0, skipped: 0, preps: 0, prepMs: 0 };
   const preps = new Map<number, PreparedTrozo>(), prepped = new Set<string>();
@@ -80,7 +82,7 @@ void (async () => {
     ...(ENTRAR ? { view: { cut: true } } : {}),
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
     // (?tile=N: el rehorneado por baldosas de N x N trozos de vóxeles con o sin worker; 0, sin baldosas)
-    ...(q.get('tile') !== null ? (Number(q.get('tile')) ? { rebake: { band: 16, rows: 64, merge: true, tile: Number(q.get('tile')) } } : {}) : hornero ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
+    ...(q.get('tile') !== null ? (Number(q.get('tile')) ? { rebake: { band: 16, rows: 64, merge: true, tile: Number(q.get('tile')) } } : {}) : hornero || WORKER2 ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
     ...(hornero ? {
       // (los que escribió el worker ya están en su copia; los del constructor, no)
       onLoad: (t: readonly [number, number], ctx: { at: readonly [number, number, number] }) => { if (!prepped.delete(`${t[0]},${t[1]}`)) hornero.postMessage({ kind: 'gen', t, at: [ctx.at[0], ctx.at[1]] }); },
@@ -96,6 +98,8 @@ void (async () => {
   boot.ventana = Math.round(performance.now());
   let rid = 0;
   if (hornero) win.baked.remote = { ask: (rect) => { const id = ++rid; remote.asked++; hornero.postMessage({ kind: 'rect', id, rect, brake: FRENO, epoch: win.baked.rebakeEpoch ?? 0 }); return { result: () => { const o = results.get(id); if (o) results.delete(id); return o ?? null; }, ready: () => results.has(id) }; } };
+  const motor = WORKER2 ? new BakeWorker(new Worker(new URL('../../../src/world/horno-worker.ts', import.meta.url), { type: 'module' }) as unknown as BakeWorkerPort, { brake: FRENO }) : null;
+  motor?.attach(win);
   const compositor = createCompositor(canvas, { prefer: q.get('ruta') === 'cpu' ? 'cpu' : 'gpu' });
   boot.compositor = Math.round(performance.now());
   compositor.upload(win.baked);
@@ -402,7 +406,7 @@ void (async () => {
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
-      remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : null,
+      remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
