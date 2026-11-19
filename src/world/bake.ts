@@ -159,10 +159,12 @@ export function bakeWorld(world: Bakeable, opts: { topZ?: number; incline?: numb
 export const SKY_RAYS = 5;
 export const SKY_REACH = 8;
 const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
-function skyOf(b: Baked, idx: number): number {
-  const k = b.pick[idx]!;
+function skyOf(b: Baked, idx: number): number { return skyAt(b.source, b.pick[idx]!, b.face[idx]!); }
+// El cielo de un píxel: cuántos de los SKY_RAYS rayos desde la celda delante de su cara (k: el vóxel que se ve; f: su
+// cara) salen al aire
+function skyAt(s: StaticVoxels, k: number, f: number): number {
   if (Number.isNaN(k)) return SKY_RAYS;
-  const s = b.source, f = b.face[idx]!, n = DIR_VECTORS[f]!;
+  const n = DIR_VECTORS[f]!;
   const vz = (k % KEY_SPAN) - KEY_OFF, rr = Math.floor(k / KEY_SPAN), vy = (rr % KEY_SPAN) - KEY_OFF, vx = Math.floor(rr / KEY_SPAN) - KEY_OFF;
   const cx = vx + n[0], cy = vy + n[1], cz = vz + n[2];
   let open = 0;
@@ -178,6 +180,18 @@ function skyOf(b: Baked, idx: number): number {
     if (sky) open++;
   }
   return open;
+}
+// El cielo de un recuadro de w píxeles de ancho a partir de su pick y su face (los del horneado en ese recuadro): lo que
+// calcula el trabajo del cielo, para quien tiene una copia de los vóxeles y no el horneado (BakeWorker)
+export function skyFromPick(s: StaticVoxels, pick: Float64Array, face: Int8Array): Uint8Array {
+  const out = new Uint8Array(pick.length);
+  for (let i = 0; i < pick.length; i++) out[i] = skyAt(s, pick[i]!, face[i]!);
+  return out;
+}
+// Los trozos de vóxeles que lee el cielo del recuadro r: los que pinta y SKY_REACH + 3 alrededor (los rayos)
+export function skyReadChunks(b: Baked, r: ScreenRect): number[] {
+  const { region } = stripRegion(b, r, r.x0, r.x1), m = SKY_REACH + 3;
+  return chunksOfPlan(b, { X0: region.x0 - m, X1: region.x1 + m, Y0: region.y0 - m, Y1: region.y1 + m, Z0: 0, Z1: 0 }, 0);
 }
 function fillSky(b: Baked, x0: number, y0: number, x1: number, y1: number): void {
   const out = b.sky!;
@@ -914,7 +928,12 @@ export function publishedSince(b: Baked, serial: number): Array<{ x0: number; y0
 export type RectOut = { rect: ScreenRect; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; w: number; h: number };
 // Cuántas veces se vuelve a pedir fuera un recuadro que llegó caducado antes de pintarlo aquí
 export const REMOTE_RETRIES = 2;
-export interface RemoteRects { ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean } | null }
+export interface RemoteRects {
+  ask(rect: ScreenRect): { result(): RectOut | null; ready?(): boolean } | null;
+  // (opcional) el cielo del recuadro rect fuera, con el pick y el face del horneado en él (fila a fila, su ancho): devuelve
+  // el cielo de cada píxel, en el mismo orden
+  sky?(rect: ScreenRect, pick: Float64Array, face: Int8Array): { result(): Uint8Array | null; ready?(): boolean } | null;
+}
 export function renderRectFor(b: Baked, chunks: readonly number[], band = RECT_BAND): RectOut { return renderRect(b, chunkRect(b, chunks).rect, band); }
 export function renderRect(b: Baked, rect: ScreenRect, band = RECT_BAND): RectOut {
   const buf = rectBuffers(rect);
@@ -1288,6 +1307,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       for (let cy = Math.max(0, Math.floor((p.Y0 - m2) / CHUNK)); cy <= Math.min(s.rows - 1, Math.floor((p.Y1 + m2) / CHUNK)); cy++)
         for (let cx = Math.max(0, Math.floor((p.X0 - m2) / CHUNK)); cx <= Math.min(s.cols - 1, Math.floor((p.X1 + m2) / CHUNK)); cx++) reads.push(cy * s.cols + cx); }
     let skyStarted = -1, skySerial = -1, skyRestarts = 0, skyDone = false, skyOut = false, skyCounted = false;
+    // (el cielo pedido fuera, b.remote.sky: como los recuadros, y cuántas veces se pidió)
+    let skyTicket: { result(): Uint8Array | null; ready?(): boolean } | null | undefined, skyAsks = 0;
     const skyGone = () => skyOut || stale();
     let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
     if (movedKeys.has(skyKey)) skyKey += `#${++movedSerial}`;
@@ -1301,6 +1322,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       kill() { skyOut = true; skySettle(); },
       can(P) {
         if (skyDone || skyGone()) return 'gone';
+        if (skyTicket) return false;
         return planInside(b, p, P, Math.ceil((2 * SKY_REACH + 2) / CHUNK)) && rectInside(b, r, P);
       },
       move(P) {
@@ -1316,13 +1338,36 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       key: skyKey,
       dead: skyGone,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
-      waiting: () => !skyGone() && (!!b.shiftHold || waiting()),
+      waiting: () => !skyGone() && (!!b.shiftHold || waiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready())),
       run(deadline) {
         if (skyGone()) { skyDone = true; skySettle(); return true; }
         if (b.shiftHold || waiting()) return false;
+        // Fuera (b.remote.sky): con el pick y el face de ahora; al llegar, la misma regla que al acabar aquí (lo que lee
+        // cambió, o se publicó un recuadro encima desde que se pidió): se vuelve a pedir, REMOTE_RETRIES veces, y después aquí
+        if (skyTicket === undefined && b.remote?.sky && row === r.y0) {
+          const pk = new Float64Array(w * (r.y1 - r.y0 + 1)), fc = new Int8Array(pk.length);
+          for (let y = r.y0; y <= r.y1; y++) { const o = y * b.width + r.x0; pk.set(b.pick.subarray(o, o + w), (y - r.y0) * w); fc.set(b.face.subarray(o, o + w), (y - r.y0) * w); }
+          skyStarted = b.source.clock; skySerial = b.published.serial;
+          skyTicket = b.remote.sky(r, pk, fc);
+          if (skyTicket) skyAsks++; else skyTicket = null;
+        }
+        if (skyTicket) {
+          const o = skyTicket.result();
+          if (!o) return false;
+          skyTicket = null;
+          const moved = b.source.changedSince(skyStarted), since = publishedSince(b, skySerial);
+          const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
+          if (repainted || (moved.length > 0 && reads.some((c) => moved.includes(c)))) {
+            if (repainted) sst.restartPub++; else sst.restartVox++;
+            if (skyAsks <= REMOTE_RETRIES) { skyTicket = undefined; return false; }
+            skyStarted = -1;
+          } else {
+            out.set(o); row = r.y1 + 1; skyRestarts = 2;
+          }
+        }
         if (skyStarted < 0) { skyStarted = b.source.clock; skySerial = b.published.serial; }
         const t0 = performance.now(), r0 = row;
-        do { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; } while (row <= r.y1 && performance.now() < deadline);
+        while (row <= r.y1) { for (let x = r.x0; x <= r.x1; x++) out[(row - r.y0) * w + x - r.x0] = skyOf(b, row * b.width + x); row++; if (performance.now() >= deadline) break; }
         sst.pixels += (row - r0) * w; sst.ms += performance.now() - t0;
         if (row <= r.y1) return false;
         if (skyRestarts < 2) {

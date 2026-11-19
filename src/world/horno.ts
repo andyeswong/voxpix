@@ -16,7 +16,7 @@
 // worker no se traslada).
 import type { Palette } from '../core';
 import { StaticVoxels, type PreparedSlab } from './state';
-import { bakeWorldJob, renderRect, readChunks, type Baked, type RectOut, type RemoteRects, type ScreenRect } from './bake';
+import { bakeWorldJob, renderRect, readChunks, skyFromPick, skyReadChunks, type Baked, type RectOut, type RemoteRects, type ScreenRect } from './bake';
 import type { LiveWindow } from './live';
 
 type Outline = 'none' | 'outer' | 'both';
@@ -28,8 +28,9 @@ export type ToWorker =
   | { kind: 'drop'; id: number }
   | { kind: 'chunks'; id: number; list: SentChunk[] }
   | { kind: 'shift'; id: number; dcx: number; dcy: number }
-  | { kind: 'rect'; ticket: number; id: number; gen: number; rect: ScreenRect; brake: number };
-export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number } | { kind: 'skip'; ticket: number };
+  | { kind: 'rect'; ticket: number; id: number; gen: number; rect: ScreenRect; brake: number }
+  | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number };
+export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number } | { kind: 'skip'; ticket: number };
 
 export interface BakeWorkerPort {
   postMessage(m: ToWorker, transfer?: Transferable[]): void;
@@ -61,9 +62,9 @@ function shiftSent(a: Uint32Array, cols: number, rows: number, dcx: number, dcy:
 }
 
 export class BakeWorker {
-  readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0 };
+  readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
-  private readonly tickets = new Map<number, { out: RectOut | null; ready: boolean }>();
+  private readonly tickets = new Map<number, { out: RectOut | Uint8Array | null; ready: boolean }>();
   private readonly inbox: number[] = [];
   private nextId = 0;
   private nextTicket = 0;
@@ -91,15 +92,14 @@ export class BakeWorker {
     }
   }
 
-  private remoteFor(b: Baked): RemoteRects { return { ask: (rect) => this.ask(b, rect) }; }
+  private remoteFor(b: Baked): RemoteRects { return { ask: (rect) => this.ask(b, rect), sky: (rect, pick, face) => this.askSky(b, rect, pick, face) }; }
 
-  private ask(b: Baked, rect: ScreenRect): ReturnType<RemoteRects['ask']> {
-    if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
-    const m = this.mirror(b), s = b.source;
-    // Los trozos que lee el recuadro y que el espejo no tiene en su versión de ahora
-    const t0 = performance.now(), list: SentChunk[] = [], transfer: Transferable[] = [];
+  // Los trozos de `chunks` que el espejo no tiene en su versión de ahora, mandados. false: alguno no cabe en la forma de
+  // mandar (lo pedido se hace aquí)
+  private sync(b: Baked, m: Mirror, chunks: readonly number[]): boolean {
+    const s = b.source, t0 = performance.now(), list: SentChunk[] = [], transfer: Transferable[] = [];
     let ok = true;
-    for (const c of readChunks(b, rect)) {
+    for (const c of chunks) {
       const v = s.versions[c]!;
       if (m.sent[c] === v) continue;
       const e = s.exportChunkPrepared(c);
@@ -111,20 +111,41 @@ export class BakeWorker {
     }
     if (list.length) { this.port.postMessage({ kind: 'chunks', id: m.id, list }, transfer); this.stats.chunks += list.length; }
     this.stats.syncMs += performance.now() - t0;
-    // (un trozo que no cabe en la forma de mandar: este recuadro se pinta aquí)
-    if (!ok) { this.stats.unsendable++; return null; }
-    const ticket = ++this.nextTicket, entry = { out: null as RectOut | null, ready: false };
+    if (!ok) this.stats.unsendable++;
+    return ok;
+  }
+  private ticket<T extends RectOut | Uint8Array>(): { ticket: number; handle: { result(): T | null; ready(): boolean } } {
+    const ticket = ++this.nextTicket, entry = { out: null as RectOut | Uint8Array | null, ready: false };
     this.tickets.set(ticket, entry);
-    this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1 });
-    this.stats.asked++;
-    return {
+    return { ticket, handle: {
       result: () => {
         if (!entry.ready || !entry.out) return null;
         this.tickets.delete(ticket);
-        return entry.out;
+        return entry.out as T;
       },
       ready: () => entry.ready && !!entry.out,
-    };
+    } };
+  }
+
+  private ask(b: Baked, rect: ScreenRect): ReturnType<RemoteRects['ask']> {
+    if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
+    const m = this.mirror(b);
+    // (los trozos que lee: uno que no cabe en la forma de mandar hace que este recuadro se pinte aquí)
+    if (!this.sync(b, m, readChunks(b, rect))) return null;
+    const { ticket, handle } = this.ticket<RectOut>();
+    this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1 });
+    this.stats.asked++;
+    return handle;
+  }
+
+  private askSky(b: Baked, rect: ScreenRect, pick: Float64Array, face: Int8Array): ReturnType<NonNullable<RemoteRects['sky']>> {
+    if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
+    const m = this.mirror(b);
+    if (!this.sync(b, m, skyReadChunks(b, rect))) return null;
+    const { ticket, handle } = this.ticket<Uint8Array>();
+    this.port.postMessage({ kind: 'sky', ticket, id: m.id, gen: m.gen, pick, face, brake: this.o.brake ?? 1 }, [pick.buffer, face.buffer]);
+    this.stats.skies++;
+    return handle;
   }
 
   private mirror(b: Baked): Mirror {
@@ -170,9 +191,10 @@ export class BakeWorker {
   private receive(m: FromWorker): void {
     const t = this.tickets.get(m.ticket);
     if (m.kind === 'skip') { this.stats.skipped++; this.tickets.delete(m.ticket); return; }
-    this.stats.got++; this.stats.workerMs += m.ms;
+    if (m.kind === 'sky') this.stats.skyMs += m.ms; else this.stats.got++;
+    this.stats.workerMs += m.ms;
     if (!t) return;
-    t.out = m.o;
+    t.out = m.kind === 'sky' ? m.sky : m.o;
     if (this.o.perFrame === undefined) t.ready = true; else this.inbox.push(m.ticket);
   }
 }
@@ -181,7 +203,7 @@ export class BakeWorker {
 // recuadros (setTimeout 0 en el worker; en las pruebas, a mano)
 export class BakeWorkerHost {
   private readonly mirrors = new Map<number, { store: StaticVoxels; shell: Baked; gen: number }>();
-  private readonly queue: Array<Extract<ToWorker, { kind: 'rect' }>> = [];
+  private readonly queue: Array<Extract<ToWorker, { kind: 'rect' | 'sky' }>> = [];
   private scheduled = false;
   busyMs = 0;
 
@@ -212,6 +234,7 @@ export class BakeWorkerHost {
         break;
       }
       case 'rect':
+      case 'sky':
         this.queue.push(m);
         if (!this.scheduled) { this.scheduled = true; this.schedule(() => this.next()); }
         break;
@@ -225,7 +248,12 @@ export class BakeWorkerHost {
     if (m) {
       const x = this.mirrors.get(m.id);
       if (!x || x.gen !== m.gen) this.post({ kind: 'skip', ticket: m.ticket }, []);
-      else {
+      else if (m.kind === 'sky') {
+        const a = performance.now(), sky = skyFromPick(x.store, m.pick, m.face), ms = performance.now() - a;
+        if (m.brake > 1) { const until = performance.now() + ms * (m.brake - 1); while (performance.now() < until); }
+        this.busyMs += performance.now() - a;
+        this.post({ kind: 'sky', ticket: m.ticket, sky, ms }, [sky.buffer]);
+      } else {
         const a = performance.now(), o = renderRect(x.shell, m.rect), ms = performance.now() - a;
         if (m.brake > 1) { const until = performance.now() + ms * (m.brake - 1); while (performance.now() < until); }
         this.busyMs += performance.now() - a;

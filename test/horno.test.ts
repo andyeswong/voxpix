@@ -61,6 +61,9 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
 // worker lo que le llegó, le deja pintar `paint` recuadros y devuelve al principal lo pintado
 function channel() {
   const toHost: ToWorker[] = [], toMain: FromWorker[] = [], tasks: Array<() => void> = [];
+  // (holdSky: los pedidos de cielo se quedan sin llegar al worker hasta release())
+  let holdSky = false;
+  const held: ToWorker[] = [];
   const kinds: Record<string, number> = {};
   // (un trozo mandado otra vez con la misma versión y el mismo contenido: el espejo ya lo tenía, p. ej. tras correrse)
   const seen = new Set<string>();
@@ -73,7 +76,7 @@ function channel() {
       const k = `${m.id}:${ch.v}:${h}`;
       if (seen.has(k)) again++; else seen.add(k);
     }
-    toHost.push(structuredClone(m));
+    (holdSky && m.kind === 'sky' ? held : toHost).push(structuredClone(m));
   } };
   const host = new BakeWorkerHost((m) => toMain.push(structuredClone(m)), (fn) => tasks.push(fn));
   const step = (paint = 1) => {
@@ -81,7 +84,9 @@ function channel() {
     for (let k = 0; k < paint && tasks.length; k++) tasks.shift()!();
     while (toMain.length) port.onmessage?.({ data: toMain.shift()! });
   };
-  return { port, host, step, kinds, again: () => again, idle: () => !toHost.length && !tasks.length && !toMain.length };
+  return { port, host, step, kinds, again: () => again, held: () => held.length,
+    hold: (on: boolean) => { holdSky = on; }, release: () => { toHost.push(...held.splice(0)); },
+    idle: () => !toHost.length && !tasks.length && !toMain.length && !held.length };
 }
 type Ch = ReturnType<typeof channel>;
 const Y = TV / 2;
@@ -99,6 +104,8 @@ const walk = (win: LiveWindow, ch: Ch | null, budget: FrameBudget, from: number,
 };
 const drain = (win: LiveWindow, ch: Ch | null, budget: FrameBudget, x: number) => {
   for (let k = 0; k < 3000 && (win.busy || budget.pending || (ch && !ch.idle())); k++) { budget.run(); ch?.step(4); win.update(x, Y, budget); }
+  // (nada se queda esperando para siempre: un pedido saltado que nadie descartó colgaría su trabajo en la cola)
+  if (win.busy || budget.pending || (ch && !ch.idle())) throw new Error(`no se vacía: cola ${budget.pending}, ocupada ${win.busy}`);
   for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) for (let k = 0; !j.run(Infinity); k++) { ch?.step(4); if (k > 1000) throw new Error('no acaba'); }
 };
 // Picar un hoyo en coordenadas del mundo
@@ -137,7 +144,10 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(a.bw!.stats.asked).toBeGreaterThan(20);
     expect(a.bw!.stats.got).toBeGreaterThan(10);
     expect(a.bw!.stats.skipped).toBeGreaterThan(0);
-    expect(a.bw!.stats.got + a.bw!.stats.skipped).toBe(a.bw!.stats.asked);
+    // (el cielo también fuera: cada pedido de cielo llega o se salta como los recuadros)
+    expect(a.bw!.stats.skies).toBeGreaterThan(10);
+    expect(a.bw!.stats.skyMs).toBeGreaterThan(0);
+    expect(a.bw!.stats.got + a.bw!.stats.skipped).toBeLessThanOrEqual(a.bw!.stats.asked + a.bw!.stats.skies);
     // Lo mandado: solo lo que el espejo no tenía (un corrimiento no hace volver a mandar lo que se corrió con él)
     expect(a.bw!.stats.chunks).toBeGreaterThan(0);
     expect(ch.again()).toBe(0);
@@ -146,6 +156,32 @@ describe('BakeWorker: el horno en un worker', () => {
     a.win.turn(1); b.win.turn(1);
     drain(a.win, ch, new FrameBudget(1e6), a.x); drain(b.win, null, new FrameBudget(1e6), b.x);
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
+  });
+
+  it('un cielo pedido fuera cuando la ventana se corre no se traslada: se descarta (el worker lo salta) y nada se queda esperando', () => {
+    const ch = channel(), win = make([0, 0]), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    ch.hold(true);
+    let x = TV / 2;
+    // Andar hasta tener cielos retenidos y que la ventana se corra después
+    let shiftsAtHeld = -1;
+    for (let n = 0; n < 200 && !(shiftsAtHeld >= 0 && (ch.kinds.shift ?? 0) > shiftsAtHeld); n++) {
+      x += TV / 16;
+      win.update(x, Y, budget);
+      for (let k = 0; k < 4; k++) { budget.run(); ch.step(4); win.update(x, Y, budget); }
+      if (shiftsAtHeld < 0 && ch.held() > 0) shiftsAtHeld = ch.kinds.shift ?? 0;
+    }
+    expect(shiftsAtHeld).toBeGreaterThanOrEqual(0);
+    expect(ch.kinds.shift).toBeGreaterThan(shiftsAtHeld);
+    const skipped = bw.stats.skipped;
+    ch.hold(false); ch.release();
+    drain(win, ch, budget, x);
+    expect(bw.stats.skipped).toBeGreaterThan(skipped);
+    const ref = make([0, 0]), rb = new FrameBudget(1e6);
+    let rx = TV / 2;
+    while (rx < x) { rx += TV / 16; ref.update(rx, Y, rb); for (let k = 0; k < 4; k++) { rb.run(); ref.update(rx, Y, rb); } }
+    drain(ref, null, rb, x);
+    expect(diff(win.baked, ref.baked)).toBe(0);
   });
 
   it('girar no rehace el espejo: uno por fuente (giro 0 y giro 1), ninguno tirado, y al volver se mandan pocos trozos', () => {
