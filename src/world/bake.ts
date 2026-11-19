@@ -71,7 +71,7 @@ export interface Baked {
   // (para medir) el cielo del rehorneado: trabajos creados, píxeles calculados (con los rehechos), veces rehecho por un
   // recuadro publicado encima o por vóxeles que cambiaron, y píxeles publicados
   skyStats?: { jobs: number; pixels: number; restartPub: number; restartVox: number; published: number; ms: number };
-  remoteStats?: { published: number; stale: number; local: number; localMs: number };
+  remoteStats?: { published: number; stale: number; local: number; localMs: number; reasked?: number; skyReasked?: number };
   // El rehorneado que está en la cola sin publicar (recuadros, cielo y luces), con las cajas de lo que rehace; y el número
   // de tanda: al correrse la ventana (shiftBakedJob), lo de la cola se descarta (cancelRebakes: sus trabajos acaban sin
   // hacer nada) y sus trozos se vuelven a marcar como cambiados ya corridos. Antes el cambio esperaba a que se vaciara
@@ -1142,7 +1142,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // aquí. Andando, el trozo de al lado se escribe mientras: con la regla de los trozos que lee, ~23 % llegaba caducado,
           // y pintarlo aquí devolvía al principal ~110 ms/s en viva)
           st.stale++;
-          if (asks <= REMOTE_RETRIES) { ticket = undefined; reads = readChunks(b, rect); return false; }
+          if (asks <= REMOTE_RETRIES) { st.reasked = (st.reasked ?? 0) + 1; ticket = undefined; reads = readChunks(b, rect); return false; }
         }
         if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; reads = readChunks(b, rect); }
         // (trasladado con lo pintado: lo que cambie del plan y lo que se publique, desde ahora)
@@ -1376,7 +1376,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
           if (repainted || (moved.length > 0 && reads.some((c) => moved.includes(c)))) {
             if (repainted) sst.restartPub++; else sst.restartVox++;
-            if (skyAsks <= REMOTE_RETRIES) { skyTicket = undefined; return false; }
+            if (skyAsks <= REMOTE_RETRIES) { const rs = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 }); rs.skyReasked = (rs.skyReasked ?? 0) + 1; skyTicket = undefined; return false; }
             skyStarted = -1;
           } else {
             out.set(o); row = r.y1 + 1; skyRestarts = 2;

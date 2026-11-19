@@ -72,6 +72,10 @@ void (async () => {
   const preps = new Map<number, PreparedTrozo>(), prepped = new Set<string>();
   let pid = 0;
   let lastView: [number, number] = [-1e9, -1e9], viewPending = 0;
+  // (con ?worker=2: cada segundo, lo pedido fuera, lo saltado, lo que falta por llegar, los recuadros ocupados, las tandas y
+  // los re-pedidos: para ver un atasco en el tiempo)
+  const linea: Array<Record<string, number>> = [];
+  let nextLinea = 0;
   const results = new Map<number, RectOut>();
   if (hornero) {
     hornero.postMessage({ kind: 'init', voxset: ext ? ext.voxset : null, spec: ext ? ext.spec : spec0, chunk: 16, width: NXW * 128, depth: NYW * 128, bake: ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' } });
@@ -319,6 +323,13 @@ void (async () => {
     // pendiente, la puerta del 6x)
     motor?.frame();
     if (hornero && (Math.abs(o.vx - lastView[0]) > 8 || Math.abs(o.vy - lastView[1]) > 8)) { lastView = [o.vx, o.vy]; hornero.postMessage({ kind: 'view', x: o.vx + VW / 2, y: o.vy + VH / 2 }); }
+    if (motor && now - start >= nextLinea) {
+      nextLinea += 1000;
+      const st = motor.stats, rs = win.baked.remoteStats;
+      linea.push({ s: Math.round((now - start) / 1000), asked: st.asked, skies: st.skies, got: st.got, skipped: st.skipped, skShift: st.skippedShift, out: motor.outstanding,
+        busy: win.baked.rectsBusy?.size ?? 0, tandas: win.baked.rebakeBatches?.size ?? 0, cola: budget.pending, reask: rs?.reasked ?? 0, skyReask: rs?.skyReasked ?? 0,
+        cambiados: win.baked.source.changedSince(win.baked.version).length });
+    }
     for (const k of win.baked.rectsBusy?.keys() ?? []) {
       const [x0, y0, x1, y1] = k.slice(5).split(',').map(Number) as [number, number, number, number];
       if (x1 >= o.vx && x0 < o.vx + VW && y1 >= o.vy && y0 < o.vy + VH) { viewPending++; break; }
@@ -426,7 +437,7 @@ void (async () => {
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
-      remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
+      linea, remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,

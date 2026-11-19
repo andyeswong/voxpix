@@ -32,7 +32,7 @@ export type ToWorker =
   | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number }
   // (lo pedido que ya no hace falta: si aún no se empezó, no se pinta)
   | { kind: 'cancel'; ticket: number };
-export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number } | { kind: 'skip'; ticket: number };
+export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number } | { kind: 'skip'; ticket: number; why: 'shift' | 'mirror' };
 
 export interface BakeWorkerPort {
   postMessage(m: ToWorker, transfer?: Transferable[]): void;
@@ -67,7 +67,7 @@ function shiftSent(a: Uint32Array, cols: number, rows: number, dcx: number, dcy:
 }
 
 export class BakeWorker {
-  readonly stats = { asked: 0, got: 0, skipped: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0,
+  readonly stats = { asked: 0, got: 0, skipped: 0, skippedShift: 0, skippedMirror: 0, near: 0, unsendable: 0, chunks: 0, syncMs: 0, workerMs: 0, mirrors: 0, dropped: 0, skies: 0, skyMs: 0,
     // (trozos mandados otra vez porque sus vóxeles cambiaron desde el último envío)
     resent: 0,
     // (lo retirado del worker porque pasó a ser cercano mientras estaba fuera: se pinta aquí sin esperarlo)
@@ -101,6 +101,9 @@ export class BakeWorker {
       if (t) t.ready = true;
     }
   }
+
+  // (lo pedido que aún no llegó ni se saltó)
+  get outstanding(): number { return this.tickets.size; }
 
   private remoteFor(b: Baked): RemoteRects { return { ask: (rect) => this.ask(b, rect), sky: (rect, pick, face) => this.askSky(b, rect, pick, face) }; }
 
@@ -217,7 +220,7 @@ export class BakeWorker {
 
   private receive(m: FromWorker): void {
     const t = this.tickets.get(m.ticket);
-    if (m.kind === 'skip') { this.stats.skipped++; this.tickets.delete(m.ticket); return; }
+    if (m.kind === 'skip') { this.stats.skipped++; if (m.why === 'shift') this.stats.skippedShift++; else this.stats.skippedMirror++; this.tickets.delete(m.ticket); return; }
     if (m.kind === 'sky') this.stats.skyMs += m.ms; else this.stats.got++;
     this.stats.workerMs += m.ms;
     if (!t) return;
@@ -281,7 +284,7 @@ export class BakeWorkerHost {
     const m = this.queue.shift();
     if (m) {
       const x = this.mirrors.get(m.id);
-      if (!x || x.gen !== m.gen) this.post({ kind: 'skip', ticket: m.ticket }, []);
+      if (!x || x.gen !== m.gen) this.post({ kind: 'skip', ticket: m.ticket, why: x ? 'shift' : 'mirror' }, []);
       else if (m.kind === 'sky') {
         const a = performance.now(), sky = skyFromPick(x.store, m.pick, m.face), ms = performance.now() - a;
         if (m.brake > 1) { const until = performance.now() + ms * (m.brake - 1); while (performance.now() < until); }
