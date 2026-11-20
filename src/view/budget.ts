@@ -103,9 +103,9 @@ export class FrameBudget {
   }
 
   // Lo que cuesta cada clase de llamada (la key hasta ":" o "#": rect, light, sky, view-cut...): las últimas
-  // COST_SAMPLES, y su p95 como lo esperado de la siguiente. Las llamadas que no gastan nada medible (una espera) no
-  // cuentan
-  private costs = new Map<string, { ms: number[]; at: number; p95: number }>();
+  // COST_SAMPLES, y su p95 como lo esperado de la siguiente (y su mediana, para lo corto: ver phase). Las llamadas que no
+  // gastan nada medible (una espera) no cuentan
+  private costs = new Map<string, { ms: number[]; at: number; p95: number; p50: number }>();
   private static kind(key: string): string {
     const m = /[:#]/.exec(key);
     return m ? key.slice(0, m.index) : key;
@@ -126,11 +126,12 @@ export class FrameBudget {
   private record(k: string, ms: number): void {
     if (!(ms >= MIN_SAMPLE_MS)) return;
     let c = this.costs.get(k);
-    if (!c) this.costs.set(k, (c = { ms: [], at: 0, p95: 0 }));
+    if (!c) this.costs.set(k, (c = { ms: [], at: 0, p95: 0, p50: 0 }));
     if (c.ms.length < COST_SAMPLES) c.ms.push(ms);
     else { c.ms[c.at] = ms; c.at = (c.at + 1) % COST_SAMPLES; }
     const sorted = [...c.ms].sort((a, b) => a - b);
     c.p95 = sorted[Math.floor(0.95 * (sorted.length - 1))]!;
+    c.p50 = sorted[Math.floor(0.5 * (sorted.length - 1))]!;
   }
   // Corre los trabajos de [i, hasta) de la cola (hasta: el primero que no es de la fase) hasta el plazo. La primera
   // llamada de la fase va siempre (si no, nada avanzaría); las demás, solo si cabe lo que suele costar esa clase de
@@ -156,22 +157,31 @@ export class FrameBudget {
       break;
     }
     // Lo corto que desbloquea a otro (una clase propia, costClass: pedir a un worker, publicar lo llegado) va antes en su
-    // fase, hasta la mitad de su tiempo y si cabe lo que suele costar su clase (una clase sin medir, solo la primera vez del
-    // cuadro). Detrás de un trabajo en marcha que se come la fase entera (pintar aquí un recuadro, 6-24 ms en el juego de
-    // FERN), lo que solo iba a pedir al worker no llegaba nunca: el worker ocioso con ~140 recuadros sin pedir. No cuenta
-    // como lo que corrió en la fase: lo demás sigue teniendo su primera llamada
+    // fase. Detrás de un trabajo en marcha que se come la fase entera (pintar aquí un recuadro, 6-24 ms en un juego), lo que
+    // solo iba a pedir al worker no llegaba nunca: el worker ocioso con ~140 recuadros sin pedir.
+    // - Si cabe lo que suele costar su clase en la mitad de la fase: va, y no cuenta como la llamada de la fase (lo demás
+    //   sigue teniendo la suya).
+    // - Si no cabe: se cuenta como saltado, y a los STARVE_FRAMES cuadros lo adelanta la salvaguarda de arriba, que sí cuenta
+    //   como la llamada de la fase. Antes iba siempre el primero, quepa o no, y sin contar: a 6x, un pedido de ~4 ms más el
+    //   paso de un trozo o de un corrimiento en el mismo cuadro (los cuadros de más de 25 ms casi se doblaron en un juego).
+    // - Una clase sin medir: una vez por fase (para medirla), sin contar, como antes. Contarla como la llamada de la fase
+    //   cambiaba el orden de lo de detrás y un recuadro pedido fuera acababa distinto que pintado aquí (sin explicar aún).
+    // Lo que suele costar es la mediana, no el p95: pedir cuesta en dos escalones. Casi siempre es poco (los trozos que lee
+    // ya están en el espejo); a veces lleva la copia de trozos nuevos al espejo, y esa cola es su p95 (en viva a 6x, mediana
+    // ~1,6 ms y p95 ~10 ms, casi todo copia). Con el p95, a 6x no cabía nunca ninguno en la mitad de la fase (1,5 ms la de
+    // lo demás) y pedir iba solo por hambre, uno por cuadro
     {
       const t0 = this.now(), half = t0 + (deadline - t0) / 2;
-      let quick = 0;
+      let unknown = false;
       for (let k = from; k < this.queue.length && inPhase(this.queue[k]!);) {
         const job = this.queue[k]!;
         if (!job.costClass?.() || job.waiting?.()) { k++; continue; }
         const t = this.now();
         if (t >= half) break;
-        const est = this.costs.get(this.costKey(job))?.p95;
-        if (quick > 0 && (est === undefined || t + est > half)) { k++; continue; }
+        const est = this.costs.get(this.costKey(job))?.p50;
+        if (est === undefined) { if (unknown) { k++; continue; } unknown = true; }
+        else if (t + est > half) { this.noteSkip(job); k++; continue; }
         const r = this.call(job, deadline, t);
-        if (r.ms >= MIN_SAMPLE_MS) quick++;
         if (r.done) this.removeAt(k); else k++;
       }
     }
