@@ -170,7 +170,7 @@ void (async () => {
   const turns: Array<{ ms: number; frames: number; over25: number; worst: number }> = [];
   // (por giro, en ms de performance.now(): la tecla, el cambio de horneado y el final de lo demás; con ?worker=2 se cruza
   // con el primer espejo creado tras la tecla)
-  const giros: Array<{ tecla: number; cambio: number; resto: number }> = [];
+  const giros: Array<{ tecla: number; cambio: number; resto: number; nucleo?: unknown }> = [];
   let turnAt = -1, turnFrames = 0, turnOver = 0, turnWorst = 0, nextTurn = GIRAR * 1000, lastBaked = win.baked, fade = 1, swapMs = -1;
   let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
   const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
@@ -257,7 +257,7 @@ void (async () => {
       lastBaked = win.baked;
       if (turnAt >= 0 && swapMs < 0 && (!win.turning || win.turning.phase === 'rest')) swapMs = now - turnAt;
       const g = giros[giros.length - 1];
-      if (g && g.cambio < 0) g.cambio = performance.now();
+      if (g && g.cambio < 0) { g.cambio = performance.now(); g.nucleo = { ...win.lastTurn, copyMs: Math.round(win.lastTurn.copyMs), jobMs: Object.fromEntries(Object.entries(win.lastTurn.jobMs).map(([k, v]) => [k, Math.round(v)])) }; }
     }
     { const g = giros[giros.length - 1]; if (g && g.cambio >= 0 && g.resto < 0 && !win.turning) g.resto = performance.now(); }
     // El fundido: a negro mientras se hace el núcleo, y de vuelta al cambiar (150 ms cada uno)
@@ -446,7 +446,7 @@ void (async () => {
       linea, giros: giros.map((g, i) => {
         const fin = giros[i + 1]?.tecla ?? Infinity, ms = (t: number) => t < 0 ? null : Math.round(t - g.tecla);
         const e = motor?.mirrorLog.find((l) => l.at >= g.tecla && l.at < fin);
-        return { cambio: ms(g.cambio), resto: ms(g.resto), ...(e ? { espejo: ms(e.at), pedido: ms(e.firstAsk), trozos: e.chunksFirst, syncMs: Math.round(e.syncMsFirst), llega: ms(e.firstGot), worker: e.worker ? Object.fromEntries(Object.entries(e.worker).map(([k, v]) => [k, Math.round(v as number)])) : null } : {}) };
+        return { cambio: ms(g.cambio), resto: ms(g.resto), nucleo: g.nucleo, ...(e ? { espejo: ms(e.at), pedido: ms(e.firstAsk), trozos: e.chunksFirst, syncMs: Math.round(e.syncMsFirst), llega: ms(e.firstGot), worker: e.worker ? Object.fromEntries(Object.entries(e.worker).map(([k, v]) => [k, Math.round(v as number)])) : null } : {}) };
       }), remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
