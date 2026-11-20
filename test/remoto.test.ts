@@ -90,10 +90,23 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
 
   it('lo que llega se publica igual que pintarlo aquí; si algo suyo cambió mientras, se vuelve a pedir: lo publicado es lo de ahora', () => {
     // (fresh: píxeles distintos de pintar de nuevo toda la imagen con lo de ahora)
+    const same = (f: RectOut, B: Baked, i: number) => f.face[i] === B.face[i] && [0, 1, 2, 3].every((c) => f.rgba[i * 4 + c] === B.rgba[i * 4 + c]);
     const fresh = (B: Baked) => {
       const f = renderRect(B, { x0: 0, x1: B.width - 1, y0: 0, y1: B.height - 1 });
       let n = 0;
-      for (let i = 0; i < B.width * B.height; i++) if (f.face[i] !== B.face[i] || [0, 1, 2, 3].some((c) => f.rgba[i * 4 + c] !== B.rgba[i * 4 + c])) n++;
+      for (let i = 0; i < B.width * B.height; i++) if (!same(f, B, i)) n++;
+      return n;
+    };
+    // Un parpadeo con lo viejo: un píxel que estaba al día (igual que pintarlo de nuevo con lo de ahora) y tras una llamada
+    // de la cola ya no lo está. (Lo que aún no se ha puesto al día, como el borde de un trozo que entra hasta que se pinta el
+    // vecino, no cuenta: no estaba al día antes)
+    const regressions = (B: Baked, before: { face: Int8Array; rgba: Uint8ClampedArray }) => {
+      const f = renderRect(B, { x0: 0, x1: B.width - 1, y0: 0, y1: B.height - 1 });
+      let n = 0;
+      for (let i = 0; i < B.width * B.height; i++) {
+        const was = f.face[i] === before.face[i] && [0, 1, 2, 3].every((c) => f.rgba[i * 4 + c] === before.rgba[i * 4 + c]);
+        if (was && !same(f, B, i)) n++;
+      }
       return n;
     };
     // Andando; con dig, se pica delante en la vuelta kDig de cada paso. Lo pedido llega, pintado con lo del momento de
@@ -110,12 +123,15 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
         return { result: () => (++calls >= delay ? o : null) };
       } };
       const budget = new FrameBudget(1e6);
-      let x = TV / 2;
+      let x = TV / 2, flicker = 0;
       for (let s = 0; s < 3 * 8; s++) {
         x += TV / 8;
         win.update(x, TV / 2, budget);
         for (let k = 0; k < 50 && (win.busy || budget.pending); k++) {
+          const B = win.baked, shifts = B.shifts ?? 0, hold = !!B.shiftHold, before = dig ? { face: B.face.slice(), rgba: B.rgba.slice() } : null;
           budget.run();
+          // (tras cada llamada; no a través de un corrimiento de la ventana: la imagen se mueve entera, uno o dos por paso)
+          if (before && !hold && !win.baked.shiftHold && (win.baked.shifts ?? 0) === shifts && win.baked === B) flicker += regressions(B, before);
           if (dig && k === dig.kDig) { const [lx, ly] = win.toLocal(x + TV, TV / 2); for (let z = 20; z < 40; z++) for (let y = ly - 4; y < ly + 4; y++) for (let xx = lx - 4; xx < lx + 4; xx++) if (xx >= 0 && xx < win.store.width && y >= 0 && y < win.store.depth) win.store.set(xx, y, z, 0); }
           win.update(x, TV / 2, budget);
         }
@@ -124,7 +140,7 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
       expect(win.busy || budget.pending > 0).toBe(false);
       const pre = fresh(win.baked);
       for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
-      return { win, asked, pre };
+      return { win, asked, pre, flicker };
     };
     const a = run(true), b = run(false);
     expect(a.asked).toBeGreaterThan(3);
@@ -137,11 +153,12 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     for (const dig of [{ kDig: 0, delay: 8 }, { kDig: 1, delay: 8 }, { kDig: 2, delay: 8 }, { kDig: 1, delay: 4 }]) {
       const c = run(true, dig);
       stale += c.win.baked.remoteStats?.stale ?? 0;
+      expect(c.flicker).toBe(0);
       expect(c.pre).toBe(0);
       expect(fresh(c.win.baked)).toBe(0);
     }
     expect(stale).toBeGreaterThan(10);
-  });
+  }, 30_000);
 
   it('uno que llega después de que un vecino que pinta en parte (no de su núcleo) cambió y se publicó encima: se pinta aquí, igual que hornear de nuevo', () => {
     // Como el del vecino de ventana-horneado, pero el recuadro de A se pinta fuera con lo de antes de cavar B. A, junto al
