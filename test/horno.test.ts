@@ -429,10 +429,10 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(a.bw!.stats.mirrors).toBe(2);
   });
 
-  it('turnTo: el núcleo del giro nuevo se pinta aquí (ningún espejo nuevo antes del cambio) y lo demás fuera; igual que hornear aquí', () => {
+  it('turnTo: el núcleo del giro nuevo también se pide fuera (su espejo se crea antes del cambio), y lo demás; igual que hornear aquí', () => {
     const ch = channel();
     const a = scenario(ch, true), b = scenario(null, true);
-    expect(a.mirrorsAtSwitch1).toBe(a.m1);
+    expect(a.mirrorsAtSwitch1).toBeGreaterThan(a.m1);
     expect(ch.kinds.mirror).toBeGreaterThan(1);
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
   });

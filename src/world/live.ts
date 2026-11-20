@@ -149,6 +149,8 @@ export class LiveWindow {
   private at: [number, number] = [0, 0];
   // El giro en marcha (turnTo): el núcleo antes del cambio (job: null hasta que se pueda empezar) y lo demás después
   private turnPrep: { q: Quarter; job: ViewJob | null } | null = null;
+  // (el núcleo dejado a medias: lo que pidió fuera se cancela, para que nada lo espere ni guarde su horneado)
+  private turnAbort: (() => void) | null = null;
   private turnRest: { q: Quarter; job: ViewJob } | null = null;
 
   constructor(opts: LiveWindowOptions) {
@@ -300,7 +302,7 @@ export class LiveWindow {
 
   // Pide girar a q con fundido (ver arriba). Si q se tiene siempre (opts.quarters), es turn(q), sin esperar
   turnTo(q: Quarter): void {
-    if (this.turnPrep) { if (this.turnPrep.q === q) return; this.turnPrep = null; }
+    if (this.turnPrep) { if (this.turnPrep.q === q) return; this.turnAbort?.(); this.turnPrep = null; }
     if (q === this.quarter) return;
     if (this.views.has(q)) { this.turn(q); return; }
     this.turnPrep = { q, job: null };
@@ -416,15 +418,31 @@ export class LiveWindow {
           const R = 64, lights = view.lights.filter((l) => l.x > X0 - R && l.x < X1 + R && l.y > Y0 - R && l.y < Y1 + R);
           // (las cajas, de lo copiado: lo que haya cambiado desde que se eligió el núcleo, también)
           const boxes = boxesOf(vs, false, core);
+          // (con quien pinta fuera: el núcleo también, aunque aún no se vea; si el giro se deja, lo pedido se cancela)
+          const r = this.remoteFor?.(baked);
+          if (r) baked.remote = r;
           jobs = rebakeJobs(baked, core, lights, boxes, this.o.rebake ?? { band: 16, rows: 64, merge: true }, clip);
+          const js = jobs;
+          this.turnAbort = () => { cancelRebakes(baked); for (const x of js) x?.run(0); delete baked.remote; this.turnAbort = null; };
           if (clip) inCore = new Set(chunksInScreen(baked, { x0: clip.x0 + 2, y0: clip.y0 + 2, x1: clip.x1 - 2, y1: clip.y1 - 2 }, boxes, true).filter((c) => inCore.has(c)));
           if (performance.now() >= deadline) return false;
         }
-        for (; j < jobs.length; j++) {
-          const t = performance.now(), ok = jobs[j]!.run(deadline), kind = jobs[j]!.key.split(/[:#]/)[0]!;
+        // (en orden; lo que espera a lo pedido fuera no para a los de detrás, que piden lo suyo: el worker los pinta
+        // seguidos. Sin worker, como siempre: el primero que no acaba es que se acabó el plazo)
+        let all = true;
+        for (let i = j; i < jobs.length; i++) {
+          const x = jobs[i]!;
+          if (!x) continue;
+          if (!all && performance.now() >= deadline) return false;
+          if (x.waiting?.()) { all = false; continue; }
+          const t = performance.now(), ok = x.run(deadline), kind = x.key.split(/[:#]/)[0]!;
           this.lastTurn.jobMs[kind] = (this.lastTurn.jobMs[kind] ?? 0) + performance.now() - t;
-          if (!ok) return false;
+          if (ok) { jobs[i] = null as unknown as ViewJob; if (all) j = i + 1; continue; }
+          if (!x.waiting?.()) return false;
+          all = false;
         }
+        if (!all) return false;
+        this.turnAbort = null;
         // Lo del juego antes del cambio (subirlo a la GPU por partes)
         if (!prepDone) {
           if (prep === undefined) prep = this.o.beforeTurnSwap?.(baked) ?? null;
