@@ -37,7 +37,7 @@ export interface PreparedSlab { d: Uint8Array; pal: Uint16Array; palN: number; c
 // Trozos empaquetados en un solo búfer (StaticVoxels.packChunk / unpackChunk), para mandarlos a otro hilo de una vez. El
 // clon de un mensaje cuesta por búfer transferido, no por byte: con un búfer por losa y uno de alturas por trozo, el
 // primer pedido a un espejo vacío eran decenas de miles de búferes y ~300 ms de postMessage en un cuadro (la traza de
-// FERN tras girar). Por trozo: las 256 alturas (int16) y, por losa, 0 (vacía), 1 (de un solo valor: el valor y la
+// un juego tras girar). Por trozo: las 256 alturas (int16) y, por losa, 0 (vacía), 1 (de un solo valor: el valor y la
 // cuenta) o 2 (palN, la cuenta, las palN entradas de la paleta y los 4096 bytes)
 export class ChunkPackWriter {
   private u8 = new Uint8Array(1 << 16);
