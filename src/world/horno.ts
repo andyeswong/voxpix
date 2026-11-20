@@ -89,7 +89,9 @@ export class BakeWorker {
     // (lo pedido con prioridad: el núcleo de un giro con fundido)
     urgent: 0,
     // (lo mandado en bytes, y lo más que tardó un envío entero y su postMessage)
-    bytes: 0, syncMaxMs: 0, postMaxMs: 0 };
+    bytes: 0, syncMaxMs: 0, postMaxMs: 0,
+    // (veces que el búfer de un envío tuvo que crecer: con el tamaño exacto, 0)
+    packGrown: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
   // (los últimos 32 espejos creados, con lo que tardó el primero de cada uno)
   readonly mirrorLog: MirrorLog[] = [];
@@ -132,16 +134,28 @@ export class BakeWorker {
   private sync(b: Baked, m: Mirror, chunks: readonly number[]): boolean {
     const s = b.source, t0 = performance.now(), list: SentChunk[] = [];
     let ok = true, w: ChunkPackWriter | null = null;
+    // (primero lo que falta y lo que ocupa: el búfer se reserva de una vez, del tamaño exacto. Al doblarse desde 64 KB, en un
+    // juego, publicar lo pedido se llevaba más de la mitad de su tiempo en doblar y copiar)
+    const todo: Array<{ c: number; v: number }> = [];
+    let size = 0;
     for (const c of chunks) {
       // (la versión de sus vóxeles: un touch, que solo marca para rehornear, no lo vuelve a mandar)
       const v = s.dataVersions[c]!;
       if (m.sent[c] === v) continue;
-      w ??= new ChunkPackWriter();
-      const at = w.n;
-      if (!s.packChunk(c, w)) { ok = false; break; }
-      if (m.sent[c] !== 0) this.stats.resent++;
-      list.push({ c, v, at, len: w.n - at });
-      m.sent[c] = v;
+      const n = s.packedSize(c);
+      if (n < 0) { ok = false; break; }
+      todo.push({ c, v }); size += n;
+    }
+    if (todo.length) {
+      w = new ChunkPackWriter(size);
+      for (const { c, v } of todo) {
+        const at = w.n;
+        s.packChunk(c, w);
+        if (m.sent[c] !== 0) this.stats.resent++;
+        list.push({ c, v, at, len: w.n - at });
+        m.sent[c] = v;
+      }
+      this.stats.packGrown += w.grown;
     }
     if (list.length) {
       // (un solo búfer transferido por mensaje: el clon cuesta por búfer)

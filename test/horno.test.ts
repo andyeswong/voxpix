@@ -1,7 +1,7 @@
 // BakeWorker (src/world/horno.ts): los recuadros del rehorneado de la ventana viva pintados con un espejo en un worker (aquí,
 // en el mismo hilo, con los mensajes clonados como en un worker de verdad, y el worker pinta cuando se le deja). Lo que
 // sale tiene que ser lo mismo que hornear aquí, al andar, picar y girar; sin envolver nada; y girar no rehace el espejo
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { material, Model, type Palette } from '../src/core';
 import { generateRegion, type RegionSpec } from '../src/world/regiongen';
 
@@ -30,8 +30,9 @@ const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget, type ViewJob } from '../src/view/budget';
 import { LiveWindow, type Trozo, type LiveWindowOptions } from '../src/world/live';
-import { rebakeChangedJobs, type Baked } from '../src/world/bake';
+import { rebakeChangedJobs, wrapJob, type Baked } from '../src/world/bake';
 import { BakeWorker, BakeWorkerHost, type BakeWorkerPort, type ToWorker, type FromWorker } from '../src/world/horno';
+import { StaticVoxels } from '../src/world/state';
 import type { Quarter } from '../src/world/view';
 
 const OPTS = { incline: 0.5, sky: true, outline: 'both' as const };
@@ -68,12 +69,15 @@ function channel() {
   // (un trozo mandado otra vez con la misma versión y el mismo contenido: el espejo ya lo tenía, p. ej. tras correrse)
   const seen = new Set<string>();
   let again = 0;
+  // (mensajes de trozos cuyo búfer no es del tamaño de lo escrito: con packedSize, ninguno)
+  let slack = 0, chunkMsgs = 0;
   // (lo pedido de cada recuadro y lo que se corrió cada espejo, en el orden en que se mandó)
   const rects: Array<{ ticket: number; rect: { x0: number; y0: number; x1: number; y1: number } }> = [], shifts: Array<{ DX: number; rows: number }> = [];
   const port: BakeWorkerPort = { onmessage: null, postMessage: (m) => {
     kinds[m.kind] = (kinds[m.kind] ?? 0) + 1;
     if (m.kind === 'rect') rects.push({ ticket: m.ticket, rect: { ...m.rect } });
     if (m.kind === 'shift') shifts.push({ DX: m.DX, rows: m.rows });
+    if (m.kind === 'chunks') { chunkMsgs++; const last = m.list[m.list.length - 1]!; if (m.buf.byteLength !== last.at + last.len) slack++; }
     if (m.kind === 'chunks') for (const ch of m.list) {
       // (lo del trozo en el búfer del mensaje: alturas y losas)
       let h = 0;
@@ -94,7 +98,7 @@ function channel() {
     for (let k = 0; k < paint && tasks.length; k++) tasks.shift()!();
     while (deliver && toMain.length) port.onmessage?.({ data: toMain.shift()! });
   };
-  return { port, host, step, kinds, rects, shifts, inFlight: () => toMain.length, again: () => again, held: () => held.length, setStep: (f: () => void) => { onStep = f; },
+  return { port, host, step, kinds, rects, shifts, inFlight: () => toMain.length, again: () => again, slack: () => slack, chunkMsgs: () => chunkMsgs, held: () => held.length, setStep: (f: () => void) => { onStep = f; },
     hold: (on: boolean) => { holdSky = on; }, release: () => { toHost.push(...held.splice(0)); },
     idle: () => !toHost.length && !tasks.length && !toMain.length && !held.length };
 }
@@ -167,6 +171,35 @@ describe('BakeWorker: el horno en un worker', () => {
     a.win.turn(1); b.win.turn(1);
     drain(a.win, ch, new FrameBudget(1e6), a.x); drain(b.win, null, new FrameBudget(1e6), b.x);
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
+  });
+
+  it('lo que se manda al worker va en un búfer del tamaño de lo escrito, sin crecer; y ver si lo llegado caducó no recorre la fuente entera (changedSince) en los trabajos de recuadros y cielos', () => {
+    const ch = channel(), win = make([0, 0]), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    // (las llamadas a changedSince hechas dentro de un trabajo de recuadro o de cielo; lo demás, la ventana al cargar y correrse,
+    // la cuenta de lo cambiado al rehornear, sí la recorre: una vez por cuadro, no por trozo ni por llegada)
+    const spy = vi.spyOn(StaticVoxels.prototype, 'changedSince');
+    let inJobs = 0, runs = 0;
+    const push = budget.push.bind(budget);
+    budget.push = (j: ViewJob) => push(/^(rect|sky):/.test(j.key) ? wrapJob(j, { run: (d) => { const n = spy.mock.calls.length; const r = j.run(d); inJobs += spy.mock.calls.length - n; runs++; return r; } }) : j);
+    let x = TV / 2;
+    for (let n = 0; n < 64; n++) {
+      x += TV / 16;
+      win.update(x, Y, budget);
+      for (let k = 0; k < 4; k++) { budget.run(); ch.step(4); win.update(x, Y, budget); }
+      // (picar delante de vez en cuando: lo pedido antes llega caducado)
+      if (n % 8 === 3) { const [lx, ly] = win.toLocal(x + TV, Y); for (let z = 20; z < 40; z++) for (let y = ly - 4; y < ly + 4; y++) for (let xx = lx - 4; xx < lx + 4; xx++) if (xx >= 0 && xx < win.store.width && y >= 0 && y < win.store.depth) win.store.set(xx, y, z, 0); }
+    }
+    drain(win, ch, budget, x);
+    spy.mockRestore();
+    expect(runs).toBeGreaterThan(50);
+    expect(bw.stats.got).toBeGreaterThan(10);
+    // (cada llegada mira si caducó, cambiara algo o no: antes, changedSince una vez por trozo de su grupo)
+    expect(win.baked.remoteStats?.published ?? 0).toBeGreaterThan(10);
+    expect(inJobs).toBe(0);
+    expect(ch.chunkMsgs()).toBeGreaterThan(5);
+    expect(ch.slack()).toBe(0);
+    expect(bw.stats.packGrown).toBe(0);
   });
 
   it('un cielo que llega al worker después del corrimiento (fuera de orden; un worker de verdad no reordena) se salta, falla y se pinta aquí: nada se queda esperando', () => {

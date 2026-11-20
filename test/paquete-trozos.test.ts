@@ -60,3 +60,23 @@ it('un trozo con una losa a 2 bytes no se empaqueta: false y nada escrito', () =
   expect(s.packChunk(0, w)).toBe(false);
   expect(w.n).toBe(n);
 });
+
+it('packedSize: lo que ocupa cada trozo, exacto (un escritor de ese tamaño no crece); -1 si tiene una losa a 2 bytes', () => {
+  const s = make();
+  fill(s);
+  const n = s.cols * s.rows;
+  let total = 0;
+  for (let c = 0; c < n; c++) {
+    const w = new ChunkPackWriter(1);
+    expect(s.packChunk(c, w)).toBe(true);
+    expect(s.packedSize(c)).toBe(w.n);
+    total += w.n;
+  }
+  const w = new ChunkPackWriter(total);
+  for (let c = 0; c < n; c++) s.packChunk(c, w);
+  expect(w.n).toBe(total);
+  expect(w.grown).toBe(0);
+  expect(w.buffer.byteLength).toBe(total);
+  for (let i = 0; i < 300; i++) s.set(i % 16, Math.floor(i / 16) % 16, 16 + Math.floor(i / 256), 1 + i);
+  expect(s.packedSize(0)).toBe(-1);
+});

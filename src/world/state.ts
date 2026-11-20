@@ -40,9 +40,13 @@ export interface PreparedSlab { d: Uint8Array; pal: Uint16Array; palN: number; c
 // un juego tras girar). Por trozo: las 256 alturas (int16) y, por losa, 0 (vacía), 1 (de un solo valor: el valor y la
 // cuenta) o 2 (palN, la cuenta, las palN entradas de la paleta y los 4096 bytes)
 export class ChunkPackWriter {
-  private u8 = new Uint8Array(1 << 16);
-  private dv = new DataView(this.u8.buffer);
+  private u8: Uint8Array;
+  private dv: DataView;
   n = 0;
+  // (veces que tuvo que crecer: con el tamaño exacto de lo que se va a escribir (StaticVoxels.packedSize), ninguna)
+  grown = 0;
+  // size: lo que se reserva de una vez. Sin él, 64 KB, y dobla al llenarse (cada doblez copia todo lo escrito)
+  constructor(size = 1 << 16) { this.u8 = new Uint8Array(Math.max(1, size)); this.dv = new DataView(this.u8.buffer); }
   get buffer(): ArrayBuffer { return this.u8.buffer as ArrayBuffer; }
   private need(k: number): void {
     if (this.n + k <= this.u8.length) return;
@@ -50,7 +54,7 @@ export class ChunkPackWriter {
     while (L < this.n + k) L *= 2;
     const u = new Uint8Array(L);
     u.set(this.u8.subarray(0, this.n));
-    this.u8 = u; this.dv = new DataView(u.buffer);
+    this.u8 = u; this.dv = new DataView(u.buffer); this.grown++;
   }
   u8w(v: number): void { this.need(1); this.u8[this.n++] = v; }
   u16(v: number): void { this.need(2); this.dv.setUint16(this.n, v, true); this.n += 2; }
@@ -826,6 +830,18 @@ export class StaticVoxels implements VoxelSource {
     return { slabs, tops };
   }
 
+  // Lo que ocupa el trozo c con packChunk, en bytes (-1: no se puede empaquetar, una losa a 2 bytes)
+  packedSize(c: number): number {
+    let n = CHUNK * CHUNK * 2;
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, k = this.count[si]!, d = this.data[si];
+      if (!k) { n += 1; continue; }
+      if (!d) { n += 7; continue; }
+      if (!this.pal[si] || !(d instanceof Uint8Array)) return -1;
+      n += 7 + 2 * this.palN[si]! + d.length;
+    }
+    return n;
+  }
   // El trozo c en w (ChunkPackWriter), como exportChunkPrepared pero sin un búfer por losa. false (y nada escrito) si
   // alguna losa va a 2 bytes sin paleta
   packChunk(c: number, w: ChunkPackWriter): boolean {
