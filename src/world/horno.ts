@@ -29,8 +29,9 @@ export type ToWorker =
   | { kind: 'chunks'; id: number; list: SentChunk[] }
   // (y lo que se corre su imagen: el worker traslada lo pedido que tiene en cola, en vez de saltarlo)
   | { kind: 'shift'; id: number; dcx: number; dcy: number; DX: number; rows: number; dk: number }
-  | { kind: 'rect'; ticket: number; id: number; gen: number; rect: ScreenRect; brake: number }
-  | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number }
+  // (urgent: va antes que lo no urgente de la cola, en orden entre los urgentes: el núcleo de un giro con fundido)
+  | { kind: 'rect'; ticket: number; id: number; gen: number; rect: ScreenRect; brake: number; urgent?: boolean }
+  | { kind: 'sky'; ticket: number; id: number; gen: number; pick: Float64Array; face: Int8Array; brake: number; urgent?: boolean }
   // (lo pedido que ya no hace falta: si aún no se empezó, no se pinta)
   | { kind: 'cancel'; ticket: number };
 // (gen: los corrimientos de su espejo cuando se pintó; si el principal ya se corrió otra vez, llega en el sitio de antes)
@@ -83,7 +84,9 @@ export class BakeWorker {
     retired: 0, retiredSky: 0,
     // (lo pedido que seguía fuera al correrse la ventana: trasladado; lo que llegó pintado en el sitio de antes, que se hace
     // aquí; y lo descartado que se canceló en el worker)
-    moved: 0, movedSky: 0, lateShift: 0, canceled: 0 };
+    moved: 0, movedSky: 0, lateShift: 0, canceled: 0,
+    // (lo pedido con prioridad: el núcleo de un giro con fundido)
+    urgent: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
   // (los últimos 32 espejos creados, con lo que tardó el primero de cada uno)
   readonly mirrorLog: MirrorLog[] = [];
@@ -102,7 +105,7 @@ export class BakeWorker {
   attach(win: LiveWindow): void {
     this.detach();
     const offShift = win.attach({ shift: () => {}, shiftSources: (list) => this.shifted(list) });
-    win.setRemote((b) => this.remoteFor(b));
+    win.setRemote((b, o) => this.remoteFor(b, !!o?.urgent));
     this.off = () => { offShift(); win.setRemote(null); };
   }
   detach(): void { this.off?.(); this.off = null; }
@@ -119,7 +122,7 @@ export class BakeWorker {
   // (lo pedido que aún no llegó ni se saltó)
   get outstanding(): number { return this.tickets.size; }
 
-  private remoteFor(b: Baked): RemoteRects { return { ask: (rect) => this.ask(b, rect), sky: (rect, pick, face) => this.askSky(b, rect, pick, face), shifts: true }; }
+  private remoteFor(b: Baked, urgent = false): RemoteRects { return { ask: (rect) => this.ask(b, rect, urgent), sky: (rect, pick, face) => this.askSky(b, rect, pick, face, urgent), shifts: true }; }
 
   // Los trozos de `chunks` que el espejo no tiene en su versión de ahora, mandados. false: alguno no cabe en la forma de
   // mandar (lo pedido se hace aquí)
@@ -178,24 +181,26 @@ export class BakeWorker {
     }
   }
 
-  private ask(b: Baked, rect: ScreenRect): ReturnType<RemoteRects['ask']> {
+  private ask(b: Baked, rect: ScreenRect, urgent = false): ReturnType<RemoteRects['ask']> {
     if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
     const m = this.mirror(b);
     // (los trozos que lee: uno que no cabe en la forma de mandar hace que este recuadro se pinte aquí)
     if (!this.sync(b, m, readChunks(b, rect))) return null;
     const { ticket, handle } = this.ticket<RectOut>(b, rect, false, m);
-    this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1 });
+    this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1, ...(urgent ? { urgent } : {}) });
+    if (urgent) this.stats.urgent++;
     this.stats.asked++;
     if (m.log.firstAsk < 0) m.log.firstAsk = performance.now();
     return handle;
   }
 
-  private askSky(b: Baked, rect: ScreenRect, pick: Float64Array, face: Int8Array): ReturnType<NonNullable<RemoteRects['sky']>> {
+  private askSky(b: Baked, rect: ScreenRect, pick: Float64Array, face: Int8Array, urgent = false): ReturnType<NonNullable<RemoteRects['sky']>> {
     if (this.o.near?.(rect, b)) { this.stats.near++; return null; }
     const m = this.mirror(b);
     if (!this.sync(b, m, skyReadChunks(b, rect))) return null;
     const { ticket, handle } = this.ticket<Uint8Array>(b, rect, true, m);
-    this.port.postMessage({ kind: 'sky', ticket, id: m.id, gen: m.gen, pick, face, brake: this.o.brake ?? 1 }, [pick.buffer, face.buffer]);
+    this.port.postMessage({ kind: 'sky', ticket, id: m.id, gen: m.gen, pick, face, brake: this.o.brake ?? 1, ...(urgent ? { urgent } : {}) }, [pick.buffer, face.buffer]);
+    if (urgent) this.stats.urgent++;
     this.stats.skies++;
     if (m.log.firstAsk < 0) m.log.firstAsk = performance.now();
     return handle;
@@ -331,7 +336,8 @@ export class BakeWorkerHost {
       }
       case 'rect':
       case 'sky':
-        this.queue.push(m);
+        // (lo urgente, detrás del último urgente y delante de lo demás)
+        if (m.urgent) { let k = 0; while (k < this.queue.length && this.queue[k]!.urgent) k++; this.queue.splice(k, 0, m); } else this.queue.push(m);
         this.arrived.set(m.ticket, performance.now());
         if (!this.scheduled) { this.scheduled = true; this.schedule(() => this.next()); }
         break;

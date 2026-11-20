@@ -290,8 +290,9 @@ export class LiveWindow {
 
   // Quien pinta fuera los recuadros (Baked.remote): la ventana lo pone en el horneado del giro que se ve y lo quita de los
   // demás, también al girar (turn, y en el cambio de turnTo). null lo quita de todos
-  setRemote(remote: ((b: Baked) => RemoteRects | null) | null): void { this.remoteFor = remote; this.applyRemote(); }
-  private remoteFor: ((b: Baked) => RemoteRects | null) | null = null;
+  // (urgent: el núcleo de un giro con fundido, que aún no se ve y la pantalla espera en negro: va antes que lo demás)
+  setRemote(remote: ((b: Baked, o?: { urgent: boolean }) => RemoteRects | null) | null): void { this.remoteFor = remote; this.applyRemote(); }
+  private remoteFor: ((b: Baked, o?: { urgent: boolean }) => RemoteRects | null) | null = null;
   private applyRemote(released?: Baked): void {
     if (released) delete released.remote;
     for (const [q, { baked }] of this.views) {
@@ -419,7 +420,7 @@ export class LiveWindow {
           // (las cajas, de lo copiado: lo que haya cambiado desde que se eligió el núcleo, también)
           const boxes = boxesOf(vs, false, core);
           // (con quien pinta fuera: el núcleo también, aunque aún no se vea; si el giro se deja, lo pedido se cancela)
-          const r = this.remoteFor?.(baked);
+          const r = this.remoteFor?.(baked, { urgent: true });
           if (r) baked.remote = r;
           jobs = rebakeJobs(baked, core, lights, boxes, this.o.rebake ?? { band: 16, rows: 64, merge: true }, clip);
           const js = jobs;
