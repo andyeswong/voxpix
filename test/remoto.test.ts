@@ -371,4 +371,63 @@ describe('lo pedido fuera: la clase de coste de cada llamada', () => {
     for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
     expect(diff(b, ref.baked)).toBe(0);
   });
+
+  // El cielo que hay publicado en el recuadro r, y el de pintarlo de nuevo con lo de ahora (la cara y el vóxel de cada píxel y
+  // los vóxeles de alrededor): cuántos píxeles difieren
+  const skyDiff = (b: Baked, r: { x0: number; y0: number; x1: number; y1: number }) => {
+    const w = r.x1 - r.x0 + 1, h = r.y1 - r.y0 + 1, pk = new Float64Array(w * h), fc = new Int8Array(w * h);
+    for (let y = r.y0; y <= r.y1; y++) { const o = y * b.width + r.x0; pk.set(b.pick.subarray(o, o + w), (y - r.y0) * w); fc.set(b.face.subarray(o, o + w), (y - r.y0) * w); }
+    const f = skyFromPick(b.source, pk, fc);
+    let n = 0;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) if (f[y * w + x] !== b.sky![(r.y0 + y) * b.width + r.x0 + x]) n++;
+    return n;
+  };
+  const rectOfKey = (k: string) => { const [x0, y0, x1, y1] = k.replace(/^sky:/, '').split('#')[0]!.split(',').map(Number); return { x0: x0!, y0: y0!, x1: x1!, y1: y1! }; };
+  const digBox = (w: LiveWindow, [x0, y0, z0, x1, y1, z1]: number[]) => { for (let z = z0!; z <= z1!; z++) for (let y = y0!; y <= y1!; y++) for (let x = x0!; x <= x1!; x++) w.store.set(x, y, z, 0); };
+
+  it('un cielo pedido fuera que llega después de que cambiaran vóxeles que lee (sin nada publicado encima) no se publica: se vuelve a pedir, y el cielo es el de ahora', () => {
+    const win = make([0, 0]), b = win.baked;
+    let skyReady = false;
+    b.remote = {
+      ask: (rect) => { const o = renderRect(b, rect); return { result: () => o, ready: () => true }; },
+      sky: (_r, pick, face) => { const o = skyFromPick(b.source, pick, face); return { result: () => (skyReady ? o : null), ready: () => skyReady }; },
+    };
+    // A, y B junto a él: a 10 vóxeles de su borde, dentro de lo que lee el cielo de A (SKY_REACH a cada lado), de pie
+    const A = [70, 70, 0, 78, 78, 63], B2 = [80, 70, 30, 82, 78, 63];
+    digBox(win, A);
+    const js = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+    const sky = js.find((j) => j.key.startsWith('sky:'))!;
+    // (todo lo demás del rehorneado, llegado y publicado; después el cielo pide, y se queda retenido: desde que pidió no se
+    // publica nada encima)
+    for (const j of js) if (j !== sky) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    expect(sky.run(Infinity)).toBe(false);
+    expect(sky.lastCostClass!()).toBe('pedir');
+    const r = rectOfKey(sky.key), serial = b.published.serial;
+    // B cambia, sin rehornearlo: nada se publica encima del cielo de A
+    digBox(win, B2);
+    const reasked = b.remoteStats?.skyReasked ?? 0;
+    skyReady = true;
+    expect(b.published.serial).toBe(serial);
+    for (let k = 0; k < 20 && !sky.run(Infinity); k++);
+    expect((b.remoteStats?.skyReasked ?? 0) - reasked).toBeGreaterThan(0);
+    expect(skyDiff(b, r)).toBe(0);
+  });
+
+  it('un cielo que se calcula aquí por filas y lee vóxeles que cambian a medias (sin nada publicado encima) vuelve a empezar: el cielo es el de ahora', () => {
+    const win = make([0, 0]), b = win.baked;
+    const A = [70, 70, 0, 78, 78, 63], B2 = [80, 70, 30, 82, 78, 63];
+    digBox(win, A);
+    const js = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+    const sky = js.find((j) => j.key.startsWith('sky:'))!;
+    for (const j of js) if (j !== sky) while (!j.run(Infinity));
+    const r = rectOfKey(sky.key);
+    // Casi todas sus filas (una por llamada, con el plazo ya pasado), y B cambia antes de la última
+    for (let k = 0; k < r.y1 - r.y0 - 1; k++) expect(sky.run(0)).toBe(false);
+    digBox(win, B2);
+    const restarts = b.skyStats?.restartVox ?? 0;
+    while (!sky.run(Infinity));
+    expect((b.skyStats?.restartVox ?? 0) - restarts).toBeGreaterThan(0);
+    expect(skyDiff(b, r)).toBe(0);
+  });
+
 });
