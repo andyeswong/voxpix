@@ -245,8 +245,10 @@ describe('BakeWorker: el horno en un worker', () => {
     const run = (paint: number, n: number) => { for (let k = 0; k < n; k++) { ch.step(paint); budget.run(); win.update(x, Y, budget); } };
     const A = TV + 4, sky0 = bw.stats.skies;
     if (what === 'cielos') {
-      dig(x + A, Y - 30); dig(x + A, Y + 30);
-      for (let k = 0; k < 200 && bw.stats.skies < sky0 + 2; k++) run(1, 1);
+      // (sin picar después: un cielo solo, para que nada descartado al correrse se vuelva a rehornear encima del suyo)
+      const ys = when === 'nunca' ? [Y + 30] : [Y - 30, Y + 30];
+      for (const wy of ys) dig(x + A, wy);
+      for (let k = 0; k < 200 && bw.stats.skies < sky0 + ys.length; k++) run(1, 1);
     } else dig(x + A, Y);
     run(0, 6);
     const out = bw.outstanding;
@@ -256,7 +258,7 @@ describe('BakeWorker: el horno en un worker', () => {
     const s0 = ch.kinds.shift ?? 0;
     for (let n = 0; n < 200 && (ch.kinds.shift ?? 0) === s0; n++) { x += TV / 16; win.update(x, Y, budget); run(0, 4); }
     const moved = { rects: bw.stats.moved, skies: bw.stats.movedSky };
-    const before = { stale: win.baked.remoteStats?.stale ?? 0 };
+    const before = { stale: win.baked.remoteStats?.stale ?? 0, skyRestarts: (win.baked.skyStats?.restartPub ?? 0) + (win.baked.skyStats?.restartVox ?? 0), skyMs: bw.stats.skyMs };
     if (when === 'despues') again();
     drain(win, ch, budget, x);
     const ref = make([0, 0]), rb = new FrameBudget(1e6);
@@ -268,6 +270,17 @@ describe('BakeWorker: el horno en un worker', () => {
     return { out, shifts: (ch.kinds.shift ?? 0) - s0, moved, before, bw, win, diff: diff(win.baked, ref.baked) };
   };
 
+  it('cielos: lo trasladado sin que nada suyo cambie llega y se usa tal cual (sin volver a pedirlo ni pintarlo aquí), y la imagen igual', () => {
+    const r = stalePit('nunca', 'cielos');
+    expect(r.out).toBe(1);
+    expect(r.shifts).toBe(1);
+    expect(r.moved.skies).toBe(1);
+    // (llegó del worker después del corrimiento, y no se volvió a empezar)
+    expect(r.bw.stats.skyMs).toBeGreaterThan(r.before.skyMs);
+    expect(r.bw.stats.lateShift).toBe(0);
+    expect((r.win.baked.skyStats?.restartPub ?? 0) + (r.win.baked.skyStats?.restartVox ?? 0)).toBe(r.before.skyRestarts);
+    expect(r.diff).toBe(0);
+  });
   it('recuadros: lo trasladado sin que nada suyo cambie llega y se usa tal cual (sin volver a pedirlo), y la imagen igual', () => {
     // (con cielos no: al correrse se vuelve a rehornear lo que quedaba marcado, y un recuadro publicado encima hace pedir otra vez el cielo)
     const r = stalePit('nunca', 'recuadros');

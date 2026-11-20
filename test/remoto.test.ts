@@ -56,7 +56,7 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
   return n;
 };
 
-import { renderRect, REMOTE_RETRIES, type RectOut } from '../src/world/bake';
+import { renderRect, REMOTE_RETRIES, shiftBaked, shiftKeys, shiftParams, type RectOut } from '../src/world/bake';
 import type { PreparedTrozo } from '../src/world/live';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockGrid } from '../src/world/blocks';
@@ -144,6 +144,69 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     dig(ref, A); dig(ref, B2);
     for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
     expect(diff(b, ref.baked)).toBe(0);
+  });
+
+  // Lo de fuera que sigue al correrse (remote.shifts), sin la ventana: un remote que pinta al pedir y, al correrse, traslada
+  // lo pintado como el worker (las claves y la profundidad, y el sitio). A junto al borde de su trozo; B en el de al lado,
+  // que el recuadro de A lee pero no es suyo (lo del vecino de arriba). B se pica antes o después del corrimiento
+  const movedNeighbour = (when: 'antes' | 'despues') => {
+    const win = make([0, 0]), ref = make([0, 0]);
+    const b = win.baked;
+    expect(b.source).toBe(win.store);
+    const out: Array<{ o: RectOut; ready: boolean }> = [];
+    let local = false;
+    b.remote = { shifts: true, ask: (rect) => {
+      if (local) return null;
+      const it = { o: renderRect(b, rect), ready: false };
+      out.push(it);
+      return { result: () => (it.ready ? it.o : null), ready: () => it.ready };
+    } };
+    const shift = (w: LiveWindow) => {
+      if (w === win) { const P = shiftParams(b, 1, 0); for (const it of out) expect(shiftKeys(b, it.o.pick, it.o.depth, P)).toBe(true); }
+      shiftBaked(w.baked, 1, 0);
+    };
+    // (en coordenadas de antes del corrimiento; después, lo de x está en x - 16)
+    const dig = (w: LiveWindow, [x0, y0, z0, x1, y1, z1]: number[], dx = 0) => { for (let z = z0!; z <= z1!; z++) for (let y = y0!; y <= y1!; y++) for (let x = x0! - dx; x <= x1! - dx; x++) w.store.set(x, y, z, 0); };
+    const A = [70, 70, 0, 78, 78, 63], B2 = [70, 80, 0, 78, 83, 63];
+    const shape = { band: 16, rows: 64, merge: true };
+    dig(win, A);
+    const ja = rebakeChangedJobs(b, win.view.bakeable().lights, { shape });
+    const left = ja.filter((j) => !j.run(Infinity));
+    expect(left.some((j) => j.key.startsWith('rect:'))).toBe(true);
+    expect(out.length).toBeGreaterThan(0);
+    local = true;
+    if (when === 'antes') dig(win, B2);
+    shift(win);
+    const moved = out.length;
+    if (when === 'antes') {
+      // B se rehornea aquí después del corrimiento y se publica encima del recuadro de A, antes de que llegue
+      for (const j of rebakeChangedJobs(b, win.view.bakeable().lights, { shape })) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    } else dig(win, B2, 16);
+    const before = { stale: b.remoteStats?.stale ?? 0, published: b.remoteStats?.published ?? 0 };
+    for (const it of out) it.ready = true;
+    for (const j of left) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    const after = { stale: (b.remoteStats?.stale ?? 0) - before.stale, published: (b.remoteStats?.published ?? 0) - before.published };
+    for (const j of rebakeChangedJobs(b, win.view.bakeable().lights)) while (!j.run(Infinity));
+    dig(ref, A);
+    if (when === 'antes') dig(ref, B2);
+    shift(ref);
+    if (when === 'despues') dig(ref, B2, 16);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    return { moved, after, d: diff(b, ref.baked) };
+  };
+
+  it('trasladado al correrse: si el vecino que lee cambió antes del corrimiento y su rehorneado se publicó encima después, lo que llega no se usa (se pinta aquí); igual que hornear de nuevo', () => {
+    const r = movedNeighbour('antes');
+    expect(r.moved).toBeGreaterThan(0);
+    expect(r.after).toEqual({ stale: 1, published: 0 });
+    expect(r.d).toBe(0);
+  });
+
+  it('trasladado al correrse: si el vecino que lee cambió después del corrimiento sin publicar nada encima, lo que llega se usa (su rehorneado va detrás); igual que hornear de nuevo', () => {
+    const r = movedNeighbour('despues');
+    expect(r.moved).toBeGreaterThan(0);
+    expect(r.after).toEqual({ stale: 0, published: 1 });
+    expect(r.d).toBe(0);
   });
 
   it('uno que llega caducado se vuelve a pedir fuera (con lo de ahora), y tras REMOTE_RETRIES veces caducado se pinta aquí; igual que hornear de nuevo', () => {
