@@ -34,7 +34,7 @@ export type ToWorker =
   // (lo pedido que ya no hace falta: si aún no se empezó, no se pinta)
   | { kind: 'cancel'; ticket: number };
 // (gen: los corrimientos de su espejo cuando se pintó; si el principal ya se corrió otra vez, llega en el sitio de antes)
-export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number; gen: number } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number; gen: number } | { kind: 'skip'; ticket: number; why: 'shift' | 'mirror' };
+export type FromWorker = { kind: 'rect'; ticket: number; o: RectOut; ms: number; gen: number; first?: FirstInfo } | { kind: 'sky'; ticket: number; sky: Uint8Array; ms: number; gen: number; first?: FirstInfo } | { kind: 'skip'; ticket: number; why: 'shift' | 'mirror' };
 
 export interface BakeWorkerPort {
   postMessage(m: ToWorker, transfer?: Transferable[]): void;
@@ -58,7 +58,12 @@ interface Ticket { out: RectOut | Uint8Array | null; ready: boolean; failed: boo
 
 // Un espejo, visto desde el principal: su fuente, la versión mandada de cada trozo y cuántos corrimientos lleva
 // (b: el último horneado de esa fuente que pidió: lo que se corre su imagen al correrse)
-interface Mirror { id: number; source: StaticVoxels; sent: Uint32Array; gen: number; used: number; b: Baked }
+interface Mirror { id: number; source: StaticVoxels; sent: Uint32Array; gen: number; used: number; b: Baked; log: MirrorLog }
+// Lo que tardó cada espejo en dar su primer recuadro (diagnóstico, BakeWorker.mirrorLog): cuándo se creó, cuándo se mandó
+// lo primero pedido, con cuántos trozos y cuánto se tardó en mandarlos hasta entonces, cuándo llegó lo primero, y lo que
+// dice el worker de ese primer recuadro (crear su espejo, escribir sus trozos, lo que esperó en la cola)
+export interface MirrorLog { id: number; at: number; firstAsk: number; chunksFirst: number; syncMsFirst: number; firstGot: number; worker: FirstInfo | null }
+export interface FirstInfo { buildMs: number; chunksMs: number; chunks: number; queuedMs: number; renderMs: number }
 
 // (corre una rejilla de cols x rows trozos como StaticVoxels.shift: lo del trozo c + d pasa a c; lo que entra, a 0)
 function shiftSent(a: Uint32Array, cols: number, rows: number, dcx: number, dcy: number): Uint32Array {
@@ -80,6 +85,8 @@ export class BakeWorker {
     // aquí; y lo descartado que se canceló en el worker)
     moved: 0, movedSky: 0, lateShift: 0, canceled: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
+  // (los últimos 32 espejos creados, con lo que tardó el primero de cada uno)
+  readonly mirrorLog: MirrorLog[] = [];
   private readonly tickets = new Map<number, Ticket>();
   private readonly inbox: number[] = [];
   private nextId = 0;
@@ -133,6 +140,7 @@ export class BakeWorker {
     }
     if (list.length) { this.port.postMessage({ kind: 'chunks', id: m.id, list }, transfer); this.stats.chunks += list.length; }
     this.stats.syncMs += performance.now() - t0;
+    if (m.log.firstAsk < 0) { m.log.chunksFirst += list.length; m.log.syncMsFirst += performance.now() - t0; }
     if (!ok) this.stats.unsendable++;
     return ok;
   }
@@ -178,6 +186,7 @@ export class BakeWorker {
     const { ticket, handle } = this.ticket<RectOut>(b, rect, false, m);
     this.port.postMessage({ kind: 'rect', ticket, id: m.id, gen: m.gen, rect: { x0: rect.x0, y0: rect.y0, x1: rect.x1, y1: rect.y1 }, brake: this.o.brake ?? 1 });
     this.stats.asked++;
+    if (m.log.firstAsk < 0) m.log.firstAsk = performance.now();
     return handle;
   }
 
@@ -188,6 +197,7 @@ export class BakeWorker {
     const { ticket, handle } = this.ticket<Uint8Array>(b, rect, true, m);
     this.port.postMessage({ kind: 'sky', ticket, id: m.id, gen: m.gen, pick, face, brake: this.o.brake ?? 1 }, [pick.buffer, face.buffer]);
     this.stats.skies++;
+    if (m.log.firstAsk < 0) m.log.firstAsk = performance.now();
     return handle;
   }
 
@@ -195,7 +205,9 @@ export class BakeWorker {
     const s = b.source;
     let m = this.mirrors.get(s);
     if (!m) {
-      m = { id: ++this.nextId, source: s, sent: new Uint32Array(s.cols * s.rows), gen: 0, used: 0, b };
+      m = { id: ++this.nextId, source: s, sent: new Uint32Array(s.cols * s.rows), gen: 0, used: 0, b, log: { id: this.nextId, at: performance.now(), firstAsk: -1, chunksFirst: 0, syncMsFirst: 0, firstGot: -1, worker: null } };
+      this.mirrorLog.push(m.log);
+      if (this.mirrorLog.length > 32) this.mirrorLog.shift();
       const o = b.options;
       this.port.postMessage({ kind: 'mirror', id: m.id, width: s.width, depth: s.depth, zMin: s.zMin, zMax: s.zMax, palette: s.palette,
         bake: { topZ: b.topZ, incline: o.oblique?.y ?? 1, outline: (o.outline ?? 'none') as Outline, ...(o.outlineColor ? { outlineColor: o.outlineColor } : {}), options: JSON.stringify(o) } });
@@ -248,6 +260,7 @@ export class BakeWorker {
     if (m.kind === 'sky') this.stats.skyMs += m.ms; else this.stats.got++;
     this.stats.workerMs += m.ms;
     if (!t) return;
+    if (t.m.log.firstGot < 0) { t.m.log.firstGot = performance.now(); t.m.log.worker = m.first ?? null; }
     // (pintado antes de que el worker supiera del último corrimiento: en el sitio de antes; se hace aquí)
     if (m.gen !== t.gen) { t.failed = true; this.tickets.delete(m.ticket); this.stats.lateShift++; return; }
     t.out = m.kind === 'sky' ? m.sky : m.o;
@@ -258,8 +271,10 @@ export class BakeWorker {
 // El lado del worker. post: cómo contesta (con lo que se transfiere); schedule: cómo deja pasar los mensajes entre dos
 // recuadros (setTimeout 0 en el worker; en las pruebas, a mano)
 export class BakeWorkerHost {
-  private readonly mirrors = new Map<number, { store: StaticVoxels; shell: Baked; gen: number }>();
+  private readonly mirrors = new Map<number, { store: StaticVoxels; shell: Baked; gen: number; first: FirstInfo | null }>();
   private readonly queue: Array<Extract<ToWorker, { kind: 'rect' | 'sky' }>> = [];
+  // (cuándo llegó cada pedido, para el diagnóstico del primero de cada espejo)
+  private readonly arrived = new Map<number, number>();
   private scheduled = false;
   busyMs = 0;
   // (lo pedido que se retiró antes de empezar a pintarlo; lo que estaba en cola al correrse y se trasladó)
@@ -273,18 +288,21 @@ export class BakeWorkerHost {
   receive(m: ToWorker): void {
     switch (m.kind) {
       case 'mirror': {
+        const a0 = performance.now();
         const store = new StaticVoxels(m.palette, m.width, m.depth, m.zMin, m.zMax);
         const shell = bakeWorldJob({ model: store, lights: [], width: m.width, depth: m.depth },
           { topZ: m.bake.topZ, incline: m.bake.incline, outline: m.bake.outline, ...(m.bake.outlineColor ? { outlineColor: m.bake.outlineColor } : {}) }).baked;
         // (las mismas opciones de render que el horneado del principal: si no, lo pintado aquí no sería lo suyo)
         if (JSON.stringify(shell.options) !== m.bake.options) throw new Error(`BakeWorkerHost: opciones distintas del horneado del principal: ${JSON.stringify(shell.options)} / ${m.bake.options}`);
-        this.mirrors.set(m.id, { store, shell, gen: 0 });
+        this.mirrors.set(m.id, { store, shell, gen: 0, first: { buildMs: performance.now() - a0, chunksMs: 0, chunks: 0, queuedMs: 0, renderMs: 0 } });
         break;
       }
       case 'drop': this.mirrors.delete(m.id); break;
       case 'chunks': {
         const x = this.mirrors.get(m.id);
+        const a0 = performance.now();
         if (x) for (const ch of m.list) x.store.writeChunkPrepared(ch.c, ch.slabs, ch.tops);
+        if (x?.first) { x.first.chunksMs += performance.now() - a0; x.first.chunks += m.list.length; }
         break;
       }
       case 'shift': {
@@ -308,12 +326,13 @@ export class BakeWorkerHost {
       }
       case 'cancel': {
         const k = this.queue.findIndex((q) => q.ticket === m.ticket);
-        if (k >= 0) { this.queue.splice(k, 1); this.canceled++; }
+        if (k >= 0) { this.arrived.delete(this.queue[k]!.ticket); this.queue.splice(k, 1); this.canceled++; }
         break;
       }
       case 'rect':
       case 'sky':
         this.queue.push(m);
+        this.arrived.set(m.ticket, performance.now());
         if (!this.scheduled) { this.scheduled = true; this.schedule(() => this.next()); }
         break;
     }
@@ -324,18 +343,22 @@ export class BakeWorkerHost {
     this.scheduled = false;
     const m = this.queue.shift();
     if (m) {
-      const x = this.mirrors.get(m.id);
+      const x = this.mirrors.get(m.id), came = this.arrived.get(m.ticket) ?? performance.now();
+      this.arrived.delete(m.ticket);
+      // (el primero que pinta este espejo lleva lo que tardó: crearlo, sus trozos hasta ahora, lo que esperó en la cola)
+      const first = x?.first && x.gen === m.gen ? { ...x.first, queuedMs: performance.now() - came } : undefined;
+      if (first) x!.first = null;
       if (!x || x.gen !== m.gen) this.post({ kind: 'skip', ticket: m.ticket, why: x ? 'shift' : 'mirror' }, []);
       else if (m.kind === 'sky') {
         const a = performance.now(), sky = skyFromPick(x.store, m.pick, m.face), ms = performance.now() - a;
         if (m.brake > 1) { const until = performance.now() + ms * (m.brake - 1); while (performance.now() < until); }
         this.busyMs += performance.now() - a;
-        this.post({ kind: 'sky', ticket: m.ticket, sky, ms, gen: m.gen }, [sky.buffer]);
+        this.post({ kind: 'sky', ticket: m.ticket, sky, ms, gen: m.gen, ...(first ? { first: { ...first, renderMs: ms } } : {}) }, [sky.buffer]);
       } else {
         const a = performance.now(), o = renderRect(x.shell, m.rect), ms = performance.now() - a;
         if (m.brake > 1) { const until = performance.now() + ms * (m.brake - 1); while (performance.now() < until); }
         this.busyMs += performance.now() - a;
-        this.post({ kind: 'rect', ticket: m.ticket, o, ms, gen: m.gen }, [o.rgba.buffer, o.depth.buffer, o.face.buffer, o.pick.buffer]);
+        this.post({ kind: 'rect', ticket: m.ticket, o, ms, gen: m.gen, ...(first ? { first: { ...first, renderMs: ms } } : {}) }, [o.rgba.buffer, o.depth.buffer, o.face.buffer, o.pick.buffer]);
       }
     }
     if (this.queue.length && !this.scheduled) { this.scheduled = true; this.schedule(() => this.next()); }

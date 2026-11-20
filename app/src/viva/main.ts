@@ -168,6 +168,9 @@ void (async () => {
   const frames: number[] = [], heap: number[] = [], shots: string[] = [], queueMs: number[] = [], lag: number[] = [];
   // Por giro: ms desde que se pide hasta el cambio, cuadros, cuadros de más de 25 ms en ese tiempo y CPU del núcleo
   const turns: Array<{ ms: number; frames: number; over25: number; worst: number }> = [];
+  // (por giro, en ms de performance.now(): la tecla, el cambio de horneado y el final de lo demás; con ?worker=2 se cruza
+  // con el primer espejo creado tras la tecla)
+  const giros: Array<{ tecla: number; cambio: number; resto: number }> = [];
   let turnAt = -1, turnFrames = 0, turnOver = 0, turnWorst = 0, nextTurn = GIRAR * 1000, lastBaked = win.baked, fade = 1, swapMs = -1;
   let shifts = 0, lastTx0 = win.tx0, lastTy0 = win.ty0, holes = 0, last = performance.now(), start = -1, nextHeap = 0, frameNo = 0;
   const gcHeap = () => { (window as unknown as { gc?: () => void }).gc?.(); return +(mem() / 1e6).toFixed(1); };
@@ -205,7 +208,7 @@ void (async () => {
     if (HEAPCADA && now - start >= nextHeapGc) { heapEvery.push({ s: Math.round((now - start) / 1000), mb: gcHeap(), cola: budget.pending, trozos: win.baked.source.changedSince(win.baked.version).length }); nextHeapGc += HEAPCADA * 1000; }
     // ?heapgiro=1: el montón (con el recolector forzado) antes de cada giro, para ver si crece de giro en giro
     if (GIRAR && HEAPGIRO && now - start >= nextTurn) turnHeap.push(gcHeap());
-    if (GIRAR && now - start >= nextTurn) { win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
+    if (GIRAR && now - start >= nextTurn) { giros.push({ tecla: performance.now(), cambio: -1, resto: -1 }); win.turnTo(((win.turnTarget + 1) % 4) as 0 | 1 | 2 | 3); nextTurn += GIRAR * 1000; if (turnAt < 0) { turnAt = now; turnFrames = 0; turnOver = 0; turnWorst = 0; } }
     if (turnAt >= 0) { turnFrames++; const f = frames[frames.length - 1]!; if (f > 25) turnOver++; turnWorst = Math.max(turnWorst, f); }
     budget.near!.ms = win.turning?.phase === 'core' ? PRESU : 8;
     const t0 = performance.now();
@@ -253,7 +256,10 @@ void (async () => {
       if (GIRAR) compositor.release(lastBaked);
       lastBaked = win.baked;
       if (turnAt >= 0 && swapMs < 0 && (!win.turning || win.turning.phase === 'rest')) swapMs = now - turnAt;
+      const g = giros[giros.length - 1];
+      if (g && g.cambio < 0) g.cambio = performance.now();
     }
+    { const g = giros[giros.length - 1]; if (g && g.cambio >= 0 && g.resto < 0 && !win.turning) g.resto = performance.now(); }
     // El fundido: a negro mientras se hace el núcleo, y de vuelta al cambiar (150 ms cada uno)
     fade = win.turning?.phase === 'core' ? Math.max(0, fade - dt / 0.15) : Math.min(1, fade + dt / 0.15);
     canvas.style.opacity = fade.toFixed(2);
@@ -437,7 +443,11 @@ void (async () => {
     (window as unknown as { __viva: unknown }).__viva = {
       loadMs: +loadMs.toFixed(0), frames: f.length, p50: p(0.5), p95: p(0.95), max: p(1), over25: f.filter((v) => v > 25).length,
       pathMs: CAMINOS ? { p50: pq(pathMs, 0.5), p95: pq(pathMs, 0.95), max: pq(pathMs, 1), lag: field!.lag } : null,
-      linea, remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
+      linea, giros: giros.map((g, i) => {
+        const fin = giros[i + 1]?.tecla ?? Infinity, ms = (t: number) => t < 0 ? null : Math.round(t - g.tecla);
+        const e = motor?.mirrorLog.find((l) => l.at >= g.tecla && l.at < fin);
+        return { cambio: ms(g.cambio), resto: ms(g.resto), ...(e ? { espejo: ms(e.at), pedido: ms(e.firstAsk), trozos: e.chunksFirst, syncMs: Math.round(e.syncMsFirst), llega: ms(e.firstGot), worker: e.worker ? Object.fromEntries(Object.entries(e.worker).map(([k, v]) => [k, Math.round(v as number)])) : null } : {}) };
+      }), remote: WORKER ? { ...remote, workerMs: Math.round(remote.workerMs), busyMs: Math.round(remote.busyMs), main: win.baked.remoteStats ?? null } : motor ? { motor: { ...motor.stats, workerMs: Math.round(motor.stats.workerMs), syncMs: Math.round(motor.stats.syncMs) }, main: win.baked.remoteStats ?? null } : null,
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
