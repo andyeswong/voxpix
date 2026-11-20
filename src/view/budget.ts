@@ -31,6 +31,9 @@ export interface ViewJob {
   lastCostClass?(): string | undefined;
 }
 
+// (wrapJob: en world/bake, junto a la otra definición de ViewJob)
+export { wrapJob } from '../world/bake';
+
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
 const STARVE_FRAMES = 4;
 // Cuántas llamadas de cada clase recuerda la cola para saber lo que suele costar la siguiente, y lo que tiene que gastar

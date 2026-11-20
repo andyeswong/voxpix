@@ -960,6 +960,21 @@ export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, 
 // al viejo (lo hace la cola).
 export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number; dead?(): boolean; costClass?(): string | undefined; lastCostClass?(): string | undefined }
 
+// Los opcionales de ViewJob que un envoltorio tiene que pasar (el compilador obliga a que estén todos: uno nuevo en
+// ViewJob que falte aquí no compila)
+const VIEW_JOB_OPTIONALS: { [K in Exclude<keyof ViewJob, 'key' | 'run' | 'priority'>]-?: true } = { waiting: true, unit: true, dead: true, costClass: true, lastCostClass: true };
+// Un trabajo que envuelve a otro (para medirlo, o cambiar su clave, su prioridad o su run) con todos sus opcionales. Cada
+// envoltorio hecho a mano perdía alguno (dead, unit, costClass...) y la cola no se enteraba
+export function wrapJob(j: ViewJob, over: { key?: string; priority?: number | undefined; run?: (deadline: number) => boolean } = {}): ViewJob {
+  const priority = 'priority' in over ? over.priority : j.priority;
+  const w: Record<string, unknown> = { key: over.key ?? j.key, run: over.run ?? ((d: number) => j.run(d)), ...(priority !== undefined ? { priority } : {}) };
+  for (const k of Object.keys(VIEW_JOB_OPTIONALS) as Array<keyof typeof VIEW_JOB_OPTIONALS>) {
+    const f = j[k] as ((...a: unknown[]) => unknown) | undefined;
+    if (f) w[k] = (...a: unknown[]) => f.apply(j, a);
+  }
+  return w as unknown as ViewJob;
+}
+
 // Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
 // contorno no cambia nada); 'auto', solo con contorno
 export const RECT_TUNING: { halo: 'auto' | 'always' } = { halo: 'auto' };
@@ -1689,7 +1704,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
       }
     }
     // (con lo opcional del trabajo: sin dead, la cola no quitaba los de una vista ya soltada y retenían su horneado)
-    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), ...(j.dead ? { dead: () => j.dead!() } : {}), ...(j.unit ? { unit: () => j.unit!() } : {}), ...(j.costClass ? { costClass: () => j.costClass!() } : {}), ...(j.lastCostClass ? { lastCostClass: () => j.lastCostClass!() } : {}) } as ViewJob;
+    return wrapJob(j, { priority: p });
   }).concat(extra);
 }
 

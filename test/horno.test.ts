@@ -28,7 +28,7 @@ const SPEC: RegionSpec = {
 const TB = 4, TV = TB * B;                       // un trozo: 4 x 4 bloques = 32 x 32 vóxeles (2 x 2 trozos de vóxeles)
 const T0 = -3, NT = 6;                           // el mundo fijo: los trozos -3..2 en x y en y
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
-import { FrameBudget } from '../src/view/budget';
+import { FrameBudget, type ViewJob } from '../src/view/budget';
 import { LiveWindow, type Trozo, type LiveWindowOptions } from '../src/world/live';
 import { rebakeChangedJobs, type Baked } from '../src/world/bake';
 import { BakeWorker, BakeWorkerHost, type BakeWorkerPort, type ToWorker, type FromWorker } from '../src/world/horno';
@@ -461,5 +461,22 @@ describe('BakeWorker: el horno en un worker', () => {
     expect(win.baked.remote).toBeDefined();
     bw.detach();
     expect(win.baked.remote).toBeUndefined();
+  });
+});
+
+describe('BakeWorker: lo de otro giro en la cola', () => {
+  it('los trabajos del giro que se ve, si no es el 0, van envueltos (g1/...) con su clase de coste: lo que pide al worker se mide aparte también ahí', () => {
+    const ch = channel(), win = make([0, 0], undefined, { quarters: [0, 1] }), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    win.turn(1);
+    let x = TV / 2, seen = 0;
+    const q = () => (budget as unknown as { queue: ViewJob[] }).queue;
+    for (let n = 0; n < 200 && !seen; n++) {
+      x += TV / 16;
+      win.update(x, Y, budget);
+      seen = q().filter((j) => j.key.startsWith('g1/rect:') && typeof j.costClass === 'function' && typeof j.lastCostClass === 'function' && typeof j.dead === 'function').length;
+      budget.run(); ch.step(1); win.update(x, Y, budget);
+    }
+    expect(seen).toBeGreaterThan(0);
   });
 });
