@@ -88,16 +88,26 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     expect(diff(win.baked, ref.baked)).toBe(0);
   });
 
-  it('lo que llega se publica igual que pintarlo aquí; si algo suyo cambió mientras, se pinta aquí', () => {
-    const run = (withRemote: boolean, digMidway: boolean) => {
+  it('lo que llega se publica igual que pintarlo aquí; si algo suyo cambió mientras, se vuelve a pedir: lo publicado es lo de ahora', () => {
+    // (fresh: píxeles distintos de pintar de nuevo toda la imagen con lo de ahora)
+    const fresh = (B: Baked) => {
+      const f = renderRect(B, { x0: 0, x1: B.width - 1, y0: 0, y1: B.height - 1 });
+      let n = 0;
+      for (let i = 0; i < B.width * B.height; i++) if (f.face[i] !== B.face[i] || [0, 1, 2, 3].some((c) => f.rgba[i * 4 + c] !== B.rgba[i * 4 + c])) n++;
+      return n;
+    };
+    // Andando; con dig, se pica delante en la vuelta kDig de cada paso. Lo pedido llega, pintado con lo del momento de
+    // pedirlo, `delay` llamadas después uno sí y uno no, y los otros a la siguiente: lo pedido después de picar puede
+    // publicarse antes que lo pedido antes, y lo caducado que no se detecta queda encima
+    const run = (withRemote: boolean, dig?: { kDig: number; delay: number }) => {
       const win = make([0, 0]);
-      let asked = 0, late: Array<() => void> = [];
+      let asked = 0;
       if (withRemote) win.baked.remote = { ask: (rect) => {
         asked++;
-        // Llega dos llamadas después (se pinta con lo de ese momento: si se picó en medio, lo de antes)
         const o: RectOut = renderRect(win.baked, rect);
         let calls = 0;
-        return { result: () => (++calls >= 2 ? o : null) };
+        const delay = !dig ? 2 : asked % 2 ? dig.delay : 1;
+        return { result: () => (++calls >= delay ? o : null) };
       } };
       const budget = new FrameBudget(1e6);
       let x = TV / 2;
@@ -106,19 +116,31 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
         win.update(x, TV / 2, budget);
         for (let k = 0; k < 50 && (win.busy || budget.pending); k++) {
           budget.run();
-          if (digMidway && k === 1) { const [lx, ly] = win.toLocal(x + TV, TV / 2); for (let z = 20; z < 40; z++) for (let y = ly - 4; y < ly + 4; y++) for (let xx = lx - 4; xx < lx + 4; xx++) if (xx >= 0 && xx < win.store.width && y >= 0 && y < win.store.depth) win.store.set(xx, y, z, 0); }
+          if (dig && k === dig.kDig) { const [lx, ly] = win.toLocal(x + TV, TV / 2); for (let z = 20; z < 40; z++) for (let y = ly - 4; y < ly + 4; y++) for (let xx = lx - 4; xx < lx + 4; xx++) if (xx >= 0 && xx < win.store.width && y >= 0 && y < win.store.depth) win.store.set(xx, y, z, 0); }
           win.update(x, TV / 2, budget);
         }
       }
+      // (todo publicado: lo que quede mal ya no lo arregla nadie)
+      expect(win.busy || budget.pending > 0).toBe(false);
+      const pre = fresh(win.baked);
       for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
-      void late;
-      return { win, asked };
+      return { win, asked, pre };
     };
-    const a = run(true, false), b = run(false, false);
+    const a = run(true), b = run(false);
     expect(a.asked).toBeGreaterThan(3);
     expect(diff(a.win.baked, b.win.baked)).toBe(0);
-    const c = run(true, true), d = run(false, true);
-    expect(diff(c.win.baked, d.win.baked)).toBe(0);
+    // Picando mientras se pide: se pica directamente en la ventana, sin guardarlo para cuando el trozo vuelva a entrar, así
+    // que con otro orden de la cola lo picado puede caer en un trozo aún sin escribir (y volver a llenarse). Por eso no se
+    // compara con pintarlo aquí, sino con pintar de nuevo lo de ahora. Antes se comparaba, y con k = 1 y delay 2 no llegaba
+    // nada caducado: no probaba lo caducado
+    let stale = 0;
+    for (const dig of [{ kDig: 0, delay: 8 }, { kDig: 1, delay: 8 }, { kDig: 2, delay: 8 }, { kDig: 1, delay: 4 }]) {
+      const c = run(true, dig);
+      stale += c.win.baked.remoteStats?.stale ?? 0;
+      expect(c.pre).toBe(0);
+      expect(fresh(c.win.baked)).toBe(0);
+    }
+    expect(stale).toBeGreaterThan(10);
   });
 
   it('uno que llega después de que un vecino que pinta en parte (no de su núcleo) cambió y se publicó encima: se pinta aquí, igual que hornear de nuevo', () => {
