@@ -23,6 +23,12 @@ export interface ViewJob {
   // Opcional: true si correrlo ya no haría nada (lo descartó otro: un rehorneado de antes de correrse la ventana, o de
   // una vista ya soltada al girar)
   dead?(): boolean;
+  // Opcional: la clase de coste de su próxima llamada, si no es la de siempre (lo que solo pide a un worker, o publica lo
+  // llegado, cuesta otra cosa que pintar aquí). Se mide y se estima aparte: kind|clase
+  costClass?(): string | undefined;
+  // Opcional, con costClass: la clase de la llamada que acaba de hacer, que puede no ser la anunciada (un pedido que no sale
+  // y se pinta aquí en la misma llamada cuenta como pintar). Lo que gastó se apunta en esa
+  lastCostClass?(): string | undefined;
 }
 
 // Cuadros seguidos sin presupuesto (porque otra cosa lo gastó) antes de dar una porción igualmente
@@ -146,6 +152,26 @@ export class FrameBudget {
       if (r.ms >= MIN_SAMPLE_MS) { ran++; if (!r.done) allDone = false; }
       break;
     }
+    // Lo corto que desbloquea a otro (una clase propia, costClass: pedir a un worker, publicar lo llegado) va antes en su
+    // fase, hasta la mitad de su tiempo y si cabe lo que suele costar su clase (una clase sin medir, solo la primera vez del
+    // cuadro). Detrás de un trabajo en marcha que se come la fase entera (pintar aquí un recuadro, 6-24 ms en el juego de
+    // FERN), lo que solo iba a pedir al worker no llegaba nunca: el worker ocioso con ~140 recuadros sin pedir. No cuenta
+    // como lo que corrió en la fase: lo demás sigue teniendo su primera llamada
+    {
+      const t0 = this.now(), half = t0 + (deadline - t0) / 2;
+      let quick = 0;
+      for (let k = from; k < this.queue.length && inPhase(this.queue[k]!);) {
+        const job = this.queue[k]!;
+        if (!job.costClass?.() || job.waiting?.()) { k++; continue; }
+        const t = this.now();
+        if (t >= half) break;
+        const est = this.costs.get(this.costKey(job))?.p95;
+        if (quick > 0 && (est === undefined || t + est > half)) { k++; continue; }
+        const r = this.call(job, deadline, t);
+        if (r.ms >= MIN_SAMPLE_MS) quick++;
+        if (r.done) this.removeAt(k); else k++;
+      }
+    }
     let i = from;
     // (la prioridad del primero que podía correr en la fase: el escalón de lo que se adelanta por el plazo)
     let tier: number | undefined | null = null;
@@ -198,13 +224,19 @@ export class FrameBudget {
     this.skipped.set(job, (last === this.frameNo - 1 ? this.skipped.get(job) ?? 0 : 0) + 1);
     this.skippedFrame.set(job, this.frameNo);
   }
-  private costKey(job: ViewJob): string { return FrameBudget.kind(job.key) + (this.started.has(job) ? '' : FIRST); }
+  private costKey(job: ViewJob): string {
+    const c = job.costClass?.();
+    return FrameBudget.kind(job.key) + (c ? `|${c}` : this.started.has(job) ? '' : FIRST);
+  }
   // Una llamada: corre, apunta lo que costó (en su clase y posición) y deja de contarla como saltada
   private call(job: ViewJob, deadline: number, t: number): { done: boolean; ms: number } {
-    const k = this.costKey(job);
+    const kind = FrameBudget.kind(job.key), plain = kind + (this.started.has(job) ? '' : FIRST);
     this.skipped.delete(job); this.skippedFrame.delete(job);
+    const before = this.costKey(job);
     const done = job.run(deadline), ms = this.now() - t;
-    this.record(k, ms);
+    // (lo que fue de verdad, si el trabajo lo dice; si no, lo anunciado)
+    const was = job.lastCostClass ? job.lastCostClass() : undefined;
+    this.record(job.lastCostClass ? (was ? `${kind}|${was}` : plain) : before, ms);
     if (ms >= MIN_SAMPLE_MS) this.started.add(job);
     return { done, ms };
   }

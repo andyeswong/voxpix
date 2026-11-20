@@ -56,7 +56,7 @@ const diff = (b: Baked, r: Baked, rect?: { x0: number; y0: number; x1: number; y
   return n;
 };
 
-import { renderRect, REMOTE_RETRIES, shiftBaked, shiftKeys, shiftParams, type RectOut } from '../src/world/bake';
+import { renderRect, REMOTE_RETRIES, shiftBaked, shiftKeys, shiftParams, skyFromPick, type RectOut } from '../src/world/bake';
 import type { PreparedTrozo } from '../src/world/live';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockGrid } from '../src/world/blocks';
@@ -273,5 +273,63 @@ describe('recuadros pintados fuera (Baked.remote)', () => {
     for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
     for (const j of rebakeChangedJobs(win.baked, win.view.bakeable().lights)) while (!j.run(Infinity));
     expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+});
+
+// La clase de coste de cada llamada (ViewJob.costClass): la que solo pide fuera y la que publica lo llegado se miden aparte
+// de pintar aquí (FrameBudget); lastCostClass dice lo que fue de verdad cada llamada
+describe('lo pedido fuera: la clase de coste de cada llamada', () => {
+  it('recuadro y cielo: pedir, esperar (sin llamada), lo llegado; y un pedido que no sale se pinta en la misma llamada, que cuenta como pintar', () => {
+    const win = make([0, 0]), ref = make([0, 0]), b = win.baked;
+    let ready = false, refuse = false;
+    b.remote = {
+      ask: (rect) => { if (refuse) return null; const o = renderRect(b, rect); return { result: () => (ready ? o : null), ready: () => ready }; },
+      sky: (_rect, pick, face) => { if (refuse) return null; const o = skyFromPick(b.source, pick, face); return { result: () => (ready ? o : null), ready: () => ready }; },
+    };
+    const dig = (w: LiveWindow, [x0, y0, z0, x1, y1, z1]: number[]) => { for (let z = z0!; z <= z1!; z++) for (let y = y0!; y <= y1!; y++) for (let x = x0!; x <= x1!; x++) w.store.set(x, y, z, 0); };
+    const A = [70, 70, 0, 78, 78, 63], C = [100, 40, 0, 108, 48, 63];
+    dig(win, A);
+    const js = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true } });
+    const rect = js.find((j) => j.key.startsWith('rect:'))!, sky = js.find((j) => j.key.startsWith('sky:'))!;
+    expect(rect.costClass!()).toBe('pedir');
+    // (el cielo espera a su recuadro: sin clase, la cola lo salta)
+    expect(sky.waiting!()).toBe(true);
+    expect(sky.costClass!()).toBeUndefined();
+    expect(rect.run(Infinity)).toBe(false);
+    expect(rect.lastCostClass!()).toBe('pedir');
+    expect(rect.waiting!()).toBe(true);
+    expect(rect.costClass!()).toBeUndefined();
+    ready = true;
+    expect(rect.costClass!()).toBe('llegada');
+    expect(rect.run(Infinity)).toBe(true);
+    ready = false;
+    expect(sky.costClass!()).toBe('pedir');
+    expect(sky.run(Infinity)).toBe(false);
+    expect(sky.lastCostClass!()).toBe('pedir');
+    expect(sky.costClass!()).toBeUndefined();
+    ready = true;
+    expect(sky.costClass!()).toBe('llegada');
+    expect(sky.run(Infinity)).toBe(true);
+    expect(sky.lastCostClass!()).toBe('llegada');
+    expect(rect.lastCostClass!()).toBe('llegada');
+    // Un pedido que no sale (lo cercano, o un trozo que no se puede mandar): se pinta aquí en la misma llamada, y esa llamada
+    // dice que fue pintar (la cola apunta su coste ahí, no en pedir)
+    refuse = true;
+    dig(win, C);
+    // (con near: los trabajos van envueltos con su prioridad, y lo opcional pasa por el envoltorio)
+    const js2 = rebakeChangedJobs(b, win.view.bakeable().lights, { shape: { band: 16, rows: 64, merge: true }, near: { x: 104, y: 44 } });
+    const rect2 = js2.find((j) => j.key.startsWith('rect:'))!, sky2 = js2.find((j) => j.key.startsWith('sky:'))!;
+    expect(rect2.costClass!()).toBe('pedir');
+    const serial = b.published.serial;
+    expect(rect2.run(Infinity)).toBe(true);
+    expect(b.published.serial).toBeGreaterThan(serial);
+    expect(rect2.lastCostClass!()).toBeUndefined();
+    expect(sky2.costClass!()).toBe('pedir');
+    for (let k = 0; k < 20 && !sky2.run(Infinity); k++);
+    expect(sky2.lastCostClass!()).toBeUndefined();
+    for (const j of [...js, ...js2]) for (let k = 0; k < 20 && !j.run(Infinity); k++);
+    dig(ref, A); dig(ref, C);
+    for (const j of rebakeChangedJobs(ref.baked, ref.view.bakeable().lights)) while (!j.run(Infinity));
+    expect(diff(b, ref.baked)).toBe(0);
   });
 });

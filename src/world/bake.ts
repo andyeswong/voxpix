@@ -958,7 +958,7 @@ export function publishRectBuffers(b: Baked, o: RectOut): void { publishRect(b, 
 // run(deadline) trabaja hasta que el reloj pasa de `deadline` o acaba, y devuelve true si acabó. Mientras no acaba
 // vale lo viejo; lo nuevo se publica de golpe al terminar (doble búfer). Un trabajo nuevo con la misma key sustituye
 // al viejo (lo hace la cola).
-export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number; dead?(): boolean }
+export interface ViewJob { readonly key: string; run(deadline: number): boolean; readonly priority?: number; waiting?(): boolean; unit?(): number; dead?(): boolean; costClass?(): string | undefined; lastCostClass?(): string | undefined }
 
 // Para las pruebas: 'always' fuerza el margen de 1 píxel de cada franja también sin contorno (para comprobar que sin
 // contorno no cambia nada); 'auto', solo con contorno
@@ -1053,6 +1053,8 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const ROWS = shape.rows ?? Infinity;
     // (el recuadro pedido fuera, y el reloj de cuando se pidió)
     let ticket: { result(): RectOut | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null | undefined, askedAt = 0, askedPub = 0, asks = 0;
+    // (la clase de coste de la última llamada: 'pedir', 'llegada' o pintar aquí)
+    let last: string | undefined;
     // (pedido fuera y trasladado al correrse la ventana (remote.shifts): las versiones de datos de lo que lee, de cuando se
     // comprobó al correrse, y si algo que lee ya había cambiado antes, como edge)
     let vers: Map<number, number> | null = null, vedge = false;
@@ -1142,16 +1144,23 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       dead: gone,
       // (espera al recuadro pedido fuera, si el que lo pinta dice si ya llegó, o a que acabe el corrimiento)
       waiting: () => !gone() && col <= rect.x1 && (!!b.shiftHold || (!!ticket && !!ticket.ready && !ticket.ready() && !ticket.failed?.())),
+      // (la llamada que solo pide fuera, y la que publica lo llegado, cuestan otra cosa que pintar aquí: la cola las mide
+      // aparte. Con la misma clase, los recuadros que se pintan aquí dejaban su p95 en 6-24 ms y lo que solo iba a pedir no
+      // cabía en la fase: el worker ocioso con la cola llena)
+      costClass: () => gone() || b.shiftHold || col > rect.x1 ? undefined : ticket === undefined && b.remote && !buf ? 'pedir' : ticket && !ticket.failed?.() && (!ticket.ready || ticket.ready()) ? 'llegada' : undefined,
+      // (lo que fue de verdad la última llamada: un pedido que no sale se pinta aquí en la misma llamada, y cuenta como pintar)
+      lastCostClass: () => last,
       run(deadline) {
+        last = undefined;
         if (gone()) { finished = true; settle(); return true; }   // descartado al correrse la ventana
         if (b.shiftHold) return false;                                     // la ventana se está corriendo: espera
         if (col > rect.x1) { finished = true; settle(); return true; }
-        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); if (ticket) asks++; }
-        if (ticket?.failed?.()) { ticket = null; vers = null; vedge = false; }   // ya no llega: se pinta aquí
+        if (ticket === undefined && b.remote && !buf) { askedAt = b.source.clock; askedPub = b.published.serial; ticket = b.remote.ask(rect); if (ticket) { asks++; last = 'pedir'; } }
+        if (ticket?.failed?.()) { ticket = null; vers = null; vedge = false; last = undefined; }   // ya no llega: se pinta aquí
         if (ticket) {
           const r = ticket.result();
           if (!r) return false;                                            // espera (sin gastar)
-          ticket = null;
+          ticket = null; last = 'llegada';
           const st = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 });
           // (la misma regla que al acabar de pintarlo aquí, stalePaint, contada desde que se pidió: si cambió el núcleo, o un
           // trozo que lee y desde entonces se publicó otro recuadro encima, lo que llega es de antes y lo pisaría. Antes solo
@@ -1173,6 +1182,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           // y pintarlo aquí devolvía al principal ~110 ms/s en viva)
           st.stale++;
           if (asks <= REMOTE_RETRIES) { st.reasked = (st.reasked ?? 0) + 1; ticket = undefined; reads = readChunks(b, rect); return false; }
+          last = undefined;
         }
         if (!buf) { buf = rectBuffers(rect); started = b.source.clock; pubAt = b.published.serial; reads = readChunks(b, rect); }
         // (trasladado con lo pintado: lo que cambie del plan y lo que se publique, desde ahora)
@@ -1355,6 +1365,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     const skyWaiting = waitingIn(() => r);
     // (el cielo pedido fuera, b.remote.sky: como los recuadros, y cuántas veces se pidió)
     let skyTicket: { result(): Uint8Array | null; ready?(): boolean; failed?(): boolean; cancel?(): void } | null | undefined, skyAsks = 0;
+    let skyLast: string | undefined;
     // (pedido fuera y trasladado al correrse la ventana: las versiones de datos de lo que lee, como en los recuadros)
     let skyVers: Map<number, number> | null = null;
     // ¿Lo pedido fuera ya no vale? (repainted: se publicó un recuadro encima; vox: cambió algo que lee)
@@ -1401,7 +1412,11 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       dead: skyGone,
       // (espera a sus recuadros, o a que acabe el corrimiento: la cola lo salta sin llamarlo)
       waiting: () => !skyGone() && (!!b.shiftHold || skyWaiting() || (!!skyTicket && !!skyTicket.ready && !skyTicket.ready() && !skyTicket.failed?.())),
+      // (como en los recuadros: pedir y lo llegado se miden aparte de pintar aquí)
+      costClass: () => skyGone() || b.shiftHold || skyWaiting() ? undefined : skyTicket === undefined && b.remote?.sky && row === r.y0 ? 'pedir' : skyTicket && !skyTicket.failed?.() && (!skyTicket.ready || skyTicket.ready()) ? 'llegada' : undefined,
+      lastCostClass: () => skyLast,
       run(deadline) {
+        skyLast = undefined;
         if (skyGone()) { skyDone = true; skySettle(); return true; }
         if (b.shiftHold || skyWaiting()) return false;
         // Fuera (b.remote.sky): con el pick y el face de ahora; al llegar, la misma regla que al acabar aquí (lo que lee
@@ -1411,19 +1426,19 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
           for (let y = r.y0; y <= r.y1; y++) { const o = y * b.width + r.x0; pk.set(b.pick.subarray(o, o + w), (y - r.y0) * w); fc.set(b.face.subarray(o, o + w), (y - r.y0) * w); }
           skyStarted = b.source.clock; skySerial = b.published.serial;
           skyTicket = b.remote.sky(r, pk, fc);
-          if (skyTicket) skyAsks++; else skyTicket = null;
+          if (skyTicket) { skyAsks++; skyLast = 'pedir'; } else skyTicket = null;
         }
-        if (skyTicket?.failed?.()) { skyTicket = null; skyStarted = -1; skyVers = null; }
+        if (skyTicket?.failed?.()) { skyTicket = null; skyStarted = -1; skyVers = null; skyLast = undefined; }
         if (skyTicket) {
           const o = skyTicket.result();
           if (!o) return false;
-          skyTicket = null;
+          skyTicket = null; skyLast = 'llegada';
           const { repainted, vox } = skyRemoteStale();
           skyVers = null;
           if (repainted || vox) {
             if (repainted) sst.restartPub++; else sst.restartVox++;
             if (skyAsks <= REMOTE_RETRIES) { const rs = (b.remoteStats ??= { published: 0, stale: 0, local: 0, localMs: 0 }); rs.skyReasked = (rs.skyReasked ?? 0) + 1; skyTicket = undefined; return false; }
-            skyStarted = -1;
+            skyStarted = -1; skyLast = undefined;
           } else {
             out.set(o); row = r.y1 + 1; skyRestarts = 2;
           }
@@ -1674,7 +1689,7 @@ export function rebakeChangedJobs(b: Baked, lights: readonly WorldLight[], opts:
       }
     }
     // (con lo opcional del trabajo: sin dead, la cola no quitaba los de una vista ya soltada y retenían su horneado)
-    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), ...(j.dead ? { dead: () => j.dead!() } : {}), ...(j.unit ? { unit: () => j.unit!() } : {}) } as ViewJob;
+    return { key: j.key, priority: p, run: (d: number) => j.run(d), ...(j.waiting ? { waiting: () => j.waiting!() } : {}), ...(j.dead ? { dead: () => j.dead!() } : {}), ...(j.unit ? { unit: () => j.unit!() } : {}), ...(j.costClass ? { costClass: () => j.costClass!() } : {}), ...(j.lastCostClass ? { lastCostClass: () => j.lastCostClass!() } : {}) } as ViewJob;
   }).concat(extra);
 }
 
