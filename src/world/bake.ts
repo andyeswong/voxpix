@@ -1091,9 +1091,10 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
     // trozo que entra al lado), solo si desde que empezó se publicó otro recuadro encima (si no, el rehorneado de ese vecino,
     // que va detrás, publica después y arregla el borde)
     const stalePaint = (): boolean => {
-      const moved = b.source.changedSince(started);
-      if (moved.some((c) => coreChunks.includes(c))) return true;
-      if (!edge && !moved.some((c) => reads.includes(c))) return false;
+      // (trozo a trozo, changedAfter: changedSince recorre toda la fuente y monta un array en cada comprobación)
+      const s = b.source;
+      if (coreChunks.some((c) => s.changedAfter(c, started))) return true;
+      if (!edge && !reads.some((c) => s.changedAfter(c, started))) return false;
       const since = pubAt >= 0 ? publishedSince(b, pubAt) : null;
       return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
     };
@@ -1107,7 +1108,9 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         return !since || since.some((q) => !q.sky && q.x1 >= rect.x0 && q.x0 <= rect.x1 && q.y1 >= rect.y0 && q.y0 <= rect.y1);
       }
       started = askedAt; pubAt = askedPub; edge = false;
-      return g.some((c) => b.source.changedSince(askedAt).includes(c)) || stalePaint();
+      // (antes, changedSince(askedAt).includes(c) por cada trozo de g: toda la fuente |g| veces en cada llegada; en un juego,
+      // ~80 % de lo que costaba publicar lo llegado)
+      return g.some((c) => b.source.changedAfter(c, askedAt)) || stalePaint();
     };
     // (descartado: el de toda la tanda, o solo este al correrse la ventana si no podía seguir)
     const gone = () => out || stale();
@@ -1126,14 +1129,14 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         if (!planInside(b, plan, P, 1) || !rectInside(b, rect, P)) return false;
         if (ticket) { dirty = false; return true; }
         dirty = !!buf && started >= 0 && stalePaint();
-        if (buf && started >= 0 && !dirty && b.source.changedSince(started).some((c) => reads.includes(c))) edge = true;
+        if (buf && started >= 0 && !dirty && reads.some((c) => b.source.changedAfter(c, started))) edge = true;
         return true;
       },
       move(P) {
         if (ticket) {
           // (con los índices de antes: lo que lee, su grupo y su núcleo; y lo que se publique desde el cambio: swap suma 2 y
           // deja solo la caja de lo borrado, que no se lee desde dentro)
-          const edgeNow = !vers && b.source.changedSince(askedAt).some((c) => reads.includes(c));
+          const edgeNow = !vers && reads.some((c) => b.source.changedAfter(c, askedAt));
           vers = shiftVersions(b, vers ?? dataVersionsOf(b, new Set([...reads, ...g, ...coreChunks])), P);
           vedge ||= edgeNow;
           askedPub = b.published.serial + 2;
@@ -1388,8 +1391,7 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
       const since = publishedSince(b, skySerial);
       const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
       if (skyVers) return { repainted, vox: versionsChanged(b, skyVers, reads) };
-      const moved = b.source.changedSince(skyStarted);
-      return { repainted, vox: moved.length > 0 && reads.some((c) => moved.includes(c)) };
+      return { repainted, vox: reads.some((c) => b.source.changedAfter(c, skyStarted)) };
     };
     const skyGone = () => skyOut || stale();
     let skyKey = `sky:${r.x0},${r.y0},${r.x1},${r.y1}`;
@@ -1464,12 +1466,11 @@ export function rebakeJobs(b: Baked, chunks: readonly number[], lights: readonly
         sst.pixels += (row - r0) * w; sst.ms += performance.now() - t0;
         if (row <= r.y1) return false;
         if (skyRestarts < 2) {
-          const moved = b.source.changedSince(skyStarted);
           // (y lo que lee de la imagen: la cara y el vóxel de cada píxel, que pone un recuadro; uno de otro rehorneado
           // publicado mientras sobre lo suyo cambia el cielo de esos píxeles, y el cielo de ese rehorneado puede acabar antes)
           const since = publishedSince(b, skySerial);
           const repainted = !since || since.some((q) => !q.sky && q.x1 >= r.x0 && q.x0 <= r.x1 && q.y1 >= r.y0 && q.y0 <= r.y1);
-          const voxMoved = moved.length > 0 && reads.some((c) => moved.includes(c));
+          const voxMoved = reads.some((c) => b.source.changedAfter(c, skyStarted));
           if (repainted || voxMoved) { if (repainted) sst.restartPub++; else sst.restartVox++; skyRestarts++; row = r.y0; skyStarted = -1; return false; }
         }
         for (let y = r.y0; y <= r.y1; y++) b.sky!.set(out.subarray((y - r.y0) * w, (y - r.y0 + 1) * w), y * b.width + r.x0);

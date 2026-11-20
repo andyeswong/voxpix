@@ -790,6 +790,9 @@ export class StaticVoxels implements VoxelSource {
     return Math.floor(y / CHUNK) * this.cols + Math.floor(x / CHUNK);
   }
 
+  // ¿Cambiaron los vóxeles del trozo c después de la versión v? Lo mismo que changedSince(v).includes(c), sin recorrer
+  // todos los trozos (fuera de la rejilla: no)
+  changedAfter(c: number, v: number): boolean { return (this.versions[c] ?? 0) > v; }
   // Trozos (índices) cuyos vóxeles cambiaron después de la versión v
   changedSince(v: number): number[] {
     const out: number[] = [];
