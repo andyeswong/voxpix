@@ -34,6 +34,42 @@ export interface FaceSet { key: number; dirs: ReadonlyArray<readonly [number, nu
 // Una losa preparada para StaticVoxels.writeChunkPrepared (como una losa de 1 byte por dentro)
 export interface PreparedSlab { d: Uint8Array; pal: Uint16Array; palN: number; count: number }
 
+// Trozos empaquetados en un solo búfer (StaticVoxels.packChunk / unpackChunk), para mandarlos a otro hilo de una vez. El
+// clon de un mensaje cuesta por búfer transferido, no por byte: con un búfer por losa y uno de alturas por trozo, el
+// primer pedido a un espejo vacío eran decenas de miles de búferes y ~300 ms de postMessage en un cuadro (la traza de
+// FERN tras girar). Por trozo: las 256 alturas (int16) y, por losa, 0 (vacía), 1 (de un solo valor: el valor y la
+// cuenta) o 2 (palN, la cuenta, las palN entradas de la paleta y los 4096 bytes)
+export class ChunkPackWriter {
+  private u8 = new Uint8Array(1 << 16);
+  private dv = new DataView(this.u8.buffer);
+  n = 0;
+  get buffer(): ArrayBuffer { return this.u8.buffer as ArrayBuffer; }
+  private need(k: number): void {
+    if (this.n + k <= this.u8.length) return;
+    let L = this.u8.length * 2;
+    while (L < this.n + k) L *= 2;
+    const u = new Uint8Array(L);
+    u.set(this.u8.subarray(0, this.n));
+    this.u8 = u; this.dv = new DataView(u.buffer);
+  }
+  u8w(v: number): void { this.need(1); this.u8[this.n++] = v; }
+  u16(v: number): void { this.need(2); this.dv.setUint16(this.n, v, true); this.n += 2; }
+  i16(v: number): void { this.need(2); this.dv.setInt16(this.n, v, true); this.n += 2; }
+  u32(v: number): void { this.need(4); this.dv.setUint32(this.n, v, true); this.n += 4; }
+  bytes(b: Uint8Array): void { this.need(b.length); this.u8.set(b, this.n); this.n += b.length; }
+}
+export class ChunkPackReader {
+  private readonly u8: Uint8Array;
+  private readonly dv: DataView;
+  constructor(buf: ArrayBuffer, public at = 0) { this.u8 = new Uint8Array(buf); this.dv = new DataView(buf); }
+  u8r(): number { return this.u8[this.at++]!; }
+  u16(): number { const v = this.dv.getUint16(this.at, true); this.at += 2; return v; }
+  i16(): number { const v = this.dv.getInt16(this.at, true); this.at += 2; return v; }
+  u32(): number { const v = this.dv.getUint32(this.at, true); this.at += 4; return v; }
+  // (copiado: lo que se queda en el store no retiene el búfer entero)
+  bytes(n: number): Uint8Array { const b = this.u8.slice(this.at, this.at + n); this.at += n; return b; }
+}
+
 // Vóxeles estáticos en trozos. Un TROZO es una columna de CHUNK x CHUNK con toda la altura (zMin..zMax): es la
 // unidad de las versiones, de changedSince, de watchChanges y del rehorneado. Por dentro, cada trozo se guarda en
 // LOSAS de CHUNK x CHUNK x SLAB vóxeles, y cada losa ocupa solo lo que necesita:
@@ -785,6 +821,50 @@ export class StaticVoxels implements VoxelSource {
     const X = (c % this.cols) * CHUNK, Y = Math.floor(c / this.cols) * CHUNK, tops = new Int16Array(CHUNK * CHUNK);
     for (let y = 0; y < CHUNK; y++) for (let x = 0; x < CHUNK; x++) tops[(y << 4) | x] = this.height[(Y + y) * this.width + X + x]!;
     return { slabs, tops };
+  }
+
+  // El trozo c en w (ChunkPackWriter), como exportChunkPrepared pero sin un búfer por losa. false (y nada escrito) si
+  // alguna losa va a 2 bytes sin paleta
+  packChunk(c: number, w: ChunkPackWriter): boolean {
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, d = this.data[si];
+      if (this.count[si] && d && (!this.pal[si] || !(d instanceof Uint8Array))) return false;
+    }
+    const X = (c % this.cols) * CHUNK, Y = Math.floor(c / this.cols) * CHUNK;
+    for (let y = 0; y < CHUNK; y++) for (let x = 0; x < CHUNK; x++) w.i16(this.height[(Y + y) * this.width + X + x]!);
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, n = this.count[si]!;
+      if (!n) { w.u8w(0); continue; }
+      const d = this.data[si] as Uint8Array | null;
+      if (!d) { w.u8w(1); w.u16(this.uni[si]!); w.u32(n); continue; }
+      const p = this.pal[si]!, palN = this.palN[si]!;
+      w.u8w(2); w.u16(palN); w.u32(n);
+      for (let k = 0; k < palN; k++) w.u16(p[k]!);
+      w.bytes(d);
+    }
+    return true;
+  }
+  // Lo de packChunk, escrito en el trozo c: lo mismo que writeChunkPrepared con lo de exportChunkPrepared
+  unpackChunk(c: number, r: ChunkPackReader): void {
+    if (this.onSet) throw new Error('unpackChunk no avisa a onSet: escribe con set');
+    const tops = new Int16Array(CHUNK * CHUNK);
+    for (let i = 0; i < tops.length; i++) tops[i] = r.i16();
+    let any = false;
+    for (let s = 0; s < this.nz; s++) {
+      const si = c * this.nz + s, kind = r.u8r();
+      this.data[si] = null; this.pal[si] = null; this.uni[si] = 0; this.count[si] = 0; this.palN[si] = 0;
+      if (kind === 0) continue;
+      any = true;
+      if (kind === 1) { this.uni[si] = r.u16(); this.count[si] = r.u32(); continue; }
+      const palN = r.u16(), n = r.u32(), pal = new Uint16Array(256);
+      for (let k = 0; k < palN; k++) pal[k] = r.u16();
+      this.count[si] = n;
+      // (como writeChunkPrepared: llena de un solo valor, sin datos)
+      if (n === this.cap(s) && palN === 2) { this.uni[si] = pal[1]!; r.at += SLAB_CELLS; continue; }
+      this.data[si] = r.bytes(SLAB_CELLS); this.pal[si] = pal; this.palN[si] = palN;
+    }
+    if (any) this.alloc[c] = 1;
+    this.finishWritten(c, tops);
   }
 
   // ¿El trozo c no tiene ningún vóxel? (todas sus losas vacías)

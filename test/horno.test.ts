@@ -75,8 +75,10 @@ function channel() {
     if (m.kind === 'rect') rects.push({ ticket: m.ticket, rect: { ...m.rect } });
     if (m.kind === 'shift') shifts.push({ DX: m.DX, rows: m.rows });
     if (m.kind === 'chunks') for (const ch of m.list) {
+      // (lo del trozo en el búfer del mensaje: alturas y losas)
       let h = 0;
-      for (let i = 0; i < ch.tops.length; i++) h = Math.imul(h ^ ch.tops[i]!, 16777619);
+      const u = new Uint8Array(m.buf, ch.at, ch.len);
+      for (let i = 0; i < u.length; i++) h = Math.imul(h ^ u[i]!, 16777619);
       const k = `${m.id}:${ch.v}:${h}`;
       if (seen.has(k)) again++; else seen.add(k);
     }

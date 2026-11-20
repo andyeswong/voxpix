@@ -15,18 +15,19 @@
 // Lo que se pidió antes de un corrimiento de su espejo se salta (el principal ya lo descartó: un recuadro esperando al
 // worker no se traslada).
 import type { Palette } from '../core';
-import { StaticVoxels, type PreparedSlab } from './state';
+import { StaticVoxels, ChunkPackWriter, ChunkPackReader } from './state';
 import { bakeWorldJob, renderRect, readChunks, skyFromPick, skyReadChunks, shiftParams, shiftKeys, type Baked, type RectOut, type RemoteRects, type ScreenRect } from './bake';
 import type { LiveWindow } from './live';
 
 type Outline = 'none' | 'outer' | 'both';
 export interface MirrorBake { topZ: number; incline: number; outline: Outline; outlineColor?: string; options: string }
 // (v: su versión en la fuente; el worker no la usa: para contar lo mandado de más)
-export type SentChunk = { c: number; v: number; slabs: Array<PreparedSlab | null>; tops: Int16Array };
+// (los trozos van empaquetados en buf, uno detrás de otro: at y len, su sitio; ChunkPackWriter)
+export type SentChunk = { c: number; v: number; at: number; len: number };
 export type ToWorker =
   | { kind: 'mirror'; id: number; width: number; depth: number; zMin: number; zMax: number; palette: Palette; bake: MirrorBake }
   | { kind: 'drop'; id: number }
-  | { kind: 'chunks'; id: number; list: SentChunk[] }
+  | { kind: 'chunks'; id: number; list: SentChunk[]; buf: ArrayBuffer }
   // (y lo que se corre su imagen: el worker traslada lo pedido que tiene en cola, en vez de saltarlo)
   | { kind: 'shift'; id: number; dcx: number; dcy: number; DX: number; rows: number; dk: number }
   // (urgent: va antes que lo no urgente de la cola, en orden entre los urgentes: el núcleo de un giro con fundido)
@@ -86,7 +87,9 @@ export class BakeWorker {
     // aquí; y lo descartado que se canceló en el worker)
     moved: 0, movedSky: 0, lateShift: 0, canceled: 0,
     // (lo pedido con prioridad: el núcleo de un giro con fundido)
-    urgent: 0 };
+    urgent: 0,
+    // (lo mandado en bytes, y lo más que tardó un envío entero y su postMessage)
+    bytes: 0, syncMaxMs: 0, postMaxMs: 0 };
   private readonly mirrors = new Map<StaticVoxels, Mirror>();
   // (los últimos 32 espejos creados, con lo que tardó el primero de cada uno)
   readonly mirrorLog: MirrorLog[] = [];
@@ -127,22 +130,28 @@ export class BakeWorker {
   // Los trozos de `chunks` que el espejo no tiene en su versión de ahora, mandados. false: alguno no cabe en la forma de
   // mandar (lo pedido se hace aquí)
   private sync(b: Baked, m: Mirror, chunks: readonly number[]): boolean {
-    const s = b.source, t0 = performance.now(), list: SentChunk[] = [], transfer: Transferable[] = [];
-    let ok = true;
+    const s = b.source, t0 = performance.now(), list: SentChunk[] = [];
+    let ok = true, w: ChunkPackWriter | null = null;
     for (const c of chunks) {
       // (la versión de sus vóxeles: un touch, que solo marca para rehornear, no lo vuelve a mandar)
       const v = s.dataVersions[c]!;
       if (m.sent[c] === v) continue;
-      const e = s.exportChunkPrepared(c);
-      if (!e) { ok = false; break; }
+      w ??= new ChunkPackWriter();
+      const at = w.n;
+      if (!s.packChunk(c, w)) { ok = false; break; }
       if (m.sent[c] !== 0) this.stats.resent++;
-      list.push({ c, v, ...e });
+      list.push({ c, v, at, len: w.n - at });
       m.sent[c] = v;
-      transfer.push(e.tops.buffer);
-      for (const sl of e.slabs) if (sl) transfer.push(sl.d.buffer, sl.pal.buffer);
     }
-    if (list.length) { this.port.postMessage({ kind: 'chunks', id: m.id, list }, transfer); this.stats.chunks += list.length; }
+    if (list.length) {
+      // (un solo búfer transferido por mensaje: el clon cuesta por búfer)
+      const t1 = performance.now();
+      this.port.postMessage({ kind: 'chunks', id: m.id, list, buf: w!.buffer }, [w!.buffer]);
+      this.stats.chunks += list.length; this.stats.bytes += w!.n;
+      this.stats.postMaxMs = Math.max(this.stats.postMaxMs, performance.now() - t1);
+    }
     this.stats.syncMs += performance.now() - t0;
+    this.stats.syncMaxMs = Math.max(this.stats.syncMaxMs, performance.now() - t0);
     if (m.log.firstAsk < 0) { m.log.chunksFirst += list.length; m.log.syncMsFirst += performance.now() - t0; }
     if (!ok) this.stats.unsendable++;
     return ok;
@@ -306,7 +315,7 @@ export class BakeWorkerHost {
       case 'chunks': {
         const x = this.mirrors.get(m.id);
         const a0 = performance.now();
-        if (x) for (const ch of m.list) x.store.writeChunkPrepared(ch.c, ch.slabs, ch.tops);
+        if (x) for (const ch of m.list) x.store.unpackChunk(ch.c, new ChunkPackReader(m.buf, ch.at));
         if (x?.first) { x.first.chunksMs += performance.now() - a0; x.first.chunks += m.list.length; }
         break;
       }
