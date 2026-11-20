@@ -5,7 +5,7 @@
 // meta salen de un BFS hacia atrás, se guardan mientras no cambien la meta ni el mundo, y los cambios del mundo llegan
 // por watchChanges y rehacen solo las celdas tocadas. Con `budget`, la búsqueda se reparte entre ticks (advance). Para
 // cuerpos que se mueven con moveBodyLevels (src/runtime/levels.ts). docs/motor.md, "Caminos por niveles".
-import { NO_FOOT, shiftGrid, type WorldState } from './state';
+import { NO_FOOT, type WorldState } from './state';
 import { materialsOf } from '../core';
 import type { ChangeWatch } from './changes';
 
@@ -30,11 +30,6 @@ const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]
 // La dirección contraria de cada una de N8 (su índice)
 const BACK = N8.map(([dx, dy]) => N8.findIndex(([ex, ey]) => ex === -dx && ey === -dy));
 
-// Una escritura por página de 4 KB (el valor que ya tiene: no cambia nada)
-function touchPages(a: Uint8Array | Float64Array): void {
-  for (let k = 0, step = 4096 / a.BYTES_PER_ELEMENT; k < a.length; k += step) a[k] = a[k]!;
-}
-
 export class LevelPathField {
   readonly cols: number;
   readonly rows: number;
@@ -55,6 +50,37 @@ export class LevelPathField {
   private moves: Uint8Array;
   private floors: Uint8Array;           // por celda: cuántos suelos tiene (van seguidos desde el nivel 0)
   private goal = '';
+  // EL ANILLO: las rejillas no se mueven al correrse la ventana; se mueve su origen. La celda (i, j) de ahora está en la
+  // (i + ox, j + oy) de las rejillas, dando la vuelta (mod cols, mod rows). Un nodo es la celda de las rejillas y uno de
+  // sus suelos; lo que va por coordenadas (los vecinos, los bordes, los puntos) pasa por ix o por lx/ly. Correr con copia
+  // eran 29 MB por corrimiento en una ventana de 11 x 13 trozos (15-17 ms a 6x en un juego); con el anillo se limpia
+  // solo la franja que entra, a cambio de un 5-10 % más por nodo buscado
+  private ox = 0;
+  private oy = 0;
+  // La celda de las rejillas de la celda (i, j) de ahora (dentro del campo)
+  private ix(i: number, j: number): number {
+    let x = i + this.ox; if (x >= this.cols) x -= this.cols;
+    let y = j + this.oy; if (y >= this.rows) y -= this.rows;
+    return y * this.cols + x;
+  }
+  // Y al revés: la i y la j de ahora de una celda de las rejillas
+  private lx(cell: number): number { const x = cell % this.cols - this.ox; return x < 0 ? x + this.cols : x; }
+  private ly(cell: number): number { const y = Math.floor(cell / this.cols) - this.oy; return y < 0 ? y + this.rows : y; }
+  // Las celdas i0..i1 de la fila j (de ahora) en las rejillas: uno o dos tramos seguidos [a, z) (dos si dan la vuelta)
+  private runs(j: number, i0: number, i1: number, f: (a: number, z: number) => void): void {
+    const a = this.ix(i0, j), z = this.ix(i1, j);
+    if (z >= a) { f(a, z + 1); return; }
+    const row = a - (a % this.cols);
+    f(a, row + this.cols); f(row, z + 1);
+  }
+  // Las celdas [i0, i1] x [j0, j1] (de ahora), como recién entradas: sin suelo, sin distancia, sin pasos guardados
+  private clear(i0: number, j0: number, i1: number, j1: number): void {
+    const L = this.L, per = 8 * L * L;
+    for (let j = j0; j <= j1; j++) this.runs(j, i0, i1, (a, z) => {
+      this.floor.fill(NO_FOOT, a * L, z * L); this.ceil.fill(0, a * L, z * L); this.dist.fill(-1, a * L, z * L);
+      this.floors.fill(0, a, z); this.moves.fill(0, a * per, z * per);
+    });
+  }
   private watch: ChangeWatch;
   private around: number[] = [];
   private offsets: number[] = [];       // desplazamientos del cuerpo que se prueban (el centro primero)
@@ -70,11 +96,6 @@ export class LevelPathField {
     this.dist = new Int32Array(this.cols * this.rows * this.L).fill(-1);
     this.floors = new Uint8Array(this.cols * this.rows);
     this.moves = new Uint8Array(this.cols * this.rows * this.L * 8 * this.L);
-    // Las páginas de lo que no se escribe entero al construir, escritas ya: el sistema da la memoria nueva al tocarla, y
-    // moves (y ceil y floors donde no hay suelo) no se escriben enteros hasta el primer shift. Sin esto, ese primer shift
-    // paga cada página (en una ventana viva de 11 x 13 trozos, moves son 18 MB: ~10 veces lo que cuesta después, más de
-    // 100 ms a 6x en un juego); así lo paga la carga
-    touchPages(this.moves); touchPages(this.ceil); touchPages(this.floors);
     const r = this.radius, span = Math.ceil(r);
     for (let dy = -span; dy <= span; dy++) for (let dx = -span; dx <= span; dx++) if (Math.hypot(dx, dy) <= r) this.around.push(dx, dy);
     // Lo que el cuerpo sobresale de la celda por cada lado (la columna central es la c >> 1 de la celda)
@@ -108,7 +129,7 @@ export class LevelPathField {
   private fill(i0: number, j0: number, i1: number, j1: number): void {
     const st = this.state, s = st.solid, c = this.cell, mt = materialsOf(s.palette);
     for (let j = j0; j <= j1; j++) for (let i = i0; i <= i1; i++) {
-      const base = (j * this.cols + i) * this.L;
+      const c0 = this.ix(i, j), base = c0 * this.L;
       for (let k = 0; k < this.L; k++) this.floor[base + k] = NO_FOOT;
       const cx = Math.min(s.width - 1, i * c + (c >> 1)), cy = Math.min(s.depth - 1, j * c + (c >> 1));
       let air = Infinity, n = 0, roof = Infinity;                  // aire seguido encima (el cielo, infinito) y su techo
@@ -121,7 +142,7 @@ export class LevelPathField {
         }
         air = 0; roof = z;
       }
-      this.floors[j * this.cols + i] = n;
+      this.floors[c0] = n;
     }
   }
 
@@ -174,25 +195,26 @@ export class LevelPathField {
     this.fill(i0, j0, i1, j1);
     const per = 8 * this.L * this.L;
     for (let j = Math.max(0, j0 - 1); j <= Math.min(this.rows - 1, j1 + 1); j++) {
-      const a = (j * this.cols + Math.max(0, i0 - 1)) * per, z = (j * this.cols + Math.min(this.cols - 1, i1 + 1) + 1) * per;
-      this.moves.fill(0, a, z);
+      this.runs(j, Math.max(0, i0 - 1), Math.min(this.cols - 1, i1 + 1), (a, z) => this.moves.fill(0, a * per, z * per));
     }
   }
 
   // LA VENTANA VIVA (LiveWindow.attach, o el onShift del juego): el mundo se corrió dx, dy vóxeles (lo que estaba en la x
-  // pasa a x - dx; múltiplos de cell). Las celdas se corren con él (suelos, techos, pasos guardados y distancias); las
+  // pasa a x - dx; múltiplos de cell). Las celdas se corren con él (suelos, techos, pasos guardados y distancias: se corre
+  // el origen del anillo, sin copiar nada); las
   // que entran quedan sin suelo hasta que se escriba su trozo (el aviso de watchChanges las rellena), y las del borde se
   // vuelven a mirar (su cuerpo ya no tiene vecinas fuera). La meta se vuelve a buscar en la consulta siguiente (va en
   // coordenadas de antes); con budget, mientras, contestan las distancias de antes, corridas
   shift(dx: number, dy: number): void {
-    const c = this.cell, L = this.L, { cols, rows } = this;
+    const c = this.cell, { cols, rows } = this;
     if (dx % c || dy % c) throw new Error(`LevelPathField.shift: ${dx}, ${dy} no son múltiplos de la celda (${c})`);
     const i = dx / c, j = dy / c;
-    shiftGrid(this.floor, cols, rows, L, i, j, NO_FOOT);
-    shiftGrid(this.ceil, cols, rows, L, i, j, 0);
-    shiftGrid(this.dist, cols, rows, L, i, j, -1);
-    shiftGrid(this.floors, cols, rows, 1, i, j, 0);
-    shiftGrid(this.moves, cols, rows, 8 * L * L, i, j, 0);
+    // El origen del anillo se corre (lo de la celda i + dx pasa a ser la i), y lo que entra se limpia: la franja del lado
+    // que entra (todo el campo, como mucho)
+    this.ox = (((this.ox + i) % cols) + cols) % cols; this.oy = (((this.oy + j) % rows) + rows) % rows;
+    const ci = Math.max(-cols, Math.min(cols, i)), cj = Math.max(-rows, Math.min(rows, j));
+    if (ci > 0) this.clear(cols - ci, 0, cols - 1, rows - 1); else if (ci < 0) this.clear(0, 0, -ci - 1, rows - 1);
+    if (cj > 0) this.clear(0, rows - cj, cols - 1, rows - 1); else if (cj < 0) this.clear(0, 0, cols - 1, -cj - 1);
     // El borde nuevo del lado que sale (eran celdas de dentro); el del lado que entra está vacío hasta que se escriba, y
     // los otros dos no cambian
     const b = Math.ceil((this.radius + 1) / c);
@@ -207,7 +229,7 @@ export class LevelPathField {
   }
 
   private cellOf(p: { x: number; y: number }): number {
-    return Math.min(this.rows - 1, Math.max(0, Math.floor(p.y / this.cell))) * this.cols + Math.min(this.cols - 1, Math.max(0, Math.floor(p.x / this.cell)));
+    return this.ix(Math.min(this.cols - 1, Math.max(0, Math.floor(p.x / this.cell))), Math.min(this.rows - 1, Math.max(0, Math.floor(p.y / this.cell))));
   }
   // El nodo de un punto: su celda y el suelo más cercano a su z (de los que no quedan por encima de z + step)
   private nodeOf(p: LevelPoint): number {
@@ -230,9 +252,10 @@ export class LevelPathField {
     if (fa === NO_FOOT || fb === NO_FOOT || fb - fa > this.step || fa - fb > this.maxDrop) return false;
     const L = this.L, ca = Math.floor(a / L), cb = Math.floor(b / L), top = Math.max(fa, fb), hi = top + this.height;
     const s = this.state.solid, c = this.cell;
-    const col = (cell: number): [number, number] => [Math.min(s.width - 1, (cell % this.cols) * c + (c >> 1)), Math.min(s.depth - 1, Math.floor(cell / this.cols) * c + (c >> 1))];
+    const col = (cell: number): [number, number] => [Math.min(s.width - 1, this.lx(cell) * c + (c >> 1)), Math.min(s.depth - 1, this.ly(cell) * c + (c >> 1))];
     // Las del centro: el techo de cada suelo (lo que hay libre encima)
     if (this.ceil[a]! < hi || this.ceil[b]! < hi) return false;
+    // (en celdas de las rejillas: la de lado comparte fila con una y columna con la otra, también en el anillo)
     const ax = ca % this.cols, bx = cb % this.cols;
     if (ax !== bx && ca - ax !== cb - bx) for (const cell of [(ca - ax) + bx, (cb - bx) + ax]) {
       // De lado: un suelo de esa celda cuyo hueco cubra el paso; si no lo hay (no se guardan todos), se mira la columna
@@ -270,11 +293,11 @@ export class LevelPathField {
     dist[g] = 0; q[w.tail++] = g;
     // Además, los de las celdas a `near` (en el mismo suelo, más o menos step)
     if (near > 0) {
-      const span = Math.ceil(near / this.cell), gc = Math.floor(g / L), gx = gc % cols, gy = Math.floor(gc / cols), fg = this.floor[g]!;
+      const span = Math.ceil(near / this.cell), gc = Math.floor(g / L), gx = this.lx(gc), gy = this.ly(gc), fg = this.floor[g]!;
       for (let y = gy - span; y <= gy + span; y++) for (let x = gx - span; x <= gx + span; x++) {
         if (x < 0 || y < 0 || x >= cols || y >= rows) continue;
         if (Math.hypot((x - gx) * this.cell, (y - gy) * this.cell) > near) continue;
-        for (let k = 0; k < L; k++) { const n = (y * cols + x) * L + k, f = this.floor[n]!; if (f !== NO_FOOT && Math.abs(f - fg) <= this.step && dist[n]! < 0) { dist[n] = 0; q[w.tail++] = n; } }
+        for (let k = 0; k < L; k++) { const n = this.ix(x, y) * L + k, f = this.floor[n]!; if (f !== NO_FOOT && Math.abs(f - fg) <= this.step && dist[n]! < 0) { dist[n] = 0; q[w.tail++] = n; } }
       }
     }
   }
@@ -283,15 +306,20 @@ export class LevelPathField {
   private expand(nodes: number): boolean {
     const w = this.work;
     if (!w) return true;
-    const { cols, rows, L } = this, dist = w.dist, q = w.q;
+    const { cols, rows, L, ox, oy } = this, dist = w.dist, q = w.q;
     let head = w.head, tail = w.tail;
     for (let left = nodes; head < tail && left > 0; left--) {
-      const n = q[head++]!, cell = Math.floor(n / L), x = cell % cols, y = Math.floor(cell / cols);
+      // (ix, lx y ly a mano: es el bucle caliente)
+      const n = q[head++]!, cell = Math.floor(n / L);
+      let x = cell % cols - ox; if (x < 0) x += cols;
+      let y = Math.floor(cell / cols) - oy; if (y < 0) y += rows;
       if (dist[n]! >= this.reach) continue;
       for (let d = 0; d < 8; d++) {
         const nx = x + N8[d]![0], ny = y + N8[d]![1];
         if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-        const nc = ny * cols + nx, nb = nc * L, nf = this.floors[nc]!;
+        let px = nx + ox; if (px >= cols) px -= cols;
+        let py = ny + oy; if (py >= rows) py -= rows;
+        const nc = py * cols + px, nb = nc * L, nf = this.floors[nc]!;
         for (let k = 0; k < nf; k++) {
           const m = nb + k;
           if (dist[m]! >= 0 || !this.move(m, BACK[d]!, n)) continue;
@@ -354,21 +382,25 @@ export class LevelPathField {
   }
 
   private next(n: number): number {
-    const { cols, rows, L, dist } = this, here = dist[n]!;
+    const { cols, rows, L, dist, ox, oy } = this, here = dist[n]!;
     if (here <= 0) return here === 0 ? -1 : -2;
-    const cell = Math.floor(n / L), x = cell % cols, y = Math.floor(cell / cols);
+    const cell = Math.floor(n / L);
+    let x = cell % cols - ox; if (x < 0) x += cols;
+    let y = Math.floor(cell / cols) - oy; if (y < 0) y += rows;
     let best = -2, bd = here;
     for (let e = 0; e < 8; e++) {
       const nx = x + N8[e]![0], ny = y + N8[e]![1];
       if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-      for (let k = 0; k < L; k++) { const m = (ny * cols + nx) * L + k, d = dist[m]!; if (d >= 0 && d < bd && this.move(n, e, m)) { bd = d; best = m; } }
+      let px = nx + ox; if (px >= cols) px -= cols;
+      let py = ny + oy; if (py >= rows) py -= rows;
+      for (let k = 0; k < L; k++) { const m = (py * cols + px) * L + k, d = dist[m]!; if (d >= 0 && d < bd && this.move(n, e, m)) { bd = d; best = m; } }
     }
     return best;
   }
 
   private point(n: number): LevelPoint {
     const cell = Math.floor(n / this.L), c = this.cell;
-    return { x: (cell % this.cols) * c + c / 2, y: Math.floor(cell / this.cols) * c + c / 2, z: this.floor[n]! };
+    return { x: this.lx(cell) * c + c / 2, y: this.ly(cell) * c + c / 2, z: this.floor[n]! };
   }
 
   // Hacia dónde ir (unitario en x e y) desde `from` para llegar a `to`; null si ya está (a `near`) o no hay camino

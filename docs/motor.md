@@ -616,7 +616,10 @@ compositor.frame(win.state, win.baked, opts);
   copia, el resto recuadro y cielo). Lo demás, unos 3,5 s por la cola normal (`bun scripts/bench-viva.ts 1 0` con
   `GIRAR=1`). En el navegador: `viva.html?girar=6` (Q cada 6 s; `presu=ms`, el presupuesto cercano durante el fundido).
 - Caminos: `PathField` y `LevelPathField` se enganchan con `win.attach(campo)` y se corren en el cambio (sus celdas,
-  pasos guardados y distancias; lo que entra, sin suelo hasta que se escribe su trozo). Además, en el cambio la ventana
+  pasos guardados y distancias; lo que entra, sin suelo hasta que se escribe su trozo). `LevelPathField` no copia sus
+  rejillas al correrse: son un anillo, se corre su origen y se limpia solo la franja que entra (copiar eran ~30 MB por
+  cambio en una ventana de 11 x 13 trozos, 15-17 ms a 6x en un juego, y el primero además la memoria nueva, más de
+  100 ms); a cambio, cada nodo buscado cuesta un 5-10 % más. Además, en el cambio la ventana
   corre lo apuntado y sin tomar de todos los `watchChanges` (`ChangeWatch.shift`), así que también vale para los del
   juego. Con una ventana grande, una meta que se mueve costaría una búsqueda de todo el campo cada vez que cambia de
   celda: `reach` (40 pasos por defecto) para la búsqueda a esa distancia de la meta, y más lejos no hay camino (`dir`
