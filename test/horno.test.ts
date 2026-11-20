@@ -480,3 +480,83 @@ describe('BakeWorker: lo de otro giro en la cola', () => {
     expect(seen).toBeGreaterThan(0);
   });
 });
+
+// Girar con fundido (turnTo) con el worker: el núcleo del giro nuevo se pide fuera, con prioridad, y todo a la vez
+describe('BakeWorker: el núcleo de un giro con fundido', () => {
+  // (sin juntar columnas: el núcleo sale en varios recuadros, como en una pantalla ancha)
+  const SHAPE = { rebake: { band: 16, rows: 64, merge: false } };
+  const setup = () => {
+    const ch = channel(), win = make([0, 0], undefined, SHAPE), bw = new BakeWorker(ch.port), budget = new FrameBudget(1e6);
+    bw.attach(win);
+    ch.setStep(() => bw.frame());
+    const x = walk(win, ch, budget, TV / 2, TV * 1.5);
+    drain(win, ch, budget, x);
+    return { ch, win, bw, budget, x };
+  };
+  // (lo de un espejo: su horneado, para ver que el del giro dejado ya no pide fuera)
+  const mirrorsOf = (bw: BakeWorker) => [...(bw as unknown as { mirrors: Map<unknown, { b: Baked }> }).mirrors.values()];
+
+  it('lo pide todo antes del cambio, sin esperar uno a otro, con prioridad; y la imagen igual', () => {
+    const { ch, win, bw, budget, x } = setup();
+    const urgent0 = bw.stats.urgent;
+    win.turnTo(1);
+    // (el worker no pinta nada: lo pedido del núcleo se queda fuera)
+    let most = 0;
+    for (let k = 0; k < 400 && win.quarter === 0; k++) { budget.run(); ch.step(0); win.update(x, Y, budget); most = Math.max(most, bw.outstanding); if (k > 50 && most > 1 && bw.outstanding === most) break; }
+    expect(win.quarter).toBe(0);
+    expect(most).toBeGreaterThan(1);
+    expect(bw.stats.urgent - urgent0).toBe(most);
+    // (y los cielos del núcleo, pedidos cuando llegan sus recuadros, también urgentes)
+    const skies: boolean[] = [], post = ch.port.postMessage;
+    ch.port.postMessage = (m, t) => { if (m.kind === 'sky' && win.quarter === 0) skies.push(!!m.urgent); post(m, t); };
+    drain(win, ch, budget, x);
+    expect(skies.length).toBeGreaterThan(0);
+    expect(skies.every(Boolean)).toBe(true);
+    expect(win.quarter).toBe(1);
+    expect(bw.outstanding).toBe(0);
+    const ref = make([0, 0], undefined, SHAPE), rb = new FrameBudget(1e6);
+    drain(ref, null, rb, walk(ref, null, rb, TV / 2, TV * 1.5));
+    ref.turnTo(1);
+    drain(ref, null, rb, x);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+
+  it('en el worker, lo urgente pasa delante de lo que ya esperaba, en su orden', () => {
+    const { ch, win, bw } = setup();
+    const b = win.baked, W = b.width, y0 = Math.floor(b.height / 2);
+    const r = (k: number) => ({ x0: 8 + k * 16, y0, x1: 8 + k * 16 + 7, y1: y0 + 7 });
+    const urgent = (bw as unknown as { remoteFor(b: Baked, u: boolean): typeof b.remote }).remoteFor(b, true)!;
+    expect(W).toBeGreaterThan(8 + 5 * 16);
+    const A = b.remote!.ask(r(0))!, B = b.remote!.ask(r(1))!, U1 = urgent.ask(r(2))!, U2 = urgent.ask(r(3))!;
+    const order: string[] = [];
+    const named = [['A', A], ['B', B], ['U1', U1], ['U2', U2]] as const;
+    for (let k = 0; k < 4; k++) {
+      ch.step(1);
+      for (const [n, h] of named) if (h.ready!() && !order.includes(n)) order.push(n);
+    }
+    expect(order).toEqual(['U1', 'U2', 'A', 'B']);
+  });
+
+  it('un núcleo dejado a medias (se pide otro giro antes del cambio) cancela lo que pidió fuera: nada se queda esperando ni guarda su horneado, y la imagen igual', () => {
+    const { ch, win, bw, budget, x } = setup();
+    win.turnTo(1);
+    for (let k = 0; k < 400 && bw.outstanding < 2; k++) { budget.run(); ch.step(0); win.update(x, Y, budget); }
+    expect(win.quarter).toBe(0);
+    expect(bw.outstanding).toBeGreaterThan(1);
+    const left = mirrorsOf(bw).map((m) => m.b).filter((b) => b !== win.baked);
+    expect(left.length).toBe(1);
+    const canceled = bw.stats.canceled;
+    win.turnTo(2);
+    expect(bw.stats.canceled).toBeGreaterThan(canceled);
+    expect(bw.outstanding).toBe(0);
+    expect(left[0]!.remote).toBeUndefined();
+    drain(win, ch, budget, x);
+    expect(win.quarter).toBe(2);
+    expect(bw.outstanding).toBe(0);
+    const ref = make([0, 0], undefined, SHAPE), rb = new FrameBudget(1e6);
+    drain(ref, null, rb, walk(ref, null, rb, TV / 2, TV * 1.5));
+    ref.turnTo(2);
+    drain(ref, null, rb, x);
+    expect(diff(win.baked, ref.baked)).toBe(0);
+  });
+});

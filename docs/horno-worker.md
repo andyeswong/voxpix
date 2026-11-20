@@ -46,7 +46,13 @@ siguiente, o al pasar de `keep`. Lo pedido antes de un corrimiento de su espejo 
 
 ## Qué se queda en el hilo principal
 
-- **Lo cercano** (`near`): el núcleo del giro con fundido y lo de prioridad 0. Llega antes pintado aquí que ida y vuelta.
+- **Lo cercano** (`near`): lo de prioridad 0. Llega antes pintado aquí que ida y vuelta.
+
+El núcleo del giro con fundido (`turnTo`) sí va fuera, y con prioridad (`urgent`: en el worker pasa delante de lo que ya
+esperaba). Pintado aquí iba repartido en el presupuesto cercano (8 ms por cuadro): ~650 ms de CPU tardaban ~1,8 s de
+reloj hasta el cambio, y el primer recuadro del worker llegaba después de eso y de copiar lo demás (2-3 s de la tecla).
+Sus trabajos piden a la vez (el que espera al worker no para a los de detrás), y si el giro se deja antes del cambio, lo
+pedido se cancela.
 - **La sección (el corte)**: depende de la caja de corte y del objetivo, que cambian cada cuadro; se queda aquí como hoy.
 - **Publicar** lo que llega (`publishRect` con su máscara): ~0,1 ms por recuadro.
 - **El corrimiento** de la imagen (`shiftBakedJob`): ~20 ms por corrimiento, troceado en pasos. Sigue aquí.
@@ -93,8 +99,9 @@ en el navegador de viva:
    - el vecino que cambia mientras su recuadro está fuera (lo de f9341d4).
 2. **Sin envolver.** La ventana, sus fuentes y sus horneados no ganan propiedades propias (salvo `remote` y
    `remoteStats`), y `shift`, `shiftJob`, `touch` y `set` siguen en el prototipo.
-3. **Girar no rehace el espejo.** Girar 0 → 1 → 0: un espejo por fuente y ninguno tirado. Con `turnTo`, ningún espejo
-   antes del cambio: el núcleo se pinta aquí.
+3. **Girar no rehace el espejo.** Girar 0 → 1 → 0: un espejo por fuente y ninguno tirado. Con `turnTo`, el espejo del
+   giro nuevo se crea antes del cambio: su núcleo se pide fuera, todo a la vez y urgente (también sus cielos), lo urgente
+   pasa delante en el worker, y un núcleo dejado a medias cancela lo pedido y suelta su remote.
 4. **Lo saltado se cuenta, y nada se manda dos veces.** Pedidos = recibidos + saltados, y ningún trozo se manda dos veces
    con la misma versión.
 5. **Mutaciones**: sin corrimiento en el espejo, versiones mandadas sin correr, sin mandar ediciones, sin saltar, el
