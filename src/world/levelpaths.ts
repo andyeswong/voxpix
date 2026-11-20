@@ -30,6 +30,11 @@ const N8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]
 // La dirección contraria de cada una de N8 (su índice)
 const BACK = N8.map(([dx, dy]) => N8.findIndex(([ex, ey]) => ex === -dx && ey === -dy));
 
+// Una escritura por página de 4 KB (el valor que ya tiene: no cambia nada)
+function touchPages(a: Uint8Array | Float64Array): void {
+  for (let k = 0, step = 4096 / a.BYTES_PER_ELEMENT; k < a.length; k += step) a[k] = a[k]!;
+}
+
 export class LevelPathField {
   readonly cols: number;
   readonly rows: number;
@@ -65,6 +70,11 @@ export class LevelPathField {
     this.dist = new Int32Array(this.cols * this.rows * this.L).fill(-1);
     this.floors = new Uint8Array(this.cols * this.rows);
     this.moves = new Uint8Array(this.cols * this.rows * this.L * 8 * this.L);
+    // Las páginas de lo que no se escribe entero al construir, escritas ya: el sistema da la memoria nueva al tocarla, y
+    // moves (y ceil y floors donde no hay suelo) no se escriben enteros hasta el primer shift. Sin esto, ese primer shift
+    // paga cada página (en una ventana viva de 11 x 13 trozos, moves son 18 MB: ~10 veces lo que cuesta después, más de
+    // 100 ms a 6x en un juego); así lo paga la carga
+    touchPages(this.moves); touchPages(this.ceil); touchPages(this.floors);
     const r = this.radius, span = Math.ceil(r);
     for (let dy = -span; dy <= span; dy++) for (let dx = -span; dx <= span; dx++) if (Math.hypot(dx, dy) <= r) this.around.push(dx, dy);
     // Lo que el cuerpo sobresale de la celda por cada lado (la columna central es la c >> 1 de la celda)
