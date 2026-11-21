@@ -1181,6 +1181,10 @@ water.follow(state.watchChanges());                                 // picar o p
     no: quitaría los vóxeles y la celda seguiría siendo agua (`skip` y `regionWater` en su lugar). Mira cada columna desde arriba
     y para en el primer vóxel que no es agua: el agua de una cueva bajo tierra se queda como vóxeles.
   - El trozo se escribe con lo suyo (lo picado) antes de `load`: el fondo de lo guardado tiene que ser el de sus vóxeles.
+    El agua se carga lo último del trozo: en `onLoad`, después de escribir lo del juego (la ventana corre el `loadJob` que
+    devuelve después de `onLoad`, y lee los vóxeles al correr); con `fill`, como último paso de su trabajo. Lo que se
+    escriba en el trozo después, mientras la ventana lo carga, llega también como `'load'` y `follow` lo salta: el agua
+    no se enteraría.
   - Lo comprueban `test/agua-cargar.test.ts` y, con la ventana de verdad andando de ida y vuelta (también con
     `prepareTrozo`), `test/agua-ventana.test.ts`: el agua queda como en una ventana hecha de nuevo ahí, sin agua en la
     rejilla ni en los vóxeles, y lo que sale moviéndose vuelve como salió.
