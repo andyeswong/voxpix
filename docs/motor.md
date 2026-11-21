@@ -377,7 +377,19 @@ installAgent(window, agent);                                 // window.voxpixAge
 - `register(name, fn, help)` / `act(name, args)` / `list()`: las órdenes del juego. `act` siempre contesta
   `{ ok, msg, ... }`: una orden que no existe, que lanza un error o que no devuelve eso, también.
 - `step(n, input?)`: n ticks de la simulación con la misma entrada, sin reloj (la misma partida que n `step` a mano).
-- Lo que no hace (aún): andar a un sitio (sería con `LevelPathField`) y decir qué entidad hay bajo un píxel.
+- `entityAt(sx, sy)`: la entidad que se pinta en un píxel: la más cercana de las que lo cubren y no quedan detrás de lo
+  pintado ahí (el escenario o, donde la sección sustituye, lo de ella), con la misma regla que el cuadro (`frame2D`).
+  `test/agente-andar.test.ts` lo compara píxel a píxel con lo que cambia el cuadro al poner la entidad, con una pared
+  delante y con la sección. No cuenta el agua ni los efectos, que van encima.
+- `goTo({ cell } | { pixel } | { point }, { maxTicks, near, stuckTicks })`: anda con los caminos del motor (`paths`, un
+  `LevelPathField` con el cuerpo de quien anda) y la simulación (`sim`: la entrada de cada tick es la dirección del
+  camino, como unos mandos). Una celda: encima si es sólida, en su suelo si es aire; un píxel: encima de lo que se ve
+  ahí. Contesta "llegó en N ticks", "no hay camino", "no llegó en N ticks (le faltan V vóxeles)" con lo que le quedaba
+  del camino, o "atascado". Si un tick no avanza (contra una esquina), prueba un eje y luego el otro, para deslizarse;
+  en la celda de la meta va en línea recta al punto. Con `budget`, espera a que acabe la búsqueda.
+- Ojo, para quien use los caminos con un cuerpo: un camino puede pasar por una celda porque el cuerpo cabe desplazado
+  dentro de ella, pero `dir` apunta a su centro; con un cuerpo que justo cabe, la colisión puede no dejarlo pasar por
+  ahí (el test usa caminos de radio 3 para un cuerpo de radio 2).
 
 ## Terreno por semilla
 

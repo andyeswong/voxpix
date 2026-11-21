@@ -28,6 +28,7 @@ import type { ViewJob, RectOut } from '../../../src/world/bake';
 import maiaFile from '../../../models/maia/maia.json';
 import type { Frame2DOptions } from '../../../src/world/frame2d';
 import { SectionPainter, sectionAround } from '../../../src/world/section';
+import { AgentHost, installAgent } from '../../../src/agent/agent';
 import * as bakeMod from '../../../src/world/bake';
 import type { Baked } from '../../../src/world/bake';
 
@@ -182,6 +183,17 @@ void (async () => {
   let nextBurst = 2000;
   const entrada: { a?: number; abiertoMs?: number; corteMs?: number; c800?: string; final?: string; finalMs?: number; rects800?: number; pendientes800?: string[]; seccionMs?: number; cola800?: string[] } = {};
   let painter: SectionPainter | null = null, secFrames = 0, secUnready = 0, secMoves = 0, secMoved = 0;
+  // ?agente=1: la interfaz para agentes en window.voxpixAgent (la vista, el personaje, los caminos si hay ?caminos=1; sin
+  // simulación: aquí se anda por guion), y window.__vivaAgente.pixel() el píxel del centro del personaje en la imagen
+  if (q.get('agente') === '1') {
+    const host = new AgentHost({ state: win.state, grid: win.grid, look: () => ({ view: win.view, baked: win.baked, section: painter?.layer() ?? null }),
+      player: () => { const e = win.state.entities.get(id); return e ? { x: e.x, y: e.y, z: e.z } : null; }, playerEntity: id, ...(field ? { paths: field } : {}) });
+    installAgent(window as unknown as Record<string, unknown>, host);
+    (window as unknown as { __vivaAgente: unknown }).__vivaAgente = {
+      id,
+      pixel: () => { const e = win.state.entities.get(id)!; const [vx, vy] = win.view.camera.pointToView(e.x, e.y); const [px, py] = win.baked.cam.project(vx + 0.5, vy, e.z + 8); return [Math.floor(px), Math.floor(py)]; },
+    };
+  }
   const secWhy: Record<string, number> = {}, SEC_RECENT = 6, secRuns: number[] = [];
   let secRun = 0;
   const worst: Array<Record<string, number | boolean> & { iv: number }> = [];

@@ -238,7 +238,7 @@ describe('interfaz para agentes', () => {
     const win: Record<string, unknown> = {};
     installAgent(win, host);
     const api = win.voxpixAgent as Record<string, (...a: unknown[]) => unknown>;
-    expect(Object.keys(api).sort()).toEqual(['act', 'actions', 'describe', 'probe', 'reach', 'step', 'visible']);
+    expect(Object.keys(api).sort()).toEqual(['act', 'actions', 'describe', 'entityAt', 'goTo', 'probe', 'reach', 'step', 'visible']);
     const vis = api.visible!() as unknown[];
     expect(vis.length).toBeGreaterThan(50);
     expect(JSON.parse(JSON.stringify(vis))).toEqual(vis);

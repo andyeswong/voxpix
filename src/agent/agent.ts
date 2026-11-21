@@ -9,6 +9,8 @@
 //   agent.describe({ at: p, radius: 6 }).text            // capas por z, una letra por celda
 //   agent.act('picar', { cell: [86, 70, 6] })            // { ok: false, msg: 'fuera de alcance (30,2 > 24)' }
 //   agent.step(10)                                       // 10 ticks, sin reloj
+//   agent.entityAt(sx, sy)                               // la entidad que se pinta en ese píxel, o nada
+//   agent.goTo({ cell: [86, 70, 6] })                    // andar con los caminos del motor (paths): llegó, o por qué no
 //
 // Todo lo que devuelve es JSON (objetos y arrays planos). docs/motor.md, "Interfaz para agentes".
 import type { WorldState } from '../world/state';
@@ -18,12 +20,17 @@ import type { WorldView } from '../world/view';
 import type { Baked } from '../world/bake';
 import type { SectionLayer } from '../world/section';
 import { NO_INPUT, type Steppable, type TickInput } from '../runtime/runtime';
+import { sectionAt } from '../world/section';
+import { entitySprite, type Frame2DOptions } from '../world/frame2d';
+import type { LevelPathField, LevelPoint } from '../world/levelpaths';
 
 export type Vec3 = [number, number, number];
 export interface Point { x: number; y: number; z: number }
 
 // Lo que se ve en este cuadro: la vista, su imagen horneada y la capa de sección con que se compone (si la hay)
-export interface AgentLook { view: WorldView; baked: Baked; section?: SectionLayer | null }
+// (frame: las opciones con que se compone el cuadro; entityAt las usa para el sprite de cada entidad: el contorno cambia
+// su borde. Sin ellas, el contorno del horneado)
+export interface AgentLook { view: WorldView; baked: Baked; section?: SectionLayer | null; frame?: Partial<Frame2DOptions> }
 
 // Una marca en el texto: un carácter en la celda de sus pies, con su posición exacta en vóxeles
 export interface AgentMark { ch: string; x: number; y: number; z: number; name?: string }
@@ -41,7 +48,13 @@ export interface AgentHostOptions {
   letters?: Record<string, string>;        // letra fija por id de bloque (el resto se reparte solo)
   entities?: boolean;                      // marcar las entidades del mundo con '*' (por defecto sí, salvo la del jugador)
   playerEntity?: number | string | null;   // la entidad que dibuja al jugador (no se marca dos veces)
+  paths?: LevelPathField;                  // los caminos para goTo (con su cuerpo: radio, alto, escalón)
 }
+
+// A dónde ir: una celda de la rejilla (encima si es sólida, en su suelo si es aire), lo que se ve en un píxel (encima del
+// vóxel) o un punto del mundo
+export type GoToTarget = { cell: Vec3 } | { pixel: [number, number] } | { point: Point };
+export interface GoToOptions { maxTicks?: number; near?: number; stuckTicks?: number }
 
 export interface DescribeOptions {
   at?: Point;                // el centro, en vóxeles del mundo (por defecto, el jugador)
@@ -137,6 +150,91 @@ export class AgentHost {
     const d = Math.hypot(gap(p.x, b.x0, b.x1 + 1), gap(p.y, b.y0, b.y1 + 1), gap(p.z, b.z0, b.z1 + 1));
     const ok = d <= r;
     return { ok, msg: ok ? 'al alcance' : `fuera de alcance (${fmt(d)} > ${r})`, distance: d };
+  }
+
+  // La entidad que se pinta en el píxel (sx, sy) de la imagen horneada (la más cercana de las que lo cubren y no quedan
+  // detrás de lo pintado ahí: el escenario o, donde la sección sustituye, lo que pinta ella; la misma regla que el
+  // cuadro, frame2D), o nada. Cuenta el escenario y las entidades; no el agua ni los efectos, que van encima
+  entityAt(sx: number, sy: number): AgentResult {
+    const look = this.opts.look?.();
+    if (!look) return { ok: false, msg: 'no hay vista' };
+    const { view, baked, section } = look, rs = view.frame();
+    if (sx < 0 || sy < 0 || sx >= baked.width || sy >= baked.height) return { ok: false, msg: 'fuera de la imagen' };
+    const q = section ? sectionAt(section, sx, sy) : -1;
+    const ground = q >= 0 ? section!.depth[q]! : baked.depth[sy * baked.width + sx]!;
+    const o = { vx: 0, vy: 0, vw: baked.width, vh: baked.height, outline: baked.options.outline, ...(look.frame ?? {}) } as Frame2DOptions;
+    let best: { id: unknown; depth: number } | null = null;
+    for (const e of rs.entities) {
+      if (e.ghost !== undefined) continue;
+      const d = entitySprite(baked, e, o), i = sx - d.offX, j = sy - d.offY, W = d.img.width, H = d.img.height;
+      if (i < 0 || j < 0 || i >= W || j >= H || !d.img.rgba[(j * W + i) * 4 + 3]) continue;
+      const depth = Math.fround(d.img.depth[j * W + i]! + Math.fround(d.dOff));
+      // (lo de delante la tapa: como frame2D, delante si queda al menos 0,5 por delante de lo pintado)
+      if (depth >= ground - 0.5) continue;
+      if (!best || depth < best.depth) best = { id: e.id, depth };
+    }
+    if (!best) return { ok: false, msg: 'ninguna entidad en ese píxel' };
+    const e = this.opts.state.entities.get(best.id as never);
+    return { ok: true, msg: `entidad ${String(best.id)}`, id: best.id, at: e ? [e.x, e.y, e.z] : null };
+  }
+
+  // Andar hasta un sitio con los caminos del motor (opts.paths) y la simulación (opts.sim: la entrada de cada tick es la
+  // dirección del camino, como si fueran los mandos), tick a tick hasta llegar (a `near` vóxeles), quedarse sin camino,
+  // atascarse (`stuckTicks` sin moverse) o pasar de `maxTicks`. Contesta si llegó, cuántos ticks, dónde está y lo que le
+  // quedaba del camino
+  goTo(target: GoToTarget, o: GoToOptions = {}): AgentResult {
+    const paths = this.opts.paths, sim = this.opts.sim, me = this.opts.player;
+    if (!paths) return { ok: false, msg: 'no hay caminos (paths)' };
+    if (!sim) return { ok: false, msg: 'no hay simulación' };
+    if (!me?.()) return { ok: false, msg: 'no hay jugador' };
+    const to = this.goal(target);
+    if ('msg' in to) return to;
+    const max = o.maxTicks ?? 600, near = o.near ?? 2, stuckTicks = o.stuckTicks ?? 60;
+    const where = () => { const p = me()!; return { x: p.x, y: p.y, z: p.z }; };
+    const dist = (p: LevelPoint) => Math.hypot(p.x - to.x, p.y - to.y);
+    let last = where(), still = 0;
+    for (let t = 0; t <= max; t++) {
+      const p = where();
+      if (dist(p) <= near) return { ok: true, msg: `llegó en ${t} ticks`, ticks: t, at: [p.x, p.y, p.z], goal: [to.x, to.y, to.z] };
+      if (t === max) break;
+      let d = paths.dir(p, to, near);
+      paths.advance();
+      if (!d) {
+        // (con budget, dir contesta null mientras busca: se espera a que acabe antes de decir que no hay camino. Sin nodo
+        // siguiente pero con camino: ya está en la celda de la meta, y va en línea recta al punto)
+        if (paths.lag > 0) { sim.step(NO_INPUT); continue; }
+        if (!paths.path(p, to, near)) return { ok: false, msg: 'no hay camino', ticks: t, at: [p.x, p.y, p.z], goal: [to.x, to.y, to.z] };
+        const l = Math.hypot(to.x - p.x, to.y - p.y) || 1;
+        d = { x: (to.x - p.x) / l, y: (to.y - p.y) / l };
+      }
+      // (si el tick anterior no avanzó, contra una esquina: solo un eje, alternando, para deslizarse por la pared)
+      const input = still === 0 ? { dx: d.x, dy: d.y, stomp: false }
+        : still % 2 ? { dx: Math.sign(d.x), dy: 0, stomp: false } : { dx: 0, dy: Math.sign(d.y), stomp: false };
+      sim.step(input);
+      const q = where();
+      still = Math.hypot(q.x - last.x, q.y - last.y) < 0.01 ? still + 1 : 0;
+      last = q;
+      if (still >= stuckTicks) return { ok: false, msg: `atascado (${stuckTicks} ticks sin moverse)`, ticks: t + 1, at: [q.x, q.y, q.z], goal: [to.x, to.y, to.z] };
+    }
+    const p = where(), rest = paths.path(p, to, near);
+    return { ok: false, msg: `no llegó en ${max} ticks (le faltan ${Math.round(dist(p))} vóxeles)`, ticks: max, at: [p.x, p.y, p.z], goal: [to.x, to.y, to.z], path: rest ? rest.slice(0, 8).map((r) => [r.x, r.y, r.z]) : null };
+  }
+
+  // El punto de llegada de un objetivo de goTo, o el resultado de por qué no hay
+  private goal(t: GoToTarget): LevelPoint | AgentResult {
+    if ('point' in t) return { x: t.point.x, y: t.point.y, z: t.point.z };
+    const g = this.opts.grid, N = g.N, o = g.origin;
+    if ('cell' in t) {
+      const c = t.cell;
+      if (this.check(c)) return this.check(c)!;
+      const solid = g.props(c[0], c[1], c[2]).solid;
+      return { x: o.x + (c[0] + 0.5) * N, y: o.y + (c[1] + 0.5) * N, z: o.z + (c[2] + (solid ? 1 : 0)) * N };
+    }
+    const look = this.opts.look?.();
+    if (!look) return { ok: false, msg: 'no hay vista' };
+    const v = pickVoxel(look.view, look.baked, t.pixel[0], t.pixel[1], look.section);
+    if (!v) return { ok: false, msg: 'nada en ese píxel' };
+    return { x: v.voxel[0] + 0.5, y: v.voxel[1] + 0.5, z: v.voxel[2] + 1 };
   }
 
   // Las comprobaciones de siempre antes de una orden sobre una celda: dentro de la rejilla, al alcance, visible. null
@@ -251,6 +349,8 @@ export function installAgent(target: Record<string, unknown>, host: AgentHost, n
     act: (n: string, a?: Record<string, unknown>) => host.act(n, a),
     actions: () => host.list(),
     step: (n?: number, input?: TickInput) => host.step(n, input),
+    entityAt: (sx: number, sy: number) => host.entityAt(sx, sy),
+    goTo: (t: GoToTarget, o?: GoToOptions) => host.goTo(t, o),
   };
 }
 
