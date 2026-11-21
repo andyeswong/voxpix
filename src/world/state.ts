@@ -331,28 +331,41 @@ export class StaticVoxels implements VoxelSource {
 
   // Lo que entra y el borde nuevo, tras correr (shift o shiftJob)
   private finishShift(dcx: number, dcy: number): void {
-    const C = this.cols, R = this.rows, nz = this.nz, W = this.width, D = this.depth;
+    const C = this.cols, R = this.rows;
     // Los que entran: versión nueva y su caja entera; los del borde nuevo (un vecino que estaba dentro ahora queda fuera: su
     // máscara se hizo con él, y con aire fuera se ven caras que antes no), también cambiados y sin máscaras. Un vecino que
-    // entra vacío tiene versión nueva, y eso ya rehace la máscara
-    const inOld = (x: number, y: number) => x >= 0 && y >= 0 && x < C && y < R;
-    // (solo las filas y columnas del borde: lo que entra es una franja junto al borde, y el borde nuevo es el borde)
+    // entra vacío tiene versión nueva, y eso ya rehace la máscara. En orden de filas (cada uno con su versión, ++clock), y
+    // solo donde puede haber algo: las filas que entran y las de arriba y abajo, enteras; en las demás, las columnas que
+    // entran y las dos del borde. Sin cierres: la primera vez corre en frío (el primer corrimiento de una partida)
     const ex0 = dcx < 0 ? Math.min(C, -dcx) : 0, ex1 = dcx > 0 ? Math.max(0, C - dcx) : C;   // columnas que no entran: ex0..ex1-1
     const ey0 = dcy < 0 ? Math.min(R, -dcy) : 0, ey1 = dcy > 0 ? Math.max(0, R - dcy) : R;
-    for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
-      // (por dentro, ni entra ni es borde: salta al final de la fila)
-      if (cy > ey0 && cy < ey1 - 1 && cy > 0 && cy < R - 1 && cx > ex0 && cx < ex1 - 1 && cx > 0) { cx = Math.max(cx, Math.min(ex1 - 1, C - 1) - 1); continue; }
-      const c = cy * C + cx, entered = !inOld(cx + dcx, cy + dcy);
-      const edge = !entered && ((cx === 0 && inOld(cx - 1 + dcx, cy + dcy)) || (cx === C - 1 && inOld(cx + 1 + dcx, cy + dcy)) ||
-        (cy === 0 && inOld(cx + dcx, cy - 1 + dcy)) || (cy === R - 1 && inOld(cx + dcx, cy + 1 + dcy)));
-      if (!entered && !edge) continue;
-      this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
-      const o = c * SEGS * 7;
-      this.seg[o] = this.clock; this.seg[o + 1] = cx * CHUNK; this.seg[o + 2] = cy * CHUNK; this.seg[o + 3] = this.zMin;
-      this.seg[o + 4] = Math.min(W, (cx + 1) * CHUNK) - 1; this.seg[o + 5] = Math.min(D, (cy + 1) * CHUNK) - 1; this.seg[o + 6] = this.zMax;
-      this.segN[c] = 1;
-      if (edge) for (let s = 0; s < nz; s++) { this.expoAt[c * nz + s] = -1; this.expoFAt[c * nz + s] = -1; }
+    // (¿la columna o la fila de fuera, la -1 o la C / R, estaba dentro antes? Entonces el borde de ese lado es nuevo)
+    const leftNew = dcx - 1 >= 0 && dcx - 1 < C, rightNew = C + dcx >= 0 && C + dcx < C, topNew = dcy - 1 >= 0 && dcy - 1 < R, botNew = R + dcy >= 0 && R + dcy < R;
+    for (let cy = 0; cy < R; cy++) {
+      const rowIn = cy < ey0 || cy >= ey1;                      // la fila entera entra
+      if (rowIn || cy === 0 || cy === R - 1) {
+        for (let cx = 0; cx < C; cx++) {
+          const entered = rowIn || cx < ex0 || cx >= ex1;
+          const edge = !entered && ((cx === 0 && leftNew) || (cx === C - 1 && rightNew) || (cy === 0 && topNew) || (cy === R - 1 && botNew));
+          if (entered || edge) this.markShifted(cy * C + cx, edge);
+        }
+        continue;
+      }
+      // (una fila de dentro: las columnas que entran por la izquierda, la 0 si es borde, ..., la C - 1 si es borde, las que
+      // entran por la derecha; sin repetir)
+      for (let cx = 0; cx < ex0; cx++) this.markShifted(cy * C + cx, false);
+      if (ex0 === 0 && ex1 > 0 && leftNew) this.markShifted(cy * C, true);
+      if (ex1 === C && C - 1 >= ex0 && rightNew && C - 1 > 0) this.markShifted(cy * C + C - 1, true);
+      for (let cx = Math.max(ex1, ex0); cx < C; cx++) this.markShifted(cy * C + cx, false);
     }
+  }
+  private markShifted(c: number, edge: boolean): void {
+    const C = this.cols, cx = c % C, cy = (c - cx) / C, nz = this.nz, o = c * SEGS * 7, S = this.seg;
+    this.versions[c] = ++this.clock; this.worldVersions[c] = this.clock;
+    S[o] = this.clock; S[o + 1] = cx * CHUNK; S[o + 2] = cy * CHUNK; S[o + 3] = this.zMin;
+    S[o + 4] = Math.min(this.width, (cx + 1) * CHUNK) - 1; S[o + 5] = Math.min(this.depth, (cy + 1) * CHUNK) - 1; S[o + 6] = this.zMax;
+    this.segN[c] = 1;
+    if (edge) { this.expoAt.fill(-1, c * nz, c * nz + nz); this.expoFAt.fill(-1, c * nz, c * nz + nz); }
   }
 
   // MOVER LA VENTANA POR PASOS: lo mismo que shift, pero lo que más cuesta (las referencias de las losas y de sus máscaras
