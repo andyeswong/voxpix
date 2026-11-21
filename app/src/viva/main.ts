@@ -11,7 +11,7 @@
 // ty - 3 .. + 5 alrededor del de MAIA, sin escribir
 //   ?agua=1: el agua del mundo (el material 'agua' del set) como WaterLayer (movable, sin cargar, LiveWindow.setWater): sin
 //   escribirla en la rejilla (skip), cargada por trozo en onLoad (regionWater) y guardada en onUnload. ?pisar=N: cada N
-//   cuadros, un pisotón en el agua más cercana a MAIA (hasta 64 vóxeles). ?aguacheck=N: cada N cuadros, la textura del
+//   cuadros, un pisotón en el agua más cercana al personaje (hasta 64 vóxeles). ?aguacheck=N: cada N cuadros, la textura del
 //   fondo del agua de la GPU leída contra la vista (celdas distintas). Deja en __viva.agua lo que cuesta
 import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
@@ -530,7 +530,7 @@ void (async () => {
   function state_move(lx: number, ly: number): void {
     win.state.entities.move(id, lx, ly, ground(x, Y), dir > 0 ? 90 : 270);
     win.state.entities.setModel(id, CAPTURA ? walk[0]! : walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
-    // ?pisar=N: un pisotón en el agua más cercana a MAIA (en espiral de 4 en 4 vóxeles, hasta 64)
+    // ?pisar=N: un pisotón en el agua más cercana al personaje (en espiral de 4 en 4 vóxeles, hasta 64)
     if (water && PISAR && frameNo % PISAR === 0) {
       let hit: [number, number] | null = null;
       for (let r = 0; r <= 64 && !hit; r += 4) for (let a = 0; a < 16 && !hit; a++) {
