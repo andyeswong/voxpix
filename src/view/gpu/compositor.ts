@@ -1192,10 +1192,12 @@ export class GpuCompositor {
       this.waterGround = wl.groundVersion ?? 0;
       subImage(gl, this.tWStatic!, 0, 0, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf(), wl.gw, 4);
     }
-    // Cada cuadro, solo las columnas de celdas que se ven (y una más a cada lado, por las vecinas)
+    // Cada cuadro, solo las celdas que se ven: sus columnas (y una más a cada lado, por las vecinas) y las filas en que su
+    // agua puede caer en la vista (waterRows, las mismas que pinta el agua, con dos de margen por las vecinas)
     const gx0 = Math.max(0, Math.floor(o.vx / 2) - 2), gx1 = Math.min(wl.gw - 1, Math.ceil((o.vx + o.vw) / 2) + 2);
-    subImage(gl, this.tWDepth, gx0, 0, gx1 - gx0 + 1, wl.gh, gl.RED, gl.FLOAT, sim.depth, wl.gw, 1);
-    void b;
+    const [ry0, ry1] = waterRows(b.options.originY ?? 0, b.options.oblique?.y ?? 1, o.vy, o.vh, wl.gh, wl.zRange ?? [WATER_ZMIN, WATER_ZMAX]);
+    const gy0 = Math.max(0, ry0 - 2), gy1 = Math.min(wl.gh - 1, ry1 + 2);
+    if (gy0 <= gy1) subImage(gl, this.tWDepth, gx0, gy0, gx1 - gx0 + 1, gy1 - gy0 + 1, gl.RED, gl.FLOAT, sim.depth, wl.gw, 1);
     return true;
   }
 
