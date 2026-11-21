@@ -670,7 +670,9 @@ compositor.frame(win.state, win.baked, opts);
   cuyo cuerpo llegaba a lo que salió) no se rehace en el cambio: va a lo pendiente y lo rehace `advance` con su tanda (en
   un juego eran ~30 ms de ese cuadro a 6x). Ese borde, y el margen de lo que cambió, salen de lo que el cuerpo de una
   celda sobresale de ella (desplazado y con su radio): con un radio grande (6 con celdas de 4) eran más que radius + 1,
-  y el borde se quedaba corto. Además, en el cambio la ventana
+  y el borde se quedaba corto. Y lo que entra se limpia sin vaciar sus pasos guardados (`moves`, ~128 bytes por celda con 4
+  niveles): solo se miran entre nodos con suelo, y lo que entra queda sin suelo hasta que `redo` lo rehace al escribirse,
+  vaciando entonces sus pasos y los de sus vecinas. Además, en el cambio la ventana
   corre lo apuntado y sin tomar de todos los `watchChanges` (`ChangeWatch.shift`), así que también vale para los del
   juego. Con una ventana grande, una meta que se mueve costaría una búsqueda de todo el campo cada vez que cambia de
   celda: `reach` (40 pasos por defecto) para la búsqueda a esa distancia de la meta, y más lejos no hay camino (`dir`

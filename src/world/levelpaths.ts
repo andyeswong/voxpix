@@ -73,12 +73,14 @@ export class LevelPathField {
     const row = a - (a % this.cols);
     f(a, row + this.cols); f(row, z + 1);
   }
-  // Las celdas [i0, i1] x [j0, j1] (de ahora), como recién entradas: sin suelo, sin distancia, sin pasos guardados
+  // Las celdas [i0, i1] x [j0, j1] (de ahora), como recién entradas: sin suelo y sin distancia. Sus pasos guardados
+  // (moves, lo grande: 8 L² por celda) no se vacían: solo se miran entre nodos con suelo, y la única vía que da suelos a una
+  // celda es redo, que vacía después los pasos de las rehechas y de sus vecinas
   private clear(i0: number, j0: number, i1: number, j1: number): void {
-    const L = this.L, per = 8 * L * L;
+    const L = this.L;
     for (let j = j0; j <= j1; j++) this.runs(j, i0, i1, (a, z) => {
       this.floor.fill(NO_FOOT, a * L, z * L); this.ceil.fill(0, a * L, z * L); this.dist.fill(-1, a * L, z * L);
-      this.floors.fill(0, a, z); this.moves.fill(0, a * per, z * per);
+      this.floors.fill(0, a, z);
     });
   }
   private watch: ChangeWatch;
