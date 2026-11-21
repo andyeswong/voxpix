@@ -14,7 +14,7 @@ import type { World, WorldLight } from './build';
 import type { ChangeWatch } from './changes';
 import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
-import { shiftGrid, type StaticVoxels } from './state';
+import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
@@ -136,6 +136,13 @@ export class WaterLayer {
   private readonly tileSeen: Uint32Array;
   private tileSeenStamp = 0;
   private tileEpoch = 1;
+  // Las baldosas con alguna celda activa en el último subpaso (tx + ty * tilesX), sin repetir: una baldosa de agua es un
+  // trozo de vóxeles (CHUNK / CELL celdas), así que son los trozos donde el agua se movió (WorldState.step)
+  private stepTiles: Int32Array;
+  private nStepTiles = 0;
+  private readonly stepSeen: Uint32Array;
+  private stepSeenStamp = 0;
+  movedTiles(): Int32Array { return this.stepTiles.subarray(0, this.nStepTiles); }
   private shifts = 0;
   // Cuántas veces se corrió (quien copia la rejilla y no se corrió con ella la copia entera)
   get shiftCount(): number { return this.shifts; }
@@ -151,9 +158,13 @@ export class WaterLayer {
     this.gw = Math.ceil(world.width / CELL);
     this.gh = Math.ceil(world.depth / CELL);
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
+    // (una baldosa de lo que cambió es un trozo de vóxeles: WorldState.step marca los trozos por baldosas, movedTiles)
+    if (TILE * CELL !== CHUNK) throw new Error(`WaterLayer: la baldosa (${TILE} celdas de ${CELL}) no es un trozo (${CHUNK})`);
     this.tilesX = Math.ceil(this.gw / TILE); this.tilesY = Math.ceil(this.gh / TILE);
     this.tileVer = new Uint32Array(this.tilesX * this.tilesY);
     this.tileSeen = new Uint32Array(this.tilesX * this.tilesY);
+    this.stepTiles = new Int32Array(this.tilesX * this.tilesY);
+    this.stepSeen = new Uint32Array(this.tilesX * this.tilesY);
     this.basin = new Uint8Array(this.gw * this.gh);
     const { wet, waterTop, width: W } = world;
     // Sin cargar (una ventana que se carga por trozos, load): todo seco y de pared
@@ -636,6 +647,9 @@ export class WaterLayer {
       const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList, gw = this.gw, gh = this.gh;
       const [ox, oy] = sim.origin, tv = this.tileVer, tilesX = this.tilesX, stamp = this.tileEpoch;
       let ax0 = gw, ay0 = this.gh, ax1 = -1, ay1 = -1;
+      // (las baldosas de las activas de este subpaso, sin repetir: las del último las lee WorldState.step, stepTiles)
+      const seen = this.stepSeen, sst = ++this.stepSeenStamp;
+      this.nStepTiles = 0;
       for (let q = 0; q < act.length; q++) {
         const i = act[q]!;
         if (!inSoak[i] && !basin[i] && depth[i]! > 0) { inSoak[i] = 1; list[this.nSoak++] = i; }
@@ -644,6 +658,7 @@ export class WaterLayer {
         if (x < ax0) ax0 = x; if (x > ax1) ax1 = x; if (y < ay0) ay0 = y; if (y > ay1) ay1 = y;
         const k = Math.floor(y / TILE) * tilesX + Math.floor(x / TILE);
         if (tv[k] !== stamp) this.markTile(k, stamp);
+        if (seen[k] !== sst) { seen[k] = sst; this.stepTiles[this.nStepTiles++] = k; }
       }
       if (ax1 >= 0) this.logBox(ax0, ay0, ax1, ay1);
     }

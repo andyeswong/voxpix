@@ -212,11 +212,13 @@ export class ShallowWater {
     const { w, h, active, awake, list, woken, inWoken } = this;
     // (en el anillo: x0, y0 son la columna y la fila físicas de la celda 0 de la rejilla y xl, yl las de la última)
     const ox = this.ox, oy = this.oy, wl = (h - 1) * w;
-    // (el foco: las celdas de la rejilla que se calculan; sin foco, toda)
+    // (el foco: las celdas de la rejilla que se calculan; sin foco, toda. bounded: un foco que deja algo fuera; si no, los
+    // bordes son los de la rejilla y no hace falta la x y la y de la rejilla de cada celda)
     const f = this.focus, fx0 = f ? f[0] : 0, fy0 = f ? f[1] : 0, fx1 = f ? f[2] : w - 1, fy1 = f ? f[3] : h - 1;
+    const bounded = fx0 > 0 || fy0 > 0 || fx1 < w - 1 || fy1 < h - 1;
+    const xl = ox ? ox - 1 : w - 1, yl = oy ? oy - 1 : h - 1;
     for (let k = 0; k < this.count; k++) active[list[k]!] = 0;
     let n = 0;
-    const add = (j: number) => { if (!active[j]) { active[j] = 1; list[n++] = j; } };
     // Las despiertas, de su lista; las que se durmieron salen de ella
     let m = 0;
     this.visited = this.nWoken;
@@ -225,22 +227,27 @@ export class ShallowWater {
       if (!awake[i]) { inWoken[i] = 0; continue; }
       woken[m++] = i;
       const px = i % w, py = (i - px) / w;
-      let lx = px - ox, ly = py - oy;
-      if (lx < 0) lx += w; if (ly < 0) ly += h;
-      // (fuera del foco: sigue despierta, congelada, sin calcularse ni ella ni sus vecinas; a su cubo, fuera de la lista)
-      if (lx < fx0 || lx > fx1 || ly < fy0 || ly > fy1) {
-        m--;
-        const key = Math.floor(lx / FROZEN_TILE) + Math.floor(ly / FROZEN_TILE) * this.frozenX;
-        let b = this.frozen.get(key);
-        if (!b) this.frozen.set(key, (b = []));
-        b.push(i); this.nFrozen++;
-        continue;
-      }
-      add(i);
-      if (lx > fx0) add(px > 0 ? i - 1 : i + w - 1);
-      if (lx < fx1) add(px < w - 1 ? i + 1 : i - w + 1);
-      if (ly > fy0) add(py > 0 ? i - w : i + wl);
-      if (ly < fy1) add(py < h - 1 ? i + w : i - wl);
+      let eL: boolean, eR: boolean, eT: boolean, eB: boolean;
+      if (bounded) {
+        let lx = px - ox, ly = py - oy;
+        if (lx < 0) lx += w; if (ly < 0) ly += h;
+        // (fuera del foco: sigue despierta, congelada, sin calcularse ni ella ni sus vecinas; a su cubo, fuera de la lista)
+        if (lx < fx0 || lx > fx1 || ly < fy0 || ly > fy1) {
+          m--;
+          const key = Math.floor(lx / FROZEN_TILE) + Math.floor(ly / FROZEN_TILE) * this.frozenX;
+          let b = this.frozen.get(key);
+          if (!b) this.frozen.set(key, (b = []));
+          b.push(i); this.nFrozen++;
+          continue;
+        }
+        eL = lx > fx0; eR = lx < fx1; eT = ly > fy0; eB = ly < fy1;
+      } else { eL = px !== ox; eR = px !== xl; eT = py !== oy; eB = py !== yl; }
+      // (ella y sus vecinas, a la lista)
+      if (!active[i]) { active[i] = 1; list[n++] = i; }
+      if (eL) { const j = px > 0 ? i - 1 : i + w - 1; if (!active[j]) { active[j] = 1; list[n++] = j; } }
+      if (eR) { const j = px < w - 1 ? i + 1 : i - w + 1; if (!active[j]) { active[j] = 1; list[n++] = j; } }
+      if (eT) { const j = py > 0 ? i - w : i + wl; if (!active[j]) { active[j] = 1; list[n++] = j; } }
+      if (eB) { const j = py < h - 1 ? i + w : i - wl; if (!active[j]) { active[j] = 1; list[n++] = j; } }
     }
     this.nWoken = m;
     this.count = n;
@@ -256,8 +263,11 @@ export class ShallowWater {
     const n = this.count;
     let nw = this.nWoken;
     const ox = this.ox, oy = this.oy, wl = (h - 1) * w;
-    // (el foco: una vecina fuera de él es como pared, en los dos pasos: ni sale ni entra agua por su borde)
+    // (el foco: una vecina fuera de él es como pared, en los dos pasos: ni sale ni entra agua por su borde. Sin un foco que
+    // deje algo fuera, los bordes son los de la rejilla: sin la x y la y de la rejilla de cada celda)
     const f = this.focus, fx0 = f ? f[0] : 0, fy0 = f ? f[1] : 0, fx1 = f ? f[2] : w - 1, fy1 = f ? f[3] : h - 1;
+    const bounded = fx0 > 0 || fy0 > 0 || fx1 < w - 1 || fy1 < h - 1;
+    const xl = ox ? ox - 1 : w - 1, yl = oy ? oy - 1 : h - 1;
     // 1) flujos hacia las 4 vecinas según la diferencia de superficie
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
@@ -267,9 +277,12 @@ export class ShallowWater {
       if (solid[i] || !awake[i]) { fl[i] = fr[i] = ft[i] = fb[i] = 0; continue; }
       const s = ground[i]! + depth[i]!;
       // Las vecinas (en el anillo) y si existen (no en el borde de la rejilla ni del foco)
-      let lx = px - ox, ly = py - oy;
-      if (lx < 0) lx += w; if (ly < 0) ly += h;
-      const hasL = lx > fx0, hasR = lx < fx1, hasT = ly > fy0, hasB = ly < fy1;
+      let hasL: boolean, hasR: boolean, hasT: boolean, hasB: boolean;
+      if (bounded) {
+        let lx = px - ox, ly = py - oy;
+        if (lx < 0) lx += w; if (ly < 0) ly += h;
+        hasL = lx > fx0; hasR = lx < fx1; hasT = ly > fy0; hasB = ly < fy1;
+      } else { hasL = px !== ox; hasR = px !== xl; hasT = py !== oy; hasB = py !== yl; }
       const iL = px > 0 ? i - 1 : i + w - 1, iR = px < w - 1 ? i + 1 : i - w + 1, iT = py > 0 ? i - w : i + wl, iB = py < h - 1 ? i + w : i - wl;
       let L = hasL && !solid[iL] ? Math.max(0, fl[i]! * damp + k * (s - ground[iL]! - depth[iL]!)) : 0;
       let R = hasR && !solid[iR] ? Math.max(0, fr[i]! * damp + k * (s - ground[iR]! - depth[iR]!)) : 0;
@@ -290,10 +303,14 @@ export class ShallowWater {
       // Una pared no tiene agua que mover: si la despertaron (wake no mira si es pared), se duerme como una celda quieta
       if (solid[i]) { if (awake[i]! > 0) awake[i] = awake[i]! - 1; continue; }
       const px = i % w, py = (i - px) / w;
-      let lx = px - ox, ly = py - oy;
-      if (lx < 0) lx += w; if (ly < 0) ly += h;
-      const inflow = (lx > fx0 ? fr[px > 0 ? i - 1 : i + w - 1]! : 0) + (lx < fx1 ? fl[px < w - 1 ? i + 1 : i - w + 1]! : 0)
-        + (ly > fy0 ? fb[py > 0 ? i - w : i + wl]! : 0) + (ly < fy1 ? ft[py < h - 1 ? i + w : i - wl]! : 0);
+      let eL: boolean, eR: boolean, eT: boolean, eB: boolean;
+      if (bounded) {
+        let lx = px - ox, ly = py - oy;
+        if (lx < 0) lx += w; if (ly < 0) ly += h;
+        eL = lx > fx0; eR = lx < fx1; eT = ly > fy0; eB = ly < fy1;
+      } else { eL = px !== ox; eR = px !== xl; eT = py !== oy; eB = py !== yl; }
+      const inflow = (eL ? fr[px > 0 ? i - 1 : i + w - 1]! : 0) + (eR ? fl[px < w - 1 ? i + 1 : i - w + 1]! : 0)
+        + (eT ? fb[py > 0 ? i - w : i + wl]! : 0) + (eB ? ft[py < h - 1 ? i + w : i - wl]! : 0);
       const outflow = fl[i]! + fr[i]! + ft[i]! + fb[i]!;
       const delta = dt * (inflow - outflow);
       depth[i] = Math.max(0, depth[i]! + delta);
