@@ -29,7 +29,7 @@ import type { WorldLight } from './build';
 import type { Bakeable, Baked, ViewJob } from './bake';
 import { bakeWorld, bakeWorldJob, worldPointAt } from './bake';
 import { unkey, type Palette } from '../core';
-import { drawWater, WATER_CELL, type WaterLayer } from './water';
+import { drawWater, WATER_CELL, WATER_TILE, type WaterLayer } from './water';
 import { drawDrops, MAX_DROPS } from './particles';
 import { FX_STRIDE, type FxSource } from '../core';
 import { fxWorldLights, type EffectsLayer } from './effects';
@@ -138,6 +138,8 @@ class WaterView implements WaterSurface {
   private readonly ops: Array<{ v: number; shift: readonly [number, number] | null; box: readonly [number, number, number, number] | null }> = [];
   // Los corrimientos de la capa que esta vista corrió consigo (shift): si la capa se corrió sin ella, se copia entera
   private shifts = 0;
+  // La caja de lo que cambió del fondo en la copia de este cuadro (celdas de la vista; x0 > x1: nada)
+  private readonly sbox = new Int32Array(4);
   // hideAbove (opcional, con el corte de la vista): por columna del MUNDO, desde qué z está cortada. El agua de una celda
   // cuya superficie pasa de ahí no se dibuja (como lo cortado)
   constructor(private readonly src: WaterLayer, private readonly cam: ViewCamera, private readonly hideAbove: ((x: number, y: number) => number) | null = null) {
@@ -167,18 +169,31 @@ class WaterView implements WaterSurface {
   // quieta, nada. Copiar una celda de más no cambia nada (es la misma copia)
   refresh(): void {
     if (this.shifts !== this.src.shiftCount) { this.shifts = this.src.shiftCount; this.full = true; }
-    const ch = this.src.changesSince(this.seq);
+    // Lo que cambió, por baldosas (changedTiles), y las columnas cuyo corte cambió
+    const ch = this.src.changedTiles(this.seq);
     this.seq = ch.seq;
+    this.visited = 0;
+    this.sbox[0] = this.gw; this.sbox[1] = this.gh; this.sbox[2] = -1; this.sbox[3] = -1;
     const c = this.cutBox;
-    let box = ch.box;
-    if (c[0]! <= c[2]!) box = box ? [Math.min(box[0], c[0]!), Math.min(box[1], c[1]!), Math.max(box[2], c[2]!), Math.max(box[3], c[3]!)] : [c[0]!, c[1]!, c[2]!, c[3]!];
-    c[0] = c[1] = 0x7fffffff; c[2] = c[3] = -1;
     // (la copia entera apunta, como cualquiera, la caja de lo que cambió del fondo: quien lo guarda sube solo eso)
-    if (this.full || ch.all) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); return; }
-    if (!box) { this.visited = 0; return; }
-    // La caja de celdas del mundo en celdas de la vista (sus esquinas giradas), con una de margen: con lados impares
-    // las celdas giradas no caen justo sobre las del mundo
-    const [ax, ay] = this.cam.pointToView(box[0] * WATER_CELL, box[1] * WATER_CELL), [bx, by] = this.cam.pointToView((box[2] + 1) * WATER_CELL, (box[3] + 1) * WATER_CELL);
+    if (this.full) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); }
+    else {
+      const T = WATER_TILE, tx = this.src.tilesX;
+      for (const k of ch.tiles) {
+        const x0 = (k % tx) * T, y0 = Math.floor(k / tx) * T;
+        this.copyWorld(x0, y0, Math.min(this.src.gw - 1, x0 + T - 1), Math.min(this.src.gh - 1, y0 + T - 1));
+      }
+      if (c[0]! <= c[2]!) this.copyWorld(c[0]!, c[1]!, c[2]!, c[3]!);
+    }
+    c[0] = c[1] = 0x7fffffff; c[2] = c[3] = -1;
+    const b = this.sbox;
+    if (b[2]! >= 0) this.log(null, [b[0]!, b[1]!, b[2]!, b[3]!]);
+  }
+  // Una caja de celdas del mundo, copiada en las celdas de la vista que la cubren (sus esquinas giradas); en los giros, con
+  // una de margen: con lados impares las celdas giradas no caen justo sobre las del mundo
+  private copyWorld(x0: number, y0: number, x1: number, y1: number): void {
+    if (this.cam.quarter === 0) { this.copy(x0, y0, x1, y1); return; }
+    const [ax, ay] = this.cam.pointToView(x0 * WATER_CELL, y0 * WATER_CELL), [bx, by] = this.cam.pointToView((x1 + 1) * WATER_CELL, (y1 + 1) * WATER_CELL);
     this.copy(Math.floor(Math.min(ax, bx) / WATER_CELL) - 1, Math.floor(Math.min(ay, by) / WATER_CELL) - 1, Math.ceil(Math.max(ax, bx) / WATER_CELL) + 1, Math.ceil(Math.max(ay, by) / WATER_CELL) + 1);
   }
   // Las columnas del mundo (vóxeles, extremos incluidos) cuyo corte cambió: su agua se vuelve a copiar
@@ -189,9 +204,10 @@ class WaterView implements WaterSurface {
   private copy(gx0: number, gy0: number, gx1: number, gy1: number): void {
     const s = this.src.sim, out = this.sim, m = this.map, hide = this.hideAbove, gw = this.src.gw;
     gx0 = Math.max(0, gx0); gy0 = Math.max(0, gy0); gx1 = Math.min(this.gw - 1, gx1); gy1 = Math.min(this.gh - 1, gy1);
-    this.visited = Math.max(0, gx1 - gx0 + 1) * Math.max(0, gy1 - gy0 + 1);
-    // (la caja de lo que cambió del fondo, las paredes y las cuencas)
-    let bx0 = this.gw, by0 = this.gh, bx1 = -1, by1 = -1;
+    this.visited += Math.max(0, gx1 - gx0 + 1) * Math.max(0, gy1 - gy0 + 1);
+    // (la caja de lo que cambió del fondo, las paredes y las cuencas: se junta en sbox y refresh la apunta una vez)
+    const sb = this.sbox;
+    let bx0 = sb[0]!, by0 = sb[1]!, bx1 = sb[2]!, by1 = sb[3]!;
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const i = gy * this.gw + gx, j = m[i]!;
       if (j < 0) { out.depth[i] = 0; continue; }
@@ -205,7 +221,7 @@ class WaterView implements WaterSurface {
       if (hide && d > 0 && s.ground[p]! + d > hide(wx * WATER_CELL + 1, wy * WATER_CELL + 1)) d = 0;
       out.depth[i] = d;
     }
-    if (bx1 >= 0) this.log(null, [bx0, by0, bx1, by1]);
+    sb[0] = bx0; sb[1] = by0; sb[2] = bx1; sb[3] = by1;
   }
 
   private log(shift: readonly [number, number] | null, box: readonly [number, number, number, number] | null): void {

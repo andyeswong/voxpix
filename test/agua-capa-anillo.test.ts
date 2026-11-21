@@ -210,12 +210,39 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     for (let t = 0; t < 600 && (ring.water.sim.activeCount || t < 2); t++) for (const w of [ring, ref]) w.water.step(1 / 60);
     view.frame(); sameView(view, ref, 'otra vez en calma');
     for (const w of [ring, ref]) { w.water.pour(70, 30, 3); for (let t = 0; t < 4; t++) w.water.step(1 / 60); }
-    for (const w of [ring, ref]) w.s.shift(1, 0);
-    view.shift(CHUNK, 0);
-    ring.water.shift(CHUNK, 0); copyShift(ref.water, CHUNK / CELL, 0);
+    // (tres trozos: lo que cambió queda lejos de donde estaba, sin solaparse)
+    for (const w of [ring, ref]) w.s.shift(3, 0);
+    view.shift(3 * CHUNK, 0);
+    ring.water.shift(3 * CHUNK, 0); copyShift(ref.water, (3 * CHUNK) / CELL, 0);
     view.frame();
     expect((view.water as unknown as { visited: number }).visited).toBeLessThan(ring.water.gw * ring.water.gh);   // (no entera: la franja y lo echado)
     sameView(view, ref, 'cambio antes de correr');
+  });
+
+  it('por baldosas: dos sitios lejanos con agua moviéndose se copian sin lo de en medio; la vista girada, igual que la de la referencia', () => {
+    const ring = setup(true), ref = setup(false);
+    const view = new WorldView(ring.state, 0), turned = new WorldView(ring.state, 1), refTurned = new WorldView(ref.state, 1);
+    for (const w of [ring, ref]) w.s.shift(1, 0);
+    view.shift(CHUNK, 0); turned.shift(CHUNK, 0);
+    ring.water.shift(CHUNK, 0); copyShift(ref.water, CHUNK / CELL, 0);
+    for (let t = 0; t < 6000 && (ring.water.sim.activeCount || t < 2); t++) for (const w of [ring, ref]) w.water.step(1 / 60);
+    expect(ring.water.sim.activeCount).toBe(0);
+    view.frame(); turned.frame(); refTurned.frame();
+    // Gotas en dos esquinas opuestas (secas: se empapan ahí)
+    let most = 0, n = 0;
+    for (let t = 0; t < 30; t++) {
+      if (t % 10 === 0) for (const w of [ring, ref]) { w.water.pour(6, 6, 2); w.water.pour(W - 7, D - 7, 2); }
+      for (const w of [ring, ref]) w.water.step(1 / 60);
+      view.frame(); turned.frame(); refTurned.frame();
+      const vis = (view.water as unknown as { visited: number }).visited;
+      if (vis) { most = Math.max(most, vis); n++; }
+      sameView(view, ref, `baldosas ${t}`);
+      const a = turned.water!, b = refTurned.water!;
+      expect([t, Buffer.from(a.sim.depth.buffer).equals(Buffer.from(b.sim.depth.buffer)), Buffer.from(a.sim.ground.buffer).equals(Buffer.from(b.sim.ground.buffer))]).toEqual([t, true, true]);
+    }
+    expect(n).toBeGreaterThan(10);
+    // (la caja de las dos esquinas sería casi toda la rejilla; por baldosas, unas pocas de 8 x 8 en cada una)
+    expect(most).toBeLessThan(ring.water.gw * ring.water.gh / 4);
   });
 
   it('lo que entra queda seco y de pared hasta cargarse; la vista que se corre con la capa copia solo la franja, la que no, todo', () => {
@@ -233,8 +260,8 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     expect(w.water.changesSince(seq).box).toEqual([w.water.gw - CHUNK, 0, w.water.gw - 1, w.water.gh - 1]);
     expect(w.water.shiftCount).toBe(1);
     moved.frame(); stale.frame();
-    // (la franja y una columna de margen, la de siempre de la copia por cajas)
-    expect((moved.water as unknown as { visited: number }).visited).toBe((CHUNK + 1) * w.water.gh);
+    // (la franja justa: en el giro 0 las celdas de la vista son las del mundo, sin margen)
+    expect((moved.water as unknown as { visited: number }).visited).toBe(CHUNK * w.water.gh);
     expect((stale.water as unknown as { visited: number }).visited).toBe(w.water.gw * w.water.gh);
     for (const v of [moved, stale]) {
       const vw = v.water!;

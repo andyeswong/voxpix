@@ -1109,8 +1109,11 @@ water.follow(state.watchChanges());                                 // picar o p
   mundo de vóxeles corrido igual.
 
   Al correrse no se copia ni se sube nada entero: la vista (`WorldView.shift`, que `LiveWindow` llama antes que a los
-  `Attached`) corre su copia del agua con ella, y la capa apunta en `changesSince` solo la franja que entra; lo que
-  cambió antes del corrimiento sale corrido con él. Una vista que no se corrió con la capa la copia entera una vez
+  `Attached`) corre su copia del agua con ella, y la capa apunta solo la franja que entra; lo que cambió antes del
+  corrimiento sale corrido con él. La vista copia lo que cambió por baldosas de 8 x 8 celdas (`changedTiles`, con la
+  versión de cada baldosa; se corren con la rejilla): con agua despierta en varios sitios de una ventana grande, la caja
+  de `changesSince` los cubría a todos y lo de en medio (en el banco de 11 x 13 trozos, el p95 de lo copiado por cuadro
+  era casi la rejilla entera). Una vista que no se corrió con la capa la copia entera una vez
   (`shiftCount`). La GPU guarda el fondo, las paredes y las cuencas en una textura: con `staticSince(v)` de la vista
   (el corrimiento total y la caja que cambió desde la versión v) la corre dentro de la GPU y sube solo esa caja (lo que
   carga un trozo, lo picado); entera solo la primera vez o si el registro no llega tan atrás (64 cambios). La franja sin
