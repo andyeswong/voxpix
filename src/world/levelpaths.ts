@@ -109,6 +109,8 @@ export class LevelPathField {
     for (let dy = -hi; dy <= lo; dy++) for (let dx = -hi; dx <= lo; dx++) off.push([dx, dy]);
     off.sort((p, q) => Math.hypot(p[0], p[1]) - Math.hypot(q[0], q[1]) || p[1] - q[1] || p[0] - q[0]);
     for (const [dx, dy] of off) this.offsets.push(dx, dy);
+    // (fit guarda el desplazamiento de cada nodo en un byte)
+    if (off.length > 256) throw new Error(`LevelPathField: ${off.length} desplazamientos posibles del cuerpo en la celda (radius ${r}, cell ${this.cell}); como mucho 256`);
     // Cuánto sobresale de su celda, como mucho, el cuerpo de una celda (desplazado y con su radio): hasta ahí llega lo que
     // depende de los vóxeles de fuera. El borde que se rehace al correrse y el margen de lo que cambió salen de aquí (con
     // un radio grande, más que radius + 1)

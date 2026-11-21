@@ -127,4 +127,10 @@ describe('caminos por niveles', () => {
     for (const q of gap) { expect(Math.floor(q.x) - 3).toBeGreaterThanOrEqual(x0); expect(Math.floor(q.x) + 3).toBeLessThan(48); }
     f.close();
   });
+
+  it('un cuerpo con más de 256 desplazamientos posibles en su celda es un error (fit guarda cada uno en un byte)', () => {
+    // (cell 4: radius 9, 16 x 16 = 256, cabe; radius 10, 18 x 18 = 324, no)
+    new LevelPathField(world(), { cell: 4, radius: 9, height: 12, step: 2 }).close();
+    expect(() => new LevelPathField(world(), { cell: 4, radius: 10, height: 12, step: 2 })).toThrow(/324 desplazamientos.*como mucho 256/);
+  });
 });
