@@ -38,6 +38,9 @@ void (async () => {
   const VW = 384, VH = 216, B = 8;
   const q = new URLSearchParams(location.search);
   const AGUA = q.get('agua') === '1', PISAR = Number(q.get('pisar') ?? 0), AGUACHECK = Number(q.get('aguacheck') ?? 0);
+  // ?foco=N: el agua solo se simula a N vóxeles o menos del personaje (WaterLayer.setFocus); ?pisar=orilla: un pisotón al
+  // entrar en el agua (al pasar de seco a mojado), el ritmo de un juego, en vez de cada N cuadros
+  const FOCO = Number(q.get('foco') ?? 0), ORILLA = q.get('pisar') === 'orilla';
   const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11), GIROS = Number(q.get('giros') ?? 1);
   // ?girar=s: cada s segundos, Q (girar con fundido, turnTo: solo vive el giro de ahora); ?presu=ms: el presupuesto cercano
   // mientras dura el fundido (8 por defecto, el de siempre)
@@ -539,6 +542,12 @@ void (async () => {
   function state_move(lx: number, ly: number): void {
     win.state.entities.move(id, lx, ly, ground(x, Y), dir > 0 ? 90 : 270);
     win.state.entities.setModel(id, CAPTURA ? walk[0]! : walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
+    if (water && FOCO) water.setFocus(lx, ly, FOCO);
+    if (water && ORILLA) {
+      const wet = water.depthAt(lx, ly) > 0.3;
+      if (wet && !agua.mojado) { win.state.events.disturb(lx, ly, 2.8, 3); agua.pisotones++; }
+      agua.mojado = wet;
+    }
     // ?pisar=N: un pisotón en el agua más cercana al personaje (en espiral de 4 en 4 vóxeles, hasta 64)
     if (water && PISAR && frameNo % PISAR === 0) {
       let hit: [number, number] | null = null;
@@ -552,7 +561,7 @@ void (async () => {
     win.state.step();
     if (water && frames.length > 60) { agua.pasoMs.push(performance.now() - a0); agua.activas.push(water.sim.activeCount); }
   }
-  const agua = { pasoMs: [] as number[], activas: [] as number[], copia: [] as number[], pisotones: 0, checks: 0, malas: 0, primeraMala: null as null | string };
+  const agua = { mojado: false, pasoMs: [] as number[], activas: [] as number[], copia: [] as number[], pisotones: 0, checks: 0, malas: 0, primeraMala: null as null | string };
   boot.antesDelPrimerRaf = Math.round(performance.now());
   requestAnimationFrame(loop);
 })();

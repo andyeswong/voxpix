@@ -51,6 +51,10 @@ export class ShallowWater {
   // El anillo: el sitio físico de la celda (0, 0)
   private ox = 0;
   private oy = 0;
+  // EL FOCO: las celdas de la rejilla (x0, y0, x1, y1, extremos incluidos) que se calculan; null, todas. Dentro, el paso es
+  // el de siempre, con lo de fuera como pared (ni entra ni sale agua por su borde). Fuera, lo despierto se queda congelado
+  // (despierto, con sus flujos) y sigue donde estaba al volver a entrar. Sin foco, o con todo dentro, lo de siempre
+  focus: [number, number, number, number] | null = null;
 
   constructor(w: number, h: number, opts: ShallowOptions = {}) {
     this.w = w; this.h = h;
@@ -174,7 +178,9 @@ export class ShallowWater {
   private markActive(): void {
     const { w, h, active, awake, list, woken, inWoken } = this;
     // (en el anillo: x0, y0 son la columna y la fila físicas de la celda 0 de la rejilla y xl, yl las de la última)
-    const x0 = this.ox, y0 = this.oy, xl = x0 ? x0 - 1 : w - 1, yl = y0 ? y0 - 1 : h - 1, wl = (h - 1) * w;
+    const ox = this.ox, oy = this.oy, wl = (h - 1) * w;
+    // (el foco: las celdas de la rejilla que se calculan; sin foco, toda)
+    const f = this.focus, fx0 = f ? f[0] : 0, fy0 = f ? f[1] : 0, fx1 = f ? f[2] : w - 1, fy1 = f ? f[3] : h - 1;
     for (let k = 0; k < this.count; k++) active[list[k]!] = 0;
     let n = 0;
     const add = (j: number) => { if (!active[j]) { active[j] = 1; list[n++] = j; } };
@@ -186,11 +192,15 @@ export class ShallowWater {
       if (!awake[i]) { inWoken[i] = 0; continue; }
       woken[m++] = i;
       const px = i % w, py = (i - px) / w;
+      let lx = px - ox, ly = py - oy;
+      if (lx < 0) lx += w; if (ly < 0) ly += h;
+      // (fuera del foco: sigue despierta, congelada, sin calcularse ni ella ni sus vecinas)
+      if (lx < fx0 || lx > fx1 || ly < fy0 || ly > fy1) continue;
       add(i);
-      if (px !== x0) add(px > 0 ? i - 1 : i + w - 1);
-      if (px !== xl) add(px < w - 1 ? i + 1 : i - w + 1);
-      if (py !== y0) add(py > 0 ? i - w : i + wl);
-      if (py !== yl) add(py < h - 1 ? i + w : i - wl);
+      if (lx > fx0) add(px > 0 ? i - 1 : i + w - 1);
+      if (lx < fx1) add(px < w - 1 ? i + 1 : i - w + 1);
+      if (ly > fy0) add(py > 0 ? i - w : i + wl);
+      if (ly < fy1) add(py < h - 1 ? i + w : i - wl);
     }
     this.nWoken = m;
     this.count = n;
@@ -205,7 +215,9 @@ export class ShallowWater {
     const { list, awake, woken, inWoken } = this;
     const n = this.count;
     let nw = this.nWoken;
-    const x0 = this.ox, y0 = this.oy, xl = x0 ? x0 - 1 : w - 1, yl = y0 ? y0 - 1 : h - 1, wl = (h - 1) * w;
+    const ox = this.ox, oy = this.oy, wl = (h - 1) * w;
+    // (el foco: una vecina fuera de él es como pared, en los dos pasos: ni sale ni entra agua por su borde)
+    const f = this.focus, fx0 = f ? f[0] : 0, fy0 = f ? f[1] : 0, fx1 = f ? f[2] : w - 1, fy1 = f ? f[3] : h - 1;
     // 1) flujos hacia las 4 vecinas según la diferencia de superficie
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
@@ -214,8 +226,10 @@ export class ShallowWater {
       // va a actualizar en este paso, y la masa se conserva)
       if (solid[i] || !awake[i]) { fl[i] = fr[i] = ft[i] = fb[i] = 0; continue; }
       const s = ground[i]! + depth[i]!;
-      // Las vecinas (en el anillo) y si existen (no en el borde de la rejilla)
-      const hasL = px !== x0, hasR = px !== xl, hasT = py !== y0, hasB = py !== yl;
+      // Las vecinas (en el anillo) y si existen (no en el borde de la rejilla ni del foco)
+      let lx = px - ox, ly = py - oy;
+      if (lx < 0) lx += w; if (ly < 0) ly += h;
+      const hasL = lx > fx0, hasR = lx < fx1, hasT = ly > fy0, hasB = ly < fy1;
       const iL = px > 0 ? i - 1 : i + w - 1, iR = px < w - 1 ? i + 1 : i - w + 1, iT = py > 0 ? i - w : i + wl, iB = py < h - 1 ? i + w : i - wl;
       let L = hasL && !solid[iL] ? Math.max(0, fl[i]! * damp + k * (s - ground[iL]! - depth[iL]!)) : 0;
       let R = hasR && !solid[iR] ? Math.max(0, fr[i]! * damp + k * (s - ground[iR]! - depth[iR]!)) : 0;
@@ -236,8 +250,10 @@ export class ShallowWater {
       // Una pared no tiene agua que mover: si la despertaron (wake no mira si es pared), se duerme como una celda quieta
       if (solid[i]) { if (awake[i]! > 0) awake[i] = awake[i]! - 1; continue; }
       const px = i % w, py = (i - px) / w;
-      const inflow = (px !== x0 ? fr[px > 0 ? i - 1 : i + w - 1]! : 0) + (px !== xl ? fl[px < w - 1 ? i + 1 : i - w + 1]! : 0)
-        + (py !== y0 ? fb[py > 0 ? i - w : i + wl]! : 0) + (py !== yl ? ft[py < h - 1 ? i + w : i - wl]! : 0);
+      let lx = px - ox, ly = py - oy;
+      if (lx < 0) lx += w; if (ly < 0) ly += h;
+      const inflow = (lx > fx0 ? fr[px > 0 ? i - 1 : i + w - 1]! : 0) + (lx < fx1 ? fl[px < w - 1 ? i + 1 : i - w + 1]! : 0)
+        + (ly > fy0 ? fb[py > 0 ? i - w : i + wl]! : 0) + (ly < fy1 ? ft[py < h - 1 ? i + w : i - wl]! : 0);
       const outflow = fl[i]! + fr[i]! + ft[i]! + fb[i]!;
       const delta = dt * (inflow - outflow);
       depth[i] = Math.max(0, depth[i]! + delta);

@@ -543,6 +543,17 @@ export class WaterLayer {
     this.groundVersion++;
   }
 
+  // EL FOCO (para una ventana grande): solo se simula el agua a r vóxeles o menos de (x, y) (un recuadro, en celdas
+  // enteras); lo de fuera queda congelado (lo despierto sigue despierto y quieto, no se empapa ni pierde ni gana agua) y
+  // retoma donde estaba al entrar en el foco. Dentro, lo de siempre, con el borde del foco como pared. null: todo
+  setFocus(x: number | null, y = 0, r = 0): void {
+    if (x === null) { this.sim.focus = null; return; }
+    const { gw, gh } = this;
+    const x0 = Math.max(0, Math.floor((x - r) / CELL)), y0 = Math.max(0, Math.floor((y - r) / CELL));
+    const x1 = Math.min(gw - 1, Math.floor((x + r) / CELL)), y1 = Math.min(gh - 1, Math.floor((y + r) / CELL));
+    this.sim.focus = x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : [0, 0, -1, -1];
+  }
+
   // Escuchar los cambios de vóxeles del mundo (picar, poner) y rehacer el fondo de lo tocado en cada step. Sin esto, el
   // agua no se entera (como siempre): quien quiera que siga al mundo lo pide
   follow(watch: ChangeWatch): void { this.watch = watch; }
@@ -640,9 +651,12 @@ export class WaterLayer {
     const soak = Math.min(dt, 0.05) * 0.3, list = this.soakList, depth = sim.depth;
     let m = 0;
     this.soakVisited = this.nSoak;
+    const fc = sim.focus;
     for (let k = 0; k < this.nSoak; k++) {
       const i = list[k]!;
       if (basin[i] || !(depth[i]! > 0)) { this.inSoak[i] = 0; continue; }
+      // (fuera del foco, congelado: no se empapa; sigue en la lista)
+      if (fc) { const [x, y] = sim.xy(i); if (x < fc[0] || x > fc[2] || y < fc[1] || y > fc[3]) { list[m++] = i; continue; } }
       depth[i] = depth[i]! < 0.03 ? 0 : depth[i]! - soak * Math.max(0.25, depth[i]!);
       this.changedCell(i);
       if (depth[i]! > 0) list[m++] = i; else this.inSoak[i] = 0;

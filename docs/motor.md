@@ -1124,6 +1124,14 @@ water.follow(state.watchChanges());                                 // picar o p
   la vista al moverse la cámara (`waterDepthRects`); entera, lo que se ve, tras un corrimiento. Antes subía en cada
   cuadro toda la profundidad visible (~0,3 ms por cuadro a 6x en el banco de 11 x 13).
 
+  El foco (una ventana grande, donde casi todo está lejos): `water.setFocus(x, y, r)` (vóxeles; cada cuadro, con el
+  personaje) simula solo el recuadro de celdas a r o menos; `setFocus(null)`, todo. Dentro, el paso es el de siempre con
+  el borde del foco como pared: ni entra ni sale agua por él (lo mismo, byte a byte, que sin foco con lo de fuera hecho
+  pared). Fuera queda congelado: lo despierto sigue despierto con sus flujos, no se empapa, no pierde ni gana agua, y al
+  entrar en el foco sigue donde estaba (un lago congelado K ticks y suelto evoluciona igual que sin congelar). Con todo
+  dentro del foco (también lo que despierta un pisotón), la misma huella que sin foco. Los eventos (pisotones, gotas)
+  tocan el agua donde caigan, dentro o fuera. Lo prueba `test/agua-foco.test.ts`.
+
   Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
   pared seca; el mundo puede traer `wet` y `waterTop` vacíos), se pone con `win.setWater(water)` (en el state,
   enganchada para correrse, y las vistas la toman) y cada trozo se carga al escribirse. En una ventana generada, el agua
