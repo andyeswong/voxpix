@@ -1641,10 +1641,16 @@ export class WorldState {
       // Las celdas de agua que se movieron marcan su trozo
       const w = this.water, s = this.solid;
       let stamp = 0;
-      for (const i of w.sim.activeCells()) {
-        const [gx, gy] = w.sim.xy(i);
-        const c = s.chunkOf(gx * 2, gy * 2);
-        if (c < 0) continue;
+      // (por cada celda activa su trozo, sin xy(): el origen del anillo a mano, y las seguidas del mismo trozo una vez)
+      const act = w.sim.activeCells(), gw = w.gw, gh = w.gh, [ox, oy] = w.sim.origin, cells = CHUNK / 2;
+      let last = -1;
+      for (let q = 0; q < act.length; q++) {
+        const i = act[q]!;
+        let gx = i % gw, gy = (i - gx) / gw;
+        gx -= ox; if (gx < 0) gx += gw; gy -= oy; if (gy < 0) gy += gh;
+        const c = (gy / cells | 0) * s.cols + (gx / cells | 0);
+        if (c === last) continue;
+        last = c;
         if (!stamp) stamp = ++s.clock;
         this.dynamicVersions[c] = stamp;
       }
