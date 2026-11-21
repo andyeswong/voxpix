@@ -430,12 +430,12 @@ export class BlockGrid implements StatePart {
 const union = (a: Box3 | null, b: Box3 | null): Box3 | null =>
   !a ? b : !b ? a : { x0: Math.min(a.x0, b.x0), y0: Math.min(a.y0, b.y0), z0: Math.min(a.z0, b.z0), x1: Math.max(a.x1, b.x1), y1: Math.max(a.y1, b.y1), z1: Math.max(a.z1, b.z1) };
 
-// El bloque y la cara que se ven en un píxel de la imagen horneada de una vista (en los 4 giros): la cara es la
-// dirección, en ejes del mundo, hacia la que mira (donde iría un bloque puesto contra ella). null si no hay nada o si
-// lo que se ve no es de la rejilla. Con `section` (la capa del corte al componer con que se pinta el cuadro, la de
-// sectionFor o SectionPainter.layer()), donde la capa sustituye el píxel manda lo que pinta ella: lo de la caja no se
-// pica (no se ve) y lo que la caja destapa, sí
-export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: number, sy: number, section?: SectionLayer | null): { cell: [number, number, number]; face: [number, number, number] } | null {
+// El vóxel (en ejes del MUNDO) y la cara que se pintan en un píxel de la imagen horneada de una vista, o null si ahí
+// no hay nada. La cara es la dirección, en ejes del mundo, hacia la que mira. Con `section` (la capa del corte al
+// componer con que se pinta el cuadro, la de sectionFor o SectionPainter.layer()), donde la capa sustituye el píxel
+// manda lo que pinta ella: lo de la caja no está (no se ve) y lo que la caja destapa, sí. Lo comparten pickBlock y lo
+// que se ve para un agente (src/agent): lo que se ve es lo que se pica
+export function pickVoxel(view: WorldView, baked: Baked, sx: number, sy: number, section?: SectionLayer | null): { voxel: [number, number, number]; face: [number, number, number] } | null {
   let k: number, f: number;
   const q = section ? sectionAt(section, sx, sy) : -1;
   if (q >= 0) { k = section!.pick[q]!; f = section!.face[q]!; }
@@ -447,6 +447,13 @@ export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: nu
   const [vx, vy, z] = unkey(k), [x, y] = view.camera.cellToWorld(vx, vy);
   const n = DIR_VECTORS[f]!;
   const [dx, dy] = view.camera.dirToWorld(n[0], n[1]);
-  const cell = grid.cellOf(x, y, z);
-  return cell ? { cell, face: [dx + 0, dy + 0, n[2] + 0] } : null;   // + 0: sin -0
+  return { voxel: [x, y, z], face: [dx + 0, dy + 0, n[2] + 0] };   // + 0: sin -0
+}
+
+// El bloque y la cara que se ven en un píxel (en los 4 giros; con la sección, como pickVoxel): la cara es donde iría un
+// bloque puesto contra ella. null si no hay nada o si lo que se ve no es de la rejilla
+export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: number, sy: number, section?: SectionLayer | null): { cell: [number, number, number]; face: [number, number, number] } | null {
+  const p = pickVoxel(view, baked, sx, sy, section);
+  const cell = p && grid.cellOf(p.voxel[0], p.voxel[1], p.voxel[2]);
+  return cell ? { cell, face: p.face } : null;
 }

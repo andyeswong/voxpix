@@ -78,6 +78,7 @@ requestAnimationFrame(loop);
 | `view/budget` | `FrameBudget`: el trabajo de la vista que no cabe en un cuadro (rehornear trozos) se reparte entre cuadros, con un presupuesto aparte para lo cercano (`near`). Ver "Editar el mundo en partida". |
 | `world/edit` | `stampModel` / `clearBox`: poner un modelo o vaciar una caja en partida (y `turnCell`, `rampMap`). Ver "Editar el mundo en partida". |
 | `world/blocks` | `BlockSet`, `BlockGrid`, `pickBlock` y el `.voxset.json`: un mundo de bloques. Ver "Bloques". |
+| `agent/agent` | `AgentHost` e `installAgent`: leer el mundo de bloques como texto y dar órdenes con resultado, para agentes. Ver "Interfaz para agentes". |
 | `world/terrain` | `generateTerrain`: el terreno de bloques por semilla. Ver "Terreno por semilla". |
 | `world/paths`, `world/levelpaths` | `PathField` y `LevelPathField`: caminos hacia una meta, por la superficie o por niveles. Ver "Caminos" y "Caminos por niveles". |
 | `runtime/levels` | `moveBodyLevels`: cuerpos con alto que andan bajo techos, caen y saltan. Ver "Moverse por niveles". |
@@ -339,6 +340,44 @@ const hit2 = pickBlock(grid, view, baked, sx, sy, layer); // con corte al compon
 - La rejilla se añade al mundo como una parte del estado (`WorldState.addPart`): entra en `snapshot`, `restore` y
   `hash`. Un mundo sin partes da la huella de siempre. `addPart` sirve para cualquier otro estado que añada un juego
   (`exportState`, `importState`, `hashInto`).
+
+## Interfaz para agentes
+
+`src/agent/agent.ts`: un agente (pruebas de juego, reproducir un fallo, un arnés de medida) lee el mundo de bloques
+como texto y da órdenes que contestan qué pasó, sin coordenadas de pantalla ni ratón. El motor pone lo que sabe (la
+rejilla, lo que se ve, el alcance, los ticks); las órdenes y sus reglas (picar, poner, qué suelta, la dureza) las
+registra el juego. Todo lo que devuelve es JSON.
+
+```ts
+import { AgentHost, installAgent } from '@voxpix/agent/agent';
+
+const agent = new AgentHost({
+  state, grid,
+  look: () => ({ view, baked, section: painter.layer() }),   // lo de este cuadro (la misma capa con que se compone)
+  player: () => runtime.player, playerEntity: runtime.entityId,
+  marks: () => enemigos.map((e) => ({ ch: 'e', x: e.x, y: e.y, z: e.z, name: e.tipo })),
+  sim: runtime,                                              // lo que avanza step(n)
+});
+agent.register('picar', (a, h) => h.check(a.cell, { reach: 24, visible: true }) ?? picar(a.cell), 'picar {cell}');
+installAgent(window, agent);                                 // window.voxpixAgent, solo si se pide
+```
+
+- `describe({ at?, radius?, below?, above?, visible? })`: capas por z (de arriba abajo) alrededor de un punto (por
+  defecto el jugador), una letra por celda; las filas de norte a sur y las columnas de oeste a este. Las letras salen de
+  los ids del `BlockSet` (la primera libre del id, o `letters` fijas); `.` aire, espacio fuera de la rejilla, `@` el
+  jugador, `*` las entidades, y las marcas del juego. Con vista, en minúscula lo que no se ve desde la cámara. Lleva la
+  leyenda, las marcas con su posición exacta y un `text` listo para leer.
+- `visibleCells(rect?)`: por celda, qué caras se ven y cuántos píxeles. Sale de `pickVoxel` en cada píxel, lo mismo que
+  `pickBlock` (con la capa de sección): lo que el agente ve es lo que el jugador puede picar (`test/agente.test.ts` lo
+  compara celda a celda, con y sin sección).
+- `probe(sx, sy)`: el vóxel, la celda, la cara y el bloque que se pintan en un píxel de la imagen horneada.
+- `reach(cell, r)`: la distancia del jugador a la caja de la celda. `check(cell, { reach, visible })`: las
+  comprobaciones de siempre antes de una orden (dentro de la rejilla, al alcance, visible); null si pasa, si no el
+  resultado que hay que devolver ("fuera de alcance (30.2 > 24)", "no visible").
+- `register(name, fn, help)` / `act(name, args)` / `list()`: las órdenes del juego. `act` siempre contesta
+  `{ ok, msg, ... }`: una orden que no existe, que lanza un error o que no devuelve eso, también.
+- `step(n, input?)`: n ticks de la simulación con la misma entrada, sin reloj (la misma partida que n `step` a mano).
+- Lo que no hace (aún): andar a un sitio (sería con `LevelPathField`) y decir qué entidad hay bajo un píxel.
 
 ## Terreno por semilla
 
