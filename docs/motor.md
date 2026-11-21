@@ -1094,6 +1094,12 @@ water.follow(state.watchChanges());                                 // picar o p
   ahora, por debajo de 0,1 ms (lo que mide el reloj del navegador frenado). Con todo despierto cuesta lo mismo que
   antes, y la simulación es la misma (`test/agua-reposo.test.ts`, con huellas fijadas con el código de antes).
 
+  En anillo (para la ventana viva): `ShallowWater.shift(dx, dy)` corre la rejilla en celdas sin copiar nada. La celda
+  (x, y) está en el índice físico `at(x, y)` (y `xy(i)` lo deshace); el origen corre y solo se limpia la franja que
+  entra, que queda seca, quieta y de pared hasta que se cargue. Sin correrse, `at(x, y)` es `y * w + x`, como siempre.
+  `exportState` e `importState` van en el orden de la rejilla, corrida o no. Es lo mismo, byte a byte, que una
+  simulación que se corre copiando (`test/agua-anillo.test.ts`), también a través de la costura del anillo.
+
   La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
   profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
   desde la copia anterior (un registro de una caja por tick, de los últimos 256; si se queda atrás, la copia entera),

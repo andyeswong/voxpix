@@ -4,6 +4,11 @@
 // que se añada o quite a propósito) y se lleva bien con una rejilla 2D grande: es lineal en celdas.
 //
 // Unidades: alturas en vóxeles, celdas de `cell` vóxeles de lado, tiempo en segundos.
+//
+// EN ANILLO (para una ventana que se corre con el mundo, live.ts): la celda (x, y) de la rejilla está en el sitio físico
+// ((x + ox) mod w, (y + oy) mod h) de los arrays. shift(dx, dy) corre el origen y limpia solo la franja que entra (seca y
+// pared, hasta que se cargue), sin copiar nada. Sin correrse, el origen es (0, 0) y el índice es y * w + x, como siempre.
+// Los arrays (ground, depth, solid) se leen por índice físico: at(x, y) lo da, y xy(i) lo deshace.
 
 export interface ShallowOptions {
   gravity?: number;      // vóxeles/s²
@@ -43,6 +48,9 @@ export class ShallowWater {
   private uphillList: Int32Array;
   private inUphill: Uint8Array;
   private nUphill = 0;
+  // El anillo: el sitio físico de la celda (0, 0)
+  private ox = 0;
+  private oy = 0;
 
   constructor(w: number, h: number, opts: ShallowOptions = {}) {
     this.w = w; this.h = h;
@@ -64,6 +72,44 @@ export class ShallowWater {
     this.wakeAll();
   }
 
+  // El origen del anillo (para medir y probar)
+  get origin(): [number, number] { return [this.ox, this.oy]; }
+  // El índice físico de la celda (x, y) de la rejilla (0 <= x < w, 0 <= y < h)
+  at(x: number, y: number): number {
+    let px = x + this.ox, py = y + this.oy;
+    if (px >= this.w) px -= this.w;
+    if (py >= this.h) py -= this.h;
+    return py * this.w + px;
+  }
+  // La celda (x, y) de la rejilla de un índice físico
+  xy(i: number): [number, number] {
+    const px = i % this.w, py = (i - px) / this.w;
+    let x = px - this.ox, y = py - this.oy;
+    if (x < 0) x += this.w;
+    if (y < 0) y += this.h;
+    return [x, y];
+  }
+
+  // Corre la rejilla dx, dy celdas: la celda (x, y) pasa a tener lo que tenía (x + dx, y + dy). Lo que entra (la franja
+  // del lado hacia el que se corre) queda seco, quieto y de pared (no entra ni sale agua) con el fondo a 0, hasta que se
+  // cargue. Sin copiar: corre el origen y limpia la franja. Un corrimiento de todo el ancho o más lo limpia todo
+  shift(dx: number, dy: number): void {
+    if (!dx && !dy) return;
+    const { w, h } = this;
+    this.ox = (((this.ox + dx) % w) + w) % w;
+    this.oy = (((this.oy + dy) % h) + h) % h;
+    const cx = Math.max(-w, Math.min(w, dx)), cy = Math.max(-h, Math.min(h, dy));
+    if (cx > 0) this.clear(w - cx, 0, w - 1, h - 1); else if (cx < 0) this.clear(0, 0, -cx - 1, h - 1);
+    if (cy > 0) this.clear(0, h - cy, w - 1, h - 1); else if (cy < 0) this.clear(0, 0, w - 1, -cy - 1);
+  }
+  private clear(x0: number, y0: number, x1: number, y1: number): void {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const i = this.at(x, y);
+      this.ground[i] = 0; this.depth[i] = 0; this.solid[i] = 1;
+      this.fl[i] = this.fr[i] = this.ft[i] = this.fb[i] = 0; this.awake[i] = 0;
+    }
+  }
+
   private woke(i: number): void { if (!this.inWoken[i]) { this.inWoken[i] = 1; this.woken[this.nWoken++] = i; } }
 
   // Despierta todas las celdas mojadas (al empezar o tras cambiar el agua a mano)
@@ -73,16 +119,32 @@ export class ShallowWater {
 
   wake(cx: number, cy: number, radius: number): void {
     for (let y = Math.max(0, Math.floor(cy - radius)); y <= Math.min(this.h - 1, Math.ceil(cy + radius)); y++)
-      for (let x = Math.max(0, Math.floor(cx - radius)); x <= Math.min(this.w - 1, Math.ceil(cx + radius)); x++) { this.awake[y * this.w + x] = 90; this.woke(y * this.w + x); }
+      for (let x = Math.max(0, Math.floor(cx - radius)); x <= Math.min(this.w - 1, Math.ceil(cx + radius)); x++) { const i = this.at(x, y); this.awake[i] = 90; this.woke(i); }
   }
 
   // Todo lo que define el estado del fluido (para snapshot, restore y hash). Las matrices de trabajo (active, list)
   // no cuentan: se rehacen en cada paso a partir de awake.
+  // En el orden de la rejilla (y * w + x), corrida o no
   exportState(): { depth: Float32Array; fl: Float32Array; fr: Float32Array; ft: Float32Array; fb: Float32Array; awake: Uint16Array } {
-    return { depth: this.depth.slice(), fl: this.fl.slice(), fr: this.fr.slice(), ft: this.ft.slice(), fb: this.fb.slice(), awake: this.awake.slice() };
+    return { depth: this.logical(this.depth), fl: this.logical(this.fl), fr: this.logical(this.fr), ft: this.logical(this.ft), fb: this.logical(this.fb), awake: this.logical(this.awake) };
+  }
+  // Un array en el orden de la rejilla (sin anillo, una copia tal cual)
+  logical<T extends Float32Array | Uint16Array | Uint8Array>(a: T): T {
+    const out = a.slice() as T;
+    if (!this.ox && !this.oy) return out;
+    const { w, h } = this;
+    for (let y = 0; y < h; y++) {
+      const py = (y + this.oy) % h, tail = w - this.ox;
+      out.set(a.subarray(py * w + this.ox, py * w + w), y * w);
+      out.set(a.subarray(py * w, py * w + this.ox), y * w + tail);
+    }
+    return out;
   }
 
+  // Vuelve a una instantánea (en el orden de la rejilla): el fondo y las paredes no van en ella; los que haya se pasan al
+  // orden de la rejilla con el origen en (0, 0)
   importState(s: ReturnType<ShallowWater['exportState']>): void {
+    if (this.ox || this.oy) { this.ground.set(this.logical(this.ground)); this.solid.set(this.logical(this.solid)); this.ox = 0; this.oy = 0; }
     this.depth.set(s.depth); this.fl.set(s.fl); this.fr.set(s.fr); this.ft.set(s.ft); this.fb.set(s.fb); this.awake.set(s.awake);
     for (let k = 0; k < this.nWoken; k++) this.inWoken[this.woken[k]!] = 0;
     this.nWoken = 0;
@@ -108,6 +170,8 @@ export class ShallowWater {
   // Lista de celdas a calcular: las despiertas y sus vecinas
   private markActive(): void {
     const { w, h, active, awake, list, woken, inWoken } = this;
+    // (en el anillo: x0, y0 son la columna y la fila físicas de la celda 0 de la rejilla y xl, yl las de la última)
+    const x0 = this.ox, y0 = this.oy, xl = x0 ? x0 - 1 : w - 1, yl = y0 ? y0 - 1 : h - 1, wl = (h - 1) * w;
     for (let k = 0; k < this.count; k++) active[list[k]!] = 0;
     let n = 0;
     const add = (j: number) => { if (!active[j]) { active[j] = 1; list[n++] = j; } };
@@ -118,12 +182,12 @@ export class ShallowWater {
       const i = woken[k]!;
       if (!awake[i]) { inWoken[i] = 0; continue; }
       woken[m++] = i;
-      const x = i % w, y = (i - x) / w;
+      const px = i % w, py = (i - px) / w;
       add(i);
-      if (x > 0) add(i - 1);
-      if (x < w - 1) add(i + 1);
-      if (y > 0) add(i - w);
-      if (y < h - 1) add(i + w);
+      if (px !== x0) add(px > 0 ? i - 1 : i + w - 1);
+      if (px !== xl) add(px < w - 1 ? i + 1 : i - w + 1);
+      if (py !== y0) add(py > 0 ? i - w : i + wl);
+      if (py !== yl) add(py < h - 1 ? i + w : i - wl);
     }
     this.nWoken = m;
     this.count = n;
@@ -138,34 +202,39 @@ export class ShallowWater {
     const { list, awake, woken, inWoken } = this;
     const n = this.count;
     let nw = this.nWoken;
+    const x0 = this.ox, y0 = this.oy, xl = x0 ? x0 - 1 : w - 1, yl = y0 ? y0 - 1 : h - 1, wl = (h - 1) * w;
     // 1) flujos hacia las 4 vecinas según la diferencia de superficie
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
-      const x = i % w, y = (i - x) / w;
+      const px = i % w, py = (i - px) / w;
       // Solo las despiertas mandan agua; sus vecinas solo la reciben (así nunca sale agua hacia una celda que no se
       // va a actualizar en este paso, y la masa se conserva)
       if (solid[i] || !awake[i]) { fl[i] = fr[i] = ft[i] = fb[i] = 0; continue; }
       const s = ground[i]! + depth[i]!;
-      let L = x > 0 && !solid[i - 1] ? Math.max(0, fl[i]! * damp + k * (s - ground[i - 1]! - depth[i - 1]!)) : 0;
-      let R = x < w - 1 && !solid[i + 1] ? Math.max(0, fr[i]! * damp + k * (s - ground[i + 1]! - depth[i + 1]!)) : 0;
-      let T = y > 0 && !solid[i - w] ? Math.max(0, ft[i]! * damp + k * (s - ground[i - w]! - depth[i - w]!)) : 0;
-      let B = y < h - 1 && !solid[i + w] ? Math.max(0, fb[i]! * damp + k * (s - ground[i + w]! - depth[i + w]!)) : 0;
+      // Las vecinas (en el anillo) y si existen (no en el borde de la rejilla)
+      const hasL = px !== x0, hasR = px !== xl, hasT = py !== y0, hasB = py !== yl;
+      const iL = px > 0 ? i - 1 : i + w - 1, iR = px < w - 1 ? i + 1 : i - w + 1, iT = py > 0 ? i - w : i + wl, iB = py < h - 1 ? i + w : i - wl;
+      let L = hasL && !solid[iL] ? Math.max(0, fl[i]! * damp + k * (s - ground[iL]! - depth[iL]!)) : 0;
+      let R = hasR && !solid[iR] ? Math.max(0, fr[i]! * damp + k * (s - ground[iR]! - depth[iR]!)) : 0;
+      let T = hasT && !solid[iT] ? Math.max(0, ft[i]! * damp + k * (s - ground[iT]! - depth[iT]!)) : 0;
+      let B = hasB && !solid[iB] ? Math.max(0, fb[i]! * damp + k * (s - ground[iB]! - depth[iB]!)) : 0;
       // No puede salir más agua de la que hay
       const out = (L + R + T + B) * dt;
       if (out > depth[i]! && out > 0) { const sc = depth[i]! / out; L *= sc; R *= sc; T *= sc; B *= sc; }
       fl[i] = L; fr[i] = R; ft[i] = T; fb[i] = B;
       // Una vecina dormida con agua más alta: solo las despiertas mandan agua, así que dormida no bajaría nunca hacia
       // aquí (el nivel se quedaría en escalón). Se despierta al acabar el paso (no a mitad: el orden no debe contar)
-      if (x > 0 && !awake[i - 1]) this.uphill(i - 1, s); if (x < w - 1 && !awake[i + 1]) this.uphill(i + 1, s);
-      if (y > 0 && !awake[i - w]) this.uphill(i - w, s); if (y < h - 1 && !awake[i + w]) this.uphill(i + w, s);
+      if (hasL && !awake[iL]) this.uphill(iL, s); if (hasR && !awake[iR]) this.uphill(iR, s);
+      if (hasT && !awake[iT]) this.uphill(iT, s); if (hasB && !awake[iB]) this.uphill(iB, s);
     }
     // 2) profundidad: lo que entra de las vecinas menos lo que sale. Una celda que ya no se mueve se va durmiendo.
     for (let q = 0; q < n; q++) {
       const i = list[q]!;
       // Una pared no tiene agua que mover: si la despertaron (wake no mira si es pared), se duerme como una celda quieta
       if (solid[i]) { if (awake[i]! > 0) awake[i] = awake[i]! - 1; continue; }
-      const x = i % w, y = (i - x) / w;
-      const inflow = (x > 0 ? fr[i - 1]! : 0) + (x < w - 1 ? fl[i + 1]! : 0) + (y > 0 ? fb[i - w]! : 0) + (y < h - 1 ? ft[i + w]! : 0);
+      const px = i % w, py = (i - px) / w;
+      const inflow = (px !== x0 ? fr[px > 0 ? i - 1 : i + w - 1]! : 0) + (px !== xl ? fl[px < w - 1 ? i + 1 : i - w + 1]! : 0)
+        + (py !== y0 ? fb[py > 0 ? i - w : i + wl]! : 0) + (py !== yl ? ft[py < h - 1 ? i + w : i - wl]! : 0);
       const outflow = fl[i]! + fr[i]! + ft[i]! + fb[i]!;
       const delta = dt * (inflow - outflow);
       depth[i] = Math.max(0, depth[i]! + delta);
@@ -194,7 +263,7 @@ export class ShallowWater {
     const inner: number[] = [], ring: number[] = [];
     for (let y = Math.floor(cy - radius * 2); y <= Math.ceil(cy + radius * 2); y++) for (let x = Math.floor(cx - radius * 2); x <= Math.ceil(cx + radius * 2); x++) {
       if (x < 0 || y < 0 || x >= w || y >= h) continue;
-      const i = y * w + x;
+      const i = this.at(x, y);
       if (solid[i] || depth[i]! <= 0.05) continue;
       const d = Math.hypot(x - cx, y - cy);
       if (d <= radius) inner.push(i); else if (d <= radius * 2) ring.push(i);
@@ -211,9 +280,9 @@ export class ShallowWater {
   flow(x: number, y: number): [number, number] {
     const { w, h, fl, fr, ft, fb } = this;
     if (x < 0 || y < 0 || x >= w || y >= h) return [0, 0];
-    const i = y * w + x, d = Math.max(0.3, this.depth[i]!);
-    const fx = (fr[i]! - fl[i]!) + (x > 0 ? fr[i - 1]! : 0) - (x < w - 1 ? fl[i + 1]! : 0);
-    const fy = (fb[i]! - ft[i]!) + (y > 0 ? fb[i - w]! : 0) - (y < h - 1 ? ft[i + w]! : 0);
+    const i = this.at(x, y), d = Math.max(0.3, this.depth[i]!);
+    const fx = (fr[i]! - fl[i]!) + (x > 0 ? fr[this.at(x - 1, y)]! : 0) - (x < w - 1 ? fl[this.at(x + 1, y)]! : 0);
+    const fy = (fb[i]! - ft[i]!) + (y > 0 ? fb[this.at(x, y - 1)]! : 0) - (y < h - 1 ? ft[this.at(x, y + 1)]! : 0);
     return [fx * 0.5 * this.cell / d, fy * 0.5 * this.cell / d];
   }
 
@@ -222,8 +291,8 @@ export class ShallowWater {
     const { w, h } = this;
     const s = (xx: number, yy: number) => {
       const cx = Math.max(0, Math.min(w - 1, xx)), cy = Math.max(0, Math.min(h - 1, yy));
-      const i = cy * w + cx;
-      return this.solid[i] || this.depth[i]! <= 0.01 ? this.surface(y * w + x) : this.surface(i);
+      const i = this.at(cx, cy);
+      return this.solid[i] || this.depth[i]! <= 0.01 ? this.surface(this.at(x, y)) : this.surface(i);
     };
     return [(s(x + 1, y) - s(x - 1, y)) / (2 * this.cell), (s(x, y + 1) - s(x, y - 1)) / (2 * this.cell)];
   }
