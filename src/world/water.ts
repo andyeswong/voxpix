@@ -373,7 +373,18 @@ export class WaterLayer {
     }
     for (const i of cells) this.soakMaybe(i);
     this.groundVersion++;
-    this.widenRange();
+    // (el tramo de alturas, ensanchado con lo tocado y lo inundado: recorrer la rejilla entera en cada syncGround era el
+    // 10 % del paso del agua en una ventana grande que sigue al mundo. No se estrecha: es dónde se busca agua al pintar)
+    this.widenWith(cells); this.widenWith(flood);
+  }
+  private widenWith(cells: ReadonlyArray<number>): void {
+    let lo = this.zRange[0], hi = this.zRange[1];
+    for (const i of cells) {
+      if (!this.basin[i] || this.sim.solid[i]) continue;
+      const g = this.sim.ground[i]!;
+      lo = Math.min(lo, g - 4); hi = Math.max(hi, g + this.sim.depth[i]! + 8);
+    }
+    this.zRange = [Math.floor(lo), Math.ceil(hi)];
   }
 
   // Apunta que cambiaron las celdas de la caja (en celdas, extremos incluidos): en el registro de cajas y en sus baldosas

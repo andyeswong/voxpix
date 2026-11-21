@@ -275,6 +275,22 @@ describe('agua por trozos: cargar y guardar', () => {
     expect(() => jc.run(Infinity)).toThrow(/a medias/);
   });
 
+  it('el tramo de alturas se ensancha con lo que toca syncGround (un pozo bajo el fondo de un lago, por debajo de -12)', () => {
+    // Un mundo que baja hasta z -40: suelo a 10, un lago con el fondo a 4 y el agua a 7
+    const s = new StaticVoxels(PAL, W, D, -40, ZMAX);
+    for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) { const f = lake(x, y) ? 4 : 10; for (let z = -40; z < f; z++) s.set(x, y, z, material(0, 1)); }
+    const w = new WaterLayer(world(s, true), { wallAbove: Infinity });
+    expect(w.zRange[0]).toBeGreaterThan(-20);
+    // Un pozo de 4 x 4 en el lago, hasta -30
+    let px = -1, py = -1;
+    for (let y = 0; y < D && px < 0; y += 2) for (let x = 0; x < W && px < 0; x += 2) if (lake(x, y) && lake(x + 4, y + 4)) { px = x; py = y; }
+    for (let y = py; y < py + 4; y++) for (let x = px; x < px + 4; x++) for (let z = -30; z < 4; z++) s.set(x, y, z, 0);
+    w.syncGround({ x0: px, y0: py, x1: px + 3, y1: py + 3 });
+    expect(w.zRange[0]).toBeLessThanOrEqual(-34);
+    // (y lo que había, dentro: el tramo no se estrecha)
+    expect(w.zRange[1]).toBeGreaterThanOrEqual(32);
+  });
+
   it('errores: recuadro que no es de celdas enteras, lo guardado de otro tamaño', () => {
     const w = new WaterLayer(world(voxels(), false), { wallAbove: Infinity, unloaded: true, movable: true });
     expect(() => w.load(1, 0, 16, 15)).toThrow(/celdas enteras/);
