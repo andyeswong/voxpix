@@ -125,14 +125,32 @@ describe('preparar lo expuesto después del horneado', () => {
     };
     const faces = frontFaces({ incline: 0.5 } as never);
     const exposed = (s: StaticVoxels, f?: typeof faces) => { const out: string[] = []; s.forEachExposed((x, y, z, v) => out.push(`${x},${y},${z},${v}`), { x0: 0, y0: 0, x1: W - 1, y1: D - 1 }, true, f); return out.sort(); };
-    // (de una vez, shift, y por pasos, shiftJob: el de la ventana viva)
-    for (const [dcx, dcy, byJob] of [[1, 0, false], [0, 1, false], [-1, 0, false], [1, -1, false], [1, 0, true], [-1, 1, true]] as const) {
+    // (de una vez, shift, y por pasos, shiftJob: el de la ventana viva. 'medio': las máscaras se piden con el corrimiento a
+    // medio preparar, unas ya hechas y otras sin hacer: las que se crean entonces se pierden y se rehacen, las que se
+    // rellenan siguen siendo las mismas)
+    // 'mitad': al correr solo están hechas, en escalera, unas filas de la mitad oeste: dos columnas de trozos enteras y las dos
+    // siguientes hasta media altura, cortando un trozo (las filas hechas de cada máscara tienen que ir con ella)
+    for (const [dcx, dcy, byJob] of [[1, 0, false], [0, 1, false], [-1, 0, false], [1, -1, false], [1, 0, true], [-1, 1, true], [1, 0, 'medio'], [0, -1, 'medio'], [1, 0, 'mitad'], [-1, 1, 'mitad']] as const) {
       const s = new StaticVoxels(PAL, W, D, 0, 47);
       fill(s, 0, 0);
-      // (las máscaras hechas antes de correr, con y sin caras)
-      exposed(s); exposed(s, faces);
-      const full = s.exposureRows;
-      if (byJob) { const j = s.shiftJob(dcx, dcy); while (!j.step()); j.commit(); } else s.shift(dcx, dcy);
+      // (las máscaras hechas antes de correr, sin y con caras, contando las filas de cada una; a medias, solo las de la
+      // mitad oeste)
+      const half = { x0: 0, y0: 0, x1: W / 2 - 1, y1: D - 1 };
+      if (byJob === 'medio') { s.forEachExposed(() => {}, half); s.forEachExposed(() => {}, half, true, faces); }
+      if (byJob === 'mitad') for (const r of [{ x0: 0, y0: 0, x1: 31, y1: D - 1 }, { x0: 32, y0: 0, x1: 63, y1: 71 }]) { s.forEachExposed(() => {}, r); s.forEachExposed(() => {}, r, true, faces); }
+      const r0 = s.exposureRows;
+      if (byJob !== 'medio' && byJob !== 'mitad') exposed(s);
+      const r1 = s.exposureRows;
+      if (byJob !== 'medio' && byJob !== 'mitad') exposed(s, faces);
+      const fullPlain = r1 - r0, fullFaces = s.exposureRows - r1;
+      if (byJob === 'medio') {
+        const j = s.shiftJob(dcx, dcy);
+        for (let k = 0; k < 3; k++) j.step();
+        exposed(s); exposed(s, faces);
+        while (!j.step());
+        j.commit();
+      } else if (byJob) { const j = s.shiftJob(dcx, dcy); while (!j.step()); j.commit(); } else s.shift(dcx, dcy);
+      const a0 = s.exposureRows;
       // Lo que entra, escrito en su sitio nuevo
       const DX = dcx * 16, DY = dcy * 16;
       const ex0 = DX > 0 ? W - DX : 0, ex1 = DX > 0 ? W - 1 : DX < 0 ? -DX - 1 : -1;
@@ -141,11 +159,13 @@ describe('preparar lo expuesto después del horneado', () => {
       if (ey1 >= ey0) fill(s, DX, DY, 0, ey0, W - 1, ey1);
       const ref = new StaticVoxels(PAL, W, D, 0, 47);
       fill(ref, DX, DY);
-      expect({ at: [dcx, dcy, byJob], n: exposed(s).join('|') === exposed(ref).join('|') }).toEqual({ at: [dcx, dcy, byJob], n: true });
-      expect({ at: [dcx, dcy, byJob], f: exposed(s, faces).join('|') === exposed(ref, faces).join('|') }).toEqual({ at: [dcx, dcy, byJob], f: true });
+      const mine = exposed(s), a1 = s.exposureRows, mineF = exposed(s, faces), a2 = s.exposureRows;
+      expect({ at: [dcx, dcy, byJob], n: mine.join('|') === exposed(ref).join('|') }).toEqual({ at: [dcx, dcy, byJob], n: true });
+      expect({ at: [dcx, dcy, byJob], f: mineF.join('|') === exposed(ref, faces).join('|') }).toEqual({ at: [dcx, dcy, byJob], f: true });
       // Y se rehizo solo lo que entró y el borde nuevo, con sus vecinos (no todas: antes se daban por caducadas). En 8 x 8
       // trozos: un corrimiento por un eje rehace 4 columnas de 8 (la mitad); en diagonal, el 75 %; tirándolas, el 100 %
-      expect(s.exposureRows - full).toBeLessThan(0.9 * full);
+      // (cada máscara por su lado: sin caras y con caras)
+      if (byJob !== 'medio' && byJob !== 'mitad') expect({ at: [dcx, dcy, byJob], sin: (a1 - a0) / fullPlain < 0.9, con: (a2 - a1) / fullFaces < 0.9 }).toEqual({ at: [dcx, dcy, byJob], sin: true, con: true });
     }
   });
   it('copia girada de un trozo que queda vacío (copyRotatedChunk): sus alturas y lo expuesto, como copiarlo todo de nuevo (antes se quedaban con lo de antes)', () => {

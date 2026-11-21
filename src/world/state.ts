@@ -355,8 +355,8 @@ export class StaticVoxels implements VoxelSource {
     }
   }
 
-  // MOVER LA VENTANA POR PASOS: lo mismo que shift, pero lo que más cuesta (las referencias de las losas, las alturas y las
-  // cajas de lo cambiado) se prepara en otros búferes por filas de trozos (step: una fila por llamada; true al acabar)
+  // MOVER LA VENTANA POR PASOS: lo mismo que shift, pero lo que más cuesta (las referencias de las losas y de sus máscaras
+  // de lo expuesto, las alturas y las cajas de lo cambiado) se prepara en otros búferes por filas de trozos (step: una fila por llamada; true al acabar)
   // mientras el mundo sigue; commit hace el cambio: vuelve a copiar los trozos que cambiaron mientras tanto, cambia los
   // búferes, corre lo pequeño en su sitio y da la rejilla de pisar por sucia (se rehace al pedirla)
   shiftJob(dcx: number, dcy: number): { step(): boolean; commit(): void } {
@@ -364,13 +364,24 @@ export class StaticVoxels implements VoxelSource {
     const C = this.cols, R = this.rows, nz = this.nz, W = this.width, D = this.depth, DX = dcx * CHUNK, DY = dcy * CHUNK;
     const start = this.clock;
     let bk = this.backBufs;
-    if (!bk || bk.data.length !== this.data.length) bk = this.backBufs = { data: new Array(this.data.length).fill(null), pal: new Array(this.pal.length).fill(null), height: new Int16Array(this.height.length), seg: new Int32Array(this.seg.length), segN: new Uint8Array(this.segN.length) };
+    if (!bk || bk.data.length !== this.data.length) {
+      const refs = () => new Array(this.data.length).fill(null);
+      bk = this.backBufs = { data: refs(), pal: refs(), expo: refs(), expoOk: refs(), expoF: refs(), expoFOk: refs(), height: new Int16Array(this.height.length), seg: new Int32Array(this.seg.length), segN: new Uint8Array(this.segN.length) };
+    }
     const B = bk;
     const inside = (sx: number, sy: number) => sx >= 0 && sy >= 0 && sx < C && sy < R;
     // El trozo c (destino) desde su origen en los búferes de ahora
     const copyChunk = (cx: number, cy: number) => {
       const c = cy * C + cx, sx = cx + dcx, sy = cy + dcy, ok = inside(sx, sy), sc = sy * C + sx;
-      for (let s = 0; s < nz; s++) { B.data[c * nz + s] = ok ? this.data[sc * nz + s]! : null; B.pal[c * nz + s] = ok ? this.pal[sc * nz + s]! : null; }
+      // (las máscaras de lo expuesto, por referencia como las losas: se rellenan en su sitio, así que la de un trozo sigue
+      // siendo la misma; una que se crea mientras tanto donde no había se pierde, y se vuelve a hacer entera al pedirla,
+      // con su ok a cero. Si siguen valiendo lo dice expoAt, que se corre en commit)
+      for (let s = 0; s < nz; s++) {
+        const d = c * nz + s, o = sc * nz + s;
+        B.data[d] = ok ? this.data[o]! : null; B.pal[d] = ok ? this.pal[o]! : null;
+        B.expo[d] = ok ? this.expo[o]! : null; B.expoOk[d] = ok ? this.expoOk[o]! : null;
+        B.expoF[d] = ok ? this.expoF[o]! : null; B.expoFOk[d] = ok ? this.expoFOk[o]! : null;
+      }
       const o = c * SEGS * 7;
       if (!ok) { B.segN[c] = 0; B.seg.fill(0, o, o + SEGS * 7); }
       else {
@@ -396,21 +407,22 @@ export class StaticVoxels implements VoxelSource {
           if (inside(sx, sy) && this.versions[sy * C + sx]! > start) copyChunk(cx, cy);
         }
         // El cambio de búferes (los de antes quedan para la próxima vez)
-        const old = { data: this.data, pal: this.pal, height: this.height, seg: this.seg, segN: this.segN };
+        const old = { data: this.data, pal: this.pal, expo: this.expo, expoOk: this.expoOk, expoF: this.expoF, expoFOk: this.expoFOk, height: this.height, seg: this.seg, segN: this.segN };
         this.data = B.data; this.pal = B.pal; this.height = B.height; this.seg = B.seg; this.segN = B.segN;
+        this.expo = B.expo; this.expoOk = B.expoOk; this.expoF = B.expoF; this.expoFOk = B.expoFOk;
         this.backBufs = old;
         // Lo pequeño, en su sitio (copias de memoria)
         const g = (a: CopyArr, per: number, fill: number | null) => shiftGrid(a, C, R, per, dcx, dcy, fill);
         g(this.palN, nz, 0); g(this.uni, nz, 0); g(this.count, nz, 0);
         g(this.alloc, 1, 0); g(this.versions, 1, 0); g(this.worldVersions, 1, 0); g(this.dataVersions, 1, 0);
-        this.shiftExposure(g);
+        g(this.expoAt, nz, -1); g(this.expoFAt, nz, -1);
         if (this.fgrid) this.fgrid.dirty.fill(1);
         void D;
         this.finishShift(dcx, dcy);
       },
     };
   }
-  private backBufs: { data: Array<Uint8Array | Uint16Array | null>; pal: Array<Uint16Array | null>; height: Int16Array; seg: Int32Array; segN: Uint8Array } | null = null;
+  private backBufs: { data: Array<Uint8Array | Uint16Array | null>; pal: Array<Uint16Array | null>; expo: Array<Uint16Array | null>; expoOk: Array<Uint8Array | null>; expoF: Array<Uint16Array | null>; expoFOk: Array<Uint8Array | null>; height: Int16Array; seg: Int32Array; segN: Uint8Array } | null = null;
 
   // Escribe de una vez TODAS las losas del trozo c (un trozo nuevo: lo que tuviera se pierde). slabs[s]: los valores de
   // la losa s en el orden de dentro de la losa ((z & 15) << 8 | (y & 15) << 4 | x & 15), o null si toda es aire. Para
