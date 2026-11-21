@@ -48,6 +48,7 @@ import type { Yaw } from './edit';
 import { generateRegion, type RegionSpec, type GeneratedRegion } from './regiongen';
 import { bakeWorld, bakeWorldJob, shiftBakedJob, rebakeJobs, rebakeChangedJobs, cancelRebakes, chunksInScreen, wrapJob, type RemoteRects, SKY_RAYS, LIGHT_PRIORITY, type Baked, type ShiftJob, type ViewJob, type RebakeShape } from './bake';
 import { WorldView, ViewCamera, type Quarter, type WorldViewOptions } from './view';
+import type { WaterLayer } from './water';
 
 export type Trozo = readonly [number, number];
 // Lo que se engancha a la ventana para correrse con ella (attach)
@@ -63,6 +64,9 @@ export interface TrozoCtx {
   write(x: number, y: number, z: number, v: number): void;
   cell(bx: number, by: number, bz: number): [number, Yaw];     // [bloque, giro en grados]
   setCell(bx: number, by: number, bz: number, block: number, yaw?: Yaw): void;
+  // En onLoad, si lo generó la ventana (o lo preparó prepareTrozo): la región generada, con lo que no se escribió (skip),
+  // como el agua que va a un WaterLayer (regionWater)
+  region?: GeneratedRegion;
 }
 export interface LiveWindowOptions {
   blocks: BlockSet;
@@ -113,6 +117,9 @@ export interface LiveWindowOptions {
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
   onLoad?(t: Trozo, ctx: TrozoCtx): void;
   onShift?(d: { cells: readonly [number, number]; voxels: readonly [number, number] }): void;
+  // Materiales de la región que no se escriben en la rejilla (el agua, si la simula un WaterLayer: se carga en onLoad con
+  // regionWater(ctx.region, ...)). Un prepareTrozo del juego tiene que saltarse los mismos en sus vóxeles
+  skip?: readonly number[];
 }
 
 export interface PreparedTrozo {
@@ -287,6 +294,18 @@ export class LiveWindow {
     return () => { this.attached.delete(x); };
   }
   private readonly attached = new Set<Attached>();
+
+  // El agua de la ventana (un WaterLayer movable, creado sobre win.store después de la ventana: necesita sus vóxeles): la
+  // pone en el state, la engancha (se corre con la ventana) y las vistas la toman. Los trozos ya cargados los carga el
+  // juego (water.load), como en onLoad. null la quita
+  setWater(water: WaterLayer | null): void {
+    if (water && !water.movable) throw new Error('LiveWindow.setWater: la capa tiene que ser movable (WaterOptions.movable)');
+    const old = this.state.water;
+    if (old) this.attached.delete(old);
+    this.state.water = water;
+    if (water) this.attached.add(water);
+    for (const { view } of this.views.values()) view.useWater();
+  }
 
   // Quien pinta fuera los recuadros (Baked.remote): la ventana lo pone en el horneado del giro que se ve y lo quita de los
   // demás, también al girar (turn, y en el cambio de turnTo). null lo quita de todos
@@ -494,9 +513,10 @@ export class LiveWindow {
   }
 
   // Lo del trozo t para el juego (en coordenadas del mundo)
-  ctx(t: Trozo): TrozoCtx {
+  ctx(t: Trozo, region?: GeneratedRegion): TrozoCtx {
     const C = this.C, cx0 = this.tx0 * C, cy0 = this.ty0 * C;
     return {
+      ...(region ? { region } : {}),
       grid: this.grid, at: [(t[0] - this.tx0) * C, (t[1] - this.ty0) * C, 0],
       read: (x, y, z) => { const [lx, ly] = this.toLocal(x, y); return this.store.get(lx, ly, z); },
       write: (x, y, z, v) => { const [lx, ly] = this.toLocal(x, y); this.store.set(lx, ly, z, v); },
@@ -748,6 +768,7 @@ export class LiveWindow {
     } };
   }
   private pendingRebake = false;
+  private get skipOpt(): { skip?: readonly number[] } { return this.o.skip ? { skip: this.o.skip } : {}; }
 
   // Generar y escribir el trozo t (en su sitio de la ventana), y lo del juego
   private loadTrozoJob(t: Trozo, remote = false): { run(deadline: number): boolean } {
@@ -771,28 +792,29 @@ export class LiveWindow {
     if (ticket) return { run: (deadline: number) => {
       if (!prep) { prep = ticket!.result(); if (!prep) return false; ticket = null; }
       if (prep.local) {
-        stamp ??= this.grid.stampRegionJob(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0]);
+        stamp ??= this.grid.stampRegionJob(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt);
         if (!stamp.run(deadline)) return false;
         k = prep.chunks.length;
       }
-      if (k < 0) { this.grid.stampCells(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0]); k = 0; }
+      if (k < 0) { this.grid.stampCells(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt); k = 0; }
       for (; k < prep.chunks.length; k++) {
         if (k && performance.now() >= deadline) return false;
         const ch = prep.chunks[k]!;
         this.store.writeChunkPrepared(ch.c, ch.slabs, ch.tops);
       }
-      this.o.onLoad?.(t, this.ctx(t));
+      this.o.onLoad?.(t, this.ctx(t, prep.cells));
       this.loaded.add(`${tx},${ty}`);
       return true;
     } };
+    let region: GeneratedRegion | null = null;
     return { run: (deadline: number) => {
       if (!stamp) {
-        const r = generateRegion(spec, { x0: tx * C, y0: ty * C, z0: 0, width: C, depth: C, height: spec.height });
-        stamp = this.grid.stampRegionJob(r, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0]);
+        region = generateRegion(spec, { x0: tx * C, y0: ty * C, z0: 0, width: C, depth: C, height: spec.height });
+        stamp = this.grid.stampRegionJob(region, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt);
         if (performance.now() >= deadline) return false;
       }
       if (!stamp.run(deadline)) return false;
-      this.o.onLoad?.(t, this.ctx(t));
+      this.o.onLoad?.(t, this.ctx(t, region!));
       this.loaded.add(`${tx},${ty}`);
       return true;
     } };

@@ -15,6 +15,7 @@ import type { ChangeWatch } from './changes';
 import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import type { StaticVoxels } from './state';
+import type { GeneratedRegion } from './regiongen';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
 const CHANGE_LOG = 256;                           // ticks que guarda el registro de cambios (changesSince)
@@ -39,6 +40,23 @@ export interface WaterOptions {
   // unloaded: nace sin cargar, toda seca y de pared (una ventana que carga el agua por trozos con load); no lee el agua de
   // partida del mundo (wet / waterTop pueden ir vacíos)
   unloaded?: boolean;
+}
+
+// El agua de una región generada (regiongen) cuyo material `water` no se escribió en la rejilla (LiveWindowOptions.skip,
+// stampRegion con skip): la superficie de cada columna de vóxeles (la cara de arriba de la celda de agua más alta de su
+// columna de bloques), para WaterLayer.load. at: la celda de la rejilla donde se puso la región (TrozoCtx.at); N: el
+// lado del bloque; origin: el de la rejilla (vóxeles). Las coordenadas que recibe son vóxeles locales del mundo
+export function regionWater(r: GeneratedRegion, water: number, N: number, at: readonly [number, number, number], origin: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 }): (x: number, y: number) => number | null {
+  const { width: W, depth: D, height: H } = r.region, top = new Int16Array(W * D).fill(-32768);
+  for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) {
+    for (let z = H - 1; z >= 0; z--) if (r.cells[(z * D + y) * W + x] === water) { top[y * W + x] = origin.z + (at[2] + z + 1) * N; break; }
+  }
+  return (x, y) => {
+    const bx = Math.floor((x - origin.x) / N) - at[0], by = Math.floor((y - origin.y) / N) - at[1];
+    if (bx < 0 || by < 0 || bx >= W || by >= D) return null;
+    const t = top[by * W + bx]!;
+    return t === -32768 ? null : t;
+  };
 }
 
 // El agua guardada de un recuadro (WaterLayer.save / load): w x h celdas, por filas

@@ -308,13 +308,15 @@ export class WorldView implements RenderState {
   readonly static: StaticVoxels;
   entities: Entity[] = [];
   lights: WorldLight[] = [];
-  readonly water: WaterSurface | null;
-  readonly drops: DropSource;
+  water: WaterSurface | null = null;
+  drops!: DropSource;
   effects: EffectsLayer | null = null;
   private fxViews: FxView[] = [];
   private synced: number;
-  private readonly waterView: WaterView | null = null;
-  private readonly dropsView: DropsView | null = null;
+  private waterView: WaterView | null = null;
+  private dropsView: DropsView | null = null;
+  private readonly hideWater: ((x: number, y: number) => number) | null;
+  private readonly cutOpt: boolean;
   private readonly dress: ViewDress | null;
   // Las luces que esta vista no enseña (las de lo que el vestido quitó): ni se hornean ni se pintan
   hideLight: ((light: WorldLight) => boolean) | null = null;
@@ -329,21 +331,11 @@ export class WorldView implements RenderState {
     this.static = quarter === 0 && !this.dress && !opts.cut ? src : pre?.static ?? rotatedStatic(src, this.camera);
     // Con corte, el agua también va por la rejilla de la vista (en el giro 0, la misma que la del mundo): así lo que queda
     // por encima de lo cortado no se dibuja
-    const hide = opts.cut ? (x: number, y: number) => this.appliedAt(Math.min(src.width - 1, x), Math.min(src.depth - 1, y)) : null;
-    // (una capa que se corre, movable, está en anillo: también en el giro 0 se lee por WaterView)
-    if (quarter === 0 && !(state.water && (opts.cut || state.water.movable))) {
-      this.water = state.water;
-      this.drops = state.drops;
-    } else if (quarter === 0) {
-      this.waterView = new WaterView(state.water!, this.camera, hide);
-      this.water = this.waterView;
-      this.drops = state.drops;
-    } else {
-      this.waterView = state.water ? new WaterView(state.water, this.camera, hide) : null;
-      this.dropsView = new DropsView(state.drops, this.camera);
-      this.water = this.waterView;
-      this.drops = this.dropsView;
-    }
+    this.hideWater = opts.cut ? (x: number, y: number) => this.appliedAt(Math.min(src.width - 1, x), Math.min(src.depth - 1, y)) : null;
+    this.cutOpt = !!opts.cut;
+    if (quarter === 0) this.drops = state.drops;
+    else { this.dropsView = new DropsView(state.drops, this.camera); this.drops = this.dropsView; }
+    this.setupWater();
     this.synced = pre ? pre.since : src.clock;
     this.refresh();
     this.dress?.(this, null);
@@ -473,6 +465,17 @@ export class WorldView implements RenderState {
     this.pending = this.pending.map((b) => clip(mv(b))).filter(inside);
     this.cursor = 0; this.pendingAt = 0;
   }
+
+  // El agua de la vista: la del mundo tal cual en el giro 0 sin corte; si no (girada, con corte, o una capa que se corre,
+  // movable, que está en anillo), su copia en ejes de la vista (WaterView)
+  private setupWater(): void {
+    const w = this.state.water;
+    if (this.camera.quarter === 0 && !(w && (this.cutOpt || w.movable))) { this.waterView = null; this.water = w; return; }
+    this.waterView = w ? new WaterView(w, this.camera, this.hideWater) : null;
+    this.water = this.waterView;
+  }
+  // El agua del mundo cambió (state.water puesto después de crear la vista: LiveWindow.setWater): la vista la toma
+  useWater(): void { this.setupWater(); this.waterView?.refresh(); }
 
   // ¿Ninguna columna del trozo c del mundo está escondida en la copia?
   private uncut(c: number): boolean {

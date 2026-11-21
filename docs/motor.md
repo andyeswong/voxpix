@@ -1117,16 +1117,24 @@ water.follow(state.watchChanges());                                 // picar o p
   cargar es pared seca en la capa, en la vista y en la GPU: no se sube nada de ella hasta que se carga.
 
   Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
-  pared seca; el mundo puede traer `wet` y `waterTop` vacíos) y cada trozo se carga al escribirse:
+  pared seca; el mundo puede traer `wet` y `waterTop` vacíos), se pone con `win.setWater(water)` (en el state,
+  enganchada para correrse, y las vistas la toman) y cada trozo se carga al escribirse. En una ventana generada, el agua
+  no se escribe en la rejilla (`LiveWindowOptions.skip: [agua]`; un `prepareTrozo` del juego se salta lo mismo en su
+  copia) y `regionWater(ctx.region, agua, N, ctx.at)` da su superficie:
 
   ```ts
-  onLoad(t, ctx) {   // (o al final de fill): los vóxeles del trozo ya escritos, antes de hornearlo
-    const [x0, y0] = [ctx.at[0] * N, ctx.at[1] * N], x1 = x0 + T - 1, y1 = y0 + T - 1;
-    const saved = guardado.get(key(t));                                   // lo de save, si salió antes
-    const surface = saved ? null : takeWaterVoxels(state.solid, x0, y0, x1, y1, esAgua);   // bloques de agua -> agua
-    water.load(x0, y0, x1, y1, { saved, surface });
-  },
-  onUnload(t, ctx) { guardado.set(key(t), water.save(x0, y0, x1, y1)); },   // null: nada que guardar
+  const win = new LiveWindow({ ..., skip: [set.index('agua')],
+    onLoad(t, ctx) {   // los vóxeles del trozo ya escritos (con lo suyo, lo picado), antes de hornearlo
+      const [x0, y0] = [ctx.at[0] * N, ctx.at[1] * N], x1 = x0 + T - 1, y1 = y0 + T - 1;
+      const saved = guardado.get(key(t)) ?? null;                         // lo de save, si salió antes
+      water.load(x0, y0, x1, y1, { saved, surface: saved ? null : regionWater(ctx.region!, agua, N, ctx.at) });
+    },
+    onUnload(t, ctx) { guardado.set(key(t), water.save(x0, y0, x1, y1)); },   // null: nada que guardar
+  });
+  const water = new WaterLayer({ model: win.store, lights: [], width: win.store.width, depth: win.store.depth,
+    wet: new Uint8Array(0), waterTop: new Int16Array(0), fountain: null }, { movable: true, unloaded: true, wallAbove: Infinity });
+  win.setWater(water);   // y los trozos del constructor, que llegaron a onLoad antes que la capa: se apuntan allí y se
+                         // cargan aquí (como test/agua-ventana.test.ts)
   ```
 
   - `load` rehace el fondo y las paredes desde los vóxeles; el agua sale de lo guardado o, la primera vez, de `surface`
@@ -1136,11 +1144,14 @@ water.follow(state.watchChanges());                                 // picar o p
     el cambio para la vista y sube `groundVersion`.
   - `save` guarda la profundidad y la cuenca de cada celda (no los flujos: vuelve quieta); null si no hay agua ni
     cuenca. Lo que se empapaba se sigue empapando al volver.
-  - `takeWaterVoxels(s, x0, y0, x1, y1, esAgua)`: para un mundo hecho de bloques de agua (que se pintarían opacos y
-    taparían lo que hay dentro), quita esos vóxeles y da la superficie de cada columna. Mira cada columna desde arriba
+  - `takeWaterVoxels(s, x0, y0, x1, y1, esAgua)`: para un mundo de vóxeles sueltos con agua pintada (que se pintaría
+    opaca y taparía lo que hay dentro), quita esos vóxeles y da la superficie de cada columna. En una rejilla de bloques
+    no: quitaría los vóxeles y la celda seguiría siendo agua (`skip` y `regionWater` en su lugar). Mira cada columna desde arriba
     y para en el primer vóxel que no es agua: el agua de una cueva bajo tierra se queda como vóxeles.
   - El trozo se escribe con lo suyo (lo picado) antes de `load`: el fondo de lo guardado tiene que ser el de sus vóxeles.
-  - Lo comprueba `test/agua-cargar.test.ts`.
+  - Lo comprueban `test/agua-cargar.test.ts` y, con la ventana de verdad andando de ida y vuelta (también con
+    `prepareTrozo`), `test/agua-ventana.test.ts`: el agua queda como en una ventana hecha de nuevo ahí, sin agua en la
+    rejilla ni en los vóxeles, y lo que sale moviéndose vuelve como salió.
 
   La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
   profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
