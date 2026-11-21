@@ -41,6 +41,9 @@ void (async () => {
   // ?foco=N: el agua solo se simula a N vóxeles o menos del personaje (WaterLayer.setFocus); ?pisar=orilla: un pisotón al
   // entrar en el agua (al pasar de seco a mojado), el ritmo de un juego, en vez de cada N cuadros
   const FOCO = Number(q.get('foco') ?? 0), ORILLA = q.get('pisar') === 'orilla';
+  // ?seguir=1: el agua sigue al mundo (WaterLayer.follow: cada vóxel escrito, también los trozos que entran, rehace su fondo),
+  // como en un juego que pica y pone
+  const SEGUIR = q.get('seguir') === '1';
   const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11), GIROS = Number(q.get('giros') ?? 1);
   // ?girar=s: cada s segundos, Q (girar con fundido, turnTo: solo vive el giro de ahora); ?presu=ms: el presupuesto cercano
   // mientras dura el fundido (8 por defecto, el de siempre)
@@ -129,6 +132,7 @@ void (async () => {
     const st = win.store;
     water = new WaterLayer({ model: st, lights: [], width: st.width, depth: st.depth, wet: new Uint8Array(0), waterTop: new Int16Array(0), fountain: null } as never, { movable: true, unloaded: true, wallAbove: Infinity });
     win.setWater(water);
+    if (SEGUIR) water.follow(win.state.watchChanges());
     for (const [t, ctx] of aguaPend) { const j = aguaLoad(t, ctx); while (!j.run(Infinity)); }
     aguaPend.length = 0;
   }
