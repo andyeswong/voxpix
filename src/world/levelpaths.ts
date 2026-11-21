@@ -84,6 +84,7 @@ export class LevelPathField {
   private watch: ChangeWatch;
   private around: number[] = [];
   private offsets: number[] = [];       // desplazamientos del cuerpo que se prueban (el centro primero)
+  private overhang = 0;                 // vóxeles que el cuerpo de una celda sobresale de ella, como mucho
 
   constructor(readonly state: WorldState, o: LevelPathOptions = {}) {
     this.cell = o.cell ?? 4; this.radius = o.radius ?? 0; this.height = o.height ?? 16; this.step = o.step ?? 2;
@@ -104,6 +105,11 @@ export class LevelPathField {
     for (let dy = -hi; dy <= lo; dy++) for (let dx = -hi; dx <= lo; dx++) off.push([dx, dy]);
     off.sort((p, q) => Math.hypot(p[0], p[1]) - Math.hypot(q[0], q[1]) || p[1] - q[1] || p[0] - q[0]);
     for (const [dx, dy] of off) this.offsets.push(dx, dy);
+    // Cuánto sobresale de su celda, como mucho, el cuerpo de una celda (desplazado y con su radio): hasta ahí llega lo que
+    // depende de los vóxeles de fuera. El borde que se rehace al correrse y el margen de lo que cambió salen de aquí (con
+    // un radio grande, más que radius + 1)
+    const c = this.cell, mid = c >> 1;
+    this.overhang = Math.max(0, hi + span - mid, mid + lo + span - (c - 1));
     this.fill(0, 0, this.cols - 1, this.rows - 1);
     this.watch = state.watchChanges();
   }
@@ -169,7 +175,7 @@ export class LevelPathField {
   private redoQ: Array<[number, number, number, number]> = [];
   private sync(cells = Infinity): number {
     const { boxes } = this.watch.take();
-    const c = this.cell, m = Math.ceil(this.radius) + 1;
+    const c = this.cell, m = Math.max(Math.ceil(this.radius), this.overhang) + 1;
     for (const b of boxes) this.redoQ.push([Math.max(0, Math.floor((b.x0 - m) / c)), Math.max(0, Math.floor((b.y0 - m) / c)),
       Math.min(this.cols - 1, Math.floor((b.x1 + m) / c)), Math.min(this.rows - 1, Math.floor((b.y1 + m) / c))]);
     if (!this.redoQ.length || cells <= 0) return cells;
@@ -217,15 +223,19 @@ export class LevelPathField {
     if (cj > 0) this.clear(0, rows - cj, cols - 1, rows - 1); else if (cj < 0) this.clear(0, 0, cols - 1, -cj - 1);
     // El borde nuevo del lado que sale (eran celdas de dentro); el del lado que entra está vacío hasta que se escriba, y
     // los otros dos no cambian
-    const b = Math.ceil((this.radius + 1) / c);
-    if (i > 0) this.redo(0, 0, b - 1, rows - 1); else if (i < 0) this.redo(cols - b, 0, cols - 1, rows - 1);
-    if (j > 0) this.redo(0, 0, cols - 1, b - 1); else if (j < 0) this.redo(0, rows - b, cols - 1, rows - 1);
+    // (con budget, a la cola de lo pendiente: lo rehace advance() por su tanda, como lo que escribe la ventana, y no cae
+    // entero en el cuadro del corrimiento; en un juego, ~30 ms de ese cuadro a 6x)
+    const b = Math.ceil((Math.max(this.radius, this.overhang) + 1) / c), edge: Array<[number, number, number, number]> = [];
+    if (i > 0) edge.push([0, 0, b - 1, rows - 1]); else if (i < 0) edge.push([cols - b, 0, cols - 1, rows - 1]);
+    if (j > 0) edge.push([0, 0, cols - 1, b - 1]); else if (j < 0) edge.push([0, rows - b, cols - 1, rows - 1]);
+    if (this.budget === undefined) for (const e of edge) this.redo(...e);
     this.goal = '';
     if (this.work) { this.spare = { dist: this.work.dist, q: this.work.q }; this.work = null; }
     this.want = null; this.asked = '';
     // Lo pendiente de rehacer, en las celdas de ahora (lo que queda fuera se tira)
     this.redoQ = this.redoQ.map(([a, b2, c2, d]) => [Math.max(0, a - i), Math.max(0, b2 - j), Math.min(cols - 1, c2 - i), Math.min(rows - 1, d - j)] as [number, number, number, number])
       .filter(([a, b2, c2, d]) => a <= c2 && b2 <= d);
+    if (this.budget !== undefined) this.redoQ.push(...edge);
   }
 
   private cellOf(p: { x: number; y: number }): number {

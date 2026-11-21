@@ -134,6 +134,43 @@ describe('caminos por niveles: el anillo', () => {
     }
   });
 
+  it('con budget, el borde que sale se rehace por advance (no en el corrimiento) y acaba como un campo hecho de nuevo', () => {
+    // (lo que entra se escribe, como en la ventana; el borde del lado que sale solo lo rehace el corrimiento)
+    for (const [dcx, dcy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const s = new StaticVoxels(PAL, W, D, 0, Z), st = new WorldState(s, [], null);
+      for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) writeChunk(s, cx, cy, 0, 0);
+      // (radius 6: el cuerpo de una celda llega a las de al lado, y la del borde, a lo que había fuera)
+      const O6 = { ...O, radius: 6 };
+      const f = new LevelPathField(st, { ...O6, budget: 50 }), now = new LevelPathField(st, O6);
+      const goal: LevelPoint = { x: W / 2, y: D / 2, z: 40 };
+      f.path({ x: 6, y: 6, z: 40 }, goal); now.path({ x: 6, y: 6, z: 40 }, goal);
+      s.shift(dcx, dcy); f.shift(dcx * CHUNK, dcy * CHUNK); now.shift(dcx * CHUNK, dcy * CHUNK);
+      for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
+        const ox = cx + dcx, oy = cy + dcy;
+        if (ox >= 0 && oy >= 0 && ox < C && oy < R) continue;
+        writeChunk(s, cx, cy, dcx * CHUNK, dcy * CHUNK);
+      }
+      // (con budget se pone al día al consultarlo: una consulta y advance hasta acabar; sin budget, al consultar)
+      f.dir({ x: 6, y: 6, z: 40 }, goal);
+      for (let n = 0; n < 100000 && !f.advance(); n++);
+      now.dir({ x: 6, y: 6, z: 40 }, goal);
+      const ref = new LevelPathField(st, O6);
+      for (let y = 1; y < D; y += 2) for (let x = 1; x < W; x += 2) {
+        const r = ref.floorsAt({ x, y });
+        if (JSON.stringify(now.floorsAt({ x, y })) !== JSON.stringify(r)) throw new Error(`${dcx},${dcy}: suelos en ${x},${y} (sin budget)`);
+        if (JSON.stringify(f.floorsAt({ x, y })) !== JSON.stringify(r)) throw new Error(`${dcx},${dcy}: suelos en ${x},${y} (budget)`);
+      }
+      for (let y = 2; y < D; y += 9) for (let x = 2; x < W; x += 9) {
+        const p = ref.path({ x, y, z: 40 }, goal);
+        expect([dcx, dcy, x, y, now.path({ x, y, z: 40 }, goal)]).toEqual([dcx, dcy, x, y, p]);
+        f.dir({ x, y, z: 40 }, goal);
+        for (let n = 0; n < 100000 && !f.advance(); n++);
+        expect([dcx, dcy, x, y, f.path({ x, y, z: 40 }, goal)]).toEqual([dcx, dcy, x, y, p]);
+      }
+      f.close(); now.close(); ref.close();
+    }
+  });
+
   it('shift no copia las rejillas: ningún copyWithin, en el tamaño de una ventana de 11 x 13 trozos', () => {
     const st = new WorldState(new StaticVoxels(PAL, 11 * 128, 13 * 128, 0, 15), [], null);
     const f = new LevelPathField(st, { cell: 4, levels: 4, radius: 1, height: 14, step: 8, maxDrop: 64, budget: 1000 });

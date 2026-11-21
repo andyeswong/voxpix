@@ -666,7 +666,11 @@ compositor.frame(win.state, win.baked, opts);
   pasos guardados y distancias; lo que entra, sin suelo hasta que se escribe su trozo). `LevelPathField` no copia sus
   rejillas al correrse: son un anillo, se corre su origen y se limpia solo la franja que entra (copiar eran ~30 MB por
   cambio en una ventana de 11 x 13 trozos, 15-17 ms a 6x en un juego, y el primero además la memoria nueva, más de
-  100 ms); a cambio, cada nodo buscado cuesta un 5-10 % más. Además, en el cambio la ventana
+  100 ms); a cambio, cada nodo buscado cuesta un 5-10 % más. Con `budget`, el borde del lado que sale (las celdas
+  cuyo cuerpo llegaba a lo que salió) no se rehace en el cambio: va a lo pendiente y lo rehace `advance` con su tanda (en
+  un juego eran ~30 ms de ese cuadro a 6x). Ese borde, y el margen de lo que cambió, salen de lo que el cuerpo de una
+  celda sobresale de ella (desplazado y con su radio): con un radio grande (6 con celdas de 4) eran más que radius + 1,
+  y el borde se quedaba corto. Además, en el cambio la ventana
   corre lo apuntado y sin tomar de todos los `watchChanges` (`ChangeWatch.shift`), así que también vale para los del
   juego. Con una ventana grande, una meta que se mueve costaría una búsqueda de todo el campo cada vez que cambia de
   celda: `reach` (40 pasos por defecto) para la búsqueda a esa distancia de la meta, y más lejos no hay camino (`dir`
