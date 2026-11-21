@@ -6,7 +6,7 @@
 // - la vista del giro 0 (WaterView) la ve igual;
 // - con el agua moviéndose (pisotones), lo de un trozo que sale y vuelve vuelve como salió.
 import { describe, it, expect } from 'vitest';
-import { material, type Palette } from '../src/core';
+import { material, Model, type Palette } from '../src/core';
 import type { RegionSpec } from '../src/world/regiongen';
 import { BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { FrameBudget } from '../src/view/budget';
@@ -143,6 +143,44 @@ describe('agua en la ventana viva (LiveWindow.setWater, skip, regionWater, load 
     expect(checked).toBeGreaterThan(TV * TV * 2);
     expect(wetCols).toBeGreaterThan(20);
     expect(deep).toBeGreaterThan(5);
+  });
+
+  it('al correrse: las gotas en el aire, lo que flota y los efectos siguen en su sitio del mundo, y lo que flota sobre su agua', () => {
+    const { win, water } = make([0, 0], new Map());
+    const st = win.state;
+    // Un sitio con agua honda cerca del centro, para lo que flota
+    let spot: [number, number] | null = null;
+    for (let y = 40; y < win.store.depth - 40 && !spot; y += 2) for (let x = 40; x < win.store.width - 40 && !spot; x += 2) if (water.depthAt(x, y) > 2) spot = [x, y];
+    expect(spot).not.toBeNull();
+    const pad = new Model(pal, 'hoja'); pad.set(0, 0, 0, material(2, 1));
+    const fid = st.floaters.add(pad, spot![0] + 0.25, spot![1] + 0.5);
+    // Una gota en el aire, un emisor de efecto y una partícula suelta
+    st.drops.emit(spot![0] + 3.5, spot![1] - 2.25, 60, 0, 0, 0);
+    const em = st.simFx.add('polvo', spot![0] - 4, spot![1] + 6, 30);
+    st.simFx.burst('polvo', spot![0] + 1, spot![1] + 1, 40, 1);
+    const em2 = st.fx.add('polvo', spot![0] + 5, spot![1] - 3, 30);
+    const world = () => {
+      const f = st.floaters.list.find((q) => q.id === fid)!, e = st.entities.get(fid)!, [dx, dy] = st.drops.at(0);
+      const emi = st.simFx.list().find((q) => q.id === em)!, part = st.simFx.exportState().data, emi2 = st.fx.list().find((q) => q.id === em2)!, part2 = st.fx.exportState().data;
+      return { f: win.toWorld(f.x, f.y), e: win.toWorld(e.x, e.y), d: win.toWorld(dx, dy), em: win.toWorld(emi.x, emi.y), p: win.toWorld(part[0]!, part[1]!), em2: win.toWorld(emi2.x, emi2.y), p2: win.toWorld(part2[0]!, part2[1]!) };
+    };
+    const before = world();
+    const budget = new FrameBudget(1e6);
+    const settle = () => { for (let k = 0; k < 2000 && (win.busy || budget.pending); k++) budget.run(); };
+    win.update(0, 0, budget); settle();
+    const tx0 = win.tx0, ty0 = win.ty0;
+    // (al este hasta que se corre en x, y al norte hasta que se corre en y)
+    let x = TV / 2, y = TV / 2;
+    for (let s2 = 0; s2 < 24 && win.tx0 === tx0; s2++) { x += TV / 8; win.update(x, y, budget); budget.run(); win.update(x, y, budget); settle(); }
+    for (let s2 = 0; s2 < 24 && win.ty0 === ty0; s2++) { y += TV / 8; win.update(x, y, budget); budget.run(); win.update(x, y, budget); settle(); }
+    expect([win.tx0 !== tx0, win.ty0 !== ty0]).toEqual([true, true]);
+    // (sin pasos del mundo: solo se corrió la ventana)
+    expect(world()).toEqual(before);
+    // Y lo que flota sigue sobre su agua (la de la capa corrida): unos ticks, y no se vara
+    const f = st.floaters.list.find((q) => q.id === fid)!;
+    expect(water.depthAt(f.x, f.y)).toBeGreaterThan(2);
+    for (let t = 0; t < 30; t++) st.step();
+    expect(water.depthAt(f.x, f.y)).toBeGreaterThan(0.3);
   });
 
   it('setWater: cambiar de capa suelta la vieja (ya no se corre) y las vistas toman la nueva; null la quita', () => {

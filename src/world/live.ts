@@ -6,8 +6,8 @@
 //
 // Dos marcos de coordenadas: las del MUNDO (sin tope, también negativas: el trozo (tx, ty) empieza en tx * T, ty * T
 // vóxeles) y las LOCALES del WorldState de la ventana (state, grid, baked: la esquina de la ventana en (0, 0)). toLocal /
-// toWorld pasan de unas a otras. Al correrse la ventana, las entidades y las luces del state se corren con ella (sus
-// coordenadas locales cambian; las del mundo no).
+// toWorld pasan de unas a otras. Al correrse la ventana, las entidades, las luces, las gotas, lo que flota y los efectos
+// del state se corren con ella (sus coordenadas locales cambian; las del mundo no).
 //
 // El juego:
 // - fill(t, ctx) (opcional): escribe él el trozo t que entra (lo generado y sus diferencias guardadas, hornos, cofres...)
@@ -16,7 +16,8 @@
 // - onUnload(t, ctx): el trozo t sale; aún está en la rejilla (ctx.read, ctx.cell), para guardar sus diferencias y
 //   quitar sus entidades. Se llama antes de correr nada.
 // - onShift({ cells, voxels }): el origen local se corrió: lo que estaba en la x local pasa a x - voxels[0] (y en celdas,
-//   bx - cells[0]); igual en y. Las entidades y las luces del state ya van corridas; lo demás que guarde el juego en
+//   bx - cells[0]); igual en y. Las entidades, las luces, las gotas, lo que flota y los efectos del state ya van corridos
+//   (WorldState.shiftDynamic); lo demás que guarde el juego en
 //   coordenadas locales (cuerpos, listas por celda, la cámara, el corte), lo corre él aquí.
 // Todo lo de ctx va en coordenadas del MUNDO (vóxeles y celdas); ctx.grid y ctx.at (la celda local de la esquina del
 // trozo) por si hace falta ir directo a la rejilla.
@@ -725,6 +726,8 @@ export class LiveWindow {
     // Las entidades y las luces, en el marco nuevo (las del mundo no cambian)
     for (const e of [...this.state.entities]) this.state.entities.move(e.id, e.x - DX, e.y - DY, e.z, e.yaw);
     for (const l of this.state.lights) { l.x -= DX; l.y -= DY; }
+    // Las gotas, lo que flota y los efectos (sus posiciones son del state)
+    this.state.shiftDynamic(DX, DY);
     this.tx0 += dx; this.ty0 += dy;
     // Lo que oye los cambios del mundo (watchChanges: caminos, cachés del juego): lo apuntado sin tomar, corrido; y lo
     // enganchado (attach: los campos de caminos), corrido en el mismo momento

@@ -626,7 +626,9 @@ compositor.frame(win.state, win.baked, opts);
   384 x 216 con 96 de alto y 2 trozos más allá de lo visible: 4 a los lados, 6 al norte y 4 al sur, ventana de 9 x 11.
 - Al correrse: `onUnload` de los que salen (aún en la rejilla), `shiftBakedJob` (imagen y vóxeles por pasos), y en el
   cambio, de una vez, la rejilla de bloques (`BlockGrid.shift`: celdas, giros; las luces de los bloques que salen se
-  quitan), las entidades y las luces del `state` y `onShift`. Después, por cada trozo que entra (del centro hacia
+  quitan), las entidades y las luces del `state`, lo que se mueve por su cuenta con posiciones del `state`
+  (`WorldState.shiftDynamic`: las gotas, la posición continua de lo que flota y las partículas y emisores de los efectos),
+  lo enganchado (`attach`: caminos, el agua) y `onShift`. Después, por cada trozo que entra (del centro hacia
   fuera), `fill` del juego o lo de siempre (`generateRegion`, `stampRegionJob`, `onLoad`), y `rebakeChangedJobs`.
 - El contexto de cada trozo (`TrozoCtx`) va en coordenadas del MUNDO: `read`/`write` (vóxeles), `cell`/`setCell`
   (celdas, con el giro en grados), y `grid` con `at` (la celda local de la esquina del trozo).

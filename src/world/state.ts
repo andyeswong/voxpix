@@ -1658,6 +1658,17 @@ export class WorldState {
     this.tick++;
   }
 
+  // LA VENTANA VIVA (LiveWindow, en el cambio de cada corrimiento): lo que se mueve por su cuenta y guarda posiciones del
+  // state, en el marco nuevo (lo que estaba en x pasa a x - dx): las gotas, lo que flota (su posición continua; sus
+  // entidades las corre la ventana con las demás) y las partículas y emisores de los efectos. Siguen en el mismo sitio del
+  // mundo
+  shiftDynamic(dx: number, dy: number): void {
+    this.drops.shift(dx, dy);
+    this.floaters.shift(dx, dy);
+    this.fx.shift(dx, dy);
+    this.simFx.shift(dx, dy);
+  }
+
   // Calienta el JIT de step (agua, gotas, salpicaduras): sin esto el primer tick de la partida tarda ~10 ms en vez de
   // ~0,7 (lo midió FERN). Da unos ticks con un pisotón y vuelve exactamente al estado de antes (misma huella).
   warmUp(ticks = 6): void {

@@ -21,6 +21,13 @@ export class Drops {
 
   get count(): number { return this.n; }
 
+  // La ventana viva se corrió dx, dy vóxeles (lo que estaba en x pasa a x - dx): las gotas, en el marco nuevo (siguen en
+  // el mismo sitio del mundo)
+  shift(dx: number, dy: number): void {
+    const d = this.d;
+    for (let k = 0; k < this.n; k++) { d[k * 8] = d[k * 8]! - dx; d[k * 8 + 1] = d[k * 8 + 1]! - dy; }
+  }
+
   // Posición de la gota k (ejes del modelo), sin copias (para quien la dibuja por su cuenta, como la GPU)
   at(k: number): [number, number, number] { const o = k * 8; return [this.d[o]!, this.d[o + 1]!, this.d[o + 2]!]; }
 

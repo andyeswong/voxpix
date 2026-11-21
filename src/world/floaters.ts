@@ -50,6 +50,10 @@ export class Floaters {
     this.world.entities.remove(id);
   }
 
+  // La ventana viva se corrió dx, dy vóxeles: la posición continua de cada uno, en el marco nuevo (sus entidades las corre
+  // la ventana con las demás). Lo que sale de la ventana se queda varado fuera; quien descarga el trozo lo quita (remove)
+  shift(dx: number, dy: number): void { for (const f of this.list) { f.x -= dx; f.y -= dy; } }
+
   // Un pisotón (o algo que agita el agua) en (x, y): aparta lo que flota cerca, hacia fuera
   push(x: number, y: number, force: number, radius: number): void {
     const reach = radius * KICK_REACH;

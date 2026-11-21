@@ -112,6 +112,13 @@ export class FxSystem implements FxSource {
     return e.id;
   }
   move(id: number, x: number, y: number, z: number): void { const e = this.emitter(id); e.x = x; e.y = y; e.z = z; }
+  // La ventana viva se corrió dx, dy vóxeles: las partículas y los emisores, en el marco nuevo
+  shift(dx: number, dy: number): void {
+    const d = this.d;
+    for (let k = 0; k < this.n; k++) { d[k * P] = d[k * P]! - dx; d[k * P + 1] = d[k * P + 1]! - dy; }
+    for (const e of this.emitters) { e.x -= dx; e.y -= dy; }
+    this.dirty = true;
+  }
   setOn(id: number, on: boolean): void { this.emitter(id).on = on; }
   remove(id: number): void { this.emitters = this.emitters.filter((e) => e.id !== id); }
   get emitterCount(): number { return this.emitters.length; }
