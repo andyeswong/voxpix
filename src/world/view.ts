@@ -176,7 +176,7 @@ class WaterView implements WaterSurface {
     this.sbox[0] = this.gw; this.sbox[1] = this.gh; this.sbox[2] = -1; this.sbox[3] = -1;
     const c = this.cutBox;
     // (la copia entera apunta, como cualquiera, la caja de lo que cambió del fondo: quien lo guarda sube solo eso)
-    if (this.full) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); }
+    if (this.full || ch.all) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); }
     else {
       const T = WATER_TILE, tx = this.src.tilesX;
       for (const k of ch.tiles) {
@@ -208,6 +208,27 @@ class WaterView implements WaterSurface {
     // (la caja de lo que cambió del fondo, las paredes y las cuencas: se junta en sbox y refresh la apunta una vez)
     const sb = this.sbox;
     let bx0 = sb[0]!, by0 = sb[1]!, bx1 = sb[2]!, by1 = sb[3]!;
+    // En el giro 0 sin corte, las celdas de la vista son las del mundo (map es la identidad): por filas, sin map ni at()
+    if (this.cam.quarter === 0 && !hide && this.gw === gw) {
+      const [ox, oy] = s.origin, H = this.src.gh, sg = s.ground, ss = s.solid, sd = s.depth, sbs = this.src.basin;
+      for (let gy = gy0; gy <= gy1; gy++) {
+        let py = gy + oy; if (py >= H) py -= H;
+        const row = py * gw;
+        let px = gx0 + ox; if (px >= gw) px -= gw;
+        for (let gx = gx0, i = gy * gw + gx0; gx <= gx1; gx++, i++) {
+          const p = row + px;
+          const g = sg[p]!, so = ss[p]!, ba = sbs[p] === 1 ? 1 : 0;
+          if (out.ground[i] !== g || out.solid[i] !== so || this.basin[i] !== ba) {
+            if (gx < bx0) bx0 = gx; if (gx > bx1) bx1 = gx; if (gy < by0) by0 = gy; if (gy > by1) by1 = gy;
+            out.ground[i] = g; out.solid[i] = so; this.basin[i] = ba;
+          }
+          out.depth[i] = sd[p]!;
+          if (++px === gw) px = 0;
+        }
+      }
+      sb[0] = bx0; sb[1] = by0; sb[2] = bx1; sb[3] = by1;
+      return;
+    }
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const i = gy * this.gw + gx, j = m[i]!;
       if (j < 0) { out.depth[i] = 0; continue; }

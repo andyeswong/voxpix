@@ -245,6 +245,51 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     expect(most).toBeLessThan(ring.water.gw * ring.water.gh / 4);
   });
 
+  it('la lista de baldosas cambiadas: leer a mitad de un tick y volver a cambiar la misma; corrimiento de media baldosa; lista desbordada', () => {
+    const ring = setup(true), ref = setup(false);
+    const view = new WorldView(ring.state, 0);
+    for (let t = 0; t < 6000 && (ring.water.sim.activeCount || t < 2); t++) for (const w of [ring, ref]) w.water.step(1 / 60);
+    view.frame();
+    // Gota, la vista lee, otra gota en la misma celda sin paso entre medias: la vista la ve
+    for (const w of [ring, ref]) w.water.pour(41, 41, 2);
+    view.frame();
+    for (const w of [ring, ref]) w.water.pour(41, 41, 3);
+    view.frame();
+    sameView(view, ref, 'dos gotas en el mismo tick');
+    // Un corrimiento que no es de baldosas enteras (4 celdas): la vista lo copia todo
+    for (const w of [ring, ref]) { w.water.step(1 / 60); }
+    view.frame();
+    ring.water.shift(8, 0); view.shift(8, 0); copyShift(ref.water, 4, 0);
+    view.frame();
+    expect((view.water as unknown as { visited: number }).visited).toBe(ring.water.gw * ring.water.gh);
+    sameView(view, ref, 'media baldosa');
+    // Una vista que no lee mientras otra lee cada tick: la lista se le queda corta y lo copia todo, igual que la referencia.
+    // Una gota lejos (la baldosa 5,4) una sola vez y después mucho movimiento solo en las baldosas del oeste: la entrada de
+    // la gota se pierde de la lista, y aun así la vista que no leía la ve
+    const lazy = new WorldView(ring.state, 0);
+    lazy.frame();
+    for (const w of [ring, ref]) w.water.pour(90, 74, 3);
+    let entries = 0, pseq = ring.water.changedTiles(0).seq;
+    for (let t = 0; t < 4000; t++) {
+      // (despiertas las celdas de x < 24: las baldosas 0..2 de cada fila cambian en cada tick)
+      for (const w of [ring, ref]) { w.water.sim.wake(10, 20, 13); if (t % 3 === 0) w.water.disturb(8 + (t % 30), 30, 2, 2); w.water.step(1 / 60); }
+      view.frame();
+      // (cada 10 ticks, lo que da la lista desde la vez anterior: sin repetir, aunque la otra vista leyó diez veces)
+      if (t % 10 === 9) {
+        const probe = ring.water.changedTiles(pseq);
+        pseq = probe.seq;
+        expect(probe.all).toBe(false);
+        expect(new Set(probe.tiles).size).toBe(probe.tiles.length);
+        entries = probe.seq;
+      }
+    }
+    expect(entries).toBeGreaterThan(1 << 16);
+    lazy.frame();
+    expect((lazy.water as unknown as { visited: number }).visited).toBe(ring.water.gw * ring.water.gh);
+    sameView(lazy, ref, 'lista desbordada');
+    sameView(view, ref, 'la que lee');
+  });
+
   it('lo que entra queda seco y de pared hasta cargarse; la vista que se corre con la capa copia solo la franja, la que no, todo', () => {
     const w = setup(true);
     const moved = new WorldView(w.state, 0), stale = new WorldView(w.state, 0);

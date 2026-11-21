@@ -19,6 +19,8 @@ import type { GeneratedRegion } from './regiongen';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
 const TILE = 8;                                   // celdas por lado de una baldosa de lo que cambió (changedTiles)
+const TILE_LOG = 1 << 16;                         // baldosas cambiadas que guarda la lista (changedTiles)
+const TILE_SHIFTS = 64;                           // corrimientos que guarda
 export const WATER_TILE = TILE;
 const CHANGE_LOG = 256;                           // ticks que guarda el registro de cambios (changesSince)
 export const WATER_CELL = CELL;
@@ -122,10 +124,18 @@ export class WaterLayer {
   private fountainOut: number[] = [];             // desagüe
   // Los corrimientos (shift), con el número de cajas cerradas cuando se hicieron: las cajas de antes se corren con ellos
   private shiftLog: Array<{ at: number; cx: number; cy: number }> = [];
-  // Lo que cambió, por baldosas de TILE x TILE celdas de la rejilla: la versión (logN + 1 del tick en que cambió) de cada una
+  // Lo que cambió, por baldosas de TILE x TILE celdas de la rejilla: la época (tileEpoch) en que se apuntó cada una
   readonly tilesX: number;
   readonly tilesY: number;
   private readonly tileVer: Uint32Array;
+  // La lista de las que cambiaron (una vez por tick cada una), circular, y los corrimientos con su sitio en ella
+  private readonly tileLog = new Int32Array(TILE_LOG);
+  private tileLogN = 0;
+  private readonly tileShifts: Array<{ tdx: number; tdy: number; all: boolean }> = [];
+  private tileShiftBase = 0;                       // el número del primer corrimiento que guarda tileShifts
+  private readonly tileSeen: Uint32Array;
+  private tileSeenStamp = 0;
+  private tileEpoch = 1;
   private shifts = 0;
   // Cuántas veces se corrió (quien copia la rejilla y no se corrió con ella la copia entera)
   get shiftCount(): number { return this.shifts; }
@@ -143,6 +153,7 @@ export class WaterLayer {
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
     this.tilesX = Math.ceil(this.gw / TILE); this.tilesY = Math.ceil(this.gh / TILE);
     this.tileVer = new Uint32Array(this.tilesX * this.tilesY);
+    this.tileSeen = new Uint32Array(this.tilesX * this.tilesY);
     this.basin = new Uint8Array(this.gw * this.gh);
     const { wet, waterTop, width: W } = world;
     // Sin cargar (una ventana que se carga por trozos, load): todo seco y de pared
@@ -347,19 +358,48 @@ export class WaterLayer {
     if (gx1 > c[2]!) c[2] = Math.min(this.gw - 1, gx1); if (gy1 > c[3]!) c[3] = Math.min(this.gh - 1, gy1);
   }
   private changedCell(i: number): void { const [gx, gy] = this.sim.xy(i); this.changed(gx, gy, gx, gy); }
-  // Las baldosas de TILE x TILE celdas de la caja, con la versión del tick en curso (la que dará changesSince al cerrarlo)
+  // Las baldosas de TILE x TILE celdas de la caja: a la lista de las cambiadas
   private markTiles(gx0: number, gy0: number, gx1: number, gy1: number): void {
     const tx0 = Math.max(0, Math.floor(gx0 / TILE)), ty0 = Math.max(0, Math.floor(gy0 / TILE));
-    const tx1 = Math.min(this.tilesX - 1, Math.floor(gx1 / TILE)), ty1 = Math.min(this.tilesY - 1, Math.floor(gy1 / TILE)), v = this.logN + 1;
-    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) this.tileVer[ty * this.tilesX + tx] = v;
+    const tx1 = Math.min(this.tilesX - 1, Math.floor(gx1 / TILE)), ty1 = Math.min(this.tilesY - 1, Math.floor(gy1 / TILE)), v = this.tileEpoch;
+    for (let ty = ty0; ty <= ty1; ty++) for (let tx = tx0; tx <= tx1; tx++) this.markTile(ty * this.tilesX + tx, v);
   }
-  // Las baldosas (de TILE x TILE celdas, tx + ty * tilesX) que cambiaron desde `seq` (el que dio la llamada anterior, o el
-  // de changesSince; 0 al empezar). Más fino que la caja de changesSince: con agua despierta en varios sitios lejanos, la
-  // caja los cubre a todos y lo de en medio
-  changedTiles(seq: number): { seq: number; tiles: number[] } {
-    const out: number[] = [], tv = this.tileVer;
-    for (let k = 0; k < tv.length; k++) if (tv[k]! > seq) out.push(k);
-    return { seq: this.logN, tiles: out };
+  // Una baldosa cambió (v: la época de ahora, que sube con cada lectura, changedTiles): la primera vez desde la última
+  // lectura, a la lista de las cambiadas. (Por época y no por tick: si se lee a mitad de un tick y la baldosa vuelve a
+  // cambiar, tiene que volver a la lista)
+  private markTile(k: number, v: number): void {
+    if (this.tileVer[k] === v) return;
+    this.tileVer[k] = v;
+    this.tileLog[this.tileLogN % TILE_LOG] = k;
+    this.tileLogN++;
+  }
+  // Las baldosas (de TILE x TILE celdas, tx + ty * tilesX, en las coordenadas de ahora) que cambiaron desde `seq` (el que
+  // dio la llamada anterior; 0 al empezar), sin repetir. Más fino que la caja de changesSince: con agua despierta en varios
+  // sitios lejanos, la caja los cubre a todos y lo de en medio. Sale de una lista de las que cambiaron (sin recorrerlas
+  // todas); las de antes de un corrimiento salen corridas con él (y las que salieron de la rejilla, no). all: la lista no
+  // llega tan atrás, o hubo un corrimiento que no es de baldosas enteras: quien copia, todo
+  changedTiles(seq: number): { seq: number; all: boolean; tiles: number[] } {
+    this.tileEpoch++;
+    const n = this.tileLogN;
+    if (n - seq > TILE_LOG) return { seq: n, all: true, tiles: [] };
+    const out: number[] = [], seen = this.tileSeen, stamp = ++this.tileSeenStamp, X = this.tilesX, Y = this.tilesY;
+    let ox = 0, oy = 0;
+    for (let e = n - 1; e >= seq; e--) {
+      const k = this.tileLog[e % TILE_LOG]!;
+      // (un corrimiento: lo de antes de él sale corrido; uno que no es de baldosas enteras, o ya olvidado, todo)
+      if (k < 0) {
+        const r = this.tileShifts[-1 - k - this.tileShiftBase];
+        if (!r || r.all) return { seq: n, all: true, tiles: [] };
+        ox += r.tdx; oy += r.tdy;
+        continue;
+      }
+      const tx = (k % X) - ox, ty = Math.floor(k / X) - oy;
+      if (tx < 0 || ty < 0 || tx >= X || ty >= Y) continue;
+      const k2 = ty * X + tx;
+      if (seen[k2] === stamp) continue;
+      seen[k2] = stamp; out.push(k2);
+    }
+    return { seq: n, all: false, tiles: out };
   }
   private closeChanges(): void {
     const c = this.cur;
@@ -468,8 +508,14 @@ export class WaterLayer {
     this.closeChanges();
     // (las baldosas se corren con la rejilla si el corrimiento es de baldosas enteras; si no, todas cambiaron. La franja
     // que entra la marcan las cajas de abajo)
-    if (cx % TILE || cy % TILE) this.tileVer.fill(this.logN + 1);
-    else shiftGrid(this.tileVer, this.tilesX, this.tilesY, 1, cx / TILE, cy / TILE, this.logN + 1);
+    // (la lista de las cambiadas apunta el corrimiento como una entrada más, negativa: las de antes salen corridas en
+    // changedTiles. Uno que no es de baldosas enteras: todo)
+    const aligned = !(cx % TILE || cy % TILE);
+    if (aligned) shiftGrid(this.tileVer, this.tilesX, this.tilesY, 1, cx / TILE, cy / TILE, 0); else this.tileVer.fill(0);
+    this.tileShifts.push({ tdx: aligned ? cx / TILE : 0, tdy: aligned ? cy / TILE : 0, all: !aligned });
+    if (this.tileShifts.length > TILE_SHIFTS) { this.tileShifts.shift(); this.tileShiftBase++; }
+    this.tileLog[this.tileLogN % TILE_LOG] = -1 - (this.tileShiftBase + this.tileShifts.length - 1);
+    this.tileLogN++;
     this.shiftLog.push({ at: this.logN, cx, cy });
     if (this.shiftLog.length > CHANGE_LOG) this.shiftLog.shift();
     this.shifts++;
@@ -559,7 +605,7 @@ export class WaterLayer {
       sim.step(1 / 120);
       // Lo que pudo mojarse fuera de cuenca en este subpaso (solo las celdas que calculó), y su caja
       const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList, gw = this.gw, gh = this.gh;
-      const [ox, oy] = sim.origin, tv = this.tileVer, tilesX = this.tilesX, stamp = this.logN + 1;
+      const [ox, oy] = sim.origin, tv = this.tileVer, tilesX = this.tilesX, stamp = this.tileEpoch;
       let ax0 = gw, ay0 = this.gh, ax1 = -1, ay1 = -1;
       for (let q = 0; q < act.length; q++) {
         const i = act[q]!;
@@ -567,7 +613,8 @@ export class WaterLayer {
         let x = i % gw, y = (i - x) / gw;
         x -= ox; if (x < 0) x += gw; y -= oy; if (y < 0) y += gh;
         if (x < ax0) ax0 = x; if (x > ax1) ax1 = x; if (y < ay0) ay0 = y; if (y > ay1) ay1 = y;
-        tv[Math.floor(y / TILE) * tilesX + Math.floor(x / TILE)] = stamp;
+        const k = Math.floor(y / TILE) * tilesX + Math.floor(x / TILE);
+        if (tv[k] !== stamp) this.markTile(k, stamp);
       }
       if (ax1 >= 0) this.logBox(ax0, ay0, ax1, ay1);
     }
