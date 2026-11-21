@@ -1105,9 +1105,16 @@ water.follow(state.watchChanges());                                 // picar o p
   queda seco, de pared y sin cuenca hasta que se cargue. Todo lo que indexa la rejilla (el fondo tras picar y su cuenca,
   las gotas, el empapado, `waterAt`, `firstPersonWater`, la instantánea, `WorldState.waterColumns`) va por el anillo. Una
   capa movable se dibuja siempre por su vista (`WaterView`, en orden, también en el giro 0): `WaterLayer.draw` directo,
-  corrida, es un error. Tras correrse, `changesSince` da la rejilla entera (la vista la copia una vez) y `groundVersion`
-  sube (la GPU vuelve a subir el fondo). Lo comprueba `test/agua-capa-anillo.test.ts` contra una capa que se corre
-  copiando, con el mundo de vóxeles corrido igual.
+  corrida, es un error. Lo comprueba `test/agua-capa-anillo.test.ts` contra una capa que se corre copiando, con el
+  mundo de vóxeles corrido igual.
+
+  Al correrse no se copia ni se sube nada entero: la vista (`WorldView.shift`, que `LiveWindow` llama antes que a los
+  `Attached`) corre su copia del agua con ella, y la capa apunta en `changesSince` solo la franja que entra; lo que
+  cambió antes del corrimiento sale corrido con él. Una vista que no se corrió con la capa la copia entera una vez
+  (`shiftCount`). La GPU guarda el fondo, las paredes y las cuencas en una textura: con `staticSince(v)` de la vista
+  (el corrimiento total y la caja que cambió desde la versión v) la corre dentro de la GPU y sube solo esa caja (lo que
+  carga un trozo, lo picado); entera solo la primera vez o si el registro no llega tan atrás (64 cambios). La franja sin
+  cargar es pared seca en la capa, en la vista y en la GPU: no se sube nada de ella hasta que se carga.
 
   Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
   pared seca; el mundo puede traer `wet` y `waterTop` vacíos) y cada trozo se carga al escribirse:

@@ -131,6 +131,7 @@ export class GpuCompositor {
   private tWStatic: WebGLTexture | null = null;
   private waterOf: unknown = null;
   private waterGround = -1;                        // la groundVersion del agua cuyo fondo está subido
+  private waterStaticV = 0;                        // la versión de staticSince del fondo subido (con WaterView)
   // Destinos de la vista
   // El corte al componer: la capa subida (se sube cuando cambia) y sus texturas, del tamaño de la mayor
   private secLayer: SectionLayer | null = null;
@@ -1161,12 +1162,33 @@ export class GpuCompositor {
     if (this.waterOf !== wl || !this.tWDepth) {
       this.waterOf = wl;
       this.waterGround = wl.groundVersion ?? 0;
+      this.waterStaticV = wl.staticSince ? wl.staticSince(-1).v : 0;
       for (const t of [this.tWDepth, this.tWStatic]) if (t) gl.deleteTexture(t);
       this.tWStatic = tex2D(gl, gl.RGBA32F, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf());
       this.tWDepth = tex2D(gl, gl.R32F, wl.gw, wl.gh, gl.RED, gl.FLOAT, sim.depth);
       return true;
     }
-    if ((wl.groundVersion ?? 0) !== this.waterGround) {
+    if (wl.staticSince) {
+      // Con registro (WaterView): se corre la textura dentro de la GPU como se corrió la copia y se sube solo la caja que
+      // cambió (cargar un trozo, picar); entera solo si el registro no llega tan atrás
+      const ch = wl.staticSince(this.waterStaticV);
+      this.waterStaticV = ch.v;
+      this.waterGround = wl.groundVersion ?? 0;
+      if (ch.all) subImage(gl, this.tWStatic!, 0, 0, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf(), wl.gw, 4);
+      else {
+        if (ch.shift) this.tWStatic = this.shiftWaterStatic(this.tWStatic!, wl.gw, wl.gh, ch.shift[0], ch.shift[1]);
+        if (ch.box) {
+          const [x0, y0, x1, y1] = ch.box, w = x1 - x0 + 1, h = y1 - y0 + 1, st = new Float32Array(w * h * 4);
+          for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+            const i = (y0 + y) * wl.gw + x0 + x, o = (y * w + x) * 4;
+            st[o] = sim.ground[i]!; st[o + 1] = sim.solid[i]!; st[o + 2] = wl.isBasin(i) ? 1 : 0;
+          }
+          uploadTo(gl, gl.TEXTURE_2D, this.tWStatic!);
+          gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, y0, w, h, gl.RGBA, gl.FLOAT, st);
+          this.waterStaticUploaded += w * h;
+        }
+      }
+    } else if ((wl.groundVersion ?? 0) !== this.waterGround) {
       this.waterGround = wl.groundVersion ?? 0;
       subImage(gl, this.tWStatic!, 0, 0, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, staticOf(), wl.gw, 4);
     }
@@ -1175,6 +1197,45 @@ export class GpuCompositor {
     subImage(gl, this.tWDepth, gx0, 0, gx1 - gx0 + 1, wl.gh, gl.RED, gl.FLOAT, sim.depth, wl.gw, 1);
     void b;
     return true;
+  }
+
+  // La textura del fondo del agua corrida dx, dy celdas (la celda (x, y) pasa a tener la de (x + dx, y + dy)) en una nueva:
+  // lo que entra, pared seca (fondo 0, pared 1, sin cuenca), como la franja de la capa
+  private shiftWaterStatic(src: WebGLTexture, W: number, H: number, dx: number, dy: number): WebGLTexture {
+    const gl = this.gl, dst = tex2D(gl, gl.RGBA32F, W, H, gl.RGBA, gl.FLOAT, null);
+    const rd = gl.createFramebuffer()!, dr = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, dr);
+    gl.framebufferTexture2D(gl.DRAW_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, dst, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    gl.clearBufferfv(gl.COLOR, 0, [0, 1, 0, 0]);
+    const x0 = Math.max(0, -dx), x1 = W - Math.max(0, dx), y0 = Math.max(0, -dy), y1 = H - Math.max(0, dy);
+    if (x0 < x1 && y0 < y1) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, rd);
+      gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, src, 0);
+      gl.readBuffer(gl.COLOR_ATTACHMENT0);
+      gl.blitFramebuffer(x0 + dx, y0 + dy, x1 + dx, y1 + dy, x0, y0, x1, y1, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(rd); gl.deleteFramebuffer(dr);
+    gl.deleteTexture(src);
+    this.waterShifts++;
+    return dst;
+  }
+  // (para medir y probar) corrimientos de la textura del fondo del agua y celdas subidas por caja
+  waterShifts = 0;
+  waterStaticUploaded = 0;
+  // Lee la textura del fondo del agua (fondo, pared, cuenca por celda): para el oráculo
+  readWaterStatic(): Float32Array | null {
+    const gl = this.gl, t = this.tWStatic, wl = this.waterOf as { gw: number; gh: number } | null;
+    if (!t || !wl) return null;
+    const fb = gl.createFramebuffer()!;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    const out = new Float32Array(wl.gw * wl.gh * 4);
+    gl.readPixels(0, 0, wl.gw, wl.gh, gl.RGBA, gl.FLOAT, out);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fb);
+    return out;
   }
 
   private waterTones(state: RenderState): Float32Array {

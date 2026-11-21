@@ -118,6 +118,7 @@ function rotatedStatic(src: StaticVoxels, cam: ViewCamera): StaticVoxels {
 // El agua vista desde la cámara: su propia rejilla de celdas en ejes de la vista (con lados impares, las celdas
 // giradas no caen sobre las del mundo), que toma de cada celda del mundo bajo su centro el fondo, si es pared, si es
 // cuenca y, cada cuadro, la profundidad. La física sigue en el mundo.
+const OPS_LOG = 64;
 class WaterView implements WaterSurface {
   readonly gw: number;
   readonly gh: number;
@@ -131,6 +132,12 @@ class WaterView implements WaterSurface {
   private readonly cutBox = Int32Array.of(0x7fffffff, 0x7fffffff, -1, -1);
   // Celdas recorridas por la última copia (para medir y probar)
   visited = 0;
+  // Lo que cambió del fondo, las paredes y las cuencas (lo que la GPU guarda en una textura), para staticSince: un
+  // registro de corrimientos (en celdas de la vista) y cajas de celdas cambiadas, con su versión
+  private sv = 0;
+  private readonly ops: Array<{ v: number; shift: readonly [number, number] | null; box: readonly [number, number, number, number] | null }> = [];
+  // Los corrimientos de la capa que esta vista corrió consigo (shift): si la capa se corrió sin ella, se copia entera
+  private shifts = 0;
   // hideAbove (opcional, con el corte de la vista): por columna del MUNDO, desde qué z está cortada. El agua de una celda
   // cuya superficie pasa de ahí no se dibuja (como lo cortado)
   constructor(private readonly src: WaterLayer, private readonly cam: ViewCamera, private readonly hideAbove: ((x: number, y: number) => number) | null = null) {
@@ -159,12 +166,14 @@ class WaterView implements WaterSurface {
   // en lo que cambió desde la copia anterior (WaterLayer.changesSince, y las columnas cuyo corte cambió): con el agua
   // quieta, nada. Copiar una celda de más no cambia nada (es la misma copia)
   refresh(): void {
+    if (this.shifts !== this.src.shiftCount) { this.shifts = this.src.shiftCount; this.full = true; }
     const ch = this.src.changesSince(this.seq);
     this.seq = ch.seq;
     const c = this.cutBox;
     let box = ch.box;
     if (c[0]! <= c[2]!) box = box ? [Math.min(box[0], c[0]!), Math.min(box[1], c[1]!), Math.max(box[2], c[2]!), Math.max(box[3], c[3]!)] : [c[0]!, c[1]!, c[2]!, c[3]!];
     c[0] = c[1] = 0x7fffffff; c[2] = c[3] = -1;
+    // (la copia entera apunta, como cualquiera, la caja de lo que cambió del fondo: quien lo guarda sube solo eso)
     if (this.full || ch.all) { this.full = false; this.copy(0, 0, this.gw - 1, this.gh - 1); return; }
     if (!box) { this.visited = 0; return; }
     // La caja de celdas del mundo en celdas de la vista (sus esquinas giradas), con una de margen: con lados impares
@@ -181,15 +190,63 @@ class WaterView implements WaterSurface {
     const s = this.src.sim, out = this.sim, m = this.map, hide = this.hideAbove, gw = this.src.gw;
     gx0 = Math.max(0, gx0); gy0 = Math.max(0, gy0); gx1 = Math.min(this.gw - 1, gx1); gy1 = Math.min(this.gh - 1, gy1);
     this.visited = Math.max(0, gx1 - gx0 + 1) * Math.max(0, gy1 - gy0 + 1);
+    // (la caja de lo que cambió del fondo, las paredes y las cuencas)
+    let bx0 = this.gw, by0 = this.gh, bx1 = -1, by1 = -1;
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const i = gy * this.gw + gx, j = m[i]!;
       if (j < 0) { out.depth[i] = 0; continue; }
       const wx = j % gw, wy = (j - wx) / gw, p = s.at(wx, wy);
-      out.ground[i] = s.ground[p]!; out.solid[i] = s.solid[p]!; this.basin[i] = this.src.isBasin(p) ? 1 : 0;
+      const g = s.ground[p]!, so = s.solid[p]!, ba = this.src.isBasin(p) ? 1 : 0;
+      if (out.ground[i] !== g || out.solid[i] !== so || this.basin[i] !== ba) {
+        if (gx < bx0) bx0 = gx; if (gx > bx1) bx1 = gx; if (gy < by0) by0 = gy; if (gy > by1) by1 = gy;
+        out.ground[i] = g; out.solid[i] = so; this.basin[i] = ba;
+      }
       let d = s.depth[p]!;
       if (hide && d > 0 && s.ground[p]! + d > hide(wx * WATER_CELL + 1, wy * WATER_CELL + 1)) d = 0;
       out.depth[i] = d;
     }
+    if (bx1 >= 0) this.log(null, [bx0, by0, bx1, by1]);
+  }
+
+  private log(shift: readonly [number, number] | null, box: readonly [number, number, number, number] | null): void {
+    this.ops.push({ v: ++this.sv, shift, box });
+    if (this.ops.length > OPS_LOG) this.ops.shift();
+  }
+
+  // LA VENTANA VIVA (WorldView.shift): el mundo se corrió dx, dy vóxeles (múltiplos de la celda). La copia se corre
+  // igual (en ejes de la vista) y lo que entra queda como la franja de la capa (seco, pared, sin cuenca) hasta que se
+  // copie lo que cargue; la relación entre las celdas de la vista y las del mundo (map) no cambia: las dos rejillas son
+  // de la misma ventana. Apunta el corrimiento para quien guarda el fondo (la GPU, staticSince)
+  shift(dx: number, dy: number): void {
+    if (!dx && !dy) return;
+    const [vdx, vdy] = this.cam.dirToView(dx, dy);
+    if (vdx % WATER_CELL || vdy % WATER_CELL) { this.full = true; return; }
+    const cx = vdx / WATER_CELL, cy = vdy / WATER_CELL, W = this.gw, H = this.gh;
+    shiftGrid(this.sim.depth, W, H, 1, cx, cy, 0);
+    shiftGrid(this.sim.ground, W, H, 1, cx, cy, 0);
+    shiftGrid(this.sim.solid, W, H, 1, cx, cy, 1);
+    shiftGrid(this.basin, W, H, 1, cx, cy, 0);
+    this.shifts++;
+    this.log([cx, cy], null);
+  }
+
+  // Lo que cambió del fondo, las paredes y las cuencas desde la versión v (0 al empezar), para quien lo guarda en una
+  // textura: el corrimiento total (en celdas de la vista: la celda (x, y) pasa a tener lo de (x + dx, y + dy); lo que
+  // entra, pared seca) y la caja de celdas que hay que volver a subir después de correr, en las coordenadas de ahora; o
+  // all si el registro no llega tan atrás (o la copia se rehízo entera)
+  staticSince(v: number): { v: number; all: boolean; shift: [number, number] | null; box: [number, number, number, number] | null } {
+    if (v === this.sv) return { v, all: false, shift: null, box: null };
+    if (!this.ops.length || this.ops[0]!.v > v + 1) return { v: this.sv, all: true, shift: null, box: null };
+    let sx = 0, sy = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    // De la más nueva a la más vieja: cada caja, corrida por los corrimientos que vinieron después
+    for (let k = this.ops.length - 1; k >= 0 && this.ops[k]!.v > v; k--) {
+      const o = this.ops[k]!;
+      if (o.shift) { sx += o.shift[0]; sy += o.shift[1]; continue; }
+      const b = o.box!;
+      x0 = Math.min(x0, b[0] - sx); y0 = Math.min(y0, b[1] - sy); x1 = Math.max(x1, b[2] - sx); y1 = Math.max(y1, b[3] - sy);
+    }
+    x0 = Math.max(0, x0); y0 = Math.max(0, y0); x1 = Math.min(this.gw - 1, x1); y1 = Math.min(this.gh - 1, y1);
+    return { v: this.sv, all: false, shift: sx || sy ? [sx, sy] : null, box: x0 <= x1 && y0 <= y1 ? [x0, y0, x1, y1] : null };
   }
   get zRange(): readonly [number, number] { return this.src.zRange; }
   get groundVersion(): number { return this.src.groundVersion; }
@@ -405,6 +462,8 @@ export class WorldView implements RenderState {
   shift(dx: number, dy: number): void {
     const src = this.state.solid, W = src.width, D = src.depth;
     if (this.applied) shiftGrid(this.applied, W, D, 1, dx, dy, Infinity);
+    // (el agua de la vista se corre con ella; la capa se corre aparte, como Attached de la ventana)
+    this.waterView?.shift(dx, dy);
     const mv = <T extends { x0: number; y0: number; x1: number; y1: number }>(b: T): T => ({ ...b, x0: b.x0 - dx, x1: b.x1 - dx, y0: b.y0 - dy, y1: b.y1 - dy });
     const clip = <T extends { x0: number; y0: number; x1: number; y1: number }>(b: T): T => ({ ...b, x0: Math.max(0, b.x0), y0: Math.max(0, b.y0), x1: Math.min(W - 1, b.x1), y1: Math.min(D - 1, b.y1) });
     const inside = (b: { x0: number; y0: number; x1: number; y1: number }) => b.x0 <= b.x1 && b.y0 <= b.y1;

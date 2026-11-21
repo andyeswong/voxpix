@@ -82,10 +82,40 @@ function sameView(view: WorldView, ref: ReturnType<typeof setup>, what: string):
   for (let i = 0; i < ref.water.gw * ref.water.gh; i++) if (vw.isBasin(i) !== ref.water.isBasin(i)) throw new Error(`${what}: cuenca ${i}`);
 }
 
+// Un espejo como la textura del fondo de la GPU: se pone al día solo con staticSince (corre lo que tiene y sube la caja)
+// y tiene que quedar igual que la vista
+class Mirror {
+  v = -1; ground: Float32Array; solid: Uint8Array; basin: Uint8Array; uploaded = 0; full = 0;   // (-1: como la GPU, la primera vez todo)
+  constructor(readonly gw: number, readonly gh: number) { this.ground = new Float32Array(gw * gh); this.solid = new Uint8Array(gw * gh); this.basin = new Uint8Array(gw * gh); }
+  sync(view: WorldView): void {
+    const vw = view.water as unknown as { sim: { ground: Float32Array; solid: Uint8Array }; isBasin(i: number): boolean; staticSince(v: number): { v: number; all: boolean; shift: [number, number] | null; box: [number, number, number, number] | null } };
+    const ch = vw.staticSince(this.v);
+    this.v = ch.v;
+    const up = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * this.gw + x; this.ground[i] = vw.sim.ground[i]!; this.solid[i] = vw.sim.solid[i]!; this.basin[i] = vw.isBasin(i) ? 1 : 0; this.uploaded++; }
+    };
+    if (ch.all) { this.full++; up(0, 0, this.gw - 1, this.gh - 1); return; }
+    if (ch.shift) {
+      const [dx, dy] = ch.shift, g = this.ground.slice(), so = this.solid.slice(), b = this.basin.slice();
+      for (let y = 0; y < this.gh; y++) for (let x = 0; x < this.gw; x++) {
+        const sx = x + dx, sy = y + dy, i = y * this.gw + x, inside = sx >= 0 && sy >= 0 && sx < this.gw && sy < this.gh, j = sy * this.gw + sx;
+        this.ground[i] = inside ? g[j]! : 0; this.solid[i] = inside ? so[j]! : 1; this.basin[i] = inside ? b[j]! : 0;
+      }
+    }
+    if (ch.box) up(...ch.box);
+  }
+  same(view: WorldView, what: string): void {
+    const vw = view.water!;
+    expect([what, Buffer.from(this.ground.buffer).equals(Buffer.from(vw.sim.ground.buffer)), Buffer.from(this.solid.buffer).equals(Buffer.from(vw.sim.solid.buffer))]).toEqual([what, true, true]);
+    for (let i = 0; i < this.basin.length; i++) if (this.basin[i] !== (vw.isBasin(i) ? 1 : 0)) throw new Error(`${what}: cuenca ${i}`);
+  }
+}
+
 describe('WaterLayer en anillo (movable, shift)', () => {
   it('igual que correr copiando: pasos, pisotones, gotas, picados y lo que entra cargado', () => {
     const ring = setup(true), ref = setup(false);
     const view = new WorldView(ring.state, 0);           // (movable: lee por WaterView también en el giro 0)
+    const mirror = new Mirror(ring.water.gw, ring.water.gh);
     let gx = 0, gy = 0, k = 0;
     const marked = new Map<unknown, number[]>();
     const moves: Array<[number, number]> = [[1, 0], [0, 1], [-2, 1], [3, -1], [0, -2], [6, 0], [1, 1], [-1, -3], [2, 2], [0, 5]];
@@ -108,14 +138,18 @@ describe('WaterLayer en anillo (movable, shift)', () => {
           } else w.water.step(1 / 60);
         }
         // La vista, entre corrimientos: copia solo lo que cambió (changesSince) y ve lo mismo que la referencia
-        if (t % 10 === 9) { view.frame(); sameView(view, ref, `cuadro ${k}.${t}`); }
+        if (t % 10 === 9) { view.frame(); sameView(view, ref, `cuadro ${k}.${t}`); mirror.sync(view); mirror.same(view, `espejo ${k}.${t}`); }
       }
       expect([k, marked.get(ring)]).toEqual([k, marked.get(ref)]);
       same(ring, ref, `antes de ${dcx},${dcy}`);
       // (al empezar, con agua de verdad moviéndose)
       if (k === 0) { expect(ring.water.sim.totalVolume()).toBeGreaterThan(100); expect(ring.water.sim.activeCount).toBeGreaterThan(50); }
+      // Unos pasos más sin cuadro: lo que cambia aquí, la vista lo copia después de correr (corrido con el corrimiento)
+      for (let t = 0; t < 3; t++) for (const w of [ring, ref]) { w.water.disturb(30 + (k * 9) % 40, 20 + (k * 7) % 40, 2.5, 3); w.water.pour(40 + (k * 5) % 30, 30, 2); w.water.step(1 / 60); }
       // Correr: el mundo y el agua (la referencia, copiando)
       for (const w of [ring, ref]) w.s.shift(dcx, dcy);
+      // (la vista se corre con la ventana antes que la capa, como en LiveWindow: WorldView.shift y después los Attached)
+      view.shift(dcx * CHUNK, dcy * CHUNK);
       ring.water.shift(dcx * CHUNK, dcy * CHUNK); copyShift(ref.water, (dcx * CHUNK) / CELL, (dcy * CHUNK) / CELL);
       gx += dcx * CHUNK; gy += dcy * CHUNK;
       // Lo que entra: escrito en las dos y su fondo cargado
@@ -129,10 +163,15 @@ describe('WaterLayer en anillo (movable, shift)', () => {
       const gv = ring.water.groundVersion;
       view.frame();
       sameView(view, ref, `vista ${dcx},${dcy}`);
+      // (el espejo, a veces cada cuadro y a veces tras varios corrimientos seguidos: corre y sube lo justo)
+      if (k % 3 !== 1) { mirror.sync(view); mirror.same(view, `espejo tras ${dcx},${dcy}`); }
       expect(gv).toBeGreaterThan(0);
       k++;
     }
     expect(ring.water.sim.origin).not.toEqual([0, 0]);
+    // (el espejo se puso al día sin subirlo todo más que la primera vez)
+    expect(mirror.full).toBe(1);
+    expect(mirror.uploaded).toBeLessThan(moves.length * 4 * ring.water.gw * ring.water.gh / 3);
   });
 
   it('con el agua en calma, la vista copia solo lo que cambia junto a la costura del anillo, y ve lo mismo', () => {
@@ -140,6 +179,7 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     const view = new WorldView(ring.state, 0);
     // Corrida un trozo en x y otro en y: la costura (la columna y la fila físicas 0) cae dentro de la rejilla
     for (const w of [ring, ref]) w.s.shift(1, 1);
+    view.shift(CHUNK, CHUNK);
     ring.water.shift(CHUNK, CHUNK); copyShift(ref.water, CHUNK / CELL, CHUNK / CELL);
     for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) {
       if (cx < C - 1 && cy < R - 1) continue;
@@ -165,25 +205,72 @@ describe('WaterLayer en anillo (movable, shift)', () => {
       }
     }
     expect(local).toBeGreaterThan(4);
+    // Agua echada lejos del borde y unos pasos sin cuadro; después, correr: lo que cambió antes de correr llega a la vista
+    // corrido (en calma, la copia es solo de lo que cambió)
+    for (let t = 0; t < 600 && (ring.water.sim.activeCount || t < 2); t++) for (const w of [ring, ref]) w.water.step(1 / 60);
+    view.frame(); sameView(view, ref, 'otra vez en calma');
+    for (const w of [ring, ref]) { w.water.pour(70, 30, 3); for (let t = 0; t < 4; t++) w.water.step(1 / 60); }
+    for (const w of [ring, ref]) w.s.shift(1, 0);
+    view.shift(CHUNK, 0);
+    ring.water.shift(CHUNK, 0); copyShift(ref.water, CHUNK / CELL, 0);
+    view.frame();
+    expect((view.water as unknown as { visited: number }).visited).toBeLessThan(ring.water.gw * ring.water.gh);   // (no entera: la franja y lo echado)
+    sameView(view, ref, 'cambio antes de correr');
   });
 
-  it('lo que entra queda seco y de pared hasta cargarse; la vista lo copia entero tras correr', () => {
+  it('lo que entra queda seco y de pared hasta cargarse; la vista que se corre con la capa copia solo la franja, la que no, todo', () => {
     const w = setup(true);
-    const view = new WorldView(w.state, 0);
-    view.frame();
-    const gv = w.water.groundVersion;
-    w.s.shift(2, 0); w.water.shift(2 * CHUNK, 0);
+    const moved = new WorldView(w.state, 0), stale = new WorldView(w.state, 0);
+    moved.frame(); stale.frame();
+    const gv = w.water.groundVersion, seq = w.water.changesSince(0).seq;
+    w.s.shift(2, 0); moved.shift(2 * CHUNK, 0); w.water.shift(2 * CHUNK, 0);
     expect(w.water.groundVersion).toBeGreaterThan(gv);         // (la GPU vuelve a subir el fondo)
     for (let gy = 0; gy < w.water.gh; gy++) for (let gx = w.water.gw - CHUNK; gx < w.water.gw; gx++) {
       const i = w.water.sim.at(gx, gy);
       expect([gx, gy, w.water.sim.depth[i], w.water.sim.solid[i], w.water.isBasin(i)]).toEqual([gx, gy, 0, 1, false]);
     }
-    const ch = w.water.changesSince(0);
-    expect(ch.box).toEqual([0, 0, w.water.gw - 1, w.water.gh - 1]);
+    // Lo que cambió: la franja que entra
+    expect(w.water.changesSince(seq).box).toEqual([w.water.gw - CHUNK, 0, w.water.gw - 1, w.water.gh - 1]);
+    expect(w.water.shiftCount).toBe(1);
+    moved.frame(); stale.frame();
+    // (la franja y una columna de margen, la de siempre de la copia por cajas)
+    expect((moved.water as unknown as { visited: number }).visited).toBe((CHUNK + 1) * w.water.gh);
+    expect((stale.water as unknown as { visited: number }).visited).toBe(w.water.gw * w.water.gh);
+    for (const v of [moved, stale]) {
+      const vw = v.water!;
+      for (let gy = 0; gy < w.water.gh; gy++) for (let gx = 0; gx < w.water.gw; gx++) {
+        const i = gy * w.water.gw + gx, p = w.water.sim.at(gx, gy);
+        if (vw.sim.depth[i] !== w.water.sim.depth[p] || vw.sim.ground[i] !== w.water.sim.ground[p] || vw.sim.solid[i] !== w.water.sim.solid[p]) throw new Error(`${gx},${gy}`);
+      }
+    }
+    moved.frame();
+    expect((moved.water as unknown as { visited: number }).visited).toBe(0);
+  });
+
+  it('la textura del fondo (staticSince): un picado y después un corrimiento; la franja sin cargar no se sube; el registro corto, todo', () => {
+    const w = setup(true);
+    const view = new WorldView(w.state, 0), mirror = new Mirror(w.water.gw, w.water.gh);
+    view.frame(); mirror.sync(view); mirror.same(view, 'al empezar');
+    const vw = view.water as unknown as { staticSince(v: number): { v: number; all: boolean; shift: [number, number] | null; box: [number, number, number, number] | null } };
+    // Un picado (cambia el fondo de una caja) y, sin poner al día el espejo, un corrimiento: la caja llega corrida
+    for (let y = 40; y < 46; y++) for (let x = 60; x < 66; x++) for (let z = 3; z <= ZMAX; z++) w.s.set(x, y, z, 0);
+    w.water.syncGround({ x0: 60, y0: 40, x1: 65, y1: 45 });
     view.frame();
-    expect((view.water as unknown as { visited: number }).visited).toBe(w.water.gw * w.water.gh);
+    w.s.shift(1, 1); view.shift(CHUNK, CHUNK); w.water.shift(CHUNK, CHUNK);
     view.frame();
-    expect((view.water as unknown as { visited: number }).visited).toBe(0);
+    const ch = vw.staticSince(mirror.v);
+    expect(ch.shift).toEqual([CHUNK / CELL, CHUNK / CELL]);
+    // (la franja que entra es pared seca en la vista y en la capa: no hay nada que subir de ella; solo la caja picada)
+    // (lo picado: las celdas 30..32 x 20..22, corridas 8 y 8)
+    expect(ch.box).toEqual([22, 12, 24, 14]);
+    mirror.sync(view); mirror.same(view, 'picado y corrido');
+    // Más de 64 cambios sin poner al día el espejo: el registro ya no llega, todo
+    for (let k = 0; k < 70; k++) {
+      const x = 4 + (k % 20) * 4, y = 4 + Math.floor(k / 20) * 4;
+      w.s.set(x, y, 20, material(0, 1)); w.water.syncGround({ x0: x, y0: y, x1: x, y1: y }); view.frame();
+    }
+    expect(vw.staticSince(mirror.v).all).toBe(true);
+    mirror.sync(view); mirror.same(view, 'registro corto');
   });
 
   it('sin movable, shift es un error; corrida, draw directo también (se dibuja por la vista)', () => {

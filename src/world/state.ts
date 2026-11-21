@@ -1335,6 +1335,9 @@ export interface WaterSurface {
   // Sube cada vez que cambian el fondo, las paredes o las cuencas (WaterLayer.syncGround, importState): quien los copie
   // (la GPU) los vuelve a copiar. Sin él, no cambian nunca
   readonly groundVersion?: number;
+  // (opcional) lo que cambió del fondo, las paredes y las cuencas desde la versión v: el corrimiento total y la caja que
+  // hay que subir después de correr, o all (WaterView). Con él, la GPU corre su textura y sube solo eso
+  staticSince?(v: number): { v: number; all: boolean; shift: [number, number] | null; box: [number, number, number, number] | null };
   isBasin(i: number): boolean;
   draw(b: import('./bake').Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect?: boolean, cut?: { x0: number; x1: number; y0: number; y1: number; zMin: number } | null): void;

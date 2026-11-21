@@ -100,6 +100,11 @@ export class WaterLayer {
   private logN = 0;                                // cajas cerradas desde el principio
   private readonly cur = Int32Array.of(0x7fffffff, 0x7fffffff, -1, -1);
   private fountainOut: number[] = [];             // desagüe
+  // Los corrimientos (shift), con el número de cajas cerradas cuando se hicieron: las cajas de antes se corren con ellos
+  private shiftLog: Array<{ at: number; cx: number; cy: number }> = [];
+  private shifts = 0;
+  // Cuántas veces se corrió (quien copia la rejilla y no se corrió con ella la copia entera)
+  get shiftCount(): number { return this.shifts; }
   // Si la capa se corre con una ventana (shift): entonces las vistas la leen siempre por WaterView (en el anillo)
   readonly movable: boolean;
 
@@ -321,12 +326,20 @@ export class WaterLayer {
   }
   // Lo que cambió desde `seq` (el seq que dio la llamada anterior; 0 al empezar): la caja de celdas que lo cubre (null
   // si nada), o all si el registro ya no llega tan atrás. Lo del tick en curso sale siempre (también la vez siguiente)
+  // Las cajas de antes de un corrimiento salen corridas con él (en las coordenadas de ahora, recortadas a la rejilla)
   changesSince(seq: number): { seq: number; all: boolean; box: [number, number, number, number] | null } {
     if (this.logN - seq > CHANGE_LOG) return { seq: this.logN, all: true, box: null };
+    const sl = this.shiftLog;
+    if (sl.length === CHANGE_LOG && sl[0]!.at > seq) return { seq: this.logN, all: true, box: null };
     let x0 = this.cur[0]!, y0 = this.cur[1]!, x1 = this.cur[2]!, y1 = this.cur[3]!;
-    for (let k = seq; k < this.logN; k++) {
+    // (de la más nueva a la más vieja, sumando los corrimientos que van quedando detrás)
+    let ox = 0, oy = 0, si = sl.length - 1;
+    for (let k = this.logN - 1; k >= seq; k--) {
+      while (si >= 0 && sl[si]!.at > k) { ox += sl[si]!.cx; oy += sl[si]!.cy; si--; }
       const o = (k % CHANGE_LOG) * 4, l = this.log;
-      if (l[o]! < x0) x0 = l[o]!; if (l[o + 1]! < y0) y0 = l[o + 1]!; if (l[o + 2]! > x1) x1 = l[o + 2]!; if (l[o + 3]! > y1) y1 = l[o + 3]!;
+      const a0 = Math.max(0, l[o]! - ox), b0 = Math.max(0, l[o + 1]! - oy), a1 = Math.min(this.gw - 1, l[o + 2]! - ox), b1 = Math.min(this.gh - 1, l[o + 3]! - oy);
+      if (a0 > a1 || b0 > b1) continue;
+      if (a0 < x0) x0 = a0; if (b0 < y0) y0 = b0; if (a1 > x1) x1 = a1; if (b1 > y1) y1 = b1;
     }
     return { seq: this.logN, all: false, box: x0 <= x1 ? [x0, y0, x1, y1] : null };
   }
@@ -406,10 +419,14 @@ export class WaterLayer {
     if (by > 0) clear(0, gh - by, gw - 1, gh - 1); else if (by < 0) clear(0, 0, gw - 1, -by - 1);
     // (la fuente no se corre: es de los escenarios de una pieza)
     this.fountainIn = []; this.fountainOut = [];
-    // (lo apuntado hasta aquí, en las coordenadas de antes, se cierra; y la rejilla entera cambió: una caja con todo, así
-    // quien copie desde antes del corrimiento lo copia todo)
+    // Lo apuntado hasta aquí (en las coordenadas de antes) se cierra, y el corrimiento queda apuntado: changesSince corre
+    // esas cajas. Lo que cambió es la franja que entra (quien copia se corre por su cuenta: WaterView.shift)
     this.closeChanges();
-    this.changed(0, 0, gw - 1, gh - 1);
+    this.shiftLog.push({ at: this.logN, cx, cy });
+    if (this.shiftLog.length > CHANGE_LOG) this.shiftLog.shift();
+    this.shifts++;
+    if (bx > 0) this.changed(gw - bx, 0, gw - 1, gh - 1); else if (bx < 0) this.changed(0, 0, -bx - 1, gh - 1);
+    if (by > 0) this.changed(0, gh - by, gw - 1, gh - 1); else if (by < 0) this.changed(0, 0, gw - 1, -by - 1);
     this.closeChanges();
     this.groundVersion++;
   }
