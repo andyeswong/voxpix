@@ -144,12 +144,14 @@ class WaterView implements WaterSurface {
       const i = gy * this.gw + gx;
       const [x, y] = cam.pointToWorld(Math.min(cam.viewWidth, gx * WATER_CELL + WATER_CELL / 2), Math.min(cam.viewDepth, gy * WATER_CELL + WATER_CELL / 2));
       const wx = Math.floor(Math.min(cam.width - 1e-6, x) / WATER_CELL), wy = Math.floor(Math.min(cam.depth - 1e-6, y) / WATER_CELL);
+      // (map: la celda de la rejilla del agua, wy * gw + wx; su sitio en los arrays, en el anillo, es src.sim.at(wx, wy))
       const j = wx < 0 || wy < 0 || wx >= src.gw || wy >= src.gh ? -1 : wy * src.gw + wx;
       this.map[i] = j;
       if (j < 0) { this.sim.solid[i] = 1; continue; }
-      this.sim.ground[i] = src.sim.ground[j]!;
-      this.sim.solid[i] = src.sim.solid[j]!;
-      this.basin[i] = src.isBasin(j) ? 1 : 0;
+      const p = src.sim.at(wx, wy);
+      this.sim.ground[i] = src.sim.ground[p]!;
+      this.sim.solid[i] = src.sim.solid[p]!;
+      this.basin[i] = src.isBasin(p) ? 1 : 0;
     }
   }
   // Cada cuadro: la profundidad, y también el fondo, la pared y la cuenca (cambian si el agua sigue al mundo:
@@ -182,9 +184,10 @@ class WaterView implements WaterSurface {
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
       const i = gy * this.gw + gx, j = m[i]!;
       if (j < 0) { out.depth[i] = 0; continue; }
-      out.ground[i] = s.ground[j]!; out.solid[i] = s.solid[j]!; this.basin[i] = this.src.isBasin(j) ? 1 : 0;
-      let d = s.depth[j]!;
-      if (hide && d > 0 && s.ground[j]! + d > hide((j % gw) * WATER_CELL + 1, Math.floor(j / gw) * WATER_CELL + 1)) d = 0;
+      const wx = j % gw, wy = (j - wx) / gw, p = s.at(wx, wy);
+      out.ground[i] = s.ground[p]!; out.solid[i] = s.solid[p]!; this.basin[i] = this.src.isBasin(p) ? 1 : 0;
+      let d = s.depth[p]!;
+      if (hide && d > 0 && s.ground[p]! + d > hide(wx * WATER_CELL + 1, wy * WATER_CELL + 1)) d = 0;
       out.depth[i] = d;
     }
   }
@@ -270,7 +273,8 @@ export class WorldView implements RenderState {
     // Con corte, el agua también va por la rejilla de la vista (en el giro 0, la misma que la del mundo): así lo que queda
     // por encima de lo cortado no se dibuja
     const hide = opts.cut ? (x: number, y: number) => this.appliedAt(Math.min(src.width - 1, x), Math.min(src.depth - 1, y)) : null;
-    if (quarter === 0 && !(opts.cut && state.water)) {
+    // (una capa que se corre, movable, está en anillo: también en el giro 0 se lee por WaterView)
+    if (quarter === 0 && !(state.water && (opts.cut || state.water.movable))) {
       this.water = state.water;
       this.drops = state.drops;
     } else if (quarter === 0) {

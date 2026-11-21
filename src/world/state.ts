@@ -1503,7 +1503,7 @@ export class WorldState {
     const gx0 = Math.max(0, Math.floor(region.x0 / 2) - 1), gx1 = Math.min(w.gw - 1, Math.ceil(region.x1 / 2) + 1);
     const gy0 = Math.max(0, Math.floor(region.y0 / 2) - 1), gy1 = Math.min(w.gh - 1, Math.ceil(region.y1 / 2) + 1);
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
-      const i = gy * w.gw + gx;
+      const i = sim.at(gx, gy);
       const d = sim.depth[i]!;
       if (d < 0.05 || sim.solid[i]) continue;
       const x0 = gx * 2, y0 = gy * 2;
@@ -1639,7 +1639,8 @@ export class WorldState {
       const w = this.water, s = this.solid;
       let stamp = 0;
       for (const i of w.sim.activeCells()) {
-        const c = s.chunkOf((i % w.gw) * 2, Math.floor(i / w.gw) * 2);
+        const [gx, gy] = w.sim.xy(i);
+        const c = s.chunkOf(gx * 2, gy * 2);
         if (c < 0) continue;
         if (!stamp) stamp = ++s.clock;
         this.dynamicVersions[c] = stamp;
@@ -1661,8 +1662,9 @@ export class WorldState {
     const w = this.water;
     for (let k = 0; k < ticks; k++) {
       if (w && k === 0) for (let i = 0; i < w.gw * w.gh; i += 97) {
-        if (w.sim.depth[i]! <= 1) continue;
-        const x = (i % w.gw) * 2 + 1, y = Math.floor(i / w.gw) * 2 + 1;
+        const gx = i % w.gw, gy = Math.floor(i / w.gw);
+        if (w.sim.depth[w.sim.at(gx, gy)]! <= 1) continue;
+        const x = gx * 2 + 1, y = gy * 2 + 1;
         this.events.disturb(x, y, 2.8, 3);
         this.events.splash(x, y, w.surfaceAt(x, y), 40, 105);
         break;

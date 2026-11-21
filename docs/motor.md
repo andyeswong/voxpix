@@ -1100,6 +1100,15 @@ water.follow(state.watchChanges());                                 // picar o p
   `exportState` e `importState` van en el orden de la rejilla, corrida o no. Es lo mismo, byte a byte, que una
   simulación que se corre copiando (`test/agua-anillo.test.ts`), también a través de la costura del anillo.
 
+  `WaterLayer` se corre con la ventana viva si se crea con `{ movable: true }`: es un `Attached` de `LiveWindow`
+  (`win.attach(water)`), y `shift(dx, dy)` (en vóxeles, múltiplos de la celda) corre su rejilla en anillo. Lo que entra
+  queda seco, de pared y sin cuenca hasta que se cargue. Todo lo que indexa la rejilla (el fondo tras picar y su cuenca,
+  las gotas, el empapado, `waterAt`, `firstPersonWater`, la instantánea, `WorldState.waterColumns`) va por el anillo. Una
+  capa movable se dibuja siempre por su vista (`WaterView`, en orden, también en el giro 0): `WaterLayer.draw` directo,
+  corrida, es un error. Tras correrse, `changesSince` da la rejilla entera (la vista la copia una vez) y `groundVersion`
+  sube (la GPU vuelve a subir el fondo). Lo comprueba `test/agua-capa-anillo.test.ts` contra una capa que se corre
+  copiando, con el mundo de vóxeles corrido igual.
+
   La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
   profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
   desde la copia anterior (un registro de una caja por tick, de los últimos 256; si se queda atrás, la copia entera),

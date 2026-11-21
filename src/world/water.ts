@@ -32,6 +32,9 @@ export interface WaterOptions {
   // y nace despierta, como siempre (bornAsleep dice qué pasó). Cambia la huella (las despiertas están en ella); por
   // defecto, como siempre
   asleep?: boolean;
+  // movable: la capa se corre con la ventana viva (shift, LiveWindow.attach). Sus vistas la leen por WaterView también en
+  // el giro 0 (la rejilla corrida está en anillo; drawWater la lee en orden)
+  movable?: boolean;
 }
 
 // El estado del agua en la instantánea: el del simulador y las cuencas (opcional: las instantáneas de antes no lo traen)
@@ -66,12 +69,15 @@ export class WaterLayer {
   private logN = 0;                                // cajas cerradas desde el principio
   private readonly cur = Int32Array.of(0x7fffffff, 0x7fffffff, -1, -1);
   private fountainOut: number[] = [];             // desagüe
+  // Si la capa se corre con una ventana (shift): entonces las vistas la leen siempre por WaterView (en el anillo)
+  readonly movable: boolean;
 
   // Rejilla de celdas de CELL x CELL vóxeles en ejes del modelo: la celda (gx, gy) cubre x en [gx*CELL, gx*CELL+CELL)
   // e y en [gy*CELL, gy*CELL+CELL) (gy crece hacia el norte). El fondo de cada celda sale de la rejilla de alturas
   // de los vóxeles del mundo; lo que sube más de WALL_Z (paredes, columnas, el fuste) o no tiene suelo, no deja pasar el agua.
   constructor(private world: World, opts: WaterOptions = {}) {
     this.wallAbove = opts.wallAbove ?? WALL_Z;
+    this.movable = !!opts.movable;
     this.gw = Math.ceil(world.width / CELL);
     this.gh = Math.ceil(world.depth / CELL);
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
@@ -128,13 +134,13 @@ export class WaterLayer {
   private restless(): string | null {
     const { sim, gw, gh } = this;
     for (let gy = 0; gy < gh; gy++) for (let gx = 0; gx < gw; gx++) {
-      const i = gy * gw + gx;
+      const i = sim.at(gx, gy);
       if (sim.solid[i] || !(sim.depth[i]! > 0)) continue;
       const s = sim.ground[i]! + sim.depth[i]!;
       for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const nx = gx + ox, ny = gy + oy;
         if (nx < 0 || ny < 0 || nx >= gw || ny >= gh) continue;
-        const j = ny * gw + nx;
+        const j = sim.at(nx, ny);
         if (!sim.solid[j] && s > sim.ground[j]! + sim.depth[j]!) return `la celda ${gx},${gy} puede echar agua a ${nx},${ny}`;
       }
     }
@@ -167,7 +173,7 @@ export class WaterLayer {
       const gx0 = Math.max(0, Math.floor(b.x0 / CELL)), gx1 = Math.min(this.gw - 1, Math.floor(b.x1 / CELL));
       const gy0 = Math.max(0, Math.floor(b.y0 / CELL)), gy1 = Math.min(this.gh - 1, Math.floor(b.y1 / CELL));
       for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
-        const i = gy * this.gw + gx;
+        const i = sim.at(gx, gy);
         const [g, hole] = this.groundOf(gx, gy);
         // La superficie que se conserva: la del agua que hay. Una celda seca no tiene (picarla no crea agua: el hoyo lo
         // llena lo que le llegue de sus vecinas)
@@ -185,22 +191,22 @@ export class WaterLayer {
     const flood: number[] = [], floodLevel: number[] = [];
     for (const i of cells) {
       if (sim.solid[i] || this.basin[i]) continue;
-      const gx = i % this.gw, gy = (i - gx) / this.gw;
+      const [gx, gy] = sim.xy(i);
       let level = -Infinity;
       for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const nx = gx + ox, ny = gy + oy;
         if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
-        const j = ny * this.gw + nx;
+        const j = sim.at(nx, ny);
         if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, sim.ground[j]! + sim.depth[j]!);
       }
       if (sim.ground[i]! < level) { this.basin[i] = 1; flood.push(i); floodLevel.push(level); }
     }
     for (let k = 0; k < flood.length; k++) {
-      const i = flood[k]!, level = floodLevel[k]!, gx = i % this.gw, gy = (i - gx) / this.gw;
+      const i = flood[k]!, level = floodLevel[k]!, [gx, gy] = sim.xy(i);
       for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
         const nx = gx + ox, ny = gy + oy;
         if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
-        const j = ny * this.gw + nx;
+        const j = sim.at(nx, ny);
         if (this.basin[j] || sim.solid[j] || !(sim.ground[j]! < level)) continue;
         this.basin[j] = 1; flood.push(j); floodLevel.push(level);
         this.changedCell(j);
@@ -217,7 +223,7 @@ export class WaterLayer {
     if (gx0 < c[0]!) c[0] = Math.max(0, gx0); if (gy0 < c[1]!) c[1] = Math.max(0, gy0);
     if (gx1 > c[2]!) c[2] = Math.min(this.gw - 1, gx1); if (gy1 > c[3]!) c[3] = Math.min(this.gh - 1, gy1);
   }
-  private changedCell(i: number): void { const gx = i % this.gw, gy = (i - gx) / this.gw; this.changed(gx, gy, gx, gy); }
+  private changedCell(i: number): void { const [gx, gy] = this.sim.xy(i); this.changed(gx, gy, gx, gy); }
   private closeChanges(): void {
     const c = this.cur;
     if (c[0]! > c[2]!) return;
@@ -262,7 +268,7 @@ export class WaterLayer {
   }
 
   // El estado del agua para la instantánea del mundo: el del simulador (profundidad, flujos, despiertas) y las cuencas
-  exportState(): WaterState { return { ...this.sim.exportState(), basin: this.basin.slice() }; }
+  exportState(): WaterState { return { ...this.sim.exportState(), basin: this.sim.logical(this.basin) }; }
 
   // Vuelve a una instantánea (WorldState.restore, con los vóxeles ya restaurados). La profundidad, los flujos y las
   // despiertas guardadas son la verdad: no se tocan ni se despierta nada más. Las cuencas, las guardadas (una
@@ -270,6 +276,8 @@ export class WaterLayer {
   // las paredes se rehacen de los vóxeles restaurados y lo pendiente de syncGround se descarta: la restauración ya
   // trae agua y mundo coherentes (un syncGround conservando la superficie metería agua de más donde se picó)
   importState(s: WaterState): void {
+    // (corrida: las cuencas de partida pasan al orden de la rejilla, como el fondo y las paredes en sim.importState)
+    if (this.sim.origin[0] || this.sim.origin[1]) this.basin0.set(this.sim.logical(this.basin0));
     this.sim.importState(s);
     this.basin.set(s.basin ?? this.basin0);
     this.soakAll();
@@ -277,7 +285,7 @@ export class WaterLayer {
       this.watch.take();
       const { sim } = this;
       for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
-        const i = gy * this.gw + gx, [g, hole] = this.groundOf(gx, gy);
+        const i = sim.at(gx, gy), [g, hole] = this.groundOf(gx, gy);
         sim.ground[i] = g;
         sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
       }
@@ -293,13 +301,38 @@ export class WaterLayer {
     return false;
   }
 
+  // LA VENTANA VIVA (Attached de LiveWindow): el mundo se corrió dx, dy vóxeles (lo que estaba en x pasa a x - dx),
+  // múltiplos de la celda. La rejilla se corre en anillo (ShallowWater.shift, sin copiar) y lo que entra queda seco y de
+  // pared, sin cuenca, hasta que se cargue (load). Las vistas que copian la rejilla la copian entera la próxima vez
+  shift(dx: number, dy: number): void {
+    if (!dx && !dy) return;
+    if (!this.movable) throw new Error('WaterLayer.shift: la capa no es movable (WaterOptions.movable)');
+    if (dx % CELL || dy % CELL) throw new Error(`WaterLayer.shift: ${dx}, ${dy} no es múltiplo de la celda (${CELL})`);
+    const cx = dx / CELL, cy = dy / CELL, { gw, gh, sim } = this;
+    sim.shift(cx, cy);
+    const bx = Math.max(-gw, Math.min(gw, cx)), by = Math.max(-gh, Math.min(gh, cy));
+    const clear = (x0: number, y0: number, x1: number, y1: number) => {
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = sim.at(x, y); this.basin[i] = 0; this.basin0[i] = 0; }
+    };
+    if (bx > 0) clear(gw - bx, 0, gw - 1, gh - 1); else if (bx < 0) clear(0, 0, -bx - 1, gh - 1);
+    if (by > 0) clear(0, gh - by, gw - 1, gh - 1); else if (by < 0) clear(0, 0, gw - 1, -by - 1);
+    // (la fuente no se corre: es de los escenarios de una pieza)
+    this.fountainIn = []; this.fountainOut = [];
+    // (lo apuntado hasta aquí, en las coordenadas de antes, se cierra; y la rejilla entera cambió: una caja con todo, así
+    // quien copie desde antes del corrimiento lo copia todo)
+    this.closeChanges();
+    this.changed(0, 0, gw - 1, gh - 1);
+    this.closeChanges();
+    this.groundVersion++;
+  }
+
   // Escuchar los cambios de vóxeles del mundo (picar, poner) y rehacer el fondo de lo tocado en cada step. Sin esto, el
   // agua no se entera (como siempre): quien quiera que siga al mundo lo pide
   follow(watch: ChangeWatch): void { this.watch = watch; }
 
   private cellOf(x: number, y: number): number {
     const gx = Math.floor(x / CELL), gy = Math.floor(y / CELL);
-    return gx < 0 || gy < 0 || gx >= this.gw || gy >= this.gh ? -1 : gy * this.gw + gx;
+    return gx < 0 || gy < 0 || gx >= this.gw || gy >= this.gh ? -1 : this.sim.at(gx, gy);
   }
 
   // Los 5 tonos del agua (RGB) y si una celda es de cuenca (para quien la dibuja por su cuenta, como la GPU)
@@ -316,11 +349,12 @@ export class WaterLayer {
     const ramp = palette.ramps.findIndex((r) => /^(agua|water)$/i.test(r.name));
     if (ramp < 0) return null;
     const n = this.gw * this.gh, surface = new Float32Array(n), depth = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
+    for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
+      const i = this.sim.at(gx, gy), o = gy * this.gw + gx;
       const d = this.sim.depth[i]!;
       const wet = !this.sim.solid[i] && d >= 0.04;
-      surface[i] = wet ? this.sim.ground[i]! + d : NaN;
-      depth[i] = wet ? d : 0;
+      surface[o] = wet ? this.sim.ground[i]! + d : NaN;
+      depth[o] = wet ? d : 0;
     }
     return { cell: CELL, gw: this.gw, gh: this.gh, surface, depth, ramp };
   }
@@ -346,14 +380,15 @@ export class WaterLayer {
     this.sim.depth[i] = this.sim.depth[i]! + amount;
     this.soakMaybe(i);
     this.changedCell(i);
-    this.sim.wake(i % this.gw, Math.floor(i / this.gw), 3);
+    const [gx, gy] = this.sim.xy(i);
+    this.sim.wake(gx, gy, 3);
   }
 
   // Centros (ejes del modelo) de las celdas donde cae el agua del cuenco de la fuente
   fountainLanding(k: number): [number, number] | null {
     if (!this.fountainIn.length) return null;
-    const i = this.fountainIn[k % this.fountainIn.length]!;
-    return [(i % this.gw) * CELL + 1, Math.floor(i / this.gw) * CELL + 1];
+    const [gx, gy] = this.sim.xy(this.fountainIn[k % this.fountainIn.length]!);
+    return [gx * CELL + 1, gy * CELL + 1];
   }
 
   // Un paso de simulación de `dt` (el mundo lo llama con 1/60 fijo): exactamente round(dt * 120) subpasos de 1/120,
@@ -370,12 +405,14 @@ export class WaterLayer {
       }
       sim.step(1 / 120);
       // Lo que pudo mojarse fuera de cuenca en este subpaso (solo las celdas que calculó), y su caja
-      const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList, gw = this.gw;
+      const act = sim.activeCells(), depth = sim.depth, inSoak = this.inSoak, list = this.soakList, gw = this.gw, gh = this.gh;
+      const [ox, oy] = sim.origin;
       let ax0 = gw, ay0 = this.gh, ax1 = -1, ay1 = -1;
       for (let q = 0; q < act.length; q++) {
         const i = act[q]!;
         if (!inSoak[i] && !basin[i] && depth[i]! > 0) { inSoak[i] = 1; list[this.nSoak++] = i; }
-        const x = i % gw, y = (i - x) / gw;
+        let x = i % gw, y = (i - x) / gw;
+        x -= ox; if (x < 0) x += gw; y -= oy; if (y < 0) y += gh;
         if (x < ax0) ax0 = x; if (x > ax1) ax1 = x; if (y < ay0) ay0 = y; if (y > ay1) ay1 = y;
       }
       if (ax1 >= 0) this.changed(ax0, ay0, ax1, ay1);
@@ -397,6 +434,8 @@ export class WaterLayer {
 
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
+    // (drawWater lee la rejilla en el orden y * gw + x: corrida, se dibuja por una vista, WaterView)
+    if (this.sim.origin[0] || this.sim.origin[1]) throw new Error('WaterLayer.draw: la capa está corrida (anillo); se dibuja con una WorldView (WaterView)');
     drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect, cut);
   }
 }
