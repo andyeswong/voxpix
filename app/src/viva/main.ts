@@ -382,7 +382,6 @@ void (async () => {
           let bad = 0;
           for (let i = 0; i < vw.gw * vw.gh; i++) if (tex[i * 4] !== vw.sim.ground[i] || tex[i * 4 + 1] !== vw.sim.solid[i] || tex[i * 4 + 2] !== (vw.isBasin(i) ? 1 : 0)) { if (!bad && !agua.primeraMala) agua.primeraMala = `celda ${i % vw.gw},${Math.floor(i / vw.gw)}: gpu ${tex[i * 4]},${tex[i * 4 + 1]},${tex[i * 4 + 2]} vista ${vw.sim.ground[i]},${vw.sim.solid[i]},${vw.isBasin(i) ? 1 : 0} (cuadro ${frameNo})`; bad++; }
           if (bad) agua.malas++;
-          if (agua.dbg.length < 6) { const w2 = vw as unknown as { sv?: number; ops?: unknown[]; shifts?: number }; agua.dbg.push({ cuadro: frameNo, bad, sv: w2.sv, ops: w2.ops?.length, vshifts: w2.shifts, lshifts: water.shiftCount, gpuV: (compositor as unknown as { gpu?: { waterStaticV?: number; waterOf?: unknown } }).gpu?.waterStaticV, mismo: (compositor as unknown as { gpu?: { waterOf?: unknown } }).gpu?.waterOf === vw, st: compositor.waterStats() }); }
         }
       }
     }
@@ -499,7 +498,7 @@ void (async () => {
         pasoMs: { p50: pq(agua.pasoMs, 0.5), p95: pq(agua.pasoMs, 0.95), max: pq(agua.pasoMs, 1) },
         activas: { p50: pq(agua.activas, 0.5), p95: pq(agua.activas, 0.95), max: pq(agua.activas, 1) },
         copia: { p50: pq(agua.copia, 0.5), p95: pq(agua.copia, 0.95), max: pq(agua.copia, 1) },
-        gpu: compositor.waterStats(), pisotones: agua.pisotones, checks: agua.checks, malas: agua.malas, primeraMala: agua.primeraMala, dbg: agua.dbg,
+        gpu: compositor.waterStats(), pisotones: agua.pisotones, checks: agua.checks, malas: agua.malas, primeraMala: agua.primeraMala,
         volumen: Math.round(water.sim.totalVolume()), celdas: water.gw * water.gh, guardados: aguaSaved.size,
       } : null,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
@@ -544,7 +543,7 @@ void (async () => {
     win.state.step();
     if (water && frames.length > 60) { agua.pasoMs.push(performance.now() - a0); agua.activas.push(water.sim.activeCount); }
   }
-  const agua = { dbg: [] as unknown[], pasoMs: [] as number[], activas: [] as number[], copia: [] as number[], pisotones: 0, checks: 0, malas: 0, primeraMala: null as null | string };
+  const agua = { pasoMs: [] as number[], activas: [] as number[], copia: [] as number[], pisotones: 0, checks: 0, malas: 0, primeraMala: null as null | string };
   boot.antesDelPrimerRaf = Math.round(performance.now());
   requestAnimationFrame(loop);
 })();

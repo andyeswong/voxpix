@@ -16,6 +16,7 @@ import { BlockGrid } from '../src/world/blocks';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { generateRegion } from '../src/world/regiongen';
 import type { World } from '../src/world/build';
+import { frame2D } from '../src/world/frame2d';
 
 const B = 8, ids = ['piedra', 'tierra', 'hierba', 'agua', 'arena'];
 const pal: Palette = { ramps: ids.map((name, i) => ({ name, colors: [`#${(30 + i * 20).toString(16)}2020`, `#${(40 + i * 20).toString(16)}3030`] })) };
@@ -95,8 +96,14 @@ describe('agua en la ventana viva (LiveWindow.setWater, skip, regionWater, load 
     let wv = 0;
     for (const [, , , v] of win.store.entries()) if (v >> 4 === T('agua') - 1) wv++;
     expect(wv).toBe(0);
-    // La vista del giro 0 (WaterView, movable) ve la capa en orden
-    win.view.frame();
+    // La vista del giro 0 (WaterView, movable) ve la capa en orden, y es lo que da al render (frame), no el state
+    const rs = win.view.frame();
+    expect(rs.water).toBe(win.view.water);
+    expect(rs.water).not.toBe(water);
+    // Un cuadro de verdad en la CPU, con la capa corrida (drawWater por la vista; el de la capa directo daría error)
+    const o = { vx: 0, vy: 0, vw: win.baked.width, vh: win.baked.height, time: 0, lights: true, ambient: [0.8, 0.8, 0.85] as [number, number, number] };
+    const img = frame2D(rs, win.baked, o);
+    expect(img.length).toBe(win.baked.width * win.baked.height * 4);
     const vw = win.view.water!, d = water.sim.logical(water.sim.depth), g = water.sim.logical(water.sim.ground);
     expect(Buffer.from(vw.sim.depth.buffer).equals(Buffer.from(d.buffer))).toBe(true);
     expect(Buffer.from(vw.sim.ground.buffer).equals(Buffer.from(g.buffer))).toBe(true);

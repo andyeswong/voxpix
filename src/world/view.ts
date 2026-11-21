@@ -360,7 +360,9 @@ export class WorldView implements RenderState {
 
   // Pone la vista al día con el mundo y la devuelve para el render: los vóxeles que cambiaron (el rehorneado los
   // encuentra con sus versiones, como siempre), las entidades, las luces, el agua y las gotas de este cuadro
-  frame(): RenderState { this.refresh(); return this.copied || this.hideLight ? this : this.state; }
+  // (en el giro 0 sin copia, el estado tal cual; con agua de la vista, WaterView de una capa que se corre, la vista: si no,
+  // el render leería la rejilla del agua en anillo como si estuviera en orden)
+  frame(): RenderState { this.refresh(); return this.copied || this.hideLight || this.waterView ? this : this.state; }
 
   private refresh(): void {
     const st = this.state, cam = this.camera;
