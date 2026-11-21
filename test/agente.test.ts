@@ -122,7 +122,7 @@ describe('interfaz para agentes', () => {
           const p = new SectionPainter(baked, { ahead: 0, behind: 0 });
           // (con la forma en cruz, SectionCut.window: la sección solo por la cruz alrededor del jugador)
           const [vx, vy] = view.camera.pointToView(PLAYER.x, PLAYER.y), [wx, wy] = baked.cam.project(vx, vy, PLAYER.z + 6);
-          p.set({ ...sectionAround(view.camera, PLAYER.x, PLAYER.y, PLAYER.z, 32), ...(withSection === 'cruz' ? { window: crossWindow(wx, wy, { arm: 10, width: 6 }) } : {}) }, 0); p.paintAll();
+          p.set({ ...sectionAround(view.camera, PLAYER.x, PLAYER.y, PLAYER.z, 32), ...(withSection === 'cruz' ? { window: crossWindow(wx, wy, { r: 10, arm: 6 }) } : {}) }, 0); p.paintAll();
           section = p.layer();
           expect(section).not.toBeNull();
           seen.push(section!.count);

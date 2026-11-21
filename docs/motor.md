@@ -1359,7 +1359,8 @@ compositor.frame(state, baked, { ...opts, section });                         //
     deshacen desde lo guardado;
   - lo sustituido sin nada detrás, bajo tierra (su cielo horneado no es el abierto), lleva `SECTION_FILL`
     (`SectionCut.fill`; `null`, transparente);
-  - el agua dentro de la caja, desde `zMin`, no se dibuja (`SectionLayer.box`; CPU y GPU).
+  - el agua dentro de la caja, desde `zMin`, no se dibuja (`SectionLayer.box`; CPU y GPU); con ventana, solo dentro de ella
+    ([La forma del corte](#la-forma-del-corte-una-ventana-en-la-imagen)).
 
   Edge con GPU, `app/seccion.html` con la cola del juego (3 ms y 8 de lo cercano), dos tiradas:
 
@@ -1377,6 +1378,56 @@ compositor.frame(state, baked, { ...opts, section });                         //
   mover la caja solo se escriben las columnas nuevas y las de los bordes. La capa devuelta vale hasta la composición
   siguiente. La y del mundo (`wy`) y la luz por detrás (`back`) de cada píxel se calculan al pintar la unidad, no al
   subir.
+
+### La forma del corte: una ventana en la imagen
+
+La caja dice qué se quita del mundo; la ventana (`SectionCut.window`, opcional), por dónde se mira. Es una forma en
+píxeles de la imagen horneada: un píxel solo se sustituye si la caja lo sustituía y además cae dentro de la forma. Lo
+demás se queda como horneado, así que el corte deja de verse como un bloque rebanado.
+
+```ts
+import { sectionAround, crossWindow, windowOf } from '@voxpix/world/section';
+const [vx, vy] = view.camera.pointToView(body.x, body.y);
+const [cx, cy] = baked.cam.project(vx, vy, body.z + 8);                        // el centro: un píxel de la imagen
+const cut = { ...sectionAround(view.camera, body.x, body.y, body.z, 128), window: crossWindow(cx, cy, { arm: 24, r: 40 }) };
+painter.set(cut, dirX);                                                        // o Frame2DOptions.section, o sectionLayer(baked, cut)
+```
+
+- `crossWindow(cx, cy, { arm, r })`: una cruz de dos barras de `arm` píxeles de ancho (el brazo) que llegan a `r`
+  píxeles del centro en las cuatro direcciones; por defecto, brazo 24 y radio 40. Un píxel a (dx, dy) del centro
+  redondeado está dentro si (|dx| ≤ arm / 2 y |dy| ≤ r) o (|dy| ≤ arm / 2 y |dx| ≤ r).
+- Otra forma: un objeto con la interfaz `SectionWindow` (su recuadro, una clave que cambia con la forma y los tramos de
+  columnas de cada fila). `windowOf(key, x0, y0, x1, y1, inside)` lo hace con una función por píxel.
+- La máscara de la capa es la única verdad. La leen `frame2D`, el compositor de la GPU, `pickVoxel` / `pickBlock` y lo
+  que ve un agente (`visibleCells`, `entityAt`, `probe`): lo que se pica es lo que se pinta, también con ventana.
+- Junto al contorno de la ventana:
+  - el borde (máscara 2) solo se queda donde toca a un píxel sustituido;
+  - un sustituido junto a uno de la caja que queda horneado lleva el contorno de la costura si lo horneado queda más
+    cerca que el salto del contorno interior, como en los lados de la caja;
+  - el tono y el cielo de cueva de lo sustituido son los de la caja entera cortada.
+- El agua de la caja solo deja de dibujarse en los píxeles de dentro de la ventana (CPU y GPU). Por eso una capa con la
+  ventana encima y nada sustituido no es `null`: lleva `count` 0.
+- `SectionPainter` pinta sus franjas sin la ventana y la aplica al componer, en una máscara aparte. Mover la ventana no
+  repinta nada: la capa dice que cambiaron el recuadro de la ventana de antes y el de ahora (`dirty`, con filas), y el
+  compositor sube solo eso.
+- Medido en el túnel de `scripts/bench-seccion.ts` (`ANDAR=1 JUEGO=1`, caja de 16 bloques; `CRUZ=24`, con `RADIO` 40), a
+  6x emulado, dos tiradas:
+
+  | | Sin ventana, antes | Sin ventana | Cruz de brazo 24 y radio 40 |
+  |---|---|---|---|
+  | `layer()` andando, p50 (ms) | 0,01 | 0,01 | 0,86 |
+  | `layer()` andando, p95 (ms) | 3,95-3,97 | 4,02-4,07 | 4,6-4,7 |
+  | Cuadro de la CPU con capa, de más (ms) | 12,6-15,2 | 12,7-14,2 | 6,9-7,6 |
+  | Píxeles de la capa que sube la GPU, p50 / p95 | 0 / 23.000-24.000 | 0 / 22.000-24.000 | 6.972 / 6.972 |
+
+  Sin ventana, el camino es el de antes. Con ella, cada cuadro en que el objetivo se mueve cuesta algo menos de un
+  milisegundo a 6x (0,13 ms sin freno) y sube un recuadro del tamaño de la cruz (83 x 84 píxeles), en vez de la capa
+  entera cada vez que la caja salta de franja.
+- Pruebas: `test/corte-ventana.test.ts` compara, píxel a píxel de toda la imagen, lo que se pica, la máscara y lo que
+  se pinta con un criterio escrito a mano, con la cruz en varios brazos, corrida, cortada por cada borde de la imagen y
+  fuera de la caja, y con un disco; el pintor moviendo la ventana y la caja, con una copia llevada al día solo con
+  `base` y `dirty`; y el agua. El oráculo tiene las escenas "corte al componer en cruz" (bajo tejado, con antorchas,
+  sobre el lago, con entidades y luz dinámica) en los 4 giros.
 
 ## Cámara con objetivo
 

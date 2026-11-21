@@ -177,7 +177,7 @@ void (async () => {
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
   const fases: Record<string, number[]> = {};
-  const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0), SECZ = Number(q.get('seccionz') ?? 0), CRUZ = Number(q.get('cruz') ?? 0);
+  const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0), SECZ = Number(q.get('seccionz') ?? 0), CRUZ = Number(q.get('cruz') ?? 0), RADIO = Number(q.get('radio') ?? 40);
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
@@ -336,8 +336,8 @@ void (async () => {
       if (!painter || painter.b !== win.baked) painter = new SectionPainter(win.baked);
       // (?seccionz=N: el suelo de la caja N vóxeles por debajo de los pies, como un corte bajo tierra)
       const cut = sectionAround(win.view.camera, lx, ly, ground(x, Y) - SECZ, SECCION);
-      // (?cruz=N: la sección solo por una ventana en cruz de brazo N alrededor del cuerpo)
-      if (CRUZ) { const [vx, vy] = win.view.camera.pointToView(lx, ly), [wx, wy] = win.baked.cam.project(vx, vy, ground(x, Y) + 8); cut.window = crossWindow(wx, wy, { arm: CRUZ }); }
+      // (?cruz=N: la sección solo por una ventana en cruz de brazo N, y ?radio=R, 40, alrededor del cuerpo)
+      if (CRUZ) { const [vx, vy] = win.view.camera.pointToView(lx, ly), [wx, wy] = win.baked.cam.project(vx, vy, ground(x, Y) + 8); cut.window = crossWindow(wx, wy, { arm: CRUZ, r: RADIO }); }
       painter.set(cut, dir);
       const pj = painter.job();
       if (pj) timed.push(pj);

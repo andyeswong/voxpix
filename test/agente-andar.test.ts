@@ -61,7 +61,7 @@ describe('agente: entityAt', () => {
     const bakedB = bakeWorld(views[1]!.bakeable(), { topZ: LAYERS * N, incline: 0.5 });
     let section: SectionLayer | null = null;
     // (la cruz, sobre el pecho de la entidad y más estrecha que ella de alto: destapa solo un trozo)
-    const [wx, wy] = baked.cam.project(ex, ey, ez + 6), win = withSection === 'cruz' ? { window: crossWindow(wx, wy, { arm: 7, width: 5 }) } : {};
+    const [wx, wy] = baked.cam.project(ex, ey, ez + 6), win = withSection === 'cruz' ? { window: crossWindow(wx, wy, { r: 7, arm: 5 }) } : {};
     if (withSection) section = sectionLayer(baked, { ...sectionAround(views[0]!.camera, ex, ey, ez, 32), ...win });
     const o = { vx: 0, vy: 0, vw: baked.width, vh: baked.height, lights: false, time: 0, ambient: [1, 1, 1] as [number, number, number], ...(section ? { sectionLayer: section } : {}) };
     const secB = withSection ? sectionLayer(bakedB, { ...sectionAround(views[1]!.camera, ex, ey, ez, 32), ...win }) : null;

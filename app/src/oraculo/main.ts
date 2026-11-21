@@ -84,8 +84,9 @@ interface Scenario {
   // (z: la altura del corte; por defecto, la de los pies)
   // (pit: una losa de un vóxel delante de MAIA sobre un pozo en el suelo, dentro de la caja: lo cortado sin nada detrás
   // lleva el fondo de la sección, no transparente; secHoles cuenta lo sustituido transparente)
-  // cross: con la ventana en cruz (SectionCut.window) de ese brazo, centrada en el cuerpo del jugador
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number };
+  // cross: con la ventana en cruz (SectionCut.window) de ese radio y ese brazo, centrada en el cuerpo del jugador; true:
+  // la de por defecto (brazo 24, radio 40)
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -434,7 +435,7 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   const ent = SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!;
   SCENARIOS.push({ ...ent, name: `corte al componer con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true } });
   // Lo mismo por una ventana en cruz: solo se sustituye dentro de la cruz, y el agua de la caja solo se quita ahí
-  SCENARIOS.push({ name: `corte al componer en cruz bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, cross: 24 } });
+  SCENARIOS.push({ name: `corte al componer en cruz bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, cross: true } });
   SCENARIOS.push({ name: `corte al componer en cruz por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, cross: 24 } });
   SCENARIOS.push({ name: `corte al componer en cruz sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1, cross: 16 } });
   SCENARIOS.push({ ...ent, name: `corte al componer en cruz con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, cross: 12 } });
@@ -615,7 +616,7 @@ async function run(): Promise<void> {
         const cut = sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
         if (!arm) return cut;
         const [vx, vy] = view.camera.pointToView(p.x + dx, p.y), [wx, wy] = b.cam.project(vx, vy, p.z + 8);
-        return { ...cut, window: crossWindow(wx, wy, { arm }) };
+        return { ...cut, window: arm === true ? crossWindow(wx, wy) : crossWindow(wx, wy, { arm, r: arm }) };
       };
       const painter = sc.section.painter ? new SectionPainter(b) : null;
       const step = (dx: number): Frame2DOptions => {

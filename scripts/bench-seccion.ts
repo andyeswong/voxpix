@@ -64,10 +64,10 @@ if (process.env.ANDAR === '1') {
     for (let f = 0; f < 420 && x < W - 64; f++) {
       x += 40 / 60;
       const yy = game ? ty + Math.round(3 * Math.sin(f / 23)) : ty, zz = game ? tz + (Math.floor(f / 37) % 3 === 2 ? 1 : 0) : tz;
-      // CRUZ=N: con la ventana en cruz de brazo N alrededor del cuerpo (SectionCut.window)
+      // CRUZ=N: con la ventana en cruz de brazo N (y RADIO, 40) alrededor del cuerpo (SectionCut.window)
       const sec = await import('../src/world/section'), cruz = Number(process.env.CRUZ ?? 0);
       const [wx, wy] = b.cam.project(x, yy, zz + 8);
-      painter.set({ ...sec.sectionAround(null, x, yy, zz, width), ...(cruz ? { window: sec.crossWindow(wx, wy, { arm: cruz }) } : {}) }, 1);
+      painter.set({ ...sec.sectionAround(null, x, yy, zz, width), ...(cruz ? { window: sec.crossWindow(wx, wy, { arm: cruz, r: Number(process.env.RADIO ?? 40) }) } : {}) }, 1);
       const j = painter.job();
       if (j) {
         const run0 = j.run.bind(j);

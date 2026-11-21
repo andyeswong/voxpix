@@ -17,7 +17,7 @@ import { WorldView, type Quarter } from '../src/world/view';
 import { frame2D } from '../src/world/frame2d';
 import { WaterLayer } from '../src/world/water';
 import type { World } from '../src/world/build';
-import { sectionAround, sectionLayer, sectionAt, SectionPainter, secIdx, crossWindow, windowOf, windowContains, CROSS_ARM, STRIP, type SectionCut, type SectionLayer, type SectionWindow } from '../src/world/section';
+import { sectionAround, sectionLayer, sectionAt, SectionPainter, secIdx, crossWindow, windowOf, windowContains, CROSS_ARM, CROSS_RADIUS, STRIP, type SectionCut, type SectionLayer, type SectionWindow } from '../src/world/section';
 
 const N = 8;
 const PAL: Palette = { ramps: [
@@ -43,11 +43,10 @@ function world() {
   return { st, grid };
 }
 
-// La cruz, a mano: dos barras de `width` de ancho que llegan a `arm` píxeles del centro
-function inCross(sx: number, sy: number, cx: number, cy: number, arm: number, width = arm): boolean {
-  const dx = sx - cx, dy = sy - cy, a = Math.floor(width / 2), z = width - 1 - a;
-  if (Math.abs(dx) > arm || Math.abs(dy) > arm) return false;
-  return (dy >= -a && dy <= z) || (dx >= -a && dx <= z);
+// La cruz, a mano: dos barras de `arm` de ancho (el brazo) que llegan a `r` píxeles del centro
+function inCross(sx: number, sy: number, cx: number, cy: number, r: number, arm = r): boolean {
+  const dx = sx - cx, dy = sy - cy, h = arm / 2;
+  return (Math.abs(dx) <= h && Math.abs(dy) <= r) || (Math.abs(dy) <= h && Math.abs(dx) <= r);
 }
 
 type Kind = 'sectionLayer' | 'SectionPainter';
@@ -128,8 +127,8 @@ describe('la ventana del corte: se pica y se pinta lo mismo, por la forma', () =
         let ex = -1, ey = -1;
         for (let sy = U.y; sy < U.y + U.h && ex < 0; sy++) for (let sx = U.x; sx < U.x + U.w - 1; sx++) if (maskAt(U, sx, sy) === 1 && maskAt(U, sx + 1, sy) === 2) { ex = sx; ey = sy; break; }
         expect(ex).toBeGreaterThan(0);
-        for (const arm of [3, 12, CROSS_ARM, 60]) for (const [ci, [cx, cy]] of [...centres, [ex - arm, ey] as [number, number]].entries()) {
-          const W = layerOf(kind, b, { ...cut, window: crossWindow(cx, cy, { arm }) });
+        for (const arm of [3, 12, CROSS_RADIUS, 60]) for (const [ci, [cx, cy]] of [...centres, [ex - arm, ey] as [number, number]].entries()) {
+          const W = layerOf(kind, b, { ...cut, window: crossWindow(cx, cy, { r: arm, arm }) });
           const r = check(grid, view, b, U, W, (sx, sy) => inCross(sx, sy, cx, cy, arm));
           total.subs += r.subs; total.seams += r.seams; total.borders += r.borders; total.cases++;
           if (ci >= 2 && ci <= 5) edge[ci - 2]! += r.subs;
@@ -139,10 +138,10 @@ describe('la ventana del corte: se pica y se pinta lo mismo, por la forma', () =
           if (ci === centres.length) expect(maskAt(W, ex + 1, ey)).toBe(2);
         }
         // Las barras más finas que el brazo, y el valor por defecto del brazo
-        const thin = layerOf(kind, b, { ...cut, window: crossWindow(px, py, { arm: 40, width: 7 }) });
+        const thin = layerOf(kind, b, { ...cut, window: crossWindow(px, py, { r: 40, arm: 7 }) });
         expect(check(grid, view, b, U, thin, (sx, sy) => inCross(sx, sy, px, py, 40, 7)).subs).toBeGreaterThan(40);
         const def = layerOf(kind, b, { ...cut, window: crossWindow(px, py) });
-        expect(check(grid, view, b, U, def, (sx, sy) => inCross(sx, sy, px, py, 24)).subs).toBeGreaterThan(24);
+        expect(check(grid, view, b, U, def, (sx, sy) => inCross(sx, sy, px, py, CROSS_RADIUS, CROSS_ARM)).subs).toBeGreaterThan(24);
       }
       // (hubo de todo: cruces cortadas por cada uno de los cuatro bordes de la imagen con algo dentro, costuras, bordes, y
       // ventanas sin nada)
@@ -176,7 +175,7 @@ describe('la ventana del corte: se pica y se pinta lo mismo, por la forma', () =
     const cut = sectionAround(view.camera, 5 * N + 4, 8 * N + 4, 2 * N, 80), [fx, fy] = b.cam.project(5 * N + 4, 8 * N + 4, 2 * N + 8);
     const o = { vx: 0, vy: 0, vw: b.width, vh: b.height, lights: false, time: 0, ambient: [1, 1, 1] as [number, number, number] };
     const frames: Uint8ClampedArray[] = [];
-    for (const win of [crossWindow(fx, fy, { arm: 10 }), crossWindow(fx + 7, fy, { arm: 10 }), crossWindow(fx, fy, { arm: 20 }), null]) {
+    for (const win of [crossWindow(fx, fy, { r: 10, arm: 10 }), crossWindow(fx + 7, fy, { r: 10, arm: 10 }), crossWindow(fx, fy, { r: 20, arm: 20 }), null]) {
       const c = { ...cut, window: win }, f = frame2D(view.frame(), b, { ...o, section: c });
       expect(Buffer.compare(Buffer.from(f.buffer), Buffer.from(frameOf(view, b, sectionLayer(b, c)).buffer))).toBe(0);
       for (const g of frames) expect(Buffer.compare(Buffer.from(f.buffer), Buffer.from(g.buffer))).not.toBe(0);
@@ -185,13 +184,26 @@ describe('la ventana del corte: se pica y se pinta lo mismo, por la forma', () =
   });
 
   it('crossWindow, windowOf y windowContains dicen lo mismo que la forma a mano', () => {
-    for (const [arm, width] of [[1, 1], [3, 3], [12, 12], [24, 24], [24, 7], [24, 8], [10, 999]] as const) {
-      const w = crossWindow(40.4, 30.6, { arm, width }), wd = Math.min(2 * arm + 1, width);
-      expect([w.x0, w.y0, w.x1, w.y1]).toEqual([40 - arm, 31 - arm, 40 + arm, 31 + arm]);
-      for (let sy = 31 - arm - 2; sy <= 31 + arm + 2; sy++) for (let sx = 40 - arm - 2; sx <= 40 + arm + 2; sx++)
-        expect([sx, sy, windowContains(w, sx, sy)]).toEqual([sx, sy, inCross(sx, sy, 40, 31, arm, wd)]);
+    expect([CROSS_ARM, CROSS_RADIUS]).toEqual([24, 40]);
+    for (const [r, arm] of [[1, 1], [3, 3], [12, 12], [40, 24], [24, 7], [24, 8], [40, 2], [10, 999]] as const) {
+      const w = crossWindow(40.4, 30.6, { r, arm });
+      expect([w.x0, w.y0, w.x1, w.y1]).toEqual([40 - r, 31 - r, 40 + r, 31 + r]);
+      // (un brazo más ancho que la cruz es un cuadrado: no pasa de r)
+      for (let sy = 31 - r - 2; sy <= 31 + r + 2; sy++) for (let sx = 40 - r - 2; sx <= 40 + r + 2; sx++)
+        expect([sx, sy, windowContains(w, sx, sy)]).toEqual([sx, sy, inCross(sx, sy, 40, 31, r, Math.min(arm, 2 * r))]);
+      // (y los tramos, sin salirse de su recuadro: ninguno fuera de sus filas ni de sus columnas)
+      for (let sy = 31 - r - 3; sy <= 31 + r + 3; sy++) {
+        const sp: number[] = [];
+        w.spans(sy, sp);
+        if (sy < w.y0 || sy > w.y1) expect([sy, sp]).toEqual([sy, []]);
+        else expect([sy, sp.length, sp[0]! >= w.x0, sp[1]! <= w.x1]).toEqual([sy, 2, true, true]);
+      }
     }
-    expect(crossWindow(10, 10).key).toBe(crossWindow(10, 10, { arm: CROSS_ARM }).key);
+    expect(crossWindow(10, 10).key).toBe(crossWindow(10, 10, { arm: CROSS_ARM, r: CROSS_RADIUS }).key);
+    expect(crossWindow(10, 10).key).not.toBe(crossWindow(10, 10, { r: 20, arm: 20 }).key);
+    expect(crossWindow(10, 10).key).not.toBe(crossWindow(10, 10, { r: 39 }).key);
+    // (un brazo más ancho que la cruz es el mismo cuadrado: la misma clave)
+    expect(crossWindow(10, 10, { r: 10, arm: 999 }).key).toBe(crossWindow(10, 10, { r: 10, arm: 20 }).key);
     expect(crossWindow(10, 10).key).not.toBe(crossWindow(11, 10).key);
     // Una forma con huecos en la fila: tramos sueltos
     const comb = windowOf('peine', 0, 0, 20, 3, (sx) => sx % 4 < 2);
@@ -256,29 +268,29 @@ describe('la ventana del corte con SectionPainter: al moverse', () => {
     };
     const centre = (tx: number): [number, number] => { const [fx, fy] = b.cam.project(tx, ty, 2 * N + 8); return [Math.round(fx), Math.round(fy)]; };
     // Anda hacia el este con la cruz en el objetivo: la ventana se mueve en cada paso y la caja, cada STRIP
-    for (let tx = 4 * N; tx <= 4 * N + 3 * STRIP; tx += 1) go(tx, crossWindow(...centre(tx), { arm: 14 }));
+    for (let tx = 4 * N; tx <= 4 * N + 3 * STRIP; tx += 1) go(tx, crossWindow(...centre(tx), { r: 14, arm: 14 }));
     const partsWalking = parts, pxWalking = px;
     // La ventana sube y baja sin moverse la caja; cambia de brazo; se va fuera de la caja y vuelve
     const [cx, cy] = centre(4 * N + 3 * STRIP);
-    for (const dy of [-1, -2, -9, 0, 6]) go(4 * N + 3 * STRIP, crossWindow(cx, cy + dy, { arm: 14 }));
-    for (const arm of [3, 30, 60, 14]) go(4 * N + 3 * STRIP, crossWindow(cx, cy, { arm }));
-    go(4 * N + 3 * STRIP, crossWindow(cx - 300, cy, { arm: 14 }));
-    go(4 * N + 3 * STRIP, crossWindow(cx, cy, { arm: 14 }));
+    for (const dy of [-1, -2, -9, 0, 6]) go(4 * N + 3 * STRIP, crossWindow(cx, cy + dy, { r: 14, arm: 14 }));
+    for (const arm of [3, 30, 60, 14]) go(4 * N + 3 * STRIP, crossWindow(cx, cy, { r: arm, arm }));
+    go(4 * N + 3 * STRIP, crossWindow(cx - 300, cy, { r: 14, arm: 14 }));
+    go(4 * N + 3 * STRIP, crossWindow(cx, cy, { r: 14, arm: 14 }));
     // Sin ventana (la caja entera) y otra vez con ella
     go(4 * N + 3 * STRIP, null);
     go(4 * N + 3 * STRIP + 1, null);
-    go(4 * N + 3 * STRIP + 2, crossWindow(cx + 2, cy, { arm: 14 }));
+    go(4 * N + 3 * STRIP + 2, crossWindow(cx + 2, cy, { r: 14, arm: 14 }));
     // La ventana quieta en la imagen mientras la caja avanza por debajo (cambia lo compuesto y no la ventana), a
     // caballo del lado de la caja (ahí hay borde y costura de la caja, a un píxel de la ventana)
-    const ox = b.options.originX ?? 0, edge = ox + Math.floor((4 * N + 3 * STRIP - 32) / STRIP) * STRIP, still = crossWindow(edge + 3, cy, { arm: 9 });
+    const ox = b.options.originX ?? 0, edge = ox + Math.floor((4 * N + 3 * STRIP - 32) / STRIP) * STRIP, still = crossWindow(edge + 3, cy, { r: 9, arm: 9 });
     for (const k of [0, 1, 2, 1, 0]) go(4 * N + 3 * STRIP + k * STRIP, still);
-    go(4 * N + 3 * STRIP, crossWindow(edge + 30, cy - 20, { arm: 9 }));
+    go(4 * N + 3 * STRIP, crossWindow(edge + 30, cy - 20, { r: 9, arm: 9 }));
     // Lo pintado se tira (cambia lo que se mira detrás) con la ventana en otro sitio: lo de antes no puede quedarse
-    go(4 * N + 3 * STRIP, crossWindow(cx + 3, cy + 3, { arm: 14 }));
-    go(4 * N + 3 * STRIP, crossWindow(cx - 20, cy - 12, { arm: 5 }), 40);
-    go(4 * N + 3 * STRIP, crossWindow(cx + 12, cy + 9, { arm: 5 }), 40);
+    go(4 * N + 3 * STRIP, crossWindow(cx + 3, cy + 3, { r: 14, arm: 14 }));
+    go(4 * N + 3 * STRIP, crossWindow(cx - 20, cy - 12, { r: 5, arm: 5 }), 40);
+    go(4 * N + 3 * STRIP, crossWindow(cx + 12, cy + 9, { r: 5, arm: 5 }), 40);
     // Y de vuelta al oeste
-    for (let tx = 4 * N + 3 * STRIP; tx >= 4 * N + STRIP; tx -= 3) go(tx, crossWindow(...centre(tx), { arm: 14 }));
+    for (let tx = 4 * N + 3 * STRIP; tx >= 4 * N + STRIP; tx -= 3) go(tx, crossWindow(...centre(tx), { r: 14, arm: 14 }));
     // Andando, casi todo fue por partes, y cada paso subió poco más que el recuadro de la cruz (no la capa entera)
     expect(partsWalking).toBeGreaterThan(3 * STRIP - 4);
     expect(pxWalking / (3 * STRIP + 1)).toBeLessThan(4000);
@@ -304,7 +316,7 @@ describe('la ventana del corte y el agua', () => {
     const cut: SectionCut = { x0: 8, x1: 55, y0: 0, y1: 40, zMin: 4 };
     const [fx, fy] = b.cam.project(32, 40, 8), cx = Math.round(fx), cy = Math.round(fy);
     for (const arm of [3, 6, 12]) {
-      const win = crossWindow(cx, cy, { arm });
+      const win = crossWindow(cx, cy, { r: arm, arm });
       for (const kind of ['sectionLayer', 'SectionPainter'] as Kind[]) {
       const U = sectionLayer(b, cut)!, L = layerOf(kind, b, { ...cut, window: win })!;
       expect([kind, arm, !!L]).toEqual([kind, arm, true]);

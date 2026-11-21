@@ -35,7 +35,7 @@ export interface SectionCut {
 // - el agua de la caja deja de dibujarse solo en los píxeles de dentro de la ventana.
 // El tono (AO) y el cielo de cueva de lo sustituido son los de la caja entera cortada.
 // Para otra forma basta con dar un objeto con esta interfaz (windowOf lo hace con una función por píxel):
-//   painter.set({ ...sectionAround(camera, x, y, z, 128), window: crossWindow(cx, cy, { arm: 24 }) }, dir);
+//   painter.set({ ...sectionAround(camera, x, y, z, 128), window: crossWindow(cx, cy, { arm: 24, r: 40 }) }, dir);
 export interface SectionWindow {
   readonly key: string;                 // dos ventanas con la misma clave cubren los mismos píxeles
   // Su recuadro en la imagen (incluidos): fuera de él no hay nada dentro
@@ -45,17 +45,18 @@ export interface SectionWindow {
   spans(sy: number, out: number[]): void;
 }
 
-// Una cruz centrada en el píxel (cx, cy) de la imagen: dos barras de `width` píxeles de ancho que llegan a `arm` píxeles
-// del centro en las cuatro direcciones (por defecto, brazo 24 y ancho el brazo)
-export const CROSS_ARM = 24;
-export function crossWindow(cx: number, cy: number, o: { arm?: number; width?: number } = {}): SectionWindow {
-  const X = Math.round(cx), Y = Math.round(cy), arm = Math.max(1, Math.round(o.arm ?? CROSS_ARM));
-  const wd = Math.max(1, Math.min(2 * arm + 1, Math.round(o.width ?? arm))), a = Math.floor(wd / 2), z = wd - 1 - a;
+// Una cruz centrada en el píxel (cx, cy) de la imagen (redondeado): dos barras de `arm` píxeles de ancho (el brazo) que
+// llegan a `r` píxeles del centro en las cuatro direcciones. Un píxel a (dx, dy) del centro está dentro si
+// (|dx| <= arm / 2 y |dy| <= r) o (|dy| <= arm / 2 y |dx| <= r). Por defecto, brazo 24 y radio 40
+export const CROSS_ARM = 24, CROSS_RADIUS = 40;
+export function crossWindow(cx: number, cy: number, o: { arm?: number; r?: number } = {}): SectionWindow {
+  const X = Math.round(cx), Y = Math.round(cy), r = Math.max(1, Math.round(o.r ?? CROSS_RADIUS));
+  const h = Math.max(0, Math.min(r, Math.floor((o.arm ?? CROSS_ARM) / 2)));
   return {
-    key: `cruz:${X},${Y},${arm},${wd}`, x0: X - arm, y0: Y - arm, x1: X + arm, y1: Y + arm,
+    key: `cruz:${X},${Y},${r},${h}`, x0: X - r, y0: Y - r, x1: X + r, y1: Y + r,
     spans(sy, out) {
-      if (sy < Y - arm || sy > Y + arm) return;
-      if (sy >= Y - a && sy <= Y + z) out.push(X - arm, X + arm); else out.push(X - a, X + z);
+      if (sy < Y - r || sy > Y + r) return;
+      if (sy >= Y - h && sy <= Y + h) out.push(X - r, X + r); else out.push(X - h, X + h);
     },
   };
 }
