@@ -110,6 +110,9 @@ export class ShallowWater {
     }
   }
 
+  // Sin flujos en la celda del índice físico i (lo cargado nace quieto)
+  clearFlow(i: number): void { this.fl[i] = this.fr[i] = this.ft[i] = this.fb[i] = 0; }
+
   private woke(i: number): void { if (!this.inWoken[i]) { this.inWoken[i] = 1; this.woken[this.nWoken++] = i; } }
 
   // Despierta todas las celdas mojadas (al empezar o tras cambiar el agua a mano)

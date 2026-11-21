@@ -14,6 +14,7 @@ import type { World, WorldLight } from './build';
 import type { ChangeWatch } from './changes';
 import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
+import type { StaticVoxels } from './state';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
 const CHANGE_LOG = 256;                           // ticks que guarda el registro de cambios (changesSince)
@@ -35,6 +36,36 @@ export interface WaterOptions {
   // movable: la capa se corre con la ventana viva (shift, LiveWindow.attach). Sus vistas la leen por WaterView también en
   // el giro 0 (la rejilla corrida está en anillo; drawWater la lee en orden)
   movable?: boolean;
+  // unloaded: nace sin cargar, toda seca y de pared (una ventana que carga el agua por trozos con load); no lee el agua de
+  // partida del mundo (wet / waterTop pueden ir vacíos)
+  unloaded?: boolean;
+}
+
+// El agua guardada de un recuadro (WaterLayer.save / load): w x h celdas, por filas
+export interface WaterChunk { w: number; h: number; depth: Float32Array; basin: Uint8Array }
+
+// El agua de un recuadro de una ventana por trozos hecha de BLOQUES (vóxeles de agua, que se pintarían opacos): los
+// quita de los vóxeles y da la superficie de cada columna (la cara de arriba del vóxel de agua más alto) para
+// WaterLayer.load. isWater dice qué vóxeles son agua. Mira cada columna desde arriba y para en el primer vóxel que no es
+// agua: el agua que se ve desde el cielo (la de una cueva bajo tierra se queda como vóxeles). Va antes de hornear el
+// trozo (onLoad / fill)
+export function takeWaterVoxels(s: StaticVoxels, x0: number, y0: number, x1: number, y1: number, isWater: (v: number) => boolean): (x: number, y: number) => number | null {
+  const w = x1 - x0 + 1, h = y1 - y0 + 1, top = new Int16Array(w * h).fill(-32768);
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    for (let z = s.height[y * s.width + x]! - 1; z >= s.zMin; z--) {
+      const v = s.get(x, y, z);
+      if (!v) continue;
+      if (!isWater(v)) break;
+      s.set(x, y, z, 0);
+      const k = (y - y0) * w + x - x0;
+      if (top[k] === -32768) top[k] = z + 1;
+    }
+  }
+  return (x, y) => {
+    if (x < x0 || y < y0 || x > x1 || y > y1) return null;
+    const t = top[(y - y0) * w + x - x0]!;
+    return t === -32768 ? null : t;
+  };
 }
 
 // El estado del agua en la instantánea: el del simulador y las cuencas (opcional: las instantáneas de antes no lo traen)
@@ -83,24 +114,11 @@ export class WaterLayer {
     this.sim = new ShallowWater(this.gw, this.gh, { cell: CELL, damping: 0.9 });
     this.basin = new Uint8Array(this.gw * this.gh);
     const { wet, waterTop, width: W } = world;
-    const zMin = world.model.zMin;
-    const height = (x: number, y: number) => world.model.floorAt(x, y);   // el follaje no es fondo: el agua lo cubre
-    for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
-      const i = gy * this.gw + gx;
-      // El fondo de la celda: el más alto de sus vóxeles (así el agua no se cuela por un borde)
-      let g = -128, top = -128, anyWet = false, hole = false;
-      for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
-        const x = gx * CELL + dx, y = gy * CELL + dy;
-        if (x >= W || y >= world.depth) continue;
-        const j = y * W + x;
-        const hh = height(x, y);
-        if (hh <= zMin) hole = true;
-        g = Math.max(g, hh);
-        if (wet[j]) { anyWet = true; top = Math.max(top, waterTop[j]!); }
-      }
-      this.sim.ground[i] = g;
-      if (hole || g > this.wallAbove) this.sim.solid[i] = 1;
-      else if (anyWet) { this.basin[i] = 1; if (top > g) this.sim.depth[i] = top - g; }
+    // Sin cargar (una ventana que se carga por trozos, load): todo seco y de pared
+    if (opts.unloaded) this.sim.solid.fill(1);
+    else {
+      const wetTop = (x: number, y: number) => (wet[y * W + x] ? waterTop[y * W + x]! : null);
+      for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) this.initCell(gx, gy, wetTop);
     }
     this.basin0 = this.basin.slice();
     this.soakList = new Int32Array(this.gw * this.gh);
@@ -128,6 +146,76 @@ export class WaterLayer {
     // Cinco tonos (del hondo a la espuma): una rampa más corta repite sus extremos, una más larga se muestrea
     this.tones = [0, 1, 2, 3, 4].map((k) => rgbOf(colors[Math.round((k * (colors.length - 1)) / 4)]!));
     this.glow = ramp && rampMaterial(ramp).emissive ? 1 : 0;
+  }
+
+  // Una celda desde los vóxeles del mundo y el agua de partida (la superficie de cada columna con agua, o null): el fondo
+  // es el más alto de sus vóxeles (así el agua no se cuela por un borde); lo que sube más de wallAbove o no tiene suelo es
+  // pared; con agua en alguna columna, cuenca, con la profundidad hasta la superficie más alta. Sin flujos ni despierta
+  private initCell(gx: number, gy: number, wetTop: ((x: number, y: number) => number | null) | null): void {
+    const world = this.world, W = world.width, zMin = world.model.zMin, sim = this.sim, i = sim.at(gx, gy);
+    let g = -128, top = -128, anyWet = false, hole = false;
+    for (let dy = 0; dy < CELL; dy++) for (let dx = 0; dx < CELL; dx++) {
+      const x = gx * CELL + dx, y = gy * CELL + dy;
+      if (x >= W || y >= world.depth) continue;
+      const hh = world.model.floorAt(x, y);       // el follaje no es fondo: el agua lo cubre
+      if (hh <= zMin) hole = true;
+      g = Math.max(g, hh);
+      const t = wetTop ? wetTop(x, y) : null;
+      if (t !== null) { anyWet = true; top = Math.max(top, t); }
+    }
+    sim.ground[i] = g; sim.solid[i] = 0; sim.depth[i] = 0; this.basin[i] = 0;
+    if (hole || g > this.wallAbove) sim.solid[i] = 1;
+    else if (anyWet) { this.basin[i] = 1; if (top > g) sim.depth[i] = top - g; }
+  }
+
+  // LA VENTANA POR TROZOS: cargar el agua de un recuadro (vóxeles locales, extremos incluidos, en celdas enteras) que
+  // acaba de escribirse. El fondo y las paredes salen de los vóxeles; el agua, de lo guardado al descargarlo (save) o,
+  // la primera vez, de `surface`: la superficie del agua de cada columna (o null si no tiene), como el agua de partida
+  // del constructor (cargar todo por trozos da lo mismo que construir de una vez). Lo cargado nace quieto; el borde del
+  // recuadro (las celdas de los dos lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están
+  load(x0: number, y0: number, x1: number, y1: number, src: { surface?: ((x: number, y: number) => number | null) | null; saved?: WaterChunk | null } = {}): void {
+    const { sim, gw, gh } = this;
+    if (x0 % CELL || y0 % CELL || (x1 + 1) % CELL || (y1 + 1) % CELL) throw new Error(`WaterLayer.load: el recuadro ${x0},${y0}..${x1},${y1} no es de celdas enteras (${CELL})`);
+    const gx0 = Math.max(0, x0 / CELL), gy0 = Math.max(0, y0 / CELL), gx1 = Math.min(gw - 1, (x1 + 1) / CELL - 1), gy1 = Math.min(gh - 1, (y1 + 1) / CELL - 1);
+    if (gx0 > gx1 || gy0 > gy1) return;
+    const saved = src.saved ?? null;
+    if (saved && (saved.w !== gx1 - gx0 + 1 || saved.h !== gy1 - gy0 + 1)) throw new Error(`WaterLayer.load: lo guardado es de ${saved.w} x ${saved.h} celdas y el recuadro de ${gx1 - gx0 + 1} x ${gy1 - gy0 + 1}`);
+    let lo = this.zRange[0], hi = this.zRange[1];
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const i = sim.at(gx, gy);
+      this.initCell(gx, gy, saved ? null : src.surface ?? null);
+      if (saved && !sim.solid[i]) { const k = (gy - gy0) * saved.w + gx - gx0; this.basin[i] = saved.basin[k]!; sim.depth[i] = saved.depth[k]!; }
+      sim.clearFlow(i);
+      this.basin0[i] = this.basin[i]!;
+      this.soakMaybe(i);
+      if (this.basin[i] && !sim.solid[i]) { const g = sim.ground[i]!; lo = Math.min(lo, g - 4); hi = Math.max(hi, g + sim.depth[i]! + 8); }
+    }
+    this.zRange = [Math.floor(lo), Math.ceil(hi)];
+    // El borde, de los dos lados
+    for (let gy = gy0 - 1; gy <= gy1 + 1; gy++) for (let gx = gx0 - 1; gx <= gx1 + 1; gx++) {
+      if (gx >= gx0 + 1 && gx <= gx1 - 1 && gy >= gy0 + 1 && gy <= gy1 - 1) continue;
+      if (gx < 0 || gy < 0 || gx >= gw || gy >= gh) continue;
+      const i = sim.at(gx, gy);
+      if (sim.depth[i]! > 0) sim.wake(gx, gy, 0);
+    }
+    this.changed(gx0, gy0, gx1, gy1);
+    this.groundVersion++;
+  }
+
+  // Lo que hay que guardar del agua de un recuadro al descargarlo (onUnload), para load: la profundidad y la cuenca de
+  // cada celda (sin flujos: vuelve quieta). null si no tiene agua ni cuenca (no hace falta guardar nada)
+  save(x0: number, y0: number, x1: number, y1: number): WaterChunk | null {
+    const { sim, gw, gh } = this;
+    const gx0 = Math.max(0, Math.floor(x0 / CELL)), gy0 = Math.max(0, Math.floor(y0 / CELL)), gx1 = Math.min(gw - 1, Math.floor(x1 / CELL)), gy1 = Math.min(gh - 1, Math.floor(y1 / CELL));
+    if (gx0 > gx1 || gy0 > gy1) return null;
+    const w = gx1 - gx0 + 1, h = gy1 - gy0 + 1, depth = new Float32Array(w * h), basin = new Uint8Array(w * h);
+    let any = false;
+    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
+      const i = sim.at(gx, gy), k = (gy - gy0) * w + gx - gx0;
+      depth[k] = sim.solid[i] ? 0 : sim.depth[i]!; basin[k] = this.basin[i]!;
+      if (depth[k]! > 0 || basin[k]) any = true;
+    }
+    return any ? { w, h, depth, basin } : null;
   }
 
   // Por qué el agua no está en reposo (una celda mojada más alta que una vecina a la que puede echar agua), o null

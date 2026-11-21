@@ -1109,6 +1109,32 @@ water.follow(state.watchChanges());                                 // picar o p
   sube (la GPU vuelve a subir el fondo). Lo comprueba `test/agua-capa-anillo.test.ts` contra una capa que se corre
   copiando, con el mundo de vóxeles corrido igual.
 
+  Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
+  pared seca; el mundo puede traer `wet` y `waterTop` vacíos) y cada trozo se carga al escribirse:
+
+  ```ts
+  onLoad(t, ctx) {   // (o al final de fill): los vóxeles del trozo ya escritos, antes de hornearlo
+    const [x0, y0] = [ctx.at[0] * N, ctx.at[1] * N], x1 = x0 + T - 1, y1 = y0 + T - 1;
+    const saved = guardado.get(key(t));                                   // lo de save, si salió antes
+    const surface = saved ? null : takeWaterVoxels(state.solid, x0, y0, x1, y1, esAgua);   // bloques de agua -> agua
+    water.load(x0, y0, x1, y1, { saved, surface });
+  },
+  onUnload(t, ctx) { guardado.set(key(t), water.save(x0, y0, x1, y1)); },   // null: nada que guardar
+  ```
+
+  - `load` rehace el fondo y las paredes desde los vóxeles; el agua sale de lo guardado o, la primera vez, de `surface`
+    (la superficie de cada columna, o null), igual que el agua de partida del constructor: cargar todos los trozos da
+    lo mismo que construir la capa de una vez. Lo cargado nace quieto, sin flujos; el borde del recuadro (de los dos
+    lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están. Ensancha `zRange`, apunta
+    el cambio para la vista y sube `groundVersion`.
+  - `save` guarda la profundidad y la cuenca de cada celda (no los flujos: vuelve quieta); null si no hay agua ni
+    cuenca. Lo que se empapaba se sigue empapando al volver.
+  - `takeWaterVoxels(s, x0, y0, x1, y1, esAgua)`: para un mundo hecho de bloques de agua (que se pintarían opacos y
+    taparían lo que hay dentro), quita esos vóxeles y da la superficie de cada columna. Mira cada columna desde arriba
+    y para en el primer vóxel que no es agua: el agua de una cueva bajo tierra se queda como vóxeles.
+  - El trozo se escribe con lo suyo (lo picado) antes de `load`: el fondo de lo guardado tiene que ser el de sus vóxeles.
+  - Lo comprueba `test/agua-cargar.test.ts`.
+
   La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
   profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
   desde la copia anterior (un registro de una caja por tick, de los últimos 256; si se queda atrás, la copia entera),
