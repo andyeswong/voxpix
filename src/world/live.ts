@@ -116,7 +116,9 @@ export interface LiveWindowOptions {
   // (los de writeChunkPrepared), y aquí solo se ponen. Sin fill; el constructor escribe aquí (no puede esperar)
   prepareTrozo?(t: Trozo, at: readonly [number, number]): { result(): PreparedTrozo | null };
   onUnload?(t: Trozo, ctx: TrozoCtx): void;
-  onLoad?(t: Trozo, ctx: TrozoCtx): void;
+  // (puede devolver un trabajo por pasos, p. ej. WaterLayer.loadJob: la ventana lo corre dentro del del trozo, con su
+  // plazo, antes de darlo por escrito y de hornearlo)
+  onLoad?(t: Trozo, ctx: TrozoCtx): { run(deadline: number): boolean } | void;
   onShift?(d: { cells: readonly [number, number]; voxels: readonly [number, number] }): void;
   // Materiales de la región que no se escriben en la rejilla (el agua, si la simula un WaterLayer: se carga en onLoad con
   // regionWater(ctx.region, ...)). Un prepareTrozo del juego tiene que saltarse los mismos en sus vóxeles
@@ -792,11 +794,16 @@ export class LiveWindow {
     if (pre) this.prefetch.delete(`${tx},${ty}`);
     let ticket: { result(): PreparedTrozo | null } | null = this.o.prepareTrozo && remote ? pre ?? this.o.prepareTrozo(t, [(tx - this.tx0) * C, (ty - this.ty0) * C]) : null;
     let prep: PreparedTrozo | null = null, k = -1;
+    // (lo que devolvió onLoad: undefined, aún no se llamó; null, nada)
+    let after: { run(deadline: number): boolean } | null | undefined;
+    // (el estampado acabado: si lo de onLoad queda a medias, no se vuelve a llamar)
+    let stamped = false;
     if (ticket) return { run: (deadline: number) => {
       if (!prep) { prep = ticket!.result(); if (!prep) return false; ticket = null; }
-      if (prep.local) {
+      if (prep.local && !stamped) {
         stamp ??= this.grid.stampRegionJob(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt);
         if (!stamp.run(deadline)) return false;
+        stamped = true;
         k = prep.chunks.length;
       }
       if (k < 0) { this.grid.stampCells(prep.cells, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt); k = 0; }
@@ -805,7 +812,8 @@ export class LiveWindow {
         const ch = prep.chunks[k]!;
         this.store.writeChunkPrepared(ch.c, ch.slabs, ch.tops);
       }
-      this.o.onLoad?.(t, this.ctx(t, prep.cells));
+      if (after === undefined) { after = this.o.onLoad?.(t, this.ctx(t, prep.cells)) ?? null; if (after && performance.now() >= deadline) return false; }
+      if (after && !after.run(deadline)) return false;
       this.loaded.add(`${tx},${ty}`);
       return true;
     } };
@@ -816,8 +824,9 @@ export class LiveWindow {
         stamp = this.grid.stampRegionJob(region, [(tx - this.tx0) * C, (ty - this.ty0) * C, 0], this.skipOpt);
         if (performance.now() >= deadline) return false;
       }
-      if (!stamp.run(deadline)) return false;
-      this.o.onLoad?.(t, this.ctx(t, region!));
+      if (!stamped) { if (!stamp.run(deadline)) return false; stamped = true; }
+      if (after === undefined) { after = this.o.onLoad?.(t, this.ctx(t, region!)) ?? null; if (after && performance.now() >= deadline) return false; }
+      if (after && !after.run(deadline)) return false;
       this.loaded.add(`${tx},${ty}`);
       return true;
     } };

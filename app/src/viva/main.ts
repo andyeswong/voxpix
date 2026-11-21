@@ -99,13 +99,13 @@ void (async () => {
   const aguaRect = (ctx: TrozoCtx) => [ctx.at[0] * B, ctx.at[1] * B, ctx.at[0] * B + 128 - 1, ctx.at[1] * B + 128 - 1] as const;
   const aguaLoad = (t: readonly [number, number], ctx: TrozoCtx) => {
     const sv = aguaSaved.get(`${t[0]},${t[1]}`) ?? null;
-    water!.load(...aguaRect(ctx), { saved: sv, surface: sv ? null : regionWater(ctx.region!, AGUA_T, B, ctx.at) });
+    return water!.loadJob(...aguaRect(ctx), { saved: sv, surface: sv ? null : regionWater(ctx.region!, AGUA_T, B, ctx.at) });
   };
   const win = new LiveWindow({
     ...(ENTRAR ? { view: { cut: true } } : {}),
     ...(AGUA ? {
       skip: [AGUA_T],
-      onLoad: (t: readonly [number, number], ctx: TrozoCtx) => { if (water) aguaLoad(t, ctx); else aguaPend.push([t, ctx]); },
+      onLoad: (t: readonly [number, number], ctx: TrozoCtx) => { if (water) return aguaLoad(t, ctx); aguaPend.push([t, ctx]); },
       onUnload: (t: readonly [number, number], ctx: TrozoCtx) => { aguaSaved.set(`${t[0]},${t[1]}`, water!.save(...aguaRect(ctx))); },
     } : {}),
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
@@ -126,7 +126,7 @@ void (async () => {
     const st = win.store;
     water = new WaterLayer({ model: st, lights: [], width: st.width, depth: st.depth, wet: new Uint8Array(0), waterTop: new Int16Array(0), fountain: null } as never, { movable: true, unloaded: true, wallAbove: Infinity });
     win.setWater(water);
-    for (const [t, ctx] of aguaPend) aguaLoad(t, ctx);
+    for (const [t, ctx] of aguaPend) { const j = aguaLoad(t, ctx); while (!j.run(Infinity)); }
     aguaPend.length = 0;
   }
   const loadMs = performance.now() - t0;

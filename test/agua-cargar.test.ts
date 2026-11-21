@@ -256,6 +256,25 @@ describe('agua por trozos: cargar y guardar', () => {
     expect(a).not.toBeNull();
   });
 
+  it('loadJob por unidades: rows filas por llamada (sin mirar el plazo), y acaba como load', () => {
+    const s = voxels();
+    const a = new WaterLayer(world(s, false), { wallAbove: Infinity, unloaded: true, movable: true });
+    const b = new WaterLayer(world(s, false), { wallAbove: Infinity, unloaded: true, movable: true });
+    a.load(...rect(1, 0), { surface: wetTop });
+    const j = b.loadJob(...rect(1, 0), { surface: wetTop }, 3);
+    let calls = 1;
+    while (!j.run(0)) if (++calls > 100) throw new Error('loadJob no avanza');
+    expect(calls).toBe(Math.ceil(CHUNK / CELL / 3));
+    sameStatic(a, b, 'por pasos');
+    expect(b.zRange).toEqual(a.zRange);
+    // (y la capa no se puede correr con la carga a medias)
+    const c = new WaterLayer(world(voxels(), false), { wallAbove: Infinity, unloaded: true, movable: true });
+    const jc = c.loadJob(...rect(1, 0), { surface: wetTop }, 1);
+    expect(jc.run(0)).toBe(false);
+    c.shift(CHUNK, 0);
+    expect(() => jc.run(Infinity)).toThrow(/a medias/);
+  });
+
   it('errores: recuadro que no es de celdas enteras, lo guardado de otro tamaño', () => {
     const w = new WaterLayer(world(voxels(), false), { wallAbove: Infinity, unloaded: true, movable: true });
     expect(() => w.load(1, 0, 16, 15)).toThrow(/celdas enteras/);

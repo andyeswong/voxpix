@@ -34,25 +34,33 @@ const OPTS = { incline: 0.5, sky: false, outline: 'none' as const };
 const key = (t: Trozo) => `${t[0]},${t[1]}`;
 
 // La ventana con su agua, como la conectaría un juego
-function make(center: Trozo, saved: Map<string, WaterChunk | null>, extra: Partial<ConstructorParameters<typeof LiveWindow>[0]> = {}) {
+// (byJob: onLoad devuelve water.loadJob y la ventana lo corre por pasos dentro del trabajo del trozo)
+let partialLoads = 0;
+function make(center: Trozo, saved: Map<string, WaterChunk | null>, extra: Partial<ConstructorParameters<typeof LiveWindow>[0]> = {}, byJob = false) {
   let water: WaterLayer | null = null;
   const queue: Array<[Trozo, TrozoCtx]> = [];
   const rect = (ctx: TrozoCtx) => [ctx.at[0] * B, ctx.at[1] * B, ctx.at[0] * B + TV - 1, ctx.at[1] * B + TV - 1] as const;
   const load = (t: Trozo, ctx: TrozoCtx) => {
     const s = saved.get(key(t)) ?? null;
-    water!.load(...rect(ctx), { saved: s, surface: s ? null : regionWater(ctx.region!, T('agua'), B, ctx.at) });
+    return water!.loadJob(...rect(ctx), { saved: s, surface: s ? null : regionWater(ctx.region!, T('agua'), B, ctx.at) });
   };
   const win = new LiveWindow({
     blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS, skip: [T('agua')],
     // (los del constructor llegan antes de que haya capa: se cargan al ponerla)
-    onLoad: (t, ctx) => { if (water) load(t, ctx); else queue.push([t, ctx]); },
+    onLoad: (t, ctx) => {
+      if (!water) { queue.push([t, ctx]); return; }
+      const j = load(t, ctx);
+      if (!byJob) { while (!j.run(Infinity)); return; }
+      // (contando las veces que se queda a medias)
+      return { run: (d: number) => { const done = j.run(d); if (!done) partialLoads++; return done; } };
+    },
     onUnload: (t, ctx) => { saved.set(key(t), water!.save(...rect(ctx))); },
     ...extra,
   });
   const s = win.store;
   water = new WaterLayer({ model: s, lights: [], width: s.width, depth: s.depth, wet: new Uint8Array(0), waterTop: new Int16Array(0), fountain: null } as unknown as World, { movable: true, unloaded: true, wallAbove: Infinity });
   win.setWater(water);
-  for (const [t, ctx] of queue) load(t, ctx);
+  for (const [t, ctx] of queue) { const j = load(t, ctx); while (!j.run(Infinity)); }
   return { win, water };
 }
 
@@ -107,6 +115,23 @@ describe('agua en la ventana viva (LiveWindow.setWater, skip, regionWater, load 
     const vw = win.view.water!, d = water.sim.logical(water.sim.depth), g = water.sim.logical(water.sim.ground);
     expect(Buffer.from(vw.sim.depth.buffer).equals(Buffer.from(d.buffer))).toBe(true);
     expect(Buffer.from(vw.sim.ground.buffer).equals(Buffer.from(g.buffer))).toBe(true);
+  });
+
+  it('con la carga por pasos (onLoad devuelve loadJob) y una cola de plazos cortos: lo mismo que de una vez', () => {
+    const saved = new Map<string, WaterChunk | null>();
+    const { win, water } = make([0, 0], saved, {}, true);
+    // (plazos de 0,02 ms: cada llamada hace poco, una o pocas filas; el trabajo se reanuda muchas veces)
+    const budget = new FrameBudget(0.02);
+    let calls = 0, x = TV / 2, y = TV / 2;
+    // (la ventana mete sus trabajos en update: con plazos cortos, update y cola en cada vuelta hasta acabar)
+    const settle = () => { let k = 0; for (; k < 200000 && (win.busy || budget.pending); k++) { win.update(x, y, budget); budget.run(); calls++; } expect(k).toBeLessThan(200000); };
+    win.update(0, 0, budget); settle();
+    const walk = (steps: number, dx: number, dy: number) => { for (let s2 = 0; s2 < steps; s2++) { x += dx; y += dy; win.update(x, y, budget); budget.run(); settle(); } };
+    walk(24, TV / 8, 0); walk(16, 0, TV / 8); walk(16, 0, -TV / 8); walk(24, -TV / 8, 0);
+    expect(saved.size).toBeGreaterThan(0);
+    expect(calls).toBeGreaterThan(500);
+    expect(partialLoads).toBeGreaterThan(10);
+    sameWater(water, make([win.tx0 + 2, win.ty0 + 2], new Map()).water, 'por pasos');
   });
 
   it('regionWater: la superficie de cada columna es la de los vóxeles de agua de la misma región escrita sin skip', () => {

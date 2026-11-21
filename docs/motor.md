@@ -1132,7 +1132,7 @@ water.follow(state.watchChanges());                                 // picar o p
     onLoad(t, ctx) {   // los vóxeles del trozo ya escritos (con lo suyo, lo picado), antes de hornearlo
       const [x0, y0] = [ctx.at[0] * N, ctx.at[1] * N], x1 = x0 + T - 1, y1 = y0 + T - 1;
       const saved = guardado.get(key(t)) ?? null;                         // lo de save, si salió antes
-      water.load(x0, y0, x1, y1, { saved, surface: saved ? null : regionWater(ctx.region!, agua, N, ctx.at) });
+      return water.loadJob(x0, y0, x1, y1, { saved, surface: saved ? null : regionWater(ctx.region!, agua, N, ctx.at) });
     },
     onUnload(t, ctx) { guardado.set(key(t), water.save(x0, y0, x1, y1)); },   // null: nada que guardar
   });
@@ -1147,6 +1147,10 @@ water.follow(state.watchChanges());                                 // picar o p
     lo mismo que construir la capa de una vez. Lo cargado nace quieto, sin flujos; el borde del recuadro (de los dos
     lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están. Ensancha `zRange`, apunta
     el cambio para la vista y sube `groundVersion`.
+  - `loadJob(..., rows = 8)` es lo mismo por pasos: `rows` filas de celdas por llamada, por unidades y no por reloj (el
+    agua es de la simulación y no lee el reloj). Si `onLoad` lo devuelve, la ventana lo corre dentro del trabajo del
+    trozo antes de darlo por escrito (lo que falta es pared seca mientras tanto; la ventana no se corre con una carga a
+    medias). Así cargar el agua de un trozo no cae entero en un cuadro. Quien lo corra por su cuenta, hasta que dé true.
   - `save` guarda la profundidad y la cuenca de cada celda (no los flujos: vuelve quieta); null si no hay agua ni
     cuenca. Lo que se empapaba se sigue empapando al volver.
   - `takeWaterVoxels(s, x0, y0, x1, y1, esAgua)`: para un mundo de vóxeles sueltos con agua pintada (que se pintaría

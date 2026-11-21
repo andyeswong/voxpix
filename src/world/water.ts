@@ -216,33 +216,51 @@ export class WaterLayer {
   // del constructor (cargar todo por trozos da lo mismo que construir de una vez). Lo cargado nace quieto; el borde del
   // recuadro (las celdas de los dos lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están
   load(x0: number, y0: number, x1: number, y1: number, src: { surface?: ((x: number, y: number) => number | null) | null; saved?: WaterChunk | null } = {}): void {
+    this.loadJob(x0, y0, x1, y1, src, Infinity).run(0);
+  }
+
+  // Lo mismo que load, como trabajo por pasos: `rows` filas de celdas por llamada (por unidades, no por reloj: el agua es
+  // de la simulación y no lee el reloj; el plazo de la cola no se mira). Para cargar el trozo en la cola sin pagarlo de
+  // una vez (LiveWindow: onLoad lo devuelve y la ventana lo corre dentro del trabajo del trozo, antes de darlo por
+  // escrito). Lo cargado a medias es pared seca en las filas que faltan. La ventana no puede correrse mientras tanto
+  loadJob(x0: number, y0: number, x1: number, y1: number, src: { surface?: ((x: number, y: number) => number | null) | null; saved?: WaterChunk | null } = {}, rows = 8): { run(deadline: number): boolean } {
     const { sim, gw, gh } = this;
     if (x0 % CELL || y0 % CELL || (x1 + 1) % CELL || (y1 + 1) % CELL) throw new Error(`WaterLayer.load: el recuadro ${x0},${y0}..${x1},${y1} no es de celdas enteras (${CELL})`);
     const gx0 = Math.max(0, x0 / CELL), gy0 = Math.max(0, y0 / CELL), gx1 = Math.min(gw - 1, (x1 + 1) / CELL - 1), gy1 = Math.min(gh - 1, (y1 + 1) / CELL - 1);
-    if (gx0 > gx1 || gy0 > gy1) return;
+    if (gx0 > gx1 || gy0 > gy1) return { run: () => true };
     const saved = src.saved ?? null;
     if (saved && (saved.w !== gx1 - gx0 + 1 || saved.h !== gy1 - gy0 + 1)) throw new Error(`WaterLayer.load: lo guardado es de ${saved.w} x ${saved.h} celdas y el recuadro de ${gx1 - gx0 + 1} x ${gy1 - gy0 + 1}`);
-    let lo = this.zRange[0], hi = this.zRange[1];
-    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
-      const i = sim.at(gx, gy);
-      this.initCell(gx, gy, saved ? null : src.surface ?? null);
-      if (saved && !sim.solid[i]) { const k = (gy - gy0) * saved.w + gx - gx0; this.basin[i] = saved.basin[k]!; sim.depth[i] = saved.depth[k]!; }
-      sim.clearFlow(i);
-      this.basin0[i] = this.basin[i]!;
-      this.soakMaybe(i);
-      if (this.basin[i] && !sim.solid[i]) { const g = sim.ground[i]!; lo = Math.min(lo, g - 4); hi = Math.max(hi, g + sim.depth[i]! + 8); }
-    }
-    this.zRange = [Math.floor(lo), Math.ceil(hi)];
-    // El borde, de los dos lados
-    for (let gy = gy0 - 1; gy <= gy1 + 1; gy++) for (let gx = gx0 - 1; gx <= gx1 + 1; gx++) {
-      if (gx >= gx0 + 1 && gx <= gx1 - 1 && gy >= gy0 + 1 && gy <= gy1 - 1) continue;
-      if (gx < 0 || gy < 0 || gx >= gw || gy >= gh) continue;
-      const i = sim.at(gx, gy);
-      if (sim.depth[i]! > 0) sim.wake(gx, gy, 0);
-    }
-    this.changed(gx0, gy0, gx1, gy1);
-    this.groundVersion++;
+    const shifts = this.shifts, surface = saved ? null : src.surface ?? null;
+    let gy = gy0, lo = Infinity, hi = -Infinity;
+    return { run: () => {
+      if (this.shifts !== shifts) throw new Error('WaterLayer.loadJob: la capa se corrió con la carga a medias');
+      for (let n = 0; gy <= gy1; gy++, n++) {
+        if (n >= rows) return false;
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const i = sim.at(gx, gy);
+          this.initCell(gx, gy, surface);
+          if (saved && !sim.solid[i]) { const k = (gy - gy0) * saved.w + gx - gx0; this.basin[i] = saved.basin[k]!; sim.depth[i] = saved.depth[k]!; }
+          sim.clearFlow(i);
+          this.basin0[i] = this.basin[i]!;
+          this.soakMaybe(i);
+          if (this.basin[i] && !sim.solid[i]) { const g = sim.ground[i]!; lo = Math.min(lo, g - 4); hi = Math.max(hi, g + sim.depth[i]! + 8); }
+        }
+        // (lo de la fila, para quien copia: ya es agua de verdad)
+        this.changed(gx0, gy, gx1, gy);
+      }
+      this.zRange = [Math.floor(Math.min(this.zRange[0], lo)), Math.ceil(Math.max(this.zRange[1], hi))];
+      // El borde, de los dos lados
+      for (let by = gy0 - 1; by <= gy1 + 1; by++) for (let bx = gx0 - 1; bx <= gx1 + 1; bx++) {
+        if (bx >= gx0 + 1 && bx <= gx1 - 1 && by >= gy0 + 1 && by <= gy1 - 1) continue;
+        if (bx < 0 || by < 0 || bx >= gw || by >= gh) continue;
+        const i = sim.at(bx, by);
+        if (sim.depth[i]! > 0) sim.wake(bx, by, 0);
+      }
+      this.groundVersion++;
+      return true;
+    } };
   }
+
 
   // Lo que hay que guardar del agua de un recuadro al descargarlo (onUnload), para load: la profundidad y la cuenca de
   // cada celda (sin flujos: vuelve quieta). null si no tiene agua ni cuenca (no hace falta guardar nada)
