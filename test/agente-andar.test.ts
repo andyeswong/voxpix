@@ -91,10 +91,9 @@ describe('agente: entityAt', () => {
 describe('agente: goTo', () => {
   const setup = (budget?: number) => {
     const { st, grid } = world();
-    // (el cuerpo de la simulación, de radio 2; los caminos, con radio 3: más prudentes. Con el mismo radio, un camino que
-    // pasa porque el cuerpo cabe desplazado dentro de su celda lleva al centro de la celda, donde la colisión no pasa)
+    // (el cuerpo de la simulación y el de los caminos, de radio 2)
     const rt = new Runtime(st, { x: 3 * N + 4, y: 2 * N + 4 }, { radius: 2, speed: 30 });
-    const paths = new LevelPathField(st, { cell: 4, radius: 3, height: 14, step: 8, maxDrop: 32, ...(budget ? { budget } : {}) });
+    const paths = new LevelPathField(st, { cell: 4, radius: 2, height: 14, step: 8, maxDrop: 32, ...(budget ? { budget } : {}) });
     const host = new AgentHost({ state: st, grid, sim: rt, player: () => rt.player, paths });
     return { st, grid, rt, paths, host };
   };

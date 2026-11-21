@@ -387,9 +387,9 @@ installAgent(window, agent);                                 // window.voxpixAge
   ahí. Contesta "llegó en N ticks", "no hay camino", "no llegó en N ticks (le faltan V vóxeles)" con lo que le quedaba
   del camino, o "atascado". Si un tick no avanza (contra una esquina), prueba un eje y luego el otro, para deslizarse;
   en la celda de la meta va en línea recta al punto. Con `budget`, espera a que acabe la búsqueda.
-- Ojo, para quien use los caminos con un cuerpo: un camino puede pasar por una celda porque el cuerpo cabe desplazado
-  dentro de ella, pero `dir` apunta a su centro; con un cuerpo que justo cabe, la colisión puede no dejarlo pasar por
-  ahí (el test usa caminos de radio 3 para un cuerpo de radio 2).
+- Los caminos llevan a donde se miró que cabe el cuerpo: `dir` y `path` apuntan, en cada celda, a la columna con la que
+  cabe (la central o, si solo cabe corrido, la corrida), en medio de ella. Así un cuerpo del mismo radio que el de los
+  caminos pasa con el runtime por un hueco donde justo cabe (`test/caminos-niveles.test.ts`).
 
 ## Terreno por semilla
 
@@ -709,7 +709,7 @@ import { LevelPathField } from '@voxpix/world/levelpaths';
 
 const field = new LevelPathField(state, { cell: 4, radius: 2, height: 16, step: 8, maxDrop: 24 });
 const d = field.dir({ x, y, z }, { x: px, y: py, z: pz }, 6);   // con la z: elige el suelo más cercano a ella
-const ruta = field.path(desde, hasta);                           // los centros de las celdas, con su suelo
+const ruta = field.path(desde, hasta);                           // en cada celda, donde cabe el cuerpo, con su suelo
 field.floorsAt({ x, y });                                        // los suelos de una celda, para depurar
 ```
 

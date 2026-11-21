@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { LevelPathField } from '../src/world/levelpaths';
+import { Runtime } from '../src/runtime/runtime';
 
 const PAL = { ramps: [{ name: 'piedra', colors: ['#202020', '#606060', '#a0a0a0'] }] };
 // Roca hasta z = 40; un túnel este-oeste (y 20..27, z 16..31, x 4..59) y un pozo a él en x 52..59 (z 32..39)
@@ -92,5 +93,38 @@ describe('caminos por niveles', () => {
     const g = new LevelPathField(st, { cell: 4, height: 14, step: 2, radius: 3 });
     expect(g.floorsAt({ x: 10, y: 10 })).toEqual([8]);
     g.close();
+  });
+
+  // dir tiene que llevar a donde se miró que cabe el cuerpo, no al centro de la celda. Con el runtime de verdad y un
+  // cuerpo de radio 3 (7 columnas): por un hueco de 8 con celdas de 4, donde solo cabe corrido; y por uno de 7 justo con
+  // celdas de 8, donde cabe centrado sin holgura (el centro de una celda par es el borde de su columna central)
+  for (const [cell, x0, label] of [[4, 40, 'solo cabe corrido'], [8, 41, 'cabe justo centrado']] as const) it(`por un hueco donde el cuerpo ${label}: dir lleva a donde cabe y el runtime pasa`, () => {
+    const s = new StaticVoxels(PAL, 64, 64, 0, 63);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+      for (let z = 0; z < 8; z++) s.set(x, y, z, material(0, 1));
+      // la pared: y 28..35, z 8..23, salvo el hueco x0..47
+      if (y >= 28 && y < 36 && (x < x0 || x >= 48)) for (let z = 8; z < 24; z++) s.set(x, y, z, material(0, 1));
+    }
+    const st = new WorldState(s, [], null);
+    const f = new LevelPathField(st, { cell, radius: 3, height: 12, step: 2 });
+    const rt = new Runtime(st, { x: 20.5, y: 12.5 }, { radius: 3, speed: 30 });
+    const to = { x: 44, y: 52, z: 8 };
+    let ticks = 0;
+    for (; ticks < 600; ticks++) {
+      const p = rt.player;
+      if (Math.hypot(to.x - p.x, to.y - p.y) <= 2) break;
+      const d = f.dir(p, to, 0);
+      if (!d) break;
+      rt.step({ dx: d.x, dy: d.y, stomp: false });
+    }
+    expect(rt.player.y).toBeGreaterThan(36);                       // al otro lado de la pared
+    // Llegó: a 2 de la meta, o en su celda (ahí dir ya da null)
+    const sameCell = Math.floor(rt.player.x / cell) === Math.floor(to.x / cell) && Math.floor(rt.player.y / cell) === Math.floor(to.y / cell);
+    expect(sameCell || Math.hypot(to.x - rt.player.x, to.y - rt.player.y) <= 2).toBe(true);
+    // Los puntos del camino por el hueco: donde el cuerpo cabe (sus 7 columnas, de x - 3 a x + 3, dentro del hueco)
+    const gap = f.path({ x: 20.5, y: 12.5, z: 8 }, to)!.filter((q) => q.y >= 28 && q.y < 36);
+    expect(gap.length).toBeGreaterThan(0);
+    for (const q of gap) { expect(Math.floor(q.x) - 3).toBeGreaterThanOrEqual(x0); expect(Math.floor(q.x) + 3).toBeLessThan(48); }
+    f.close();
   });
 });

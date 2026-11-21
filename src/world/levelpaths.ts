@@ -49,6 +49,7 @@ export class LevelPathField {
   // no vuelve a mirar columnas
   private moves: Uint8Array;
   private floors: Uint8Array;           // por celda: cuántos suelos tiene (van seguidos desde el nivel 0)
+  private fit: Uint8Array;              // por nodo: el desplazamiento con el que cabe el cuerpo (índice en offsets / 2)
   private goal = '';
   // EL ANILLO: las rejillas no se mueven al correrse la ventana; se mueve su origen. La celda (i, j) de ahora está en la
   // (i + ox, j + oy) de las rejillas, dando la vuelta (mod cols, mod rows). Un nodo es la celda de las rejillas y uno de
@@ -98,6 +99,7 @@ export class LevelPathField {
     this.ceil = new Float64Array(this.cols * this.rows * this.L);
     this.dist = new Int32Array(this.cols * this.rows * this.L).fill(-1);
     this.floors = new Uint8Array(this.cols * this.rows);
+    this.fit = new Uint8Array(this.cols * this.rows * this.L);
     this.moves = new Uint8Array(this.cols * this.rows * this.L * 8 * this.L);
     const r = this.radius, span = Math.ceil(r);
     for (let dy = -span; dy <= span; dy++) for (let dx = -span; dx <= span; dx++) if (Math.hypot(dx, dy) <= r) this.around.push(dx, dy);
@@ -146,7 +148,8 @@ export class LevelPathField {
         if (!v || (mt && !mt.blocks[v])) { air++; continue; }
         const f = z + 1;
         if (air >= this.height && (!mt || mt.climb[v])) {
-          if (this.fits(cx, cy, f)) { this.floor[base + n] = f; this.ceil[base + n] = roof; n++; }
+          const q = this.fits(cx, cy, f);
+          if (q >= 0) { this.floor[base + n] = f; this.ceil[base + n] = roof; this.fit[base + n] = q; n++; }
         }
         air = 0; roof = z;
       }
@@ -157,17 +160,18 @@ export class LevelPathField {
   // ¿Cabe el cuerpo de pie sobre f en la celda de la columna central (cx, cy)? Primero centrado; un cuerpo más ancho que
   // media celda sobresale de ella, y entonces se prueba también corrido dentro de lo que sobresale (que lo que sobra
   // quede de un lado): si no, una celda junto a una pared o a la cara de un escalón no sería nunca suelo y no se
-  // podría subir ni un escalón. Con un cuerpo que cabe centrado, no se corre: lo de siempre
-  private fits(cx: number, cy: number, f: number): boolean {
+  // podría subir ni un escalón. Con un cuerpo que cabe centrado, no se corre: lo de siempre. Devuelve el desplazamiento
+  // con el que cabe (el más centrado; índice en offsets / 2), o -1
+  private fits(cx: number, cy: number, f: number): number {
     const a = this.around, sh = this.offsets, s = this.state.solid;
     for (let q = 0; q < sh.length; q += 2) {
       const x = cx + sh[q]!, y = cy + sh[q + 1]!;
       if (x < 0 || y < 0 || x >= s.width || y >= s.depth) continue;
       let ok = true;
       for (let k = 0; k < a.length && ok; k += 2) if (!this.open(x + a[k]!, y + a[k + 1]!, f, f + this.height)) ok = false;
-      if (ok) return true;
+      if (ok) return q >> 1;
     }
-    return false;
+    return -1;
   }
 
   // Pone al día las celdas que tocan lo que cambió: rehace como mucho `cells` celdas de lo pendiente (por filas de cada
@@ -412,7 +416,11 @@ export class LevelPathField {
 
   private point(n: number): LevelPoint {
     const cell = Math.floor(n / this.L), c = this.cell;
-    return { x: this.lx(cell) * c + c / 2, y: this.ly(cell) * c + c / 2, z: this.floor[n]! };
+    // Donde se miró que cabe el cuerpo: en medio de la columna central (c >> 1) más el desplazamiento con el que cabe. Ahí
+    // el runtime pisa las mismas columnas que se miraron (las de `around`); el centro de la celda, con una celda par, es el
+    // borde de esa columna, y donde el cuerpo justo cabe (o solo cabe corrido) lo deja contra lo que estrecha la celda
+    const q = this.fit[n]! * 2;
+    return { x: this.lx(cell) * c + (c >> 1) + this.offsets[q]! + 0.5, y: this.ly(cell) * c + (c >> 1) + this.offsets[q + 1]! + 0.5, z: this.floor[n]! };
   }
 
   // Hacia dónde ir (unitario en x e y) desde `from` para llegar a `to`; null si ya está (a `near`) o no hay camino
@@ -426,7 +434,7 @@ export class LevelPathField {
     return { x: tx / l, y: ty / l };
   }
 
-  // El camino entero: los centros de las celdas con su suelo, o null si no hay
+  // El camino entero: en cada celda, donde cabe el cuerpo (point), con su suelo; o null si no hay
   path(from: LevelPoint, to: LevelPoint, near = 0): LevelPoint[] | null {
     this.toward(to, near);
     let n = this.nodeOf(from);
