@@ -205,6 +205,57 @@ describe('agua por trozos: cargar y guardar', () => {
     expect(hgh.zRange[1]).toBeGreaterThanOrEqual(48);
   });
 
+  it('el agua que se junta contra el borde sin cargar no se duplica ni se inventa: correr, guardar, cargar y volver cuadran el volumen', () => {
+    const s = voxels();
+    const w = new WaterLayer(world(s, false), { wallAbove: Infinity, unloaded: true, movable: true });
+    const saved = new Map<string, ReturnType<WaterLayer['save']>>();
+    const vol = (c: ReturnType<WaterLayer['save']>) => (c ? c.depth.reduce((a, v) => a + v, 0) : 0);
+    let gx = 0;                                   // el trozo del mundo en la columna 0 de la ventana
+    const loadCol = (cx: number) => { for (let cy = 0; cy < R; cy++) { const sv = saved.get(`${gx + cx},${cy}`) ?? null; w.load(...rect(cx, cy), { saved: sv, surface: sv ? null : (x, y) => wetTop(x + gx * CHUNK, y) }); } };
+    const saveCol = (cx: number) => { for (let cy = 0; cy < R; cy++) saved.set(`${gx + cx},${cy}`, w.save(...rect(cx, cy))); };
+    // (el mundo por trozos: la columna cx de la ventana es el trozo gx + cx)
+    const writeCol = (cx: number) => { for (let cy = 0; cy < R; cy++) writeChunk(s, cx, cy, gx * CHUNK, 0); };
+    for (let cx = 0; cx < C; cx++) loadCol(cx);
+    // (el agua de la ventana más la guardada de los trozos que están fuera de ella)
+    const total = () => w.sim.totalVolume() + [...saved].reduce((a, [k, c]) => { const tx = Number(k.split(',')[0]); return tx >= gx && tx < gx + C ? a : a + vol(c); }, 0);
+    // Se corre un trozo al este: sale la columna 0 (se guarda) y la que entra queda sin cargar (pared)
+    saveCol(0);
+    s.shift(1, 0); w.shift(CHUNK, 0); gx++;
+    // Agua echada junto al borde sin cargar: se junta contra la pared
+    for (let k = 0; k < 40; k++) w.pour((C - 1) * CHUNK - 2, 20 + (k % 20), 3);
+    for (let t = 0; t < 300; t++) w.step(1 / 60);
+    const pile = w.sim.depth[w.sim.at(((C - 1) * CHUNK) / CELL - 1, 12)]!;
+    expect(pile).toBeGreaterThan(0.1);
+    // (el empapado quita agua del suelo seco: se mira lo que hay ahora, sin más pasos)
+    const v1 = total();
+    // Se carga la columna que entra con lo suyo: el volumen sube justo lo suyo (lo de una capa que solo tiene esa columna;
+    // el agua de junto a la pared no cuenta como suya ni se pierde)
+    writeCol(C - 1);
+    const before = w.sim.totalVolume();
+    loadCol(C - 1);
+    const added = w.sim.totalVolume() - before;
+    const ref = new WaterLayer(world(s, false), { wallAbove: Infinity, unloaded: true, movable: true });
+    for (let cy = 0; cy < R; cy++) ref.load(...rect(C - 1, cy), { surface: (x, y) => wetTop(x + gx * CHUNK, y) });
+    expect(added).toBeCloseTo(ref.sim.totalVolume(), 3);
+    // (y lo de junto a la pared, donde estaba)
+    expect(w.sim.depth[w.sim.at(((C - 1) * CHUNK) / CELL - 1, 12)]).toBe(pile);
+    const v2 = total();
+    expect(v2).toBeCloseTo(v1 + added, 3);
+    // De vuelta: sale la columna del este (se guarda, con su agua) y vuelve la del oeste con lo guardado
+    saveCol(C - 1);
+    s.shift(-1, 0); w.shift(-CHUNK, 0); gx--;
+    writeCol(0); loadCol(0);
+    expect(total()).toBeCloseTo(v2, 3);
+    // Cargar, guardar y cargar un trozo dormido (uno con agua): lo mismo byte a byte
+    let wc: [number, number] = [0, 0];
+    for (let cy = 0; cy < R; cy++) for (let cx = 1; cx < C - 1; cx++) if (w.save(...rect(cx, cy)) && wc[0] === 0) wc = [cx, cy];
+    const a = w.save(...rect(...wc));
+    w.load(...rect(...wc), { saved: a });
+    const b = w.save(...rect(...wc));
+    expect(a === null ? null : [Buffer.from(a.depth.buffer).toString('hex'), Buffer.from(a.basin.buffer).toString('hex')]).toEqual(b === null ? null : [Buffer.from(b.depth.buffer).toString('hex'), Buffer.from(b.basin.buffer).toString('hex')]);
+    expect(a).not.toBeNull();
+  });
+
   it('errores: recuadro que no es de celdas enteras, lo guardado de otro tamaño', () => {
     const w = new WaterLayer(world(voxels(), false), { wallAbove: Infinity, unloaded: true, movable: true });
     expect(() => w.load(1, 0, 16, 15)).toThrow(/celdas enteras/);
