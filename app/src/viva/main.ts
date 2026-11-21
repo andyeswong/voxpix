@@ -168,6 +168,7 @@ void (async () => {
   const esperas: number[] = [];
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
+  const fases: Record<string, number[]> = {};
   const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0), SECZ = Number(q.get('seccionz') ?? 0);
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
@@ -474,6 +475,13 @@ void (async () => {
       prevExtra = { rects, sky, kpx: +(px / 1000).toFixed(1), gc, heapMB: +(m / 1e6).toFixed(1) };
     }
     prevPhases = { update: +(t1 - t0).toFixed(1), caminos: +(b0 - t1).toFixed(1), cola: +(t2 - b0).toFixed(1), mover: +(t3 - t2).toFixed(1), resto: +(t4 - t3).toFixed(1), componer: +(t5 - t4).toFixed(1), captura: +(t7 - t6).toFixed(1) };
+    // Todas las fases de todos los cuadros (tras los 60 primeros), y lo que se lleva cada parte del compositor de la GPU
+    if (frames.length > 60) {
+      for (const [k, v] of Object.entries(prevPhases)) (fases[k] ??= []).push(v);
+      const parts = (compositor.stats as { parts?: Record<string, number> }).parts;
+      if (parts) for (const [k, v] of Object.entries(parts)) (fases['gpu.' + k] ??= []).push(v);
+      (fases['gpu.frame'] ??= []).push(compositor.stats.frameMs);
+    }
     prevShift = shifts !== shiftsSeen; shiftsSeen = shifts;
     hud.textContent = `ventana viva · ${(now - start) / 1000 | 0} s · giro ${win.quarter}${win.turning ? ' (' + win.turning.phase + ')' : ''} · trozo ${win.trozoOf(x, Y).join(',')} · corrimientos ${shifts} · huecos ${holes}`;
     prevPaso = performance.now() - tPaso;
@@ -494,6 +502,7 @@ void (async () => {
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
+      fases: Object.fromEntries(Object.entries(fases).map(([k, v]) => [k, { m: +avg(v).toFixed(2), p95: pq(v, 0.95) }])),
       agua: water ? {
         pasoMs: { p50: pq(agua.pasoMs, 0.5), p95: pq(agua.pasoMs, 0.95), max: pq(agua.pasoMs, 1) },
         activas: { p50: pq(agua.activas, 0.5), p95: pq(agua.activas, 0.95), max: pq(agua.activas, 1) },
