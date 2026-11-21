@@ -1119,7 +1119,10 @@ water.follow(state.watchChanges());                                 // picar o p
   (`shiftCount`). La GPU guarda el fondo, las paredes y las cuencas en una textura: con `staticSince(v)` de la vista
   (el corrimiento total y la caja que cambió desde la versión v) la corre dentro de la GPU y sube solo esa caja (lo que
   carga un trozo, lo picado); entera solo la primera vez o si el registro no llega tan atrás (64 cambios). La franja sin
-  cargar es pared seca en la capa, en la vista y en la GPU: no se sube nada de ella hasta que se carga.
+  cargar es pared seca en la capa, en la vista y en la GPU: no se sube nada de ella hasta que se carga. La profundidad,
+  igual: `depthSince(v)` de la vista da la caja que cambió, y la GPU sube solo eso de lo que se ve, más lo que entra en
+  la vista al moverse la cámara (`waterDepthRects`); entera, lo que se ve, tras un corrimiento. Antes subía en cada
+  cuadro toda la profundidad visible (~0,3 ms por cuadro a 6x en el banco de 11 x 13).
 
   Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
   pared seca; el mundo puede traer `wet` y `waterTop` vacíos), se pone con `win.setWater(water)` (en el state,

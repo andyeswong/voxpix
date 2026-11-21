@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import { material } from '../src/core';
 import { CHUNK, StaticVoxels, WorldState } from '../src/world/state';
-import { WaterLayer } from '../src/world/water';
+import { WaterLayer, waterDepthRects } from '../src/world/water';
 import { WorldView } from '../src/world/view';
 import type { World } from '../src/world/build';
 
@@ -288,6 +288,68 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     expect((lazy.water as unknown as { visited: number }).visited).toBe(ring.water.gw * ring.water.gh);
     sameView(lazy, ref, 'lista desbordada');
     sameView(view, ref, 'la que lee');
+  });
+
+  it('la profundidad en la GPU (depthSince y waterDepthRects): con la cámara moviéndose, corrimientos y agua que se mueve, lo que se ve está al día', () => {
+    const ring = setup(true);
+    const view = new WorldView(ring.state, 0);
+    const vw = view.water as unknown as { gw: number; gh: number; sim: { depth: Float32Array }; depthSince(v: number): { v: number; all: boolean; shift: [number, number] | null; box: [number, number, number, number] | null } };
+    // El espejo de la textura: arranca con lo de la vista (como la GPU al crearla) y se pone al día solo con los recuadros
+    view.frame();
+    const tex = vw.sim.depth.slice();
+    let v = vw.depthSince(-1).v, valid: [number, number, number, number] | null = null, uploaded = 0, frames = 0;
+    for (let t = 0; t < 240; t++) {
+      if (t % 7 === 0) ring.water.disturb(20 + (t % 40), 10 + (t % 30), 2.5, 3);
+      if (t % 11 === 0) ring.water.pour(60 - (t % 30), 50, 2);
+      ring.water.step(1 / 60);
+      if (t === 80 || t === 160) { ring.s.shift(1, 0); view.shift(CHUNK, 0); ring.water.shift(CHUNK, 0); }
+      view.frame();
+      // La vista: un recuadro de 16 x 12 celdas que va y viene en x y en y
+      const cx = 14 + Math.round(12 * Math.sin(t / 9)), cy = 12 + Math.round(10 * Math.cos(t / 7));
+      const vis: [number, number, number, number] = [cx, cy, cx + 15, cy + 11];
+      const ch = vw.depthSince(v);
+      v = ch.v;
+      for (const r of waterDepthRects(ch, valid, vis)) {
+        const x0 = Math.max(r[0], vis[0]), y0 = Math.max(r[1], vis[1]), x1 = Math.min(r[2], vis[2]), y1 = Math.min(r[3], vis[3]);
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { tex[y * vw.gw + x] = vw.sim.depth[y * vw.gw + x]!; uploaded++; }
+      }
+      valid = vis;
+      frames++;
+      for (let y = vis[1]; y <= vis[3]; y++) for (let x = vis[0]; x <= vis[2]; x++) if (tex[y * vw.gw + x] !== vw.sim.depth[y * vw.gw + x]) throw new Error(`cuadro ${t}: celda ${x},${y}`);
+    }
+    expect(ring.water.sim.totalVolume()).toBeGreaterThan(100);
+    void uploaded; void frames;
+    // En calma, con la cámara moviéndose una columna por cuadro: solo la columna que entra (12 celdas)
+    for (let t = 0; t < 6000 && (ring.water.sim.activeCount || t < 2); t++) ring.water.step(1 / 60);
+    let calm = 0;
+    for (let t = 0; t < 30; t++) {
+      view.frame();
+      const vis: [number, number, number, number] = [t, 5, t + 15, 16];
+      const ch = vw.depthSince(v);
+      v = ch.v;
+      for (const r of waterDepthRects(ch, valid, vis)) {
+        const x0 = Math.max(r[0], vis[0]), y0 = Math.max(r[1], vis[1]), x1 = Math.min(r[2], vis[2]), y1 = Math.min(r[3], vis[3]);
+        for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { tex[y * vw.gw + x] = vw.sim.depth[y * vw.gw + x]!; if (t > 0) calm++; }
+      }
+      valid = vis;
+      for (let y = vis[1]; y <= vis[3]; y++) for (let x = vis[0]; x <= vis[2]; x++) if (tex[y * vw.gw + x] !== vw.sim.depth[y * vw.gw + x]) throw new Error(`en calma ${t}: celda ${x},${y}`);
+    }
+    expect(calm).toBe(29 * 12);
+    // Un corrimiento en calma con agua a la vista: lo que se ve cambia entero aunque nada se mueva
+    // (el recuadro de 16 x 12 con más celdas mojadas, a una columna de trozo del borde este: el corrimiento lo deja dentro)
+    let lakeVis: [number, number, number, number] = [0, 0, 15, 11], wet = -1;
+    for (let y0 = 0; y0 + 11 < vw.gh; y0 += 2) for (let x0 = 0; x0 + 15 < vw.gw - CHUNK / CELL; x0 += 2) {
+      let n = 0;
+      for (let y = y0; y <= y0 + 11; y++) for (let x = x0; x <= x0 + 15; x++) if (vw.sim.depth[y * vw.gw + x]! > 0) n++;
+      if (n > wet) { wet = n; lakeVis = [x0, y0, x0 + 15, y0 + 11]; }
+    }
+    view.frame();
+    { const ch = vw.depthSince(v); v = ch.v; for (const r of waterDepthRects(ch, valid, lakeVis)) for (let y = Math.max(r[1], lakeVis[1]); y <= Math.min(r[3], lakeVis[3]); y++) for (let x = Math.max(r[0], lakeVis[0]); x <= Math.min(r[2], lakeVis[2]); x++) tex[y * vw.gw + x] = vw.sim.depth[y * vw.gw + x]!; valid = lakeVis; }
+    ring.s.shift(1, 0); view.shift(CHUNK, 0); ring.water.shift(CHUNK, 0);
+    view.frame();
+    { const ch = vw.depthSince(v); v = ch.v; for (const r of waterDepthRects(ch, valid, lakeVis)) for (let y = Math.max(r[1], lakeVis[1]); y <= Math.min(r[3], lakeVis[3]); y++) for (let x = Math.max(r[0], lakeVis[0]); x <= Math.min(r[2], lakeVis[2]); x++) tex[y * vw.gw + x] = vw.sim.depth[y * vw.gw + x]!; }
+    for (let y = lakeVis[1]; y <= lakeVis[3]; y++) for (let x = lakeVis[0]; x <= lakeVis[2]; x++) if (tex[y * vw.gw + x] !== vw.sim.depth[y * vw.gw + x]) throw new Error(`tras correr: celda ${x},${y}`);
+    expect(wet).toBeGreaterThan(5);
   });
 
   it('lo que entra queda seco y de pared hasta cargarse; la vista que se corre con la capa copia solo la franja, la que no, todo', () => {

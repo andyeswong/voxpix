@@ -17,7 +17,7 @@ import { sectionFor } from '../../world/frame2d';
 import { secIdx, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
-import { waterRows, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
+import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
@@ -132,6 +132,9 @@ export class GpuCompositor {
   private waterOf: unknown = null;
   private waterGround = -1;                        // la groundVersion del agua cuyo fondo está subido
   private waterStaticV = 0;                        // la versión de staticSince del fondo subido (con WaterView)
+  private waterDepthV = 0;                         // la de depthSince de la profundidad subida
+  private waterDepthValid: [number, number, number, number] | null = null;   // lo que está al día de la profundidad
+  waterDepthUploaded = 0;                          // (para medir) celdas de profundidad subidas
   // Destinos de la vista
   // El corte al componer: la capa subida (se sube cuando cambia) y sus texturas, del tamaño de la mayor
   private secLayer: SectionLayer | null = null;
@@ -1161,6 +1164,8 @@ export class GpuCompositor {
     };
     if (this.waterOf !== wl || !this.tWDepth) {
       this.waterOf = wl;
+      this.waterDepthV = wl.depthSince ? wl.depthSince(-1).v : 0;
+      this.waterDepthValid = null;
       this.waterGround = wl.groundVersion ?? 0;
       this.waterStaticV = wl.staticSince ? wl.staticSince(-1).v : 0;
       for (const t of [this.tWDepth, this.tWStatic]) if (t) gl.deleteTexture(t);
@@ -1197,7 +1202,17 @@ export class GpuCompositor {
     const gx0 = Math.max(0, Math.floor(o.vx / 2) - 2), gx1 = Math.min(wl.gw - 1, Math.ceil((o.vx + o.vw) / 2) + 2);
     const [ry0, ry1] = waterRows(b.options.originY ?? 0, b.options.oblique?.y ?? 1, o.vy, o.vh, wl.gh, wl.zRange ?? [WATER_ZMIN, WATER_ZMAX]);
     const gy0 = Math.max(0, ry0 - 2), gy1 = Math.min(wl.gh - 1, ry1 + 2);
-    if (gy0 <= gy1) subImage(gl, this.tWDepth, gx0, gy0, gx1 - gx0 + 1, gy1 - gy0 + 1, gl.RED, gl.FLOAT, sim.depth, wl.gw, 1);
+    if (gy0 > gy1) return true;
+    const up = (x0: number, y0: number, x1: number, y1: number) => {
+      x0 = Math.max(x0, gx0); y0 = Math.max(y0, gy0); x1 = Math.min(x1, gx1); y1 = Math.min(y1, gy1);
+      if (x0 > x1 || y0 > y1) return;
+      subImage(gl, this.tWDepth!, x0, y0, x1 - x0 + 1, y1 - y0 + 1, gl.RED, gl.FLOAT, sim.depth, wl.gw, 1);
+      this.waterDepthUploaded += (x1 - x0 + 1) * (y1 - y0 + 1);
+    };
+    const ch = wl.depthSince ? wl.depthSince(this.waterDepthV) : null;
+    if (ch) this.waterDepthV = ch.v;
+    for (const r of waterDepthRects(ch, this.waterDepthValid, [gx0, gy0, gx1, gy1])) up(...r);
+    this.waterDepthValid = ch ? [gx0, gy0, gx1, gy1] : null;
     return true;
   }
 

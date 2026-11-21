@@ -669,6 +669,24 @@ export function waterRows(originY: number, a: number, vy: number, vh: number, gh
   return [Math.max(0, Math.floor(yOf(vy + vh, range[1]) / CELL) - 2), Math.min(gh - 1, Math.ceil(yOf(vy, range[0]) / CELL) + 2)];
 }
 
+// Qué recuadros de la profundidad subir a la GPU en un cuadro: vis, lo que se ve ahora (celdas, extremos incluidos);
+// valid, lo que se vio y quedó al día el cuadro anterior (null: nada); ch, lo de depthSince desde entonces (null: sin
+// registro). Sin registro, con un corrimiento, un registro que no llega o nada al día: lo que se ve, entero. Si no: lo
+// que cambió (recortado a lo que se ve, lo hace quien sube) y lo que entra en la vista (columnas y filas de vis fuera de
+// valid). Lo de fuera de la vista no se mantiene al día: al entrar, se sube
+export function waterDepthRects(ch: { all: boolean; shift: readonly [number, number] | null; box: readonly [number, number, number, number] | null } | null,
+  valid: readonly [number, number, number, number] | null, vis: readonly [number, number, number, number]): Array<[number, number, number, number]> {
+  const [gx0, gy0, gx1, gy1] = vis;
+  if (!ch || ch.all || ch.shift || !valid) return [[gx0, gy0, gx1, gy1]];
+  const out: Array<[number, number, number, number]> = [];
+  if (ch.box) out.push([...ch.box] as [number, number, number, number]);
+  if (gx0 < valid[0]) out.push([gx0, gy0, Math.min(gx1, valid[0] - 1), gy1]);
+  if (gx1 > valid[2]) out.push([Math.max(gx0, valid[2] + 1), gy0, gx1, gy1]);
+  if (gy0 < valid[1]) out.push([gx0, gy0, gx1, Math.min(gy1, valid[1] - 1)]);
+  if (gy1 > valid[3]) out.push([gx0, Math.max(gy0, valid[3] + 1), gx1, gy1]);
+  return out;
+}
+
 // Cuánto de "hondo" tiene una celda para su color: 0 hasta DEEP_FROM de profundidad media (la de las celdas con agua
 // a DEEP_R o menos), 1 desde DEEP_TO
 export const DEEP_FROM = 3, DEEP_TO = 6, DEEP_R = 2;
