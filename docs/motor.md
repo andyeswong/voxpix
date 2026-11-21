@@ -1147,7 +1147,7 @@ water.follow(state.watchChanges());                                 // picar o p
     lo mismo que construir la capa de una vez. Lo cargado nace quieto, sin flujos; el borde del recuadro (de los dos
     lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están. Ensancha `zRange`, apunta
     el cambio para la vista y sube `groundVersion`.
-  - `loadJob(..., rows = 8)` es lo mismo por pasos: `rows` filas de celdas por llamada, por unidades y no por reloj (el
+  - `loadJob(..., rows = 32)` es lo mismo por pasos: `rows` filas de celdas por llamada, por unidades y no por reloj (el
     agua es de la simulación y no lee el reloj). Si `onLoad` lo devuelve, la ventana lo corre dentro del trabajo del
     trozo antes de darlo por escrito (lo que falta es pared seca mientras tanto; la ventana no se corre con una carga a
     medias). Así cargar el agua de un trozo no cae entero en un cuadro. Quien lo corra por su cuenta, hasta que dé true.

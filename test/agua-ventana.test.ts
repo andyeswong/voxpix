@@ -40,9 +40,10 @@ function make(center: Trozo, saved: Map<string, WaterChunk | null>, extra: Parti
   let water: WaterLayer | null = null;
   const queue: Array<[Trozo, TrozoCtx]> = [];
   const rect = (ctx: TrozoCtx) => [ctx.at[0] * B, ctx.at[1] * B, ctx.at[0] * B + TV - 1, ctx.at[1] * B + TV - 1] as const;
+  // (por pasos, de 4 filas: el trozo del test es de 16 filas de celdas)
   const load = (t: Trozo, ctx: TrozoCtx) => {
     const s = saved.get(key(t)) ?? null;
-    return water!.loadJob(...rect(ctx), { saved: s, surface: s ? null : regionWater(ctx.region!, T('agua'), B, ctx.at) });
+    return water!.loadJob(...rect(ctx), { saved: s, surface: s ? null : regionWater(ctx.region!, T('agua'), B, ctx.at) }, 4);
   };
   const win = new LiveWindow({
     blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center, margin: 1, bake: OPTS, skip: [T('agua')],

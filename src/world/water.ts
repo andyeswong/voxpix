@@ -223,7 +223,7 @@ export class WaterLayer {
   // de la simulación y no lee el reloj; el plazo de la cola no se mira). Para cargar el trozo en la cola sin pagarlo de
   // una vez (LiveWindow: onLoad lo devuelve y la ventana lo corre dentro del trabajo del trozo, antes de darlo por
   // escrito). Lo cargado a medias es pared seca en las filas que faltan. La ventana no puede correrse mientras tanto
-  loadJob(x0: number, y0: number, x1: number, y1: number, src: { surface?: ((x: number, y: number) => number | null) | null; saved?: WaterChunk | null } = {}, rows = 8): { run(deadline: number): boolean } {
+  loadJob(x0: number, y0: number, x1: number, y1: number, src: { surface?: ((x: number, y: number) => number | null) | null; saved?: WaterChunk | null } = {}, rows = 32): { run(deadline: number): boolean } {
     const { sim, gw, gh } = this;
     if (x0 % CELL || y0 % CELL || (x1 + 1) % CELL || (y1 + 1) % CELL) throw new Error(`WaterLayer.load: el recuadro ${x0},${y0}..${x1},${y1} no es de celdas enteras (${CELL})`);
     const gx0 = Math.max(0, x0 / CELL), gy0 = Math.max(0, y0 / CELL), gx1 = Math.min(gw - 1, (x1 + 1) / CELL - 1), gy1 = Math.min(gh - 1, (y1 + 1) / CELL - 1);
