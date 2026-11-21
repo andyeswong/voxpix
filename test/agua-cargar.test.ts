@@ -143,6 +143,14 @@ describe('agua por trozos: cargar y guardar', () => {
     for (let t = 0; t < 400 && (w.sim.activeCount || t < 2); t++) w.step(1 / 60);
     expect(w.sim.activeCount).toBe(0);
     w.load(...rect(2, 2), { surface: () => 9 });
+    // (despiertas, en el medio de cada lado, la celda de dentro y la de fuera)
+    { const aw = w.exportState().awake, n = CHUNK / CELL, a0 = 2 * n, a1 = 3 * n - 1, m = a0 + n / 2;
+      for (const [x, y] of [[m, a0], [m, a0 - 1], [m, a1], [m, a1 + 1], [a0, m], [a0 - 1, m], [a1, m], [a1 + 1, m]]) expect([x, y, aw[y! * w.gw + x!]! > 0]).toEqual([x, y, true]); }
+    // (al mismo nivel que lo de al lado, el borde no se despierta: nada que igualar)
+    const level = new WaterLayer(world(s, false), { wallAbove: Infinity, unloaded: true, movable: true });
+    for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) level.load(...rect(cx, cy), { surface: () => 6 });
+    level.step(1 / 60);
+    expect(level.sim.activeCount).toBe(0);
     // (lo cargado nace quieto: sin despertar su borde, nada se movería)
     const out = w.sim.at((3 * CHUNK) / CELL + 2, (2 * CHUNK + 8) / CELL), mid = w.sim.at((2 * CHUNK + 8) / CELL, (2 * CHUNK + 8) / CELL);
     const d0 = w.sim.depth[out]!, m0 = w.sim.depth[mid]!;

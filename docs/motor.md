@@ -1144,8 +1144,9 @@ water.follow(state.watchChanges());                                 // picar o p
 
   - `load` rehace el fondo y las paredes desde los vóxeles; el agua sale de lo guardado o, la primera vez, de `surface`
     (la superficie de cada columna, o null), igual que el agua de partida del constructor: cargar todos los trozos da
-    lo mismo que construir la capa de una vez. Lo cargado nace quieto, sin flujos; el borde del recuadro (de los dos
-    lados) se despierta, para que el agua de aquí y la de al lado se igualen si no lo están. Ensancha `zRange`, apunta
+    lo mismo que construir la capa de una vez. Lo cargado nace quieto, sin flujos; en el borde del recuadro se
+    despierta cada pareja de celdas (la de dentro y su vecina de fuera) con agua y la superficie distinta, para que se
+    igualen; donde ya está igualada, no (en el banco, ~400 celdas despiertas de más sin nada que mover). Ensancha `zRange`, apunta
     el cambio para la vista y sube `groundVersion`.
   - `loadJob(..., rows = 32)` es lo mismo por pasos: `rows` filas de celdas por llamada, por unidades y no por reloj (el
     agua es de la simulación y no lee el reloj). Si `onLoad` lo devuelve, la ventana lo corre dentro del trabajo del

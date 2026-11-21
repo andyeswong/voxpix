@@ -249,13 +249,18 @@ export class WaterLayer {
         this.changed(gx0, gy, gx1, gy);
       }
       this.zRange = [Math.floor(Math.min(this.zRange[0], lo)), Math.ceil(Math.max(this.zRange[1], hi))];
-      // El borde, de los dos lados
-      for (let by = gy0 - 1; by <= gy1 + 1; by++) for (let bx = gx0 - 1; bx <= gx1 + 1; bx++) {
-        if (bx >= gx0 + 1 && bx <= gx1 - 1 && by >= gy0 + 1 && by <= gy1 - 1) continue;
-        if (bx < 0 || by < 0 || bx >= gw || by >= gh) continue;
-        const i = sim.at(bx, by);
-        if (sim.depth[i]! > 0) sim.wake(bx, by, 0);
-      }
+      // El borde: cada pareja de celdas de los dos lados (la de dentro y su vecina de fuera) con agua en alguna y la
+      // superficie distinta se despierta, para que se igualen. Donde ya está igualada no (el flujo sería 0 exacto: se
+      // dormirían sin mover nada, y costarían ~60 ticks cada una)
+      const pair = (ax: number, ay: number, bx: number, by: number) => {
+        if (bx < 0 || by < 0 || bx >= gw || by >= gh) return;
+        const i = sim.at(ax, ay), j = sim.at(bx, by);
+        if (sim.solid[i] || sim.solid[j] || !(sim.depth[i]! > 0 || sim.depth[j]! > 0)) return;
+        if (sim.ground[i]! + sim.depth[i]! === sim.ground[j]! + sim.depth[j]!) return;
+        sim.wake(ax, ay, 0); sim.wake(bx, by, 0);
+      };
+      for (let x = gx0; x <= gx1; x++) { pair(x, gy0, x, gy0 - 1); pair(x, gy1, x, gy1 + 1); }
+      for (let y = gy0; y <= gy1; y++) { pair(gx0, y, gx0 - 1, y); pair(gx1, y, gx1 + 1, y); }
       this.groundVersion++;
       return true;
     } };
