@@ -1,4 +1,4 @@
-// La prueba del ORÁCULO (condición de MAIA para dar por bueno el compositor de la GPU): los mismos estados del mundo
+// La prueba del ORÁCULO (la condición para dar por bueno el compositor de la GPU): los mismos estados del mundo
 // compuestos por la CPU (frame2D, la referencia) y por la GPU, comparados píxel a píxel. Corre en un navegador de
 // verdad (WebGL2); scripts/oracle/oracle.ps1 la abre en Edge sin ventana y recoge window.__oracle.
 //
@@ -289,7 +289,7 @@ const SCENARIOS: Scenario[] = [
   },
 ];
 
-// La vista girada (condición de MAIA): los escenarios con lo que depende del lado de la cámara (luces horneadas y la
+// La vista girada: los escenarios con lo que depende del lado de la cámara (luces horneadas y la
 // fachada norte, agua y gotas, rehorneado, entidades giradas con luz dinámica, el foco) en los otros 3 cuartos, y un
 // mundo rectangular de lados impares con agua en los 4
 const TURNED = ['medieval salida', 'medieval lago con pisotones', 'medieval columna rota', 'oficina entidades y luz dinámica', 'medieval linterna'];
@@ -297,7 +297,7 @@ for (const name of TURNED) {
   const base = SCENARIOS.find((s) => s.name === name)!;
   for (const q of [1, 2, 3] as Quarter[]) SCENARIOS.push({ ...base, name: `${name}, giro ${q}`, quarter: q });
 }
-// Vegetación (condición de MAIA): transmisión por la copa, contraluz y follaje sumergido, con una luz dinámica
+// Vegetación: transmisión por la copa, contraluz y follaje sumergido, con una luz dinámica
 // llevada y pisotones en el lago, en los 4 giros
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({

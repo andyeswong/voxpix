@@ -7,7 +7,7 @@ import { materialsOf, SUN_UNIT, SUN_OPAQUE } from './materials';
 // Cámara ortográfica: el modelo gira `yaw` grados sobre el eje vertical alrededor del pivote (los pies) y
 // la cámara mira hacia el norte (+y) inclinada `elevation` grados hacia abajo. 1 vóxel = 1 píxel.
 // El pivote cae SIEMPRE en el mismo punto de la imagen (centro de la columna originX, borde de la fila originY): el personaje no salta
-// al girar ni entre frames (condición de MAIA).
+// al girar ni entre frames.
 //
 // Luz: una dirección fija en PANTALLA (arriba-izquierda, como el juego), así que al girar el modelo la luz no
 // gira con él. La sombra proyectada usa la MISMA dirección. La luz no multiplica colores: mueve el tono

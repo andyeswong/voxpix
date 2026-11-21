@@ -20,7 +20,7 @@ export interface LevelPathOptions {
   // Búsqueda repartida: nodos por advance() (sin él, cada meta nueva se busca entera al pedirla). Ver advance()
   budget?: number;
   // Hasta dónde se busca: los nodos a más de `reach` pasos de la meta no tienen camino (dir null). 40 por defecto
-  // (MAIA, para los bichos de noche en la ventana viva); Infinity, todo el campo.
+  // (para los bichos de noche en la ventana viva); Infinity, todo el campo.
   // En una ventana viva grande (288 x 352 celdas en 9 x 11 trozos), una meta que se mueve cuesta una búsqueda de todo
   // el campo cada vez que cambia de celda; con reach, ~π·reach² nodos
   reach?: number;

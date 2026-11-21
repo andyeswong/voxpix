@@ -1,7 +1,7 @@
 # Medida en navegador con la CPU frenada
 
 Lo que se mide: el intervalo entre cuadros (`requestAnimationFrame`) de la escena en un navegador real, con la CPU
-frenada por CDP (`Emulation.setCPUThrottlingRate`). Criterio de MAIA:
+frenada por CDP (`Emulation.setCPUThrottlingRate`). Criterio de aceptación:
 p95 ≤ 16,8 ms a 6x. Un cuadro "perdido" es el que pasa de 18 ms (a 60 Hz el intervalo nunca baja de 16,7).
 
 En Windows (Edge), desde WSL:
@@ -23,7 +23,7 @@ coincide): el pkill, siempre en una llamada aparte. Con la CPU a 6x el horneado 
 Primera medida (2026-10-24, commit c96186a, Edge sin ventana en la Alienware): a 1x p95 16,8 y 0 % perdidos;
 a 6x, cuadro de 43-77 ms y p95 de 67-133 ms en los tres temas (100 % perdidos). No cumple el criterio.
 
-Validación del arnés (condición de MAIA, 2026-10-24): un juego 2D de referencia que sí cumplía, medido igual, da a 6x
+Validación del arnés (2026-10-24): un juego 2D de referencia que sí cumplía, medido igual, da a 6x
 p95 16,7-16,8 ms y 0-0,2 % perdidos en los tres temas. El arnés distingue: lo que no cumple es la escena.
 
 Opciones: `-Shot C:\...\x.png` guarda una captura al final de la muestra (para comprobar qué se midió); `-Gpu` arranca

@@ -1,5 +1,5 @@
 /* VoxPix, interfaz "Dribbble moderna" (Andrés, 2026-10-24): el lienzo a pantalla completa y encima, flotando,
-   píldoras y tarjetas oscuras redondeadas con un solo acento (el violeta de MAIA). Los iconos siguen siendo pixel
+   píldoras y tarjetas oscuras redondeadas con un solo acento (un violeta). Los iconos siguen siendo pixel
    art (app/icons/icons.px.js con pxl). Referencias en Sync: arte/voxpix/gui/. */
 :root {
   --bg: #111017; --stage: #15141c; --grid: rgba(255, 255, 255, 0.035);

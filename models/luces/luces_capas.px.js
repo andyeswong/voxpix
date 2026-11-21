@@ -1,8 +1,8 @@
 // Example layer file for import-pxl --stack: makes models/luces/linterna.json, antorcha.json and linterna-neon.json.
 // How to regenerate them: models/README.md.
-// La luz que lleva el personaje de ejemplo, una por mundo (2026-10-25). Solo de aspecto: siempre equipada, fuera de la
-// tienda y sin efecto en la simulación. La luz en sí la pone el núcleo (luces que siguen a una entidad y focos de cono);
-// esto es el objeto que se ve en la mano.
+// La luz que lleva MAIA, una por mundo (2026-10-25). Solo de aspecto: siempre equipada, fuera de la tienda y sin efecto
+// en la simulación. La luz en sí la pone el núcleo (luces que siguen a una entidad y focos de cono); esto es el objeto
+// que se ve en la mano.
 //   oficina    linterna: tubo de metal pizarra con la lente cian; foco hacia el frente
 //   medieval   antorcha: palo de madera con la llama ámbar arriba; luz puntual
 //   cyberpunk  linterna de neón: tubo de cromo con un aro rosa y la lente cian; foco hacia el frente

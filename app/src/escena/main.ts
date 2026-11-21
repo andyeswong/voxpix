@@ -55,7 +55,7 @@ if (q.has('embed')) {
   for (const el of [hud, modeBtn, document.getElementById('outline')]) if (el) el.style.display = 'none';
 }
 // Letrero visible cuando el modo 2D se compone en la CPU (sin WebGL2, o si se perdió el contexto): bajo detalle, sin
-// sombras de verdad ni reflejos (MAIA no quiere que eso solo lo diga el '(cpu)' del HUD). Lo crea la escena, sin tocar
+// sombras de verdad ni reflejos (que no lo diga solo el '(cpu)' del HUD). Lo crea la escena, sin tocar
 // el HTML.
 const lowDetail = document.createElement('div');
 lowDetail.style.cssText = 'position:fixed;left:50%;bottom:12px;transform:translateX(-50%);padding:6px 12px;'

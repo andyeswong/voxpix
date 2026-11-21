@@ -366,7 +366,7 @@ void (async () => {
       for (let ty = tty - 2; ty <= tty + 4 && !hole; ty++) if (!win.isLoaded([tc, ty])) hole = true;
     }
     if (hole) holes++;
-    // La vara de un juego: el anillo tx ± 3, ty - 3 .. + 5 alrededor del trozo del personaje
+    // La vara de un juego: el anillo tx ± 3, ty - 3 .. + 5 alrededor del trozo de MAIA
     // (y por qué: algún trozo del anillo fuera de la ventana, o dentro sin escribir; y dónde va MAIA en la ventana)
     { const [mtx, mty] = win.trozoOf(x, Y); let r = false, out = false, unl = false;
       for (let ty = mty - 3; ty <= mty + 5; ty++) for (let tx = mtx - 3; tx <= mtx + 3; tx++) if (!win.isLoaded([tx, ty])) { r = true; if (tx < win.tx0 || tx >= win.tx0 + NXW || ty < win.ty0 || ty >= win.ty0 + NYW) out = true; else unl = true; }

@@ -1,4 +1,4 @@
-// El walk de MAIA en vóxeles: el pivote se queda en los pies (condición de MAIA para darlo por bueno).
+// El walk de MAIA en vóxeles: el pivote se queda en los pies (la condición para darlo por bueno).
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Model, render, type ModelFile } from '../src/core';

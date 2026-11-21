@@ -79,7 +79,7 @@ class CpuPath implements Compositor {
     const t0 = performance.now();
     const c = this.canvas;
     if (c.width !== o.vw || c.height !== o.vh) { c.width = o.vw; c.height = o.vh; }
-    // Por CPU, detalle bajo salvo que se pida otro: es la de reserva y no llega con una multitud (MAIA)
+    // Por CPU, detalle bajo salvo que se pida otro: es la de reserva y no llega con una multitud
     this.g.putImageData(new ImageData(frame2D(s, b, { ...o, detail: o.detail ?? 'bajo' }) as Uint8ClampedArray<ArrayBuffer>, o.vw, o.vh), 0, 0);
     this.stats.frameMs = performance.now() - t0;
   }

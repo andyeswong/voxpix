@@ -1,6 +1,6 @@
 // Paleta cerrada por RAMPAS: cada material es una rampa de tonos ordenados de oscuro a claro, ya con su
 // cambio de matiz hecho a mano por el artista. La luz no multiplica colores: mueve el tono dentro de la
-// rampa. Así el render solo puede producir colores de la paleta (condición de MAIA) y el sombreado
+// rampa. Así el render solo puede producir colores de la paleta y el sombreado
 // conserva el matiz que eligió el artista.
 
 import { rampMaterial, type MaterialProps } from './materials';

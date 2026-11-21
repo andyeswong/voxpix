@@ -54,7 +54,7 @@ icono, cada píxel doble). Con el contorno, el ancho es el de la silueta más 2:
 `scripts/corazones.js` (lleno, medio y vacío), y su prueba `test/corazones.test.ts` mide en cada mitad del icono los
 píxeles rojos y los del hueco: el medio no tiene nada rojo a la derecha.
 
-Dos cosas que salieron al mirarlos (MAIA, a x6):
+Dos cosas que salieron al mirarlos (a x6):
 - Lo que va en el HUD se ve sobre el mundo, que de noche o en una cueva es oscuro: un hueco oscuro con contorno oscuro
   desaparece. El hueco es un gris-marrón medio, y la prueba mide su contraste (WCAG, luminancia relativa) contra un
   fondo oscuro: 3:1 o más.
@@ -83,7 +83,7 @@ La mochila v3, medida así:
 - un 2 x 2 de hebilla de luminancia 190 o más;
 - huella a65fb30c, la misma en la barra del set entero (se comprobó).
 
-La comprobación visual la hacen MAIA o Andrés, sobre la PNG a x4 y sobre fondo claro y oscuro.
+La comprobación visual la hace una persona, sobre la PNG a x4 y sobre fondo claro y oscuro.
 
 ## Dejar los criterios en una prueba
 

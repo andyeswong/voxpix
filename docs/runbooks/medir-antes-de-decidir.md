@@ -55,7 +55,7 @@ intervalos entre cuadros. `perf-stats.py` los resume. Copiado de `scripts/perf/R
 - Criterio: p95 ≤ 16,8 ms a 6x. Perdido: un cuadro de más de 18 ms.
 - `-Gpu`: Edge con la GPU de la máquina. Sin él, `--disable-gpu` (ruta CPU). El freno de CDP no frena la GPU, así que
   con `-Gpu` la medida es optimista, y Edge sin ventana no se ata a 60 Hz: el p95 es una cota. La aceptación es en el Flip.
-- `-Shot C:\...\x.png` guarda una captura para saber qué se midió (no abrirla aquí: que la mire MAIA o Andrés).
+- `-Shot C:\...\x.png` guarda una captura para saber qué se midió (no abrirla aquí: que la mire una persona).
 - Antes de medir, reiniciar vite en una llamada aparte: `pkill -f "[v]ite app"`. Con 6x, esperar al menos 20 s.
 
 `app/seccion.html?medir=4,16,24,48&n=360` mide sin esperar al reloj: andar sin corte y con cada ancho. Deja en
@@ -69,7 +69,7 @@ cola. `perf.ps1` solo recoge `window.__frames` y el HUD; `window.__seccion` lo r
 
 ### Reglas de los bancos del navegador (lo que costó una noche de medidas, 2026-11-16/17)
 
-- **Edge arranca y espera 150 s antes de medir** (MAIA). Edge sin ventana deja de mandar un cuadro durante ~70 ms una
+- **Edge arranca y espera 150 s antes de medir**. Edge sin ventana deja de mandar un cuadro durante ~70 ms una
   vez, a los ~2 minutos de arrancar, haga lo que haga la página: en la traza de V8 el hilo principal del render está
   vacío en el hueco. Salía como "el cuadro de 345 / 68 / 72 ms" a los 113-116 s de cada tirada. No se descartan datos a
   posteriori: se espera antes. `viva.ps1 -Calentar 150` (por defecto).
