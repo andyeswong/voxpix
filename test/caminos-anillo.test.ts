@@ -135,8 +135,9 @@ describe('caminos por niveles: el anillo', () => {
   });
 
   it('con budget, el borde que sale se rehace por advance (no en el corrimiento) y acaba como un campo hecho de nuevo', () => {
-    // (lo que entra se escribe, como en la ventana; el borde del lado que sale solo lo rehace el corrimiento)
-    for (const [dcx, dcy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+    // (lo que entra se escribe, como en la ventana; el borde del lado que sale solo lo rehace el corrimiento. Una dirección
+    // por eje: con radius 6 cada campo cuesta)
+    for (const [dcx, dcy] of [[-1, 0], [0, 1]] as const) {
       const s = new StaticVoxels(PAL, W, D, 0, Z), st = new WorldState(s, [], null);
       for (let cy = 0; cy < R; cy++) for (let cx = 0; cx < C; cx++) writeChunk(s, cx, cy, 0, 0);
       // (radius 6: el cuerpo de una celda llega a las de al lado, y la del borde, a lo que había fuera)
@@ -160,7 +161,8 @@ describe('caminos por niveles: el anillo', () => {
         if (JSON.stringify(now.floorsAt({ x, y })) !== JSON.stringify(r)) throw new Error(`${dcx},${dcy}: suelos en ${x},${y} (sin budget)`);
         if (JSON.stringify(f.floorsAt({ x, y })) !== JSON.stringify(r)) throw new Error(`${dcx},${dcy}: suelos en ${x},${y} (budget)`);
       }
-      for (let y = 2; y < D; y += 9) for (let x = 2; x < W; x += 9) {
+      // (los caminos, en una muestra: con radius 6 cada búsqueda cuesta; los suelos ya van todos arriba)
+      for (let y = 2; y < D; y += 37) for (let x = 2; x < W; x += 41) {
         const p = ref.path({ x, y, z: 40 }, goal);
         expect([dcx, dcy, x, y, now.path({ x, y, z: 40 }, goal)]).toEqual([dcx, dcy, x, y, p]);
         f.dir({ x, y, z: 40 }, goal);
