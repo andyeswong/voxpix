@@ -9,11 +9,16 @@
 //   sus índices y las opciones de horneado de LiveWindow): para medir con el mundo de un juego sin meterlo en el repo.
 // Además deja la cola por clase de trabajo (ms y llamadas) y los huecos con otra vara: el anillo de trozos tx ± 3,
 // ty - 3 .. + 5 alrededor del de MAIA, sin escribir
+//   ?agua=1: el agua del mundo (el material 'agua' del set) como WaterLayer (movable, sin cargar, LiveWindow.setWater): sin
+//   escribirla en la rejilla (skip), cargada por trozo en onLoad (regionWater) y guardada en onUnload. ?pisar=N: cada N
+//   cuadros, un pisotón en el agua más cercana a MAIA (hasta 64 vóxeles). ?aguacheck=N: cada N cuadros, la textura del
+//   fondo del agua de la GPU leída contra la vista (celdas distintas). Deja en __viva.agua lo que cuesta
 import { Model, type ModelFile } from '@core/index';
 import { createCompositor } from '../../../src/view/compositor';
 import { FrameBudget, wrapJob } from '../../../src/view/budget';
 import { BakeWorker, type BakeWorkerPort } from '../../../src/world/horno';
-import { LiveWindow, type PreparedTrozo } from '../../../src/world/live';
+import { LiveWindow, type PreparedTrozo, type TrozoCtx } from '../../../src/world/live';
+import { WaterLayer, regionWater, type WaterChunk } from '../../../src/world/water';
 import { LevelPathField } from '../../../src/world/levelpaths';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import { set as SET, SPEC } from '../../../scripts/ventana-mundo';
@@ -32,6 +37,7 @@ void (async () => {
   const boot: Record<string, number> = { script: Math.round(performance.now()) };
   const VW = 384, VH = 216, B = 8;
   const q = new URLSearchParams(location.search);
+  const AGUA = q.get('agua') === '1', PISAR = Number(q.get('pisar') ?? 0), AGUACHECK = Number(q.get('aguacheck') ?? 0);
   const SECONDS = Number(q.get('segundos') ?? 330), BLOCKS = Number(q.get('bloques') ?? 200), NX = Number(q.get('nx') ?? 9), NY = Number(q.get('ny') ?? 11), GIROS = Number(q.get('giros') ?? 1);
   // ?girar=s: cada s segundos, Q (girar con fundido, turnTo: solo vive el giro de ahora); ?presu=ms: el presupuesto cercano
   // mientras dura el fundido (8 por defecto, el de siempre)
@@ -85,8 +91,23 @@ void (async () => {
       results.set(d.id, d.o); remote.got++; remote.workerMs += d.ms; remote.busyMs = d.busyMs; remote.skipped = d.skipped;
     };
   }
+  // El agua: los trozos llegan a onLoad antes de que haya capa (la del constructor); se cargan al ponerla
+  const AGUA_T = AGUA ? set.index('agua') : -1;
+  if (AGUA && hornero) throw new Error('?agua=1 con el worker de la página (hornero) no: sus trozos traen el agua escrita');
+  let water: WaterLayer | null = null;
+  const aguaPend: Array<[readonly [number, number], TrozoCtx]> = [], aguaSaved = new Map<string, WaterChunk | null>();
+  const aguaRect = (ctx: TrozoCtx) => [ctx.at[0] * B, ctx.at[1] * B, ctx.at[0] * B + 128 - 1, ctx.at[1] * B + 128 - 1] as const;
+  const aguaLoad = (t: readonly [number, number], ctx: TrozoCtx) => {
+    const sv = aguaSaved.get(`${t[0]},${t[1]}`) ?? null;
+    water!.load(...aguaRect(ctx), { saved: sv, surface: sv ? null : regionWater(ctx.region!, AGUA_T, B, ctx.at) });
+  };
   const win = new LiveWindow({
     ...(ENTRAR ? { view: { cut: true } } : {}),
+    ...(AGUA ? {
+      skip: [AGUA_T],
+      onLoad: (t: readonly [number, number], ctx: TrozoCtx) => { if (water) aguaLoad(t, ctx); else aguaPend.push([t, ctx]); },
+      onUnload: (t: readonly [number, number], ctx: TrozoCtx) => { aguaSaved.set(`${t[0]},${t[1]}`, water!.save(...aguaRect(ctx))); },
+    } : {}),
     // (con el worker, recuadros por trozo: 8 x 8 trozos de vóxeles)
     // (?tile=N: el rehorneado por baldosas de N x N trozos de vóxeles con o sin worker; 0, sin baldosas)
     ...(q.get('tile') !== null ? (Number(q.get('tile')) ? { rebake: { band: 16, rows: 64, merge: true, tile: Number(q.get('tile')) } } : {}) : hornero || WORKER2 ? { rebake: { band: 16, rows: 64, merge: true, tile: 8 } } : {}),
@@ -101,6 +122,13 @@ void (async () => {
       // (la tanda nueva antes que el corrimiento: lo pedido antes se salta en el worker)
       onShift: (d: { cells: readonly [number, number]; voxels: readonly [number, number] }) => { hornero.postMessage({ kind: 'epoch', epoch: win.baked.rebakeEpoch ?? 0 }); hornero.postMessage({ kind: 'shift', chunks: [d.voxels[0] / 16, d.voxels[1] / 16], cells: d.cells }); },
     } : {}), blocks: set, spec, nx: ext?.nx ?? NX, ny: ext?.ny ?? NY, chunk: 16, center: CENTER, margin: ext?.margin ?? { x: 4, n: 6, s: 4 }, ...(GIRAR || NUCLEO ? { viewport: [VW, VH] as const } : { quarters: GIROS === 4 ? [0, 1, 2, 3] as const : [0] as const }), ...(NUCLEO ? { bakeFirst: 'view' as const } : {}), ...(q.get("prepara") === "0" ? {} : { beforeTurnSwap: (bk: Baked) => compositor.prepare(bk) }), bake: (ext?.bake ?? { incline: 0.5, sky: true, outline: 'both' }) as never });
+  if (AGUA) {
+    const st = win.store;
+    water = new WaterLayer({ model: st, lights: [], width: st.width, depth: st.depth, wet: new Uint8Array(0), waterTop: new Int16Array(0), fountain: null } as never, { movable: true, unloaded: true, wallAbove: Infinity });
+    win.setWater(water);
+    for (const [t, ctx] of aguaPend) aguaLoad(t, ctx);
+    aguaPend.length = 0;
+  }
   const loadMs = performance.now() - t0;
   boot.ventana = Math.round(performance.now());
   let rid = 0;
@@ -344,6 +372,19 @@ void (async () => {
     if (!boot.primerCuadro) boot.primerPaso = Math.round(performance.now());
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     compositor.frame(win.view.frame(), win.baked, o);
+    if (water && frames.length > 60) {
+      agua.copia.push((win.view.water as unknown as { visited?: number } | null)?.visited ?? 0);
+      // ?aguacheck=N: la textura del fondo del agua de la GPU contra la vista (lo que acaba de pintar)
+      if (AGUACHECK && frameNo % AGUACHECK === 0) {
+        const tex = compositor.readWaterStatic(), vw = win.view.water;
+        if (tex && vw) {
+          agua.checks++;
+          let bad = 0;
+          for (let i = 0; i < vw.gw * vw.gh; i++) if (tex[i * 4] !== vw.sim.ground[i] || tex[i * 4 + 1] !== vw.sim.solid[i] || tex[i * 4 + 2] !== (vw.isBasin(i) ? 1 : 0)) { if (!bad && !agua.primeraMala) agua.primeraMala = `celda ${i % vw.gw},${Math.floor(i / vw.gw)}: gpu ${tex[i * 4]},${tex[i * 4 + 1]},${tex[i * 4 + 2]} vista ${vw.sim.ground[i]},${vw.sim.solid[i]},${vw.isBasin(i) ? 1 : 0} (cuadro ${frameNo})`; bad++; }
+          if (bad) agua.malas++;
+        }
+      }
+    }
     // ?negro=N: cada N s, lo que se ve reducido a 64 x 36 y la fracción de píxeles casi negros (ningún canal > 25), con lo
     // marcado como cambiado sin rehornear, la cola y los corrimientos (la pantalla negra andando a 6x)
     if (NEGRO && now - start >= nextNegro) {
@@ -453,6 +494,13 @@ void (async () => {
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
       arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
+      agua: water ? {
+        pasoMs: { p50: pq(agua.pasoMs, 0.5), p95: pq(agua.pasoMs, 0.95), max: pq(agua.pasoMs, 1) },
+        activas: { p50: pq(agua.activas, 0.5), p95: pq(agua.activas, 0.95), max: pq(agua.activas, 1) },
+        copia: { p50: pq(agua.copia, 0.5), p95: pq(agua.copia, 0.95), max: pq(agua.copia, 1) },
+        gpu: compositor.waterStats(), pisotones: agua.pisotones, checks: agua.checks, malas: agua.malas, primeraMala: agua.primeraMala,
+        volumen: Math.round(water.sim.totalVolume()), celdas: water.gw * water.gh, guardados: aguaSaved.size,
+      } : null,
       queueMs: { p50: pq(queueMs, 0.5), p95: pq(queueMs, 0.95), max: pq(queueMs, 1) }, queuedMax: Math.max(...lag), queuedP50: pq(lag, 0.5),
       trozoMs: { n: win.stats.loadMs.length, p50: pq(win.stats.loadMs, 0.5), p95: pq(win.stats.loadMs, 0.95) },
       shiftMs: { n: win.stats.shiftMs.length, p50: pq(win.stats.shiftMs, 0.5), max: pq(win.stats.shiftMs, 1) },
@@ -482,8 +530,20 @@ void (async () => {
   function state_move(lx: number, ly: number): void {
     win.state.entities.move(id, lx, ly, ground(x, Y), dir > 0 ? 90 : 270);
     win.state.entities.setModel(id, CAPTURA ? walk[0]! : walk[Math.floor(performance.now() / WALK_FRAME_MS) % 8]!);
+    // ?pisar=N: un pisotón en el agua más cercana a MAIA (en espiral de 4 en 4 vóxeles, hasta 64)
+    if (water && PISAR && frameNo % PISAR === 0) {
+      let hit: [number, number] | null = null;
+      for (let r = 0; r <= 64 && !hit; r += 4) for (let a = 0; a < 16 && !hit; a++) {
+        const wx = lx + Math.round(Math.cos((a / 16) * Math.PI * 2) * r), wy = ly + Math.round(Math.sin((a / 16) * Math.PI * 2) * r);
+        if (water.depthAt(wx, wy) > 1) hit = [wx, wy];
+      }
+      if (hit) { win.state.events.disturb(hit[0], hit[1], 2.8, 3); agua.pisotones++; }
+    }
+    const a0 = performance.now();
     win.state.step();
+    if (water && frames.length > 60) { agua.pasoMs.push(performance.now() - a0); agua.activas.push(water.sim.activeCount); }
   }
+  const agua = { pasoMs: [] as number[], activas: [] as number[], copia: [] as number[], pisotones: 0, checks: 0, malas: 0, primeraMala: null as null | string };
   boot.antesDelPrimerRaf = Math.round(performance.now());
   requestAnimationFrame(loop);
 })();

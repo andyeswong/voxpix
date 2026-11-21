@@ -41,6 +41,10 @@ export interface Compositor {
   // Lo que subió a la GPU el último cuadro: sprites nuevos, crecimientos del atlas de sprites y de los atlas 3D (cuerpos y
   // ocupación); null en la CPU. Para saber qué hay en un cuadro largo con el juego y la cola parados
   uploadStats(): UploadStats | null;
+  // El agua en la GPU: corrimientos de su textura del fondo y celdas subidas por caja (para medir), y la textura leída de
+  // vuelta (fondo, pared, cuenca y 0 por celda; para comprobarla contra la vista). null en la CPU
+  waterStats(): { shifts: number; uploaded: number } | null;
+  readWaterStatic(): Float32Array | null;
 }
 
 export function createCompositor(canvas: HTMLCanvasElement, opts: { prefer?: 'gpu' | 'cpu' } = {}): Compositor {
@@ -86,6 +90,8 @@ class CpuPath implements Compositor {
   release(_b: Baked): void { /* nada */ }
   atlasStats(): null { return null; }
   uploadStats(): null { return null; }
+  waterStats(): null { return null; }
+  readWaterStatic(): null { return null; }
 
   // En la CPU basta con dejar el render de cada sprite en la caché de frame2d
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs = Infinity): number {
@@ -173,6 +179,8 @@ class GpuPath implements Compositor {
   release(b: Baked): void { this.warm.forget(b); this.gpu?.release(b); }
   atlasStats(): AtlasStats | null { return this.gpu?.atlasStats() ?? null; }
   uploadStats(): UploadStats | null { return this.gpu ? { ...this.gpu.lastUploads } : null; }
+  waterStats(): { shifts: number; uploaded: number } | null { return this.gpu ? { shifts: this.gpu.waterShifts, uploaded: this.gpu.waterStaticUploaded } : null; }
+  readWaterStatic(): Float32Array | null { return this.gpu?.readWaterStatic() ?? null; }
 
   prewarm(b: Baked, o: Frame2DOptions, list: readonly WarmItem[], budgetMs?: number): number {
     this.warm.record(b, o, list);
