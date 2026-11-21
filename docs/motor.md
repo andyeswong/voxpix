@@ -1409,7 +1409,9 @@ painter.set(cut, dirX);                                                        /
   ventana encima y nada sustituido no es `null`: lleva `count` 0.
 - `SectionPainter` pinta sus franjas sin la ventana y la aplica al componer, en una máscara aparte. Mover la ventana no
   repinta nada: la capa dice que cambiaron el recuadro de la ventana de antes y el de ahora (`dirty`, con filas), y el
-  compositor sube solo eso.
+  compositor sube solo eso. Cuando la caja salta de franja se suman las columnas recompuestas, como sin ventana: las
+  que entran en el recuadro de la capa hay que escribirlas aunque su máscara sea cero, porque en el anillo de texturas
+  queda lo de la vuelta anterior.
 - Medido en el túnel de `scripts/bench-seccion.ts` (`ANDAR=1 JUEGO=1`, caja de 16 bloques; `CRUZ=24`, con `RADIO` 40), a
   6x emulado, dos tiradas:
 
@@ -1421,8 +1423,7 @@ painter.set(cut, dirX);                                                        /
   | Píxeles de la capa que sube la GPU, p50 / p95 | 0 / 23.000-24.000 | 0 / 22.000-24.000 | 6.972 / 6.972 |
 
   Sin ventana, el camino es el de antes. Con ella, cada cuadro en que el objetivo se mueve cuesta algo menos de un
-  milisegundo a 6x (0,13 ms sin freno) y sube un recuadro del tamaño de la cruz (83 x 84 píxeles), en vez de la capa
-  entera cada vez que la caja salta de franja.
+  milisegundo a 6x (0,13 ms sin freno) y sube un recuadro del tamaño de la cruz (83 x 84 píxeles).
 - Pruebas: `test/corte-ventana.test.ts` compara, píxel a píxel de toda la imagen, lo que se pica, la máscara y lo que
   se pinta con un criterio escrito a mano, con la cruz en varios brazos, corrida, cortada por cada borde de la imagen y
   fuera de la caja, y con un disco; el pintor moviendo la ventana y la caja, con una copia llevada al día solo con

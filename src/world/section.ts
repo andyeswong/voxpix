@@ -875,7 +875,7 @@ export class SectionPainter {
 
   // La capa con la ventana de la caja de ahora. `U` es la compuesta (la caja entera): comparten todo menos la máscara, que
   // con ventana es raw.wmask. Solo se rehace si cambió la compuesta o la ventana, y entonces dice lo que cambió desde la
-  // anterior que se devolvió (base, dirty): los recuadros de la ventana de antes y de ahora
+  // anterior que se devolvió (base, dirty)
   private wundo: number[] = [];
   private shaped: { U: SectionLayer | null; key: string; layer: SectionLayer | null; raw: Raw | null } | null = null;
   private undoWindow(): void {
@@ -898,10 +898,13 @@ export class SectionPainter {
     if (was) for (let gy = was[1]; gy <= was[3]; gy++) for (let gx = was[0]; gx <= was[2]; gx++) dst[(gy - raw.ry) * raw.RW + (gx & ring)] = 0;
     const r = applyWindow(this.b, U, raw.mask, dst, win, this.wundo);
     raw.wreg = r.region;
-    // Lo que cambió desde la anterior devuelta, si era de este mismo anillo: los recuadros de la ventana de antes y de
-    // ahora, y nada más (fuera de ellos la máscara es cero antes y después, recomponga lo que recomponga la caja)
-    const chained = !!prev && prev.raw === raw;
-    const dirty: Array<readonly [number, number, number?, number?]> = [];
+    // Lo que cambió desde la anterior devuelta, si era de este mismo anillo y la compuesta es la misma o la siguiente:
+    // los recuadros de la ventana de antes y de ahora y, si se recompuso, lo que cambió la composición. Esto último
+    // hace falta aunque fuera de la ventana la máscara sea cero: las columnas que entran en el recuadro de la capa al
+    // moverse la caja no las ha escrito nadie en quien lleva una copia (las texturas de la GPU son un anillo y ahí
+    // queda lo de hace una vuelta, o lo de otra capa)
+    const chained = !!prev && prev.raw === raw && (prev.U === U || (U.base === prev.U && !!U.dirty));
+    const dirty: Array<readonly [number, number, number?, number?]> = chained && prev!.U !== U ? [...U.dirty!] : [];
     // (si se pisan, como al andar, su unión en un solo recuadro: es menos que los dos)
     const now = r.region, area = (g: readonly number[]) => (g[2]! - g[0]! + 1) * (g[3]! - g[1]! + 1);
     const both: [number, number, number, number] | null = was && now ? [Math.min(was[0], now[0]), Math.min(was[1], now[1]), Math.max(was[2], now[2]), Math.max(was[3], now[3])] : null;

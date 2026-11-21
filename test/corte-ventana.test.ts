@@ -230,7 +230,9 @@ describe('la ventana del corte con SectionPainter: al moverse', () => {
       const up = seen; seen = L;
       if (!L) return;
       let full = !(L.base && up && L.base === up && L.dirty && mirror && L.y === mirror.y && L.h === mirror.h);
-      if (!mirror || L.h > mirror.h) { mirror = { y: L.y, h: L.h, mask: new Uint8Array(TW * L.h), rgba: new Uint8Array(TW * L.h * 4) }; full = true; }
+      // (lo que nadie ha escrito en la copia es basura, como en una textura que viene de otra capa o de la vuelta
+      // anterior del anillo: la capa tiene que decir todo lo que hay que escribir, también las columnas que entran)
+      if (!mirror || L.h > mirror.h) { mirror = { y: L.y, h: L.h, mask: new Uint8Array(TW * L.h).fill(3), rgba: new Uint8Array(TW * L.h * 4).fill(77) }; full = true; }
       mirror.y = L.y;
       if (full) fulls++; else parts++;
       const rects: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
