@@ -776,7 +776,16 @@ export class LiveWindow {
   private get skipOpt(): { skip?: readonly number[] } { return this.o.skip ? { skip: this.o.skip } : {}; }
 
   // Generar y escribir el trozo t (en su sitio de la ventana), y lo del juego
+  // (todo lo que escribe la carga de un trozo se avisa a los oyentes como 'load': StaticVoxels.loadWrites)
   private loadTrozoJob(t: Trozo, remote = false): { run(deadline: number): boolean } {
+    const job = this.loadTrozoJobRaw(t, remote), store = this.store;
+    return { run: (deadline: number) => {
+      const prev = store.loadWrites;
+      store.loadWrites = true;
+      try { return job.run(deadline); } finally { store.loadWrites = prev; }
+    } };
+  }
+  private loadTrozoJobRaw(t: Trozo, remote = false): { run(deadline: number): boolean } {
     const C = this.C, [tx, ty] = t, spec = this.o.spec;
     if (this.o.fill) {
       // Lo escribe el juego

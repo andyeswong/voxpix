@@ -193,6 +193,9 @@ export class StaticVoxels implements VoxelSource {
   // del mundo (worldChangedSince). Lo pone la vista al cortar (WorldView.setCut/cutJob): esconder lo de encima de la
   // cabeza no es picar, y el rehorneado lo trata distinto (las luces que toca de rebote no van con prioridad cercana)
   viewWrites = false;
+  // Mientras es true, lo escrito se avisa a los oyentes (watchChanges) como 'load': la ventana viva lo pone al escribir un
+  // trozo que carga (LiveWindow), para quien ya recibe la carga por otro lado (WaterLayer.follow con WaterLayer.load)
+  loadWrites = false;
   // ¿Cambió el trozo c por el mundo (no solo por escrituras de vista) después de la versión v?
   worldChangedSince(c: number, v: number): boolean { return this.worldVersions[c]! > v; }
   clock = 0;
@@ -267,7 +270,7 @@ export class StaticVoxels implements VoxelSource {
     if (!this.viewWrites) this.worldVersions[c] = this.clock;
     this.note(c, x, y, z);
     const watchers = this.feed?.list;
-    if (watchers) for (const w of watchers) w.voxel(c, x, y, z);
+    if (watchers) for (const w of watchers) w.voxel(c, x, y, z, this.loadWrites);
     if (this.fgrid) this.fgrid.dirty[y * this.width + x] = 1;
     // Rejilla de alturas: subir es directo; si se vacía el de arriba del todo, se busca el siguiente hacia abajo
     const h = y * this.width + x;
@@ -479,7 +482,7 @@ export class StaticVoxels implements VoxelSource {
     if (!this.viewWrites) this.worldVersions[c] = this.clock;
     this.note(c, x0, y0, this.zMin); this.note(c, x1, y1, this.zMax);
     const watchers = this.feed?.list;
-    if (watchers) for (const w of watchers) { w.voxel(c, x0, y0, this.zMin); w.voxel(c, x1, y1, this.zMax); }
+    if (watchers) for (const w of watchers) { w.voxel(c, x0, y0, this.zMin, this.loadWrites); w.voxel(c, x1, y1, this.zMax, this.loadWrites); }
   }
 
   // Apunta el vóxel (x, y, z) del trozo c, que acaba de cambiar con la versión this.clock, en su tramo abierto

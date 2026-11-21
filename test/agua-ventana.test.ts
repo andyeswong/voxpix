@@ -209,6 +209,34 @@ describe('agua en la ventana viva (LiveWindow.setWater, skip, regionWater, load 
     expect(water.depthAt(f.x, f.y)).toBeGreaterThan(0.3);
   });
 
+  it('el agua que sigue al mundo (follow) no toma como cambio lo que escribe la ventana al cargar: igual, byte a byte, que sin seguirlo', () => {
+    // Dos ventanas iguales andando lo mismo; en una el agua sigue al mundo (watchChanges). Lo que escribe la ventana al
+    // cargar llega como 'load' y follow lo salta (load ya pone su fondo y su agua): profundidad, flujos y despiertas iguales
+    const a = make([0, 0], new Map()), b = make([0, 0], new Map());
+    a.water.follow(a.win.state.watchChanges());
+    const budget = new FrameBudget(1e6);
+    let x = TV / 2;
+    for (let s2 = 0; s2 < 32; s2++) {
+      x += TV / 8;
+      for (const w of [a, b]) { for (let k = 0; k < 50; k++) { w.win.update(x, TV / 2, budget); budget.run(); if (!w.win.busy && !budget.pending) break; } w.win.state.step(); }
+    }
+    expect(a.win.tx0).toBeGreaterThan(-2);
+    const ea = a.water.exportState(), eb = b.water.exportState();
+    for (const k of ['depth', 'fl', 'fr', 'ft', 'fb', 'awake'] as const) {
+      let bad = -1;
+      for (let i = 0; i < ea[k].length; i++) if (!Object.is(ea[k][i], eb[k][i])) { bad = i; break; }
+      expect([k, bad]).toEqual([k, -1]);
+    }
+    // Y lo que pica el juego sí lo sigue: un hoyo junto al agua rehace su fondo
+    let spot: [number, number] | null = null;
+    for (let y = 8; y < a.win.store.depth - 8 && !spot; y += 2) for (let xx = 8; xx < a.win.store.width - 8 && !spot; xx += 2) if (a.water.depthAt(xx, y) > 1 && a.water.depthAt(xx + 4, y) === 0) spot = [xx + 4, y];
+    expect(spot).not.toBeNull();
+    const before = a.water.sim.ground[a.water.sim.at(spot![0] / 2, spot![1] / 2)]!;
+    for (let z = 0; z <= 63; z++) for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) a.win.store.set(spot![0] + dx, spot![1] + dy, z, 0);   // (la celda entera: su fondo es el más alto de sus 2 x 2)
+    a.water.step(1 / 60);
+    expect(a.water.sim.ground[a.water.sim.at(spot![0] / 2, spot![1] / 2)]!).toBeLessThan(before);
+  });
+
   it('setWater: cambiar de capa suelta la vieja (ya no se corre) y las vistas toman la nueva; null la quita', () => {
     const { win, water } = make([0, 0], new Map());
     const s = win.store;

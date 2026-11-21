@@ -1167,6 +1167,11 @@ water.follow(state.watchChanges());                                 // picar o p
     medias). Así cargar el agua de un trozo no cae entero en un cuadro. Quien lo corra por su cuenta, hasta que dé true.
   - `save` guarda la profundidad y la cuenca de cada celda (no los flujos: vuelve quieta); null si no hay agua ni
     cuenca. Lo que se empapaba se sigue empapando al volver.
+  - Con `water.follow(state.watchChanges())` (el agua sigue lo que pica y pone el juego), lo que escribe la ventana al
+    cargar un trozo no cuenta: llega como `cause: 'load'` (`StaticVoxels.loadWrites`, que la ventana pone mientras escribe
+    un trozo, también en `fill` y `onLoad`) y `follow` lo salta, porque `load` ya pone su fondo y su agua. Si no, cada
+    trozo cargado pasaba entero por `syncGround` y despertaba miles de celdas en un mundo quieto. Los demás oyentes
+    reciben esas cajas como siempre (con su `cause`).
   - `takeWaterVoxels(s, x0, y0, x1, y1, esAgua)`: para un mundo de vóxeles sueltos con agua pintada (que se pintaría
     opaca y taparía lo que hay dentro), quita esos vóxeles y da la superficie de cada columna. En una rejilla de bloques
     no: quitaría los vóxeles y la celda seguiría siendo agua (`skip` y `regionWater` en su lugar). Mira cada columna desde arriba

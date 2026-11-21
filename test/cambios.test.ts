@@ -166,6 +166,26 @@ describe('avisos de cambios: cada vía cubre lo que cambió', () => {
 });
 
 describe('avisos de cambios: memoria, versión y oyentes', () => {
+  it("lo escrito con loadWrites (la carga de un trozo de la ventana) sale como 'load', aparte de lo demás; corrido, sigue siéndolo", () => {
+    const s = new StaticVoxels({ ramps: [{ name: 'p', colors: ['#111111', '#222222'] }] }, 64, 64, 0, 15);
+    const w = new WorldState(s, [], null), watch = w.watchChanges();
+    s.loadWrites = true;
+    s.set(3, 4, 2, material(0, 1)); s.set(20, 30, 5, material(0, 1));
+    s.loadWrites = false;
+    s.set(5, 5, 1, material(0, 1));
+    const t = watch.take();
+    const by = (c: ChangeBox['cause']) => t.boxes.filter((b) => b.cause === c).map((b) => [b.x0, b.y0, b.z0, b.x1, b.y1, b.z1]).sort();
+    expect(by('load')).toEqual([[20, 30, 5, 20, 30, 5], [3, 4, 2, 3, 4, 2]].sort());
+    expect(by('voxels')).toEqual([[5, 5, 1, 5, 5, 1]]);
+    // (sin tomar, corrido: la carga sigue siendo carga)
+    s.loadWrites = true; s.set(40, 40, 3, material(0, 1)); s.loadWrites = false;
+    s.set(41, 40, 3, material(0, 1));
+    watch.shift(16, 0, 16);
+    const u = watch.take();
+    expect(u.boxes.map((b) => [b.cause, b.x0, b.y0]).sort()).toEqual([['load', 24, 40], ['voxels', 25, 40]].sort());
+    expect(watch.pending).toBe(0);
+  });
+
   it('10.000 cambios en el mismo trozo sin take dejan 1 caja; un despierto que no para, 1 por objeto', () => {
     const w = officeWorld();
     const watch = w.watchChanges();

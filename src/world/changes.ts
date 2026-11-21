@@ -14,6 +14,9 @@
 //              Una caja por objeto (id) con su huella de antes y la de ahora (floor/ceil de la posición continua, más
 //              su altura entera); también al despertar y al dormirse, porque deja ese sitio sin escribir vóxeles.
 //   'restore'  el mundo entero: restore() cambia los trozos de golpe.
+//   'load'     como 'voxels', pero de lo que escribe la ventana viva al cargar un trozo (LiveWindow, con
+//              StaticVoxels.loadWrites: lo generado, lo preparado fuera y lo que el juego escribe en fill / onLoad). Quien
+//              ya recibe la carga por otro lado (WaterLayer.load) la puede saltar; para los demás es un cambio más.
 // version es la del mundo al tomar: ninguna caja es posterior a ella (lo que cambie después sale en el take siguiente).
 //
 // Coste: sin nadie escuchando, una comprobación de null por vóxel escrito y por movimiento de un despierto. Con
@@ -25,7 +28,7 @@
 export interface ChangeBox {
   x0: number; y0: number; z0: number;
   x1: number; y1: number; z1: number;
-  cause: 'voxels' | 'object' | 'restore';
+  cause: 'voxels' | 'object' | 'restore' | 'load';
   id?: number;                     // el objeto, en las 'object'
 }
 
@@ -35,14 +38,15 @@ export interface Box3 { x0: number; y0: number; z0: number; x1: number; y1: numb
 
 export class ChangeWatch {
   private chunks = new Map<number, Int32Array>();      // trozo -> x0, y0, z0, x1, y1, z1
+  private loads = new Map<number, Int32Array>();       // lo mismo, de lo escrito al cargar un trozo (cause 'load')
   private objects = new Map<number, Box3>();
   private whole = false;
 
   constructor(private readonly feed: ChangeFeed) {}
 
-  voxel(c: number, x: number, y: number, z: number): void {
-    const b = this.chunks.get(c);
-    if (!b) { this.chunks.set(c, Int32Array.of(x, y, z, x, y, z)); return; }
+  voxel(c: number, x: number, y: number, z: number, load = false): void {
+    const m = load ? this.loads : this.chunks, b = m.get(c);
+    if (!b) { m.set(c, Int32Array.of(x, y, z, x, y, z)); return; }
     if (x < b[0]!) b[0] = x; if (y < b[1]!) b[1] = y; if (z < b[2]!) b[2] = z;
     if (x > b[3]!) b[3] = x; if (y > b[4]!) b[4] = y; if (z > b[5]!) b[5] = z;
   }
@@ -57,14 +61,15 @@ export class ChangeWatch {
   everything(): void { this.whole = true; }
 
   // Cuántas cajas hay guardadas ahora (para medir; take() las da y vacía)
-  get pending(): number { return this.chunks.size + this.objects.size + (this.whole ? 1 : 0); }
+  get pending(): number { return this.chunks.size + this.loads.size + this.objects.size + (this.whole ? 1 : 0); }
 
   take(): ChangeTake {
     const boxes: ChangeBox[] = [];
     if (this.whole) boxes.push({ ...this.feed.worldBox(), cause: 'restore' });
     for (const b of this.chunks.values()) boxes.push({ x0: b[0]!, y0: b[1]!, z0: b[2]!, x1: b[3]!, y1: b[4]!, z1: b[5]!, cause: 'voxels' });
+    for (const b of this.loads.values()) boxes.push({ x0: b[0]!, y0: b[1]!, z0: b[2]!, x1: b[3]!, y1: b[4]!, z1: b[5]!, cause: 'load' });
     for (const [id, b] of this.objects) boxes.push({ ...b, cause: 'object', id });
-    this.chunks.clear(); this.objects.clear(); this.whole = false;
+    this.chunks.clear(); this.loads.clear(); this.objects.clear(); this.whole = false;
     return { boxes, version: this.feed.version() };
   }
 
@@ -81,13 +86,15 @@ export class ChangeWatch {
       b.x0 = Math.max(w.x0, b.x0); b.y0 = Math.max(w.y0, b.y0); b.x1 = Math.min(w.x1, b.x1); b.y1 = Math.min(w.y1, b.y1);
       return true;
     };
-    const old = [...this.chunks.values()];
-    this.chunks.clear();
-    for (const a of old) {
-      const b = { x0: a[0]!, y0: a[1]!, z0: a[2]!, x1: a[3]!, y1: a[4]!, z1: a[5]! };
-      if (!cut(b)) continue;
-      const c = Math.floor(b.y0 / chunk) * cols + Math.floor(b.x0 / chunk);
-      this.voxel(c, b.x0, b.y0, b.z0); this.voxel(c, b.x1, b.y1, b.z1);
+    for (const load of [false, true]) {
+      const map = load ? this.loads : this.chunks, old = [...map.values()];
+      map.clear();
+      for (const a of old) {
+        const b = { x0: a[0]!, y0: a[1]!, z0: a[2]!, x1: a[3]!, y1: a[4]!, z1: a[5]! };
+        if (!cut(b)) continue;
+        const c = Math.floor(b.y0 / chunk) * cols + Math.floor(b.x0 / chunk);
+        this.voxel(c, b.x0, b.y0, b.z0, load); this.voxel(c, b.x1, b.y1, b.z1, load);
+      }
     }
     for (const [id, b] of [...this.objects]) if (!cut(b)) this.objects.delete(id);
   }

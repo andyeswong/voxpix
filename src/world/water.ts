@@ -644,7 +644,8 @@ export class WaterLayer {
   // Un paso de simulación de `dt` (el mundo lo llama con 1/60 fijo): exactamente round(dt * 120) subpasos de 1/120,
   // sin acumular tiempo, así la misma partida da siempre el mismo agua
   step(dt: number): void {
-    if (this.watch) { const boxes = this.watch.take().boxes; if (boxes.length) this.syncGround(boxes); }
+    // (lo que escribe la ventana al cargar un trozo, 'load', no: su fondo y su agua los pone load)
+    if (this.watch) { const boxes = this.watch.take().boxes.filter((b) => b.cause !== 'load'); if (boxes.length) this.syncGround(boxes); }
     const { sim, basin } = this;
     const f = this.world.fountain;
     for (let n = Math.max(1, Math.round(dt * 120)); n > 0; n--) {
