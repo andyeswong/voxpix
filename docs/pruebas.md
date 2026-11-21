@@ -13,6 +13,10 @@ Las pruebas cubren:
 
 Una prueba con arte real se salta salvo que `VOXPIX_REAL_PXL` apunte a un `.px.js`.
 
+Pruebas lentas conocidas: `test/copia-girada.test.ts` ("la misma que vóxel a vóxel en los 4 giros") tarda ~4-5 s y,
+con la máquina cargada (otra batería, un banco), puede pasar del tope de 5 s de Vitest y fallar por tiempo. Si falla así,
+se repite sola: si pasa, era la carga. Si falla también con la máquina libre, es un fallo de verdad.
+
 ## Oráculos: la GPU contra la CPU
 
 La GPU tiene que dar lo mismo que la CPU, que es la referencia. Dos páginas lo comprueban en un navegador de verdad:
