@@ -108,7 +108,7 @@ describe('corte al componer', () => {
       if (!L || L === seen) return;
       const full = !mirror || !L.base || L.base !== seen || mirror.y !== L.y || mirror.h !== L.h;
       if (!mirror || mirror.y !== L.y || mirror.h !== L.h) mirror = { y: L.y, h: L.h, mask: new Uint8Array(BW * L.h), rgba: new Uint8Array(BW * L.h * 4), depth: new Float32Array(BW * L.h), sky: new Uint8Array(BW * L.h) };
-      const cols: ReadonlyArray<readonly [number, number]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
+      const cols: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
       for (const [g0, g1] of cols) for (let g = Math.max(L.x, g0); g <= Math.min(L.x + L.w - 1, g1); g++) for (let j = 0; j < L.h; j++) {
         const q = secIdx(L, g, j), m = j * BW + g;
         mirror.mask[m] = L.mask[q]!; mirror.depth[m] = L.depth[q]!; mirror.sky[m] = L.sky![q]!;

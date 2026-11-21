@@ -38,7 +38,8 @@ float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 // El corte al componer (frame2d.ts, Frame2DOptions.section / sectionLayer): la capa en su recuadro de la imagen
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
 // del mundo, cara (con el código de su luz por detrás, como uFace) y máscara (1 sustituido, 2 borde) + 16 * cielo con el
-// corte (enteros pequeños: exactos en un float)
+// corte (enteros pequeños: exactos en un float); y un 8 más en la máscara en los píxeles de dentro de la ventana del
+// corte, si la hay (SectionCut.window)
 const SECTION = `uniform bool uSec;
 uniform ivec4 uSecRect;                // x, y, w, h en la imagen horneada
 uniform int uSecTW;                    // la columna x de la imagen va en la x mod uSecTW de las texturas (un anillo)
@@ -50,7 +51,14 @@ int secMask(ivec2 s) {
   if (!uSec) return 0;
   ivec2 l = s - uSecRect.xy;
   if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return 0;
-  return int(secGeo(s).a) & 15;
+  return int(secGeo(s).a) & 7;
+}
+// ¿El píxel s cae dentro de la ventana del corte? (solo vale con una capa con ventana)
+bool secWindow(ivec2 s) {
+  if (!uSec) return false;
+  ivec2 l = s - uSecRect.xy;
+  if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
+  return (int(secGeo(s).a) & 8) != 0;
 }
 int secSky(ivec2 s) { return int(secGeo(s).a) >> 4; }`;
 
@@ -274,6 +282,8 @@ uniform vec2 uWZ;                   // las alturas con agua posible (WaterLayer.
 uniform bool uCut;                  // el corte al componer: el agua dentro de la caja (x0, x1, y0, y1), desde uCutZ, no
 uniform ivec4 uCutBox;
 uniform float uCutZ;
+uniform bool uCutWin;               // con ventana: solo en los píxeles de dentro (secWindow)
+${SECTION}
 uniform vec3 uAmbient;
 uniform vec3 uTones[5];             // 0..255
 uniform float uGlow;                // luz mínima de la superficie (agua emisiva)
@@ -317,7 +327,7 @@ void main() {
     float dd = wDepth(c);
     if (st.g != 0.0 || dd < 0.04) continue;
     float z = st.r + dd;
-    if (uCut && gx * CELL >= uCutBox.x && gx * CELL <= uCutBox.y && g * CELL >= uCutBox.z && g * CELL <= uCutBox.w && z >= uCutZ) continue;
+    if (uCut && gx * CELL >= uCutBox.x && gx * CELL <= uCutBox.y && g * CELL >= uCutBox.z && g * CELL <= uCutBox.w && z >= uCutZ && (!uCutWin || secWindow(ivec2(px, sy)))) continue;
     float north = float(g * CELL + CELL), south = float(g * CELL);
     int sy0 = int(jsRound(uOriginY - uA * north - z));
     int sy1 = max(sy0 + 1, int(jsRound(uOriginY - uA * south - z)));

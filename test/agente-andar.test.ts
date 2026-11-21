@@ -11,7 +11,7 @@ import { BlockSet, BlockGrid } from '../src/world/blocks';
 import { bakeWorld } from '../src/world/bake';
 import { WorldView } from '../src/world/view';
 import { frame2D } from '../src/world/frame2d';
-import { sectionAround, sectionLayer, type SectionLayer } from '../src/world/section';
+import { sectionAround, sectionLayer, crossWindow, type SectionLayer } from '../src/world/section';
 import { LevelPathField } from '../src/world/levelpaths';
 import { Runtime } from '../src/runtime/runtime';
 import { AgentHost, type AgentLook } from '../src/agent/agent';
@@ -50,7 +50,7 @@ function body(): Model {
 }
 
 describe('agente: entityAt', () => {
-  for (const withSection of [false, true]) it(`la entidad que se pinta en cada píxel, la misma que cambia el cuadro${withSection ? ' (con la sección que la destapa)' : ''}`, () => {
+  for (const withSection of [false, true, 'cruz'] as const) it(`la entidad que se pinta en cada píxel, la misma que cambia el cuadro${withSection === 'cruz' ? ' (con la sección en cruz, que la destapa en parte)' : withSection ? ' (con la sección que la destapa)' : ''}`, () => {
     const a = world(), b = world();
     // Una entidad de 20 de alto de pie en (5.5, 7.5) celdas, justo al norte de la pared de by 6 (que la tapa en parte desde
     // la cámara: asoma por encima)
@@ -60,9 +60,11 @@ describe('agente: entityAt', () => {
     const baked = bakeWorld(views[0]!.bakeable(), { topZ: LAYERS * N, incline: 0.5 });
     const bakedB = bakeWorld(views[1]!.bakeable(), { topZ: LAYERS * N, incline: 0.5 });
     let section: SectionLayer | null = null;
-    if (withSection) section = sectionLayer(baked, sectionAround(views[0]!.camera, ex, ey, ez, 32));
+    // (la cruz, sobre el pecho de la entidad y más estrecha que ella de alto: destapa solo un trozo)
+    const [wx, wy] = baked.cam.project(ex, ey, ez + 6), win = withSection === 'cruz' ? { window: crossWindow(wx, wy, { arm: 7, width: 5 }) } : {};
+    if (withSection) section = sectionLayer(baked, { ...sectionAround(views[0]!.camera, ex, ey, ez, 32), ...win });
     const o = { vx: 0, vy: 0, vw: baked.width, vh: baked.height, lights: false, time: 0, ambient: [1, 1, 1] as [number, number, number], ...(section ? { sectionLayer: section } : {}) };
-    const secB = withSection ? sectionLayer(bakedB, sectionAround(views[1]!.camera, ex, ey, ez, 32)) : null;
+    const secB = withSection ? sectionLayer(bakedB, { ...sectionAround(views[1]!.camera, ex, ey, ez, 32), ...win }) : null;
     const fa = frame2D(views[0]!.frame(), baked, o), fb = frame2D(views[1]!.frame(), bakedB, { ...o, ...(secB ? { sectionLayer: secB } : {}) });
     const host = new AgentHost({ state: a.st, grid: a.grid, look: (): AgentLook => ({ view: views[0]!, baked, section, frame: { lights: false } }) });
     let painted = 0, said = 0, bad = 0;
@@ -76,7 +78,11 @@ describe('agente: entityAt', () => {
     }
     expect(painted).toBeGreaterThan(20);
     expect([painted, said, bad]).toEqual([painted, painted, 0]);
+    PAINTED[String(withSection)] = painted;
+    // (la cruz destapa más que sin sección y menos que la caja entera)
+    if (withSection === 'cruz') { expect(painted).toBeGreaterThan(PAINTED['false']!); expect(painted).toBeLessThan(PAINTED['true']!); }
   });
+  const PAINTED: Record<string, number> = {};
 
   it('sin vista, fuera de la imagen, y donde no hay nadie', () => {
     const { st, grid } = world();

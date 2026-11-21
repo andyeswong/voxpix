@@ -16,6 +16,7 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
+import { windowContains, type SectionWindow } from './section';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
 const TILE = 8;                                   // celdas por lado de una baldosa de lo que cambió (changedTiles)
@@ -755,8 +756,9 @@ export interface WaterGrid {
 // Dibuja el agua en la vista (vx, vy, vw, vh de la imagen horneada). `view` y `depthBuf` tienen lo ya dibujado
 // (mundo + personajes); `total` (opcional) es la luz por píxel de la vista, que aquí se completa.
 // `worldLights`: todas las luces del mundo (fijas y dinámicas)
-// El corte al componer (section.ts): el agua dentro de la caja, desde zMin, no se dibuja
-export interface CutBox { x0: number; x1: number; y0: number; y1: number; zMin: number }
+// El corte al componer (section.ts): el agua dentro de la caja, desde zMin, no se dibuja; con ventana (la forma del
+// corte en la imagen), solo deja de dibujarse en los píxeles de dentro
+export interface CutBox { x0: number; x1: number; y0: number; y1: number; zMin: number; window?: SectionWindow | null }
 
 export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
     ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
@@ -785,7 +787,8 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     const d = sim.depth[i]!;
     if (sim.solid[i] || d < 0.04) continue;
     const zs = sim.ground[i]! + d;
-    if (cut && gx * CELL >= cut.x0 && gx * CELL <= cut.x1 && gy * CELL >= cut.y0 && gy * CELL <= cut.y1 && zs >= cut.zMin) continue;
+    const win = cut && gx * CELL >= cut.x0 && gx * CELL <= cut.x1 && gy * CELL >= cut.y0 && gy * CELL <= cut.y1 && zs >= cut.zMin ? cut.window ?? true : null;
+    if (win === true) continue;
     const north = gy * CELL + CELL, south = gy * CELL;
     const sy0 = Math.round(originY - a * north - zs), sy1 = Math.max(sy0 + 1, Math.round(originY - a * south - zs));
     const ymid = (north + south) / 2;
@@ -837,6 +840,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
         if (tx < 0 || tx >= vw) continue;
         const t = ty * vw + tx;
         if (depthHere >= srcDepth[t]! - 0.3) continue;                // lo que hay delante (orilla, personaje) tapa el agua
+        if (win && windowContains(win, px, sy)) continue;             // el agua de la caja, por la ventana del corte
         const o = t * 4, q = t * 3;
         const tn = toneAt(px, sy);
         if (BAYER[(px & 3) + ((sy & 3) << 2)]! / 16 >= alphaFor(tn)) {

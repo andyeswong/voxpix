@@ -19,7 +19,73 @@ export interface SectionCut {
   x0: number; x1: number; y0: number; y1: number; zMin: number;
   depth?: number;                       // lo que se mira detrás de la caja (filas de vóxeles; 32)
   fill?: string | null;                 // el fondo de lo sustituido bajo tierra sin nada detrás (SECTION_FILL); null, transparente
+  // La forma del corte en la imagen (opcional): de lo que la caja sustituiría, solo lo que cae dentro de la ventana; lo
+  // demás se queda como horneado. Sin ella, toda la caja
+  window?: SectionWindow | null;
 }
+
+// LA VENTANA DEL CORTE: una forma en píxeles de la imagen horneada (una cruz, un círculo, lo que sea). La caja dice qué
+// se quita del mundo; la ventana, por dónde se mira: un píxel solo se sustituye (mask 1) si su primera superficie está
+// en la caja Y el píxel cae dentro de la ventana. La máscara de la capa es la única verdad: la leen frame2D, el
+// compositor de la GPU, pickVoxel / pickBlock y lo que ve un agente (sectionAt), así que lo que se pica es lo que se
+// pinta. Lo que cambia junto al contorno de la ventana:
+// - el borde (mask 2) solo se queda donde toca a un píxel sustituido;
+// - un píxel sustituido junto a uno de la caja que la ventana deja horneado lleva el contorno de la costura si lo
+//   horneado queda mucho más cerca (como en los lados de la caja);
+// - el agua de la caja deja de dibujarse solo en los píxeles de dentro de la ventana.
+// El tono (AO) y el cielo de cueva de lo sustituido son los de la caja entera cortada.
+// Para otra forma basta con dar un objeto con esta interfaz (windowOf lo hace con una función por píxel):
+//   painter.set({ ...sectionAround(camera, x, y, z, 128), window: crossWindow(cx, cy, { arm: 24 }) }, dir);
+export interface SectionWindow {
+  readonly key: string;                 // dos ventanas con la misma clave cubren los mismos píxeles
+  // Su recuadro en la imagen (incluidos): fuera de él no hay nada dentro
+  readonly x0: number; readonly y0: number; readonly x1: number; readonly y1: number;
+  // Los tramos de columnas [a, b] (incluidos) de la fila sy que caen dentro, añadidos a `out` de dos en dos, de
+  // izquierda a derecha y sin tocarse
+  spans(sy: number, out: number[]): void;
+}
+
+// Una cruz centrada en el píxel (cx, cy) de la imagen: dos barras de `width` píxeles de ancho que llegan a `arm` píxeles
+// del centro en las cuatro direcciones (por defecto, brazo 24 y ancho el brazo)
+export const CROSS_ARM = 24;
+export function crossWindow(cx: number, cy: number, o: { arm?: number; width?: number } = {}): SectionWindow {
+  const X = Math.round(cx), Y = Math.round(cy), arm = Math.max(1, Math.round(o.arm ?? CROSS_ARM));
+  const wd = Math.max(1, Math.min(2 * arm + 1, Math.round(o.width ?? arm))), a = Math.floor(wd / 2), z = wd - 1 - a;
+  return {
+    key: `cruz:${X},${Y},${arm},${wd}`, x0: X - arm, y0: Y - arm, x1: X + arm, y1: Y + arm,
+    spans(sy, out) {
+      if (sy < Y - arm || sy > Y + arm) return;
+      if (sy >= Y - a && sy <= Y + z) out.push(X - arm, X + arm); else out.push(X - a, X + z);
+    },
+  };
+}
+
+// Una ventana con la forma que diga `inside` (por píxel de la imagen) dentro de un recuadro. `key` tiene que cambiar si
+// cambia la forma
+export function windowOf(key: string, x0: number, y0: number, x1: number, y1: number, inside: (sx: number, sy: number) => boolean): SectionWindow {
+  return {
+    key, x0, y0, x1, y1,
+    spans(sy, out) {
+      if (sy < y0 || sy > y1) return;
+      for (let x = x0; x <= x1; x++) {
+        if (!inside(x, sy)) continue;
+        const a = x;
+        while (x < x1 && inside(x + 1, sy)) x++;
+        out.push(a, x);
+      }
+    },
+  };
+}
+
+// ¿El píxel (sx, sy) de la imagen cae dentro de la ventana?
+export function windowContains(w: SectionWindow, sx: number, sy: number): boolean {
+  if (sx < w.x0 || sx > w.x1 || sy < w.y0 || sy > w.y1) return false;
+  SPANS.length = 0;
+  w.spans(sy, SPANS);
+  for (let k = 0; k < SPANS.length; k += 2) if (sx >= SPANS[k]! && sx <= SPANS[k + 1]!) return true;
+  return false;
+}
+const SPANS: number[] = [];
 
 export interface SectionLayer {
   readonly x: number; readonly y: number; readonly w: number; readonly h: number;   // el recuadro en la imagen horneada
@@ -45,7 +111,11 @@ export interface SectionLayer {
   readonly base?: SectionLayer | null;
   // La caja del corte (en vóxeles de la vista): lo que se dibuja encima de la imagen (el agua) la respeta
   readonly box?: SectionCut;
-  readonly dirty?: ReadonlyArray<readonly [number, number]>;
+  // Las columnas de la imagen [gx0, gx1] que cambiaron desde `base`; con dos números más, solo en las filas [j0, j1] de
+  // la capa (lo que cambia al moverse la ventana)
+  readonly dirty?: ReadonlyArray<readonly [number, number, number?, number?]>;
+  // La ventana con que se hizo la máscara (SectionCut.window), si la hay
+  readonly window?: SectionWindow | null;
 }
 
 // El índice en los arrays de la capa del píxel de la columna de imagen gx y la fila j de la capa (sin mirar el recuadro)
@@ -228,7 +298,16 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
       rgba[q * 4] = fill[0]; rgba[q * 4 + 1] = fill[1]; rgba[q * 4 + 2] = fill[2]; rgba[q * 4 + 3] = 255;
     }
   }
-  if (oy0 === ry && oy1 === ry1) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut };
+  if (oy0 === ry && oy1 === ry1) {
+    // La ventana (solo con la caja entera: las franjas de SectionPainter se pintan sin ella y se les aplica al componer)
+    const win = cols ? null : cut.window ?? null;
+    if (!win) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut };
+    const shaped = new Uint8Array(w * h);
+    const r = applyWindow(b, { x: rx, y: ry, w, h, rgba, depth, pick }, mask, shaped, win, null);
+    // (sin nada sustituido pero con la ventana sobre la capa, la capa se queda: el agua de la caja mira la ventana)
+    if (!r.region) return null;
+    return { x: rx, y: ry, w, h, mask: shaped, rgba, depth, face, pick, sky, wy, back, count: r.count, box: cut, window: win };
+  }
   // Solo las filas pedidas (sin el margen)
   const j0 = oy0 - ry, n = (oy1 - oy0 + 1) * w, a0 = j0 * w;
   let cnt = 0;
@@ -239,6 +318,62 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
 
 // El fondo de lo sustituido bajo tierra donde detrás no hay nada (SectionCut.fill)
 export const SECTION_FILL = '#0e0d14';
+
+// La máscara de una capa con una ventana. `src` es la máscara de la caja entera (1 sustituido, 2 borde) y `dst` la que
+// queda, que llega a cero en el recuadro de la ventana: 1 donde src es 1 dentro de la ventana; 2 donde src es 2 junto a
+// uno de esos; lo demás, 0. Y la costura: el sustituido junto a uno de la caja que queda horneado y mucho más cerca
+// toma el color del contorno (en L.rgba; con `undo`, se apunta ahí el píxel y lo que tenía, de cinco en cinco).
+// Devuelve cuántos quedan sustituidos y el recuadro de la imagen que tocó (el de la ventana con un píxel de margen,
+// dentro de la capa), o null si la ventana no cae en la capa
+type WindowTarget = Pick<SectionLayer, 'x' | 'y' | 'w' | 'h' | 'rgba' | 'depth' | 'pick'> & { stride?: number; ring?: number };
+let INS = new Uint8Array(0);
+function applyWindow(b: Baked, L: WindowTarget, src: Uint8Array, dst: Uint8Array, win: SectionWindow, undo: number[] | null): { count: number; region: [number, number, number, number] | null } {
+  const X0 = Math.max(L.x, win.x0), X1 = Math.min(L.x + L.w - 1, win.x1), Y0 = Math.max(L.y, win.y0), Y1 = Math.min(L.y + L.h - 1, win.y1);
+  if (X0 > X1 || Y0 > Y1) return { count: 0, region: null };
+  const stride = L.stride ?? L.w, ring = L.ring ? L.ring - 1 : -1;
+  const idx = (gx: number, gy: number) => (gy - L.y) * stride + (ring >= 0 ? gx & ring : gx - L.x);
+  // Lo de dentro que se sustituye, en un recuadro con un píxel de margen (1: sustituido)
+  const bw = X1 - X0 + 3, bh = Y1 - Y0 + 3;
+  if (INS.length < bw * (bh + 1)) INS = new Uint8Array(bw * (bh + 1)); else INS.fill(0, 0, bw * (bh + 1));
+  const ins = INS, sp: number[] = [];
+  let count = 0;
+  for (let gy = Y0; gy <= Y1; gy++) {
+    sp.length = 0;
+    win.spans(gy, sp);
+    for (let k = 0; k < sp.length; k += 2) for (let gx = Math.max(X0, sp[k]!), e = Math.min(X1, sp[k + 1]!); gx <= e; gx++) {
+      const q = idx(gx, gy);
+      if (src[q] !== 1) continue;
+      ins[(gy - Y0 + 1) * bw + gx - X0 + 1] = 1; dst[q] = 1; count++;
+    }
+  }
+  const rx0 = Math.max(L.x, X0 - 1), rx1 = Math.min(L.x + L.w - 1, X1 + 1), ry0 = Math.max(L.y, Y0 - 1), ry1 = Math.min(L.y + L.h - 1, Y1 + 1);
+  if (!count) return { count: 0, region: [rx0, ry0, rx1, ry1] };
+  const both = b.options.outline === 'both', gap = b.options.innerGap ?? innerGapFor(b.options), fixed = b.options.outlineColor ? rgbOf(b.options.outlineColor) : null;
+  for (let gy = ry0; gy <= ry1; gy++) for (let gx = rx0; gx <= rx1; gx++) {
+    const t = (gy - Y0 + 1) * bw + gx - X0 + 1, q = idx(gx, gy);
+    if (ins[t]) {
+      // La costura con lo de la caja que la ventana deja horneado
+      if (!both || L.depth[q] === Infinity) continue;
+      let seam = false;
+      for (const [dx, dy] of SKY_DIRS) {
+        const nx = gx + dx, ny = gy + dy;
+        if (nx < L.x || ny < L.y || nx >= L.x + L.w || ny >= L.y + L.h || ins[t + dy * bw + dx]) continue;
+        // (solo con los que la caja sustituía: con los demás de fuera, la costura ya viene pintada en la capa)
+        if (src[idx(nx, ny)] === 1 && b.depth[ny * b.width + nx]! < L.depth[q]! - gap) { seam = true; break; }
+      }
+      if (!seam) continue;
+      let c: readonly [number, number, number];
+      if (fixed) c = fixed;
+      else { const [x, y, z] = unkey(L.pick[q]!), { ramp } = decode(b.source.get(x, y, z)); c = rgbOf(b.source.palette.ramps[ramp]?.colors[0] ?? '#000000'); }
+      if (undo) undo.push(q, L.rgba[q * 4]!, L.rgba[q * 4 + 1]!, L.rgba[q * 4 + 2]!, L.rgba[q * 4 + 3]!);
+      L.rgba[q * 4] = c[0]; L.rgba[q * 4 + 1] = c[1]; L.rgba[q * 4 + 2] = c[2]; L.rgba[q * 4 + 3] = 255;
+    } else if (src[q] === 2) {
+      // El borde: solo junto a uno sustituido
+      if (ins[t - 1] || ins[t + 1] || ins[t - bw] || ins[t + bw]) dst[q] = 2;
+    }
+  }
+  return { count, region: [rx0, ry0, rx1, ry1] };
+}
 
 // La caja del corte para un objetivo en (x, y, z) del MUNDO (los pies de un cuerpo): `width` vóxeles de ancho centrados
 // en él, de su fila hasta el borde del lado de la cámara, de sus pies hacia arriba; en los ejes de la vista girada
@@ -268,6 +403,10 @@ interface Raw {
   mask: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null; wy: Float32Array; back: Float32Array;
   units: Map<number, SectionLayer | null>;     // las unidades que están (la capa de cada una, para saber si sigue siendo esa)
   edges: [number, number];                     // las columnas de píxeles de los bordes de la caja (llevan los arreglos)
+  // Con ventana (SectionCut.window): la máscara con ella (mask se queda con la de la caja entera) y el recuadro de la
+  // imagen donde no es cero
+  wmask?: Uint8Array;
+  wreg?: [number, number, number, number] | null;
 }
 
 // Los tramos de las columnas de imagen gx0..gx1 que caen seguidos en el anillo: [gx, n]
@@ -388,6 +527,7 @@ export class SectionPainter {
     const prev = this.cut;
     const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + STRIP ? prev.y1 : cut.y1;
     const zMin = prev && prev.zMin >= cut.zMin - 1 && prev.zMin <= cut.zMin + 4 ? prev.zMin : cut.zMin;
+    // (la ventana no cambia lo que se pinta: se aplica al componer)
     this.cut = { ...cut, x0, x1, y1, zMin };
     const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
     if (track !== this.track) { if (this.track) this.resets++; this.track = track; this.clearAll(); }
@@ -410,7 +550,7 @@ export class SectionPainter {
   private lastBoxX: number | null = null;
 
   private seenShifts = 0;
-  private clearAll(): void { this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); }
+  private clearAll(): void { this.strips.clear(); this.pending.clear(); this.composed = null; this.raw = null; this.last = null; this.edgeSkies.clear(); this.wundo.length = 0; this.shaped = null; }
 
   // Corre lo pintado como shiftBakedJob corrió la imagen, en x (en y no: ver abajo): el píxel nuevo x es el viejo x + DX
   // y el vóxel de cada píxel, corrido (key - dk). Se
@@ -673,7 +813,7 @@ export class SectionPainter {
   private pending = new Map<number, { serial: number; clock: number; snap: Float64Array; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
   private paintStep(i: number): void {
     const c = this.cut!, b = this.b;
-    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9 };
+    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9, window: null };
     const [fy0, fy1] = sectionRows(b, wide);
     let p = this.pending.get(i);
     if (p && (!this.unchangedSince(i, p.serial) || p.fy0 !== fy0 || p.fy1 !== fy1)) p = undefined;
@@ -726,9 +866,48 @@ export class SectionPainter {
     // no la toca, y el de cerca deja su unidad sin estar al día)
     const key = `${c.x0},${c.x1}:${ready}`;
     const serial = this.b.published.serial;
-    if (this.composed && this.composed.key === key && !this.edgeSkyChanged(c, this.composed.serial)) { this.composed.serial = serial; return this.composed.layer; }
-    const layer = this.compose(c);
-    this.composed = { key, layer, serial };
+    let layer: SectionLayer | null;
+    if (this.composed && this.composed.key === key && !this.edgeSkyChanged(c, this.composed.serial)) { this.composed.serial = serial; layer = this.composed.layer; }
+    else { layer = this.compose(c); this.composed = { key, layer, serial }; }
+    return c.window || this.shaped ? this.shape(layer, c.window ?? null) : layer;
+  }
+
+  // La capa con la ventana de la caja de ahora. `U` es la compuesta (la caja entera): comparten todo menos la máscara, que
+  // con ventana es raw.wmask. Solo se rehace si cambió la compuesta o la ventana, y entonces dice lo que cambió desde la
+  // anterior que se devolvió (base, dirty): los recuadros de la ventana de antes y de ahora
+  private wundo: number[] = [];
+  private shaped: { U: SectionLayer | null; key: string; layer: SectionLayer | null; raw: Raw | null } | null = null;
+  private undoWindow(): void {
+    const u = this.wundo, r = this.raw;
+    if (r) for (let k = u.length - 5; k >= 0; k -= 5) { const q = u[k]! * 4; r.rgba[q] = u[k + 1]!; r.rgba[q + 1] = u[k + 2]!; r.rgba[q + 2] = u[k + 3]!; r.rgba[q + 3] = u[k + 4]!; }
+    u.length = 0;
+  }
+  private shape(U: SectionLayer | null, win: SectionWindow | null): SectionLayer | null {
+    const prev = this.shaped, raw = this.raw;
+    if (prev && prev.U === U && prev.key === (win ? win.key : '') && prev.raw === raw) return prev.layer;
+    // (compose ya deshizo las costuras de la ventana anterior si recompuso; si no, ahora)
+    this.undoWindow();
+    if (!win || !U || !raw) {
+      // Sin ventana (o sin capa): la compuesta tal cual. Quien llevaba la de la ventana la sube entera (su base es otra)
+      this.shaped = win ? { U, key: win.key, layer: null, raw } : null;
+      return win ? null : U;
+    }
+    if (!raw.wmask) { raw.wmask = new Uint8Array(raw.RW * raw.h); raw.wreg = null; }
+    const dst = raw.wmask, was = raw.wreg ?? null, ring = raw.RW - 1;
+    if (was) for (let gy = was[1]; gy <= was[3]; gy++) for (let gx = was[0]; gx <= was[2]; gx++) dst[(gy - raw.ry) * raw.RW + (gx & ring)] = 0;
+    const r = applyWindow(this.b, U, raw.mask, dst, win, this.wundo);
+    raw.wreg = r.region;
+    // Lo que cambió desde la anterior devuelta, si era de este mismo anillo: los recuadros de la ventana de antes y de
+    // ahora, y nada más (fuera de ellos la máscara es cero antes y después, recomponga lo que recomponga la caja)
+    const chained = !!prev && prev.raw === raw;
+    const dirty: Array<readonly [number, number, number?, number?]> = [];
+    // (si se pisan, como al andar, su unión en un solo recuadro: es menos que los dos)
+    const now = r.region, area = (g: readonly number[]) => (g[2]! - g[0]! + 1) * (g[3]! - g[1]! + 1);
+    const both: [number, number, number, number] | null = was && now ? [Math.min(was[0], now[0]), Math.min(was[1], now[1]), Math.max(was[2], now[2]), Math.max(was[3], now[3])] : null;
+    for (const g of both && area(both) <= area(was!) + area(now!) ? [both] : [was, now]) if (g) dirty.push([g[0], g[2], g[1] - raw.ry, g[3] - raw.ry]);
+    // (sin nada sustituido pero con la ventana sobre la capa, la capa se queda: el agua de la caja mira la ventana)
+    const layer: SectionLayer | null = r.region ? { ...U, mask: dst, count: r.count, base: chained ? prev!.layer : null, dirty, window: win } : null;
+    this.shaped = { U, key: win.key, layer, raw };
     return layer;
   }
 
@@ -778,6 +957,8 @@ export class SectionPainter {
     // Lo de antes vale tal cual salvo los arreglos de sus bordes: se deshacen (se guardó lo que pisaron)
     const m = SKY_REACH + 1;
     const dirty: Array<[number, number]> = [];
+    // (y las costuras de la ventana, que van encima de todo)
+    this.undoWindow();
     if (prev) {
       this.undoEdges(raw);
       dirty.push([prevEdges[0]! - 1, prevEdges[0]! + m], [prevEdges[1]! - m, prevEdges[1]! + 1]);

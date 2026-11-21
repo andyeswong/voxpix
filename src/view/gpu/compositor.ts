@@ -407,6 +407,9 @@ export class GpuCompositor {
     gl.uniform1i(w.u.uCut, cut ? 1 : 0);
     gl.uniform4i(w.u.uCutBox, cut?.x0 ?? 0, cut?.x1 ?? 0, cut?.y0 ?? 0, cut?.y1 ?? 0);
     gl.uniform1f(w.u.uCutZ, cut?.zMin ?? 0);
+    // (con ventana, el agua de la caja solo se quita en los píxeles de dentro: lo dice la máscara de la capa)
+    gl.uniform1i(w.u.uCutWin, this.secLayer?.window ? 1 : 0);
+    this.bindSection(w, false);
     gl.uniform1i(w.u.uLights, o.lights ? 1 : 0);
     gl.uniform2i(w.u.uView, o.vx, o.vy);
     gl.uniform2i(w.u.uViewSize, o.vw, o.vh);
@@ -663,38 +666,46 @@ export class GpuCompositor {
       this.secSize = [W, H];
       full = true;
     }
-    const cols: ReadonlyArray<readonly [number, number]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;
-    for (const [g0, g1] of cols) {
-      const a = Math.max(sec.x, g0), z = Math.min(sec.x + sec.w - 1, g1);
-      if (a <= z) this.uploadSectionCols(sec, a, z);
+    const cols: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;
+    for (const [g0, g1, r0, r1] of cols) {
+      const a = Math.max(sec.x, g0), z = Math.min(sec.x + sec.w - 1, g1), j0 = Math.max(0, r0 ?? 0), j1 = Math.min(sec.h - 1, r1 ?? sec.h - 1);
+      if (a <= z && j0 <= j1) this.uploadSectionCols(sec, a, z, j0, j1);
     }
     this.sectionMs = performance.now() - t0;
   }
 
-  // Las columnas de imagen g0..g1 de la capa a las texturas del anillo (en dos trozos si dan la vuelta). La y del mundo
-  // y la luz por detrás vienen hechas en la capa (se calculan al pintarla)
-  private uploadSectionCols(sec: SectionLayer, g0: number, g1: number): void {
-    const gl = this.gl, { h } = sec, n = g1 - g0 + 1, TW = this.secSize[0];
+  // Las columnas de imagen g0..g1 de la capa (sus filas j0..j1) a las texturas del anillo (en dos trozos si dan la
+  // vuelta). La y del mundo y la luz por detrás vienen hechas en la capa (se calculan al pintarla). Con ventana
+  // (SectionLayer.window), los píxeles de dentro llevan además un 8 en la máscara: lo mira el agua
+  private uploadSectionCols(sec: SectionLayer, g0: number, g1: number, j0: number, j1: number): void {
+    const gl = this.gl, h = j1 - j0 + 1, n = g1 - g0 + 1, TW = this.secSize[0];
     const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
-    const vals = this.backVals;
-    for (let j = 0; j < h; j++) for (let k = 0; k < n; k++) {
-      const q = secIdx(sec, g0 + k, j), o = (j * n + k) * 4, m = sec.mask[q]!;
-      if (!m) { geo[o] = Infinity; continue; }
-      color[o] = sec.rgba[q * 4]!; color[o + 1] = sec.rgba[q * 4 + 1]!; color[o + 2] = sec.rgba[q * 4 + 2]!; color[o + 3] = sec.rgba[q * 4 + 3]!;
-      const f = sec.face[q]!, back = f >= 0 ? sec.back[q]! : 0;
-      geo[o] = sec.depth[q]!;
-      geo[o + 1] = sec.wy[q]!;
-      geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(Math.fround(back), 1) : f;
-      geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
+    const vals = this.backVals, win = sec.window ?? null, sp: number[] = [];
+    for (let j = j0; j <= j1; j++) {
+      const row = (j - j0) * n;
+      for (let k = 0; k < n; k++) {
+        const q = secIdx(sec, g0 + k, j), o = (row + k) * 4, m = sec.mask[q]!;
+        if (!m) { geo[o] = Infinity; continue; }
+        color[o] = sec.rgba[q * 4]!; color[o + 1] = sec.rgba[q * 4 + 1]!; color[o + 2] = sec.rgba[q * 4 + 2]!; color[o + 3] = sec.rgba[q * 4 + 3]!;
+        const f = sec.face[q]!, back = f >= 0 ? sec.back[q]! : 0;
+        geo[o] = sec.depth[q]!;
+        geo[o + 1] = sec.wy[q]!;
+        geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(Math.fround(back), 1) : f;
+        geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
+      }
+      if (!win) continue;
+      sp.length = 0;
+      win.spans(sec.y + j, sp);
+      for (let t = 0; t < sp.length; t += 2) for (let gx = Math.max(g0, sp[t]!), e = Math.min(g1, sp[t + 1]!); gx <= e; gx++) { const o = (row + gx - g0) * 4 + 3; geo[o] = geo[o]! + 8; }
     }
     for (let k0 = 0; k0 < n;) {
       const tx = (g0 + k0) % TW, pw = Math.min(n - k0, TW - tx);
       gl.pixelStorei(gl.UNPACK_ROW_LENGTH, n);
       gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, k0);
       uploadTo(gl, gl.TEXTURE_2D, this.tSecColor!);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, 0, pw, h, gl.RGBA, gl.UNSIGNED_BYTE, color);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.UNSIGNED_BYTE, color);
       uploadTo(gl, gl.TEXTURE_2D, this.tSecGeo!);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, 0, pw, h, gl.RGBA, gl.FLOAT, geo);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.FLOAT, geo);
       k0 += pw;
     }
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);

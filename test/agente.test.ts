@@ -7,7 +7,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockSet, BlockGrid, pickBlock } from '../src/world/blocks';
 import { bakeWorld } from '../src/world/bake';
 import { WorldView, type Quarter } from '../src/world/view';
-import { sectionAround, SectionPainter, type SectionLayer } from '../src/world/section';
+import { sectionAround, SectionPainter, crossWindow, type SectionLayer } from '../src/world/section';
 import { AgentHost, installAgent, type AgentLook, type Point } from '../src/agent/agent';
 import { Runtime, type TickInput } from '../src/runtime/runtime';
 
@@ -116,12 +116,16 @@ describe('interfaz para agentes', () => {
         }
         return s;
       };
-      for (const withSection of [false, true]) {
+      const seen: number[] = [];
+      for (const withSection of [false, true, 'cruz'] as const) {
         if (withSection) {
           const p = new SectionPainter(baked, { ahead: 0, behind: 0 });
-          p.set(sectionAround(view.camera, PLAYER.x, PLAYER.y, PLAYER.z, 32), 0); p.paintAll();
+          // (con la forma en cruz, SectionCut.window: la sección solo por la cruz alrededor del jugador)
+          const [vx, vy] = view.camera.pointToView(PLAYER.x, PLAYER.y), [wx, wy] = baked.cam.project(vx, vy, PLAYER.z + 6);
+          p.set({ ...sectionAround(view.camera, PLAYER.x, PLAYER.y, PLAYER.z, 32), ...(withSection === 'cruz' ? { window: crossWindow(wx, wy, { arm: 10, width: 6 }) } : {}) }, 0); p.paintAll();
           section = p.layer();
           expect(section).not.toBeNull();
+          seen.push(section!.count);
         }
         const v = host.visibleCells()!, ref = picked();
         expect([...v.keys()].sort()).toEqual([...ref.keys()].sort());
@@ -150,6 +154,8 @@ describe('interfaz para agentes', () => {
         expect(host.check([5, 7, 2], { visible: true })).toEqual(withSection ? null : { ok: false, msg: 'no visible' });
         expect(d.text).toContain('minúscula: no se ve desde la cámara');
       }
+      // (la cruz sustituye menos que la caja entera)
+      expect(seen[1]!).toBeLessThan(seen[0]!);
     });
   }
 

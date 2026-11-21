@@ -59,10 +59,15 @@ if (process.env.ANDAR === '1') {
     let seed = 7;
     const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
     let calls = 0, sectionSlow = 0, gapFrames = 0, sectionCalls: number[] = [];
+    let lastL: ReturnType<typeof painter.layer> = null;
+    const up: number[] = [];
     for (let f = 0; f < 420 && x < W - 64; f++) {
       x += 40 / 60;
       const yy = game ? ty + Math.round(3 * Math.sin(f / 23)) : ty, zz = game ? tz + (Math.floor(f / 37) % 3 === 2 ? 1 : 0) : tz;
-      painter.set({ ...(await import('../src/world/section')).sectionAround(null, x, yy, zz, width) }, 1);
+      // CRUZ=N: con la ventana en cruz de brazo N alrededor del cuerpo (SectionCut.window)
+      const sec = await import('../src/world/section'), cruz = Number(process.env.CRUZ ?? 0);
+      const [wx, wy] = b.cam.project(x, yy, zz + 8);
+      painter.set({ ...sec.sectionAround(null, x, yy, zz, width), ...(cruz ? { window: sec.crossWindow(wx, wy, { arm: cruz }) } : {}) }, 1);
       const j = painter.job();
       if (j) {
         const run0 = j.run.bind(j);
@@ -73,6 +78,11 @@ if (process.env.ANDAR === '1') {
       budget.run();
       paint.push((performance.now() - a) * KX);
       a = performance.now(); const L = painter.layer(); comp.push((performance.now() - a) * KX); if (appear >= 0) compW.push(comp[comp.length - 1]!);
+      // Lo que tendría que subir la GPU: toda la capa, o solo lo que dice que cambió desde la anterior
+      if (L !== lastL) {
+        if (L) up.push(L.base && L.base === lastL && L.dirty ? L.dirty.reduce((n, d) => n + (Math.min(L.x + L.w - 1, d[1]) - Math.max(L.x, d[0]) + 1) * ((d[3] ?? L.h - 1) - (d[2] ?? 0) + 1), 0) : L.w * L.h);
+        lastL = L;
+      } else up.push(0);
       const ok = painter.ready();
       if (appear < 0 && ok) appear = f;
       else if (appear >= 0 && !ok) holes++;
@@ -84,5 +94,6 @@ if (process.env.ANDAR === '1') {
       }
     }
     console.log(`ancho ${width / 8} bloques: aparece en el cuadro ${appear}, huecos después ${holes}; componer p95 ${p(comp, 0.95).toFixed(2)} máx ${p(comp, 1).toFixed(1)} ms, andando ya pintada p50 ${compW.length ? p(compW, 0.5).toFixed(2) : '-'} p95 ${compW.length ? p(compW, 0.95).toFixed(2) : '-'} máx ${compW.length ? p(compW, 1).toFixed(1) : '-'} ms; pintar p50 ${p(paint, 0.5).toFixed(1)} p95 ${p(paint, 0.95).toFixed(1)} máx ${p(paint, 1).toFixed(1)} ms; cuadro de la CPU con capa, de más ${extra.length ? p(extra, 0.5).toFixed(1) : '-'} ms (todo a ${KX === 1 ? '1x' : '6x'}); unidades pintadas ${painter.painted}; cuadros sin la sección entera ${gapFrames} de ${comp.length}; llamadas de la sección ${calls} (p50 ${sectionCalls.length ? p(sectionCalls, 0.5).toFixed(1) : '-'}, máx ${sectionCalls.length ? p(sectionCalls, 1).toFixed(1) : '-'} ms, de más de 16 ms ${sectionSlow})`);
+    console.log(`  subida a la GPU por cuadro (píxeles de la capa): p50 ${p(up, 0.5)} p95 ${p(up, 0.95)} máx ${p(up, 1)}, media ${Math.round(up.reduce((u, v) => u + v, 0) / up.length)}`);
   }
 }

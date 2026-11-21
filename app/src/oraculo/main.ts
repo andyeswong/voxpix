@@ -25,7 +25,7 @@ import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
-import { sectionAround, SectionPainter, secIdx } from '../../../src/world/section';
+import { sectionAround, SectionPainter, secIdx, crossWindow } from '../../../src/world/section';
 import maiaFile from '../../../models/maia/maia.json';
 import { walkFrames } from '../../../src/anim/walk';
 
@@ -84,7 +84,8 @@ interface Scenario {
   // (z: la altura del corte; por defecto, la de los pies)
   // (pit: una losa de un vóxel delante de MAIA sobre un pozo en el suelo, dentro de la caja: lo cortado sin nada detrás
   // lleva el fondo de la sección, no transparente; secHoles cuenta lo sustituido transparente)
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean };
+  // cross: con la ventana en cruz (SectionCut.window) de ese brazo, centrada en el cuerpo del jugador
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -432,6 +433,11 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte al componer sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1 } });
   const ent = SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!;
   SCENARIOS.push({ ...ent, name: `corte al componer con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true } });
+  // Lo mismo por una ventana en cruz: solo se sustituye dentro de la cruz, y el agua de la caja solo se quita ahí
+  SCENARIOS.push({ name: `corte al componer en cruz bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, cross: 24 } });
+  SCENARIOS.push({ name: `corte al componer en cruz por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, cross: 24 } });
+  SCENARIOS.push({ name: `corte al componer en cruz sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1, cross: 16 } });
+  SCENARIOS.push({ ...ent, name: `corte al componer en cruz con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, cross: 12 } });
 }
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
@@ -604,7 +610,13 @@ async function run(): Promise<void> {
     if (prep) { let n = 0; while (!prep.run(-Infinity)) if (++n > 100000) throw new Error('la subida por partes no acaba'); }
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.section) {
-      const p = rt.player, at = (dx: number) => sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
+      const p = rt.player, arm = sc.section.cross;
+      const at = (dx: number) => {
+        const cut = sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
+        if (!arm) return cut;
+        const [vx, vy] = view.camera.pointToView(p.x + dx, p.y), [wx, wy] = b.cam.project(vx, vy, p.z + 8);
+        return { ...cut, window: crossWindow(wx, wy, { arm }) };
+      };
       const painter = sc.section.painter ? new SectionPainter(b) : null;
       const step = (dx: number): Frame2DOptions => {
         if (!painter) return { ...o, section: at(dx) };
