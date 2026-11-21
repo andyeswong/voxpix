@@ -53,6 +53,15 @@ export function secIdx(L: SectionLayer, gx: number, j: number): number {
   return j * (L.stride ?? L.w) + (L.ring ? gx & (L.ring - 1) : gx - L.x);
 }
 
+// El índice en los arrays de la capa del píxel (sx, sy) de la imagen horneada si la capa lo sustituye o lo repinta
+// (mask 1 o 2: lo que se pinta ahí es lo de la capa), o -1
+export function sectionAt(L: SectionLayer, sx: number, sy: number): number {
+  const j = sy - L.y;
+  if (sx < L.x || j < 0 || sx >= L.x + L.w || j >= L.h) return -1;
+  const q = secIdx(L, sx, j);
+  return L.mask[q] ? q : -1;
+}
+
 const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 
 // cols (opcional): solo esas columnas de vóxeles (x0..x1) del recuadro, con la caja del corte tal cual (puede ser más

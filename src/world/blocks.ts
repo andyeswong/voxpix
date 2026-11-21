@@ -5,12 +5,13 @@
 //     su dibujo. Escribe con stampModel/clearBox (edit.ts), así que el rehorneado es el de siempre, y entra en la
 //     instantánea y la huella del mundo (WorldState.addPart).
 // docs/motor.md, "Bloques".
-import { Model, decode, material, rampMaterial, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
+import { Model, decode, material, rampMaterial, unkey, DIR_VECTORS, type Palette, type MaterialProps } from '../core';
 import { clearBox, rampMap, turnCell, turnPoint, type Yaw } from './edit';
 import type { Box3 } from './changes';
 import type { WorldState, LightId, StatePart, StateHasher } from './state';
 import type { WorldView } from './view';
 import type { Baked } from './bake';
+import { sectionAt, type SectionLayer } from './section';
 import type { SourceKind } from '../lighting/lights';
 import { CHUNK as CHUNK_V, SLAB, type PreparedSlab } from './state';
 const TEMPLATE_MAP = new Uint8Array(256);              // stampRegion: valor del tipo -> entrada de la paleta de la losa
@@ -431,14 +432,21 @@ const union = (a: Box3 | null, b: Box3 | null): Box3 | null =>
 
 // El bloque y la cara que se ven en un píxel de la imagen horneada de una vista (en los 4 giros): la cara es la
 // dirección, en ejes del mundo, hacia la que mira (donde iría un bloque puesto contra ella). null si no hay nada o si
-// lo que se ve no es de la rejilla
-export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: number, sy: number): { cell: [number, number, number]; face: [number, number, number] } | null {
-  const v = view.voxelAt(baked, sx, sy);
-  if (!v) return null;
-  const f = baked.face[sy * baked.width + sx]!;
-  if (f < 0) return null;
+// lo que se ve no es de la rejilla. Con `section` (la capa del corte al componer con que se pinta el cuadro, la de
+// sectionFor o SectionPainter.layer()), donde la capa sustituye el píxel manda lo que pinta ella: lo de la caja no se
+// pica (no se ve) y lo que la caja destapa, sí
+export function pickBlock(grid: BlockGrid, view: WorldView, baked: Baked, sx: number, sy: number, section?: SectionLayer | null): { cell: [number, number, number]; face: [number, number, number] } | null {
+  let k: number, f: number;
+  const q = section ? sectionAt(section, sx, sy) : -1;
+  if (q >= 0) { k = section!.pick[q]!; f = section!.face[q]!; }
+  else {
+    if (sx < 0 || sy < 0 || sx >= baked.width || sy >= baked.height) return null;
+    k = baked.pick[sy * baked.width + sx]!; f = baked.face[sy * baked.width + sx]!;
+  }
+  if (Number.isNaN(k) || f < 0) return null;
+  const [vx, vy, z] = unkey(k), [x, y] = view.camera.cellToWorld(vx, vy);
   const n = DIR_VECTORS[f]!;
   const [dx, dy] = view.camera.dirToWorld(n[0], n[1]);
-  const cell = grid.cellOf(v[0], v[1], v[2]);
+  const cell = grid.cellOf(x, y, z);
   return cell ? { cell, face: [dx + 0, dy + 0, n[2] + 0] } : null;   // + 0: sin -0
 }

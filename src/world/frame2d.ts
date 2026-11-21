@@ -8,7 +8,7 @@ import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
-import { sectionLayer, secIdx, type SectionCut, type SectionLayer } from './section';
+import { sectionLayer, secIdx, sectionAt, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -67,13 +67,7 @@ export function sectionFor(b: Baked, o: Frame2DOptions): SectionLayer | null {
   return layer;
 }
 // El índice en la capa del píxel (sx, sy) de la imagen horneada si se sustituye; -1 si no
-function secIndex(sec: SectionLayer | null, sx: number, sy: number): number {
-  if (!sec) return -1;
-  const i = sx - sec.x, j = sy - sec.y;
-  if (i < 0 || j < 0 || i >= sec.w || j >= sec.h) return -1;
-  const q = secIdx(sec, sx, j);
-  return sec.mask[q] ? q : -1;
-}
+const secIndex = (sec: SectionLayer | null, sx: number, sy: number): number => (sec ? sectionAt(sec, sx, sy) : -1);
 
 // La z de cada píxel es la del punto que se ve en él (escenario, entidad o agua), sacada de su profundidad y su fila
 // (como worldPointAt): sin hornear nada, y sin caché, así que focusZ puede cambiar en cada cuadro. Las gotas y los

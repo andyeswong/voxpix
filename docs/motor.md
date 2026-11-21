@@ -314,7 +314,13 @@ grid.fill([0, 0, 0], [47, 47, 4], set.index('piedra')); // para generar, antes d
 grid.set(bx, by, bz, set.index('antorcha'));
 grid.set(bx, by, bz, 0);                                // picar
 const hit = pickBlock(grid, view, baked, sx, sy);       // { cell: [bx, by, bz], face: [dx, dy, dz] } bajo el puntero
+const hit2 = pickBlock(grid, view, baked, sx, sy, layer); // con corte al componer: la capa con que se pinta el cuadro
 ```
+
+- Con corte al componer (la capa de `sectionFor` o `SectionPainter.layer()`), `pickBlock` lee la capa donde ella pinta
+  el píxel: lo que la caja quita no se pica y lo que destapa (el suelo de una zanja junto al personaje, un túnel bajo
+  tierra), sí. Sin la capa lee solo la imagen horneada, y ahí un bloque de hondo tapa dos celdas de suelo detrás de la
+  pared de delante: ningún píxel las apunta (`test/pick-seccion.test.ts`).
 
 - `.voxset.json`: `{ format: 'voxpix-set', version: 1, name, size, palette, blocks: [{ id, voxels, props? }] }`. Los
   vóxeles de cada bloque van de 0 a N-1 en cada eje, con los valores de la paleta del set.
