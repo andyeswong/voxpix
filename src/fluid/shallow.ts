@@ -129,7 +129,8 @@ export class ShallowWater {
   // cargue. Sin copiar: corre el origen y limpia la franja. Un corrimiento de todo el ancho o más lo limpia todo
   shift(dx: number, dy: number): void {
     if (!dx && !dy) return;
-    // (las congeladas están en cubos por coordenadas de la rejilla, que cambian: de vuelta a la lista)
+    // (las congeladas están en cubos por coordenadas de la rejilla, que cambian: de vuelta a la lista. Correr los cubos con
+    // la rejilla salía más caro, medido, que esto más volver a repartirlas en el paso siguiente)
     this.thawAll();
     const { w, h } = this;
     this.ox = (((this.ox + dx) % w) + w) % w;
@@ -139,10 +140,21 @@ export class ShallowWater {
     if (cy > 0) this.clear(0, h - cy, w - 1, h - 1); else if (cy < 0) this.clear(0, 0, w - 1, -cy - 1);
   }
   private clear(x0: number, y0: number, x1: number, y1: number): void {
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-      const i = this.at(x, y);
-      this.ground[i] = 0; this.depth[i] = 0; this.solid[i] = 1;
-      this.fl[i] = this.fr[i] = this.ft[i] = this.fb[i] = 0; this.awake[i] = 0;
+    // (por tramos seguidos de los arrays: una fila de la rejilla son uno o dos, según dé la vuelta en el anillo; con
+    // fill, que no depende de que el bucle esté optimizado: el primer corrimiento de una partida corre en frío)
+    this.runs(x0, y0, x1, y1, (a, z) => {
+      this.ground.fill(0, a, z); this.depth.fill(0, a, z); this.solid.fill(1, a, z);
+      this.fl.fill(0, a, z); this.fr.fill(0, a, z); this.ft.fill(0, a, z); this.fb.fill(0, a, z); this.awake.fill(0, a, z);
+    });
+  }
+  // Las celdas [x0, x1] x [y0, y1] de la rejilla como tramos [a, z) de índices físicos seguidos
+  runs(x0: number, y0: number, x1: number, y1: number, f: (a: number, z: number) => void): void {
+    if (x0 > x1) return;
+    for (let y = y0; y <= y1; y++) {
+      const a = this.at(x0, y), z = this.at(x1, y);
+      if (z >= a) { f(a, z + 1); continue; }
+      const row = a - (a % this.w);
+      f(a, row + this.w); f(row, z + 1);
     }
   }
 

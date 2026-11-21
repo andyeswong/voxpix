@@ -357,8 +357,15 @@ describe('WaterLayer en anillo (movable, shift)', () => {
     const moved = new WorldView(w.state, 0), stale = new WorldView(w.state, 0);
     moved.frame(); stale.frame();
     const gv = w.water.groundVersion, seq = w.water.changesSince(0).seq;
+    // (lo que sale tiene cuencas: las de los lagos del oeste)
+    let leaving = 0;
+    for (let gy = 0; gy < w.water.gh; gy++) for (let gx = 0; gx < CHUNK; gx++) if (w.water.isBasin(w.water.sim.at(gx, gy))) leaving++;
+    expect(leaving).toBeGreaterThan(0);
+    expect(w.water.basinChanged()).toBe(false);
     w.s.shift(2, 0); moved.shift(2 * CHUNK, 0); w.water.shift(2 * CHUNK, 0);
     expect(w.water.groundVersion).toBeGreaterThan(gv);         // (la GPU vuelve a subir el fondo)
+    // (la franja que entra no trae las cuencas de partida de lo que salió: correr no gana cuencas, y la huella no las mete)
+    expect(w.water.basinChanged()).toBe(false);
     for (let gy = 0; gy < w.water.gh; gy++) for (let gx = w.water.gw - CHUNK; gx < w.water.gw; gx++) {
       const i = w.water.sim.at(gx, gy);
       expect([gx, gy, w.water.sim.depth[i], w.water.sim.solid[i], w.water.isBasin(i)]).toEqual([gx, gy, 0, 1, false]);

@@ -536,9 +536,7 @@ export class WaterLayer {
     const cx = dx / CELL, cy = dy / CELL, { gw, gh, sim } = this;
     sim.shift(cx, cy);
     const bx = Math.max(-gw, Math.min(gw, cx)), by = Math.max(-gh, Math.min(gh, cy));
-    const clear = (x0: number, y0: number, x1: number, y1: number) => {
-      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = sim.at(x, y); this.basin[i] = 0; this.basin0[i] = 0; }
-    };
+    const clear = (x0: number, y0: number, x1: number, y1: number) => sim.runs(x0, y0, x1, y1, (a, z) => { this.basin.fill(0, a, z); this.basin0.fill(0, a, z); });
     if (bx > 0) clear(gw - bx, 0, gw - 1, gh - 1); else if (bx < 0) clear(0, 0, -bx - 1, gh - 1);
     if (by > 0) clear(0, gh - by, gw - 1, gh - 1); else if (by < 0) clear(0, 0, gw - 1, -by - 1);
     // (la fuente no se corre: es de los escenarios de una pieza)

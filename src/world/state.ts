@@ -111,7 +111,7 @@ export function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: num
   // (los arrays normales, a mano: el copyWithin de V8 en un array normal va elemento a elemento mirando huecos, ~10 veces
   // más lento que un bucle; en los tipados, copyWithin es una copia de memoria)
   if (Array.isArray(a)) { shiftArray(a, W, H, per, dx, dy, fill); return; }
-  const row = W * per, run = (W - Math.abs(dx)) * per, sx = Math.max(0, dx) * per, tx = Math.max(0, -dx) * per;
+  const row = W * per, run = (W - Math.abs(dx)) * per, tx = Math.max(0, -dx) * per;
   const f = fill as never;
   if (run <= 0 || Math.abs(dy) >= H) { a.fill(f, 0, a.length); return; }
   if (dx === 0) {
@@ -120,14 +120,15 @@ export function shiftGrid(a: CopyArr, W: number, H: number, per: number, dx: num
     else { a.copyWithin(-dy * row, 0, (H + dy) * row); a.fill(f, 0, -dy * row); }
     return;
   }
-  // Fila a fila, en el orden que no pisa lo que falta por copiar
-  const y0 = dy >= 0 ? 0 : H - 1, y1 = dy >= 0 ? H : -1, st = dy >= 0 ? 1 : -1;
-  for (let y = y0; y !== y1; y += st) {
-    const sy = y + dy, o = y * row;
-    if (sy < 0 || sy >= H) { a.fill(f, o, o + row); continue; }
-    a.copyWithin(o + tx, sy * row + sx, sy * row + sx + run);
-    if (dx > 0) a.fill(f, o + run, o + row); else a.fill(f, o, o + tx);
-  }
+  // Cada elemento lee del que está un desfase fijo más allá (dy filas y dx celdas): una sola copia de todo el array (en
+  // los tipados, una copia de memoria; fila a fila eran dos llamadas por fila, y en frío, en el primer corrimiento de una
+  // partida, eso es lo que pesa). Lo que se copió de la fila de al lado o de fuera, después, con fill
+  const len = H * row, off = dy * row + dx * per;
+  if (off > 0) a.copyWithin(0, off, len); else a.copyWithin(-off, 0, len + off);
+  const in0 = Math.max(0, -dy), in1 = Math.min(H, H - dy);           // las filas con fila de origen
+  if (in0 > 0) a.fill(f, 0, in0 * row);
+  if (in1 < H) a.fill(f, in1 * row, len);
+  for (let y = in0, o = in0 * row; y < in1; y++, o += row) { if (dx > 0) a.fill(f, o + run, o + row); else a.fill(f, o, o + tx); }
 }
 
 function shiftArray(a: unknown[], W: number, H: number, per: number, dx: number, dy: number, fill: unknown): void {
@@ -135,7 +136,8 @@ function shiftArray(a: unknown[], W: number, H: number, per: number, dx: number,
   const row = W * per, off = dx * per;
   const fwd = dy > 0 || (dy === 0 && dx > 0);                 // el orden que no pisa lo que falta por leer
   const y0 = fwd ? 0 : H - 1, y1 = fwd ? H : -1, st = fwd ? 1 : -1;
-  const k0 = Math.max(0, -off), k1 = Math.min(row, row - off);  // las k con fuente dentro de la fila
+  // las k con fuente dentro de la fila (acotadas a ella: con |dx| >= W ninguna, y todo se llena)
+  const k0 = Math.min(row, Math.max(0, -off)), k1 = Math.max(k0, Math.min(row, row - off));
   for (let y = y0; y !== y1; y += st) {
     const sy = y + dy, o = y * row;
     if (sy < 0 || sy >= H) { for (let k = 0; k < row; k++) a[o + k] = fill; continue; }
