@@ -49,7 +49,7 @@ if (process.env.ANDAR === '1') {
   const { FrameBudget } = await import('../src/view/budget');
   const KX = process.env.ESCALA === '1' ? 1 : K;
   for (const width of (process.argv[2] ?? '32,128,192,384').split(',').map(Number)) {
-    // La cola del juego (FERN): 3 ms, y 8 de lo cercano (priority < 64), como a 6x
+    // La cola de un juego: 3 ms, y 8 de lo cercano (priority < 64), como a 6x
     const painter = new SectionPainter(b, { ahead, behind: 1 }), budget = new FrameBudget(budget6 / KX, undefined, { ms: 8 / KX, below: 64 });
     let x = 64, appear = -1, holes = 0;
     const comp: number[] = [], paint: number[] = [], extra: number[] = [], compW: number[] = [];

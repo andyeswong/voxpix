@@ -1,4 +1,4 @@
-// La decoración de la demo (NARUTO): lo que dice cada tema con los materiales del motor.
+// La decoración de la demo: lo que dice cada tema con los materiales del motor.
 //   - medieval: vegetación (hierba, flores, arbustos, juncos y nenúfares con planFoliage) y árboles con copa de follaje;
 //   - oficina y cyberpunk: cubículos de vidrio con una luz dentro (la luz sale por el vidrio y no por la piedra).
 // Va en buildWorldState({ decorate }), antes del agua y del estado. Determinista por semilla.

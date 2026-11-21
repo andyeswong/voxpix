@@ -1,4 +1,4 @@
-// RUNTIME (FERN): el tick. Uno solo para todo, a 1/60 s fijos, en este orden: entrada -> mover cuerpos y
+// RUNTIME: el tick. Uno solo para todo, a 1/60 s fijos, en este orden: entrada -> mover cuerpos y
 // resolver colisiones -> eventos sobre el mundo -> world.step(). Determinista: la misma semilla y la misma entrada por
 // tick dan la misma partida, byte a byte (lo comprueba test/game/determinism.test.ts). Sin reloj ni Math.random:
 // el azar, si hace falta, sale de world.random().

@@ -1,4 +1,4 @@
-// El corte al componer (src/world/section.ts) andando por un túnel, para verlo y medirlo (NARUTO). El mundo de
+// El corte al componer (src/world/section.ts) andando por un túnel, para verlo y medirlo. El mundo de
 // scripts/tunel.ts (de bloques, con dos antorchas fijas dentro del túnel), MAIA andando por el túnel hacia el este a 5
 // bloques/s, la vista siguiéndola y la sección pintada por franjas con SectionPainter en la cola de la vista
 // (FrameBudget(3, cercano 8 / 64), como bench-corte).

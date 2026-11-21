@@ -57,7 +57,7 @@ describe('cola: el orden de push', () => {
     expect(budget.pending).toBe(0);
   });
 
-  // Lo del juego de FERN con el worker: la fase normal tiene 3 ms; delante del recuadro cercano (sin prioridad), los recuadros
+  // Lo de un juego con el worker: la fase normal tiene 3 ms; delante del recuadro cercano (sin prioridad), los recuadros
   // del worker (sin prioridad, más viejos) que cada cuadro dejan de esperar (2 por cuadro) y se publican; cada uno se come
   // el plazo
   it('salvaguarda: un recuadro cercano sin prioridad detrás de recuadros del worker sin prioridad que se publican y se comen el plazo corre en pocos cuadros', () => {
@@ -88,7 +88,7 @@ describe('cola: el orden de push', () => {
     expect(sectionRuns).toBe(60);
   });
 
-  // Lo que vio FERN con 204f7a6: varios recuadros sin prioridad, de varias llamadas cada uno, en la fase normal. Con la
+  // Lo que vio un juego con 204f7a6: varios recuadros sin prioridad, de varias llamadas cada uno, en la fase normal. Con la
   // salvaguarda adelantándolos por turnos, ninguno acababa de una vez: avanzaban a trozos, uno por cuadro, y cada uno que
   // acababa tarde se publicaba encima de la sección y la hacía repintar
   it('salvaguarda: recuadros sin prioridad de varias llamadas acaban en orden, sin turnarse (el que avanza no cede ante los que esperan)', () => {
@@ -108,7 +108,7 @@ describe('cola: el orden de push', () => {
     // (8 llamadas cada uno, una por cuadro: el primero en el cuadro 7, el último hacia el 31)
     expect(done[0]![1]).toBeLessThanOrEqual(8);
   });
-  // Lo que vio FERN en el juego al entrar bajo tierra: la sección pinta por pasos hasta el plazo, así que lo que gastan sus
+  // Lo que vio un juego al entrar bajo tierra: la sección pinta por pasos hasta el plazo, así que lo que gastan sus
   // llamadas es la fase entera (~8 ms). Cuando la salvaguarda adelantaba un recuadro cercano (1,5 ms), la sección ya "no
   // cabía" con 6,5 ms libres y perdía ese cuadro: 7-12 cuadros por entrada. Con unit (lo que cuesta un paso), cabe
   it('unit: un trabajo que llena el plazo por pasos sigue cabiendo detrás de uno adelantado (la sección tras los recuadros cercanos)', () => {

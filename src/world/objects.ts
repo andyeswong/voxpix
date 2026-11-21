@@ -1,4 +1,4 @@
-// OBJETOS del mundo (NARUTO, pedido de Andrés): muebles, columnas y lo que el juego quiera que se pueda mover o
+// OBJETOS del mundo: muebles, columnas y lo que el juego quiera que se pueda mover o
 // romper. Un objeto DORMIDO son vóxeles normales de StaticVoxels (se hornean, hacen sombra y chocan como el resto del
 // mundo); lo que añade esta capa es saber de quién es cada vóxel, cuánto pesa y cuánta vida le queda.
 //

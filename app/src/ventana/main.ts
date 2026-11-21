@@ -1,4 +1,4 @@
-// La ventana viva: lo que cuesta correrla (NARUTO). Una ventana de nx x ny trozos de 16 x 16 bloques (el mundo de
+// La ventana viva: lo que cuesta correrla. Una ventana de nx x ny trozos de 16 x 16 bloques (el mundo de
 // scripts/ventana-mundo.ts) horneada y compuesta en la GPU; cada `cada` cuadros (192: un trozo a 5 bloques/s) se corre
 // un trozo, alternando este y oeste, con shiftBakedJob en la cola de la vista (FrameBudget(3, cercano 8 / 64), como el
 // juego). Cuadros seguidos sin esperar al reloj; con el freno de CDP, los ms a esa velocidad.

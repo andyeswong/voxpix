@@ -1,4 +1,4 @@
-// VISTA (FERN): el presupuesto de cada cuadro para el trabajo de la vista que no cabe de una vez (rehornear trozos,
+// VISTA: el presupuesto de cada cuadro para el trabajo de la vista que no cabe de una vez (rehornear trozos,
 // recalcular pesos de luces, lo que venga). Lo que no cabe se hace más despacio, no más caro: con él, el p95 volvió
 // a 16,8 ms con la CPU frenada a 6x. Usa el reloj, así que vive en la vista y no en src/runtime: la simulación no lo
 // puede leer.
@@ -198,12 +198,12 @@ export class FrameBudget {
         // Lo que queda de la fase y podía correr (no espera), del mismo escalón de prioridad que el primero que podía
         // correr, también se salta este cuadro: cuenta para la salvaguarda. Si no, detrás de algo que se come el plazo en
         // cada llamada, el bucle no llegaba nunca y la racha se rompía: un recuadro cercano esperaba a que lo de delante
-        // acabara entero (1,1 s en el juego de FERN con el worker, detrás de recuadros del worker sin prioridad como él).
+        // acabara entero (1,1 s en un juego con el worker, detrás de recuadros del worker sin prioridad como él).
         // Solo su escalón: si contaban todos, a los 4 cuadros se adelantaban por delante de los de más prioridad, uno por
         // cuadro, y la sección (prioridad 0) perdía su turno (204f7a6: la franja con huecos en 40-67 cuadros de ~300).
         // Y solo si lo que se comió el plazo acabó (los del worker que se publican de una vez): si es un trabajo en marcha,
         // adelantar a los de detrás los hace avanzar por turnos, a trozos, y ninguno acaba de una vez (los recuadros que
-        // en el juego de FERN se publicaban tarde encima de la sección)
+        // en un juego se publicaban tarde encima de la sección)
         if (allDone) for (let k = i; k < this.queue.length; k++) {
           const q = this.queue[k]!;
           if (!inPhase(q)) break;

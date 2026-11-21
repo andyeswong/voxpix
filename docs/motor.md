@@ -191,7 +191,7 @@ Para que nadie lo repita a ciegas (medido en `bun scripts/bench-picar.ts`, sin f
 - **Correr las máscaras de lo expuesto con el mundo al correrse la ventana viva** (como las losas, por pasos en los
   búferes de atrás de `StaticVoxels.shiftJob`, en vez de darlas todas por caducadas): funciona (la columna de trozos a
   2 de cada borde no rehace ninguna fila, y lo expuesto es igual que en un mundo nuevo ahí), pero no gana nada medible
-  porque las máscaras son poco del coste y lo que entra las necesita nuevas igual. En Bun, con el mundo de FERN en 9 x
+  porque las máscaras son poco del coste y lo que entra las necesita nuevas igual. En Bun, con el mundo de un juego en 9 x
   11: picar junto al objetivo justo tras correrse, 4,8-6,9 ms con y 4,9-7,0 sin; un corte de casa de muñecas hondo de
   81 x 81 justo tras correrse, 50-104 ms con y 53-105 sin; el rehorneado de cada corrimiento (`bench-viva.ts`), igual.
   No entró (2026-11-17, la noche antes de una entrega, y tocando `shift`); el parche, con su test, en
@@ -1341,7 +1341,7 @@ compositor.frame(state, baked, { ...opts, section });                         //
 
   Componer y subir solo cuestan en el cuadro en que la caja salta de franja (p95 de componer ~8 ms a 6x). Con unidades
   de 8 columnas aparece antes, pero hay 6-11 cuadros de más de 25 ms.
-- Lo que cambió tras medirlo en el juego (FERN: con pasos de ~11 ms a 6x, 162-460 cuadros de más de 25 ms contra 22-23):
+- Lo que cambió tras medirlo en un juego (con pasos de ~11 ms a 6x, 162-460 cuadros de más de 25 ms contra 22-23):
   - cada unidad se pinta por bandas de `BAND` = 48 filas de la imagen (`sectionLayer` con `rows`: una fila de margen y
     solo lo que puede caer en ellas): un paso, ~0,4 ms sin freno (~3 ms a 6x); unidas, lo mismo que la unidad entera;
   - el trabajo puede no dar ningún paso si el siguiente no cabe (lo que suelen costar: el tercero mayor de los últimos

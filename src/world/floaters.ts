@@ -1,8 +1,8 @@
-// LO QUE FLOTA (NARUTO, pedido de Andrés): nenúfares, hojas, maderas... Cada flotante es una entidad del mundo (así
+// LO QUE FLOTA: nenúfares, hojas, maderas... Cada flotante es una entidad del mundo (así
 // se pinta igual en la CPU, en la GPU, con luz y en los 4 giros) que mueve el agua: sube y baja con la superficie, la
 // arrastra la corriente y la apartan las ondas (un pisotón, alguien que cruza), se frena sola y no sale del agua.
 //
-// Reglas, para que no cambie la partida (acordado con FERN):
+// Reglas, para que no cambie la partida (acordadas con el runtime):
 //   - no bloquean nada: ni la colisión, ni los disparos, ni dan sombra de verdad;
 //   - no gastan el azar del mundo: solo los mueve la simulación del agua, que es determinista;
 //   - sus entidades tienen ids propios ('flota-1', 'flota-2'...), fuera de la secuencia numérica del juego.

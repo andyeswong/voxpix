@@ -1,4 +1,4 @@
-// EDITAR EL MUNDO EN PARTIDA (NARUTO): poner un modelo de vóxeles en el escenario y vaciar una caja. Escriben por
+// EDITAR EL MUNDO EN PARTIDA: poner un modelo de vóxeles en el escenario y vaciar una caja. Escriben por
 // StaticVoxels.set, así que watchChanges da sus cajas 'voxels' de siempre y rebakeChangedJobs rehace solo lo que
 // cambió (docs/motor.md, "Editar el mundo en partida").
 import { decode, material, type Palette, type Ramp, type VoxelSource } from '../core';

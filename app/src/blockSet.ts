@@ -1,4 +1,4 @@
-// SET DE BLOQUES en el editor (NARUTO): varios modelos de N x N x N con nombre que comparten la paleta, para un mundo
+// SET DE BLOQUES en el editor: varios modelos de N x N x N con nombre que comparten la paleta, para un mundo
 // de bloques (src/world/blocks.ts). Se pinta cada bloque en el lienzo de siempre (de N x N x N) con las herramientas de
 // siempre; el set guarda los bloques y exporta un .voxset.json. Lo usan la API (window.voxpix: newSet, addBlock,
 // block, saveBlock, removeBlock, blocks, saveSet, loadSet) y el panel "Bloques".

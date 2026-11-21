@@ -105,7 +105,7 @@ export function lightsOf(sources: readonly LightSource[]): Light[] {
 // La mayor intensidad con la que una luz de ese color NO pasa de 1 en ningún canal, contando el pico del
 // parpadeo, sobre ese ambiente. Por encima de 1 la capa ADD empieza a trabajar: con el sombreado por defecto
 // deja píxeles sueltos y bordes de color (cada canal pasa de 1 en un sitio distinto); con softGlow (shade.ts)
-// no hay ese problema y esto no hace falta. Medido por FERN: [1, 0.72, 0.38] sobre un ambiente de 0.6 -> 0.4.
+// no hay ese problema y esto no hace falta. Medido en un juego: [1, 0.72, 0.38] sobre un ambiente de 0.6 -> 0.4.
 export function maxSafeIntensity(
   ambient: readonly [number, number, number],
   color: readonly [number, number, number],

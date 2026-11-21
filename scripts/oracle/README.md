@@ -71,7 +71,7 @@ Dos casos que el oráculo encontró en un solo píxel y que se arreglaron en la 
 - Un rayo de sombra que pasa justo por el borde de un vóxel (con entradas enteras es frecuente) caía en un lado en
   doble precisión y en el otro en float32. Ahora las dos rutas desempatan igual (`TIE` en `frame2d.ts`).
 
-## Resultado (NARUTO, 2026-10-24, con 7 escenas; el de hoy, arriba)
+## Resultado (2026-10-24, con 7 escenas; el de hoy, arriba)
 
 | GPU | Escenarios que pasan | Píxeles que difieren | Diferencia máxima | Píxeles a más de un nivel |
 |---|---|---|---|---|

@@ -20,7 +20,7 @@ estar midiendo. Pasó dos veces. Y el corchete no basta si en la misma línea va
 coincide): el pkill, siempre en una llamada aparte. Con la CPU a 6x el horneado tarda
 ~6 s: espera al menos 20 s antes de medir.
 
-Primera medida (NARUTO, 2026-10-24, commit c96186a, Edge sin ventana en la Alienware): a 1x p95 16,8 y 0 % perdidos;
+Primera medida (2026-10-24, commit c96186a, Edge sin ventana en la Alienware): a 1x p95 16,8 y 0 % perdidos;
 a 6x, cuadro de 43-77 ms y p95 de 67-133 ms en los tres temas (100 % perdidos). No cumple el criterio.
 
 Validación del arnés (condición de MAIA, 2026-10-24): un juego 2D de referencia que sí cumplía, medido igual, da a 6x

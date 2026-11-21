@@ -41,5 +41,5 @@ if (-not $val) {
 [IO.File]::WriteAllText($Out, $val)
 try { $ws.Abort() } catch {}
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*ss-naruto-oracle*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*voxpix-oracle*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 "ok"

@@ -146,7 +146,7 @@ export const EW = 48, EH = 72;
 const EOX = 24, EOY = 60;
 // El render de una entidad no cambia mientras no cambie su modelo, su giro ni la proyección: se guarda. Con tope
 // (los menos usados se sueltan): con giros libres, cada ángulo nuevo es un render nuevo y la caché crecía sin fin
-// (FERN lo midió: 220 MB por partida antes de llevar los giros a 8 rumbos).
+// (medido en un juego: 220 MB por partida antes de llevar los giros a 8 rumbos).
 export const MAX_ENTITY_RENDERS = 1024;
 const entityCache = new WeakMap<object, Map<string, Rendered>>();
 const entityLru = new Map<string, [object, string]>();      // en orden de uso: el primero es el más viejo
@@ -643,7 +643,7 @@ export function screenBox(b: Baked, x: number, y: number, z: number, r: number, 
     const [sx, sy] = b.cam.project(x + dx, y + dy, zz);
     x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
   }
-  // Recortada a la vista Y a la imagen horneada: la vista puede salirse de la imagen (FERN, el Flip en vertical)
+  // Recortada a la vista Y a la imagen horneada: la vista puede salirse de la imagen (en un juego, el Flip en vertical)
   const ix0 = Math.max(o.vx, 0, Math.floor(x0)), iy0 = Math.max(o.vy, 0, Math.floor(y0));
   const ix1 = Math.min(o.vx + o.vw - 1, b.width - 1, Math.ceil(x1)), iy1 = Math.min(o.vy + o.vh - 1, b.height - 1, Math.ceil(y1));
   return ix0 > ix1 || iy0 > iy1 ? null : [ix0, iy0, ix1, iy1];

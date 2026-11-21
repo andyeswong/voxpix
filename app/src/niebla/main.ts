@@ -1,4 +1,4 @@
-// La niebla por altura (Frame2DOptions.fog), para verla y medirla (NARUTO). Un terreno de bancales de 4 vóxeles con
+// La niebla por altura (Frame2DOptions.fog), para verla y medirla. Un terreno de bancales de 4 vóxeles con
 // torres y zanjas de un bloque, y MAIA andando por encima. Los deslizadores cambian focusZ, start, full, la fuerza y
 // el color; "seguir" pone focusZ en la cabeza de MAIA en cada cuadro (el foco que se mueve).
 //   ?ruta=cpu: compone la CPU   ?medir=1: mide el pase de niebla (CPU y GPU) y lo deja en window.__niebla

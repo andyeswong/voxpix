@@ -1,4 +1,4 @@
-// RUNTIME (FERN): el movimiento de un cuerpo sobre el estado del mundo. Puro y determinista: solo lee
+// RUNTIME: el movimiento de un cuerpo sobre el estado del mundo. Puro y determinista: solo lee
 // las consultas del mundo (WorldQuery), sin reloj ni azar. Ejes del modelo: x este, y norte, z arriba.
 import { NO_FOOT, type WorldState } from '../world/state';
 
@@ -17,7 +17,7 @@ export interface MoveRules {
 
 export const DEFAULT_RULES: MoveRules = { step: 2, maxWater: 4.5 };
 
-// El agua frena según la profundidad bajo los pies (los números de la demo de NARUTO). Menos de WADE es suelo
+// El agua frena según la profundidad bajo los pies (los números de la demo). Menos de WADE es suelo
 // mojado: ni frena ni salpica.
 export const WADE = 0.3;
 export function waterFactor(depth: number): number {
@@ -56,14 +56,14 @@ export function restZ(world: WorldState, x: number, y: number, r: number): numbe
 }
 
 // Los doubles que moveBody pasa a step y deflect, en un búfer en vez de como argumentos: en el navegador V8 no siempre
-// las incrusta, y un double pasado o devuelto así se guarda en el montón en cada llamada (FERN, muestreo del Brotato,
+// las incrusta, y un double pasado o devuelto así se guarda en el montón en cada llamada (muestreo de un juego,
 // 2026-11-02). [0, 1] el destino de step; [2] lo que avanza el eje que se desvía
 const MOVE = new Float64Array(3);
 
 // Lleva el cuerpo a (MOVE[0], MOVE[1]) si cabe: fits y restZ en una sola pasada por la huella, sin crear la lista de
 // celdas. Por cada celda una consulta del suelo (footing, que ya dice si se pisa) y otra del agua: es standable
 // (world/state.ts) celda a celda, así que da lo mismo que fits + restZ. Con unos 220 enemigos es lo que más pesa del
-// paso del Brotato, y lo que se crea aquí lo paga el GC: no crea nada
+// paso de un juego, y lo que se crea aquí lo paga el GC: no crea nada
 function step(world: WorldState, body: Body, rules: MoveRules): boolean {
   const nx = MOVE[0]!, ny = MOVE[1]!;
   const r = body.r, rr = r * r;

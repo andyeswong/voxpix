@@ -44,4 +44,4 @@ Shot "ctx2.png"
 "vuelto: " + (Eval "document.getElementById('hud').textContent.split('\n')[1] + ' canvases=' + document.querySelectorAll('canvas').length")
 try { $ws.Abort() } catch {}
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*ss-naruto-perf*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*voxpix-perf*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }

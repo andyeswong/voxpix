@@ -7,7 +7,7 @@
 // Un solo sistema de coordenadas: ejes del modelo (x hacia el este, y hacia el norte, z hacia arriba; 1 unidad =
 // 1 vóxel = 1 píxel). La única conversión es la cámara.
 //
-// SIMULACIÓN DETERMINISTA (acordado con FERN): el runtime lleva el tick (entrada -> mover entidades -> eventos ->
+// SIMULACIÓN DETERMINISTA (acordada con el runtime): el runtime lleva el tick (entrada -> mover entidades -> eventos ->
 // world.step()). step() avanza 1/60 s fijo, sin reloj ni Math.random: el azar es un mulberry32 del estado, sembrado
 // con la semilla de la partida. Misma semilla y mismos eventos dan la misma huella (hash).
 import type { Palette, VoxelSource } from '../core';
@@ -24,7 +24,7 @@ import { ChangeFeed, type ChangeWatch, type Box3 } from './changes';
 export const CHUNK = 16;
 
 // footAt y footing: la columna no se pisa. Un entero y no NaN: el suelo sale de una función que V8 no siempre
-// incrusta, y un double devuelto así se guarda en el montón en cada llamada (basura por celda en moveBody, FERN
+// incrusta, y un double devuelto así se guarda en el montón en cada llamada (basura por celda en moveBody, un juego
 // 2026-11-02); los enteros pequeños no. Ninguna altura de vóxel llega a él
 export const NO_FOOT = -1_000_000_000;
 
@@ -1526,7 +1526,7 @@ export class WorldState {
     return out;
   }
 
-  // ---- consultas del juego (WorldQuery, acordada con FERN). Todo en ejes del modelo: x este, y norte, z arriba.
+  // ---- consultas del juego (WorldQuery, acordada con el runtime). Todo en ejes del modelo: x este, y norte, z arriba.
 
   // ¿Vóxel sólido estático? (paredes, columnas, muebles, el pilón de la fuente)
   // (la hierba y las flores se atraviesan; los arbustos, follaje con blocks, no)
@@ -1676,7 +1676,7 @@ export class WorldState {
   }
 
   // Calienta el JIT de step (agua, gotas, salpicaduras): sin esto el primer tick de la partida tarda ~10 ms en vez de
-  // ~0,7 (lo midió FERN). Da unos ticks con un pisotón y vuelve exactamente al estado de antes (misma huella).
+  // ~0,7 (medido en un juego). Da unos ticks con un pisotón y vuelve exactamente al estado de antes (misma huella).
   warmUp(ticks = 6): void {
     const s = this.snapshot();
     const w = this.water;

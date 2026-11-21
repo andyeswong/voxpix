@@ -1,4 +1,4 @@
-// CAMINOS POR NIVELES (NARUTO): como PathField (paths.ts), pero cada celda puede tener varios suelos donde cabe un
+// CAMINOS POR NIVELES: como PathField (paths.ts), pero cada celda puede tener varios suelos donde cabe un
 // cuerpo de alto `height` (la superficie y un túnel debajo, los pisos de una casa): un nodo es una celda y uno de sus
 // suelos. Se pasa a una celda vecina subiendo como mucho `step` y bajando como mucho `maxDrop`, y solo si el tramo de
 // columna que recorre el cuerpo está libre (cae por un pozo, no atraviesa el techo de un túnel). Las distancias a una

@@ -1,4 +1,4 @@
-// Medida del giro de cámara en cuartos (NARUTO, condición de MAIA): cuánto tarda y cuánto ocupa hornear el mundo en
+// Medida del giro de cámara en cuartos: cuánto tarda y cuánto ocupa hornear el mundo en
 // cada giro, para decidir en la máquina de verdad si se guardan los 4 horneados o se rehornea al girar.
 //   ?tema=medieval  ?seed=7  ?ruta=cpu
 //   ?modo=cache: el giro actual al empezar y los otros 3 en segundo plano (prepareViewJob con la cola de presupuesto,

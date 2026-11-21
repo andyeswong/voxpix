@@ -1,4 +1,4 @@
-// VISTA (NARUTO): el cuadro del modo 2D compuesto en la GPU con WebGL2. Hace lo mismo que frame2D (CPU), que es su
+// VISTA: el cuadro del modo 2D compuesto en la GPU con WebGL2. Hace lo mismo que frame2D (CPU), que es su
 // oráculo: la CPU sigue haciendo la simulación, el horneado y el render de cada sprite de entidad (una vez por modelo
 // y giro, en un atlas); aquí se hace por píxel lo que costaba por píxel en la CPU: la luz (horneada, dinámica, las
 // sombras de las entidades), las entidades (cientos, como quads instanciados, con su luz por cara en el shader), el

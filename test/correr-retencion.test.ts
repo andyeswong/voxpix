@@ -1,7 +1,7 @@
 // shiftBakedJob no puede devolver un literal con accesores (get done, get shift, get prepared): V8 guarda los accesores de
 // un literal en la forma oculta (map) del primer objeto creado ahí, colgada de la función que lo crea, y con ellos su
 // contexto, que tiene el horneado. Así quedaba vivo para siempre el horneado del primer corrimiento (en el juego, uno de
-// ~260 MB tras girar: FERN, con una instantánea del montón del navegador; la cadena acaba en AllocationSite → map →
+// ~260 MB tras girar: en un juego, con una instantánea del montón del navegador; la cadena acaba en AllocationSite → map →
 // AccessorPair → get done → contexto → el horneado). Se comprueba la forma, no el recolector: forzar el gc desde node no
 // daba un resultado estable aquí
 import { it, expect } from 'vitest';

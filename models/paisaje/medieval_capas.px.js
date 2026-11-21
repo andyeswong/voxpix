@@ -1,6 +1,6 @@
 // Example layer file for import-pxl --stack: a 128 x 128 landscape written as code.
 // How to import it: models/README.md.
-// Paisaje medieval de 128 x 128 para VoxPix, capa por capa (NARUTO, 2026-10-25). Lo genera este mismo código:
+// Paisaje medieval de 128 x 128 para VoxPix, capa por capa (2026-10-25). Lo genera este mismo código:
 // colinas de hierba con tierra y roca debajo, un río serpenteante y un lago excavados (vacíos: el agua se echa en la
 // app con la herramienta Fluido), arena en las orillas, un camino de tierra, un castillo en la colina (torre del
 // homenaje, muralla y puerta), casas con tejado rojo, un puente de madera y árboles.

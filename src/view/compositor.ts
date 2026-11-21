@@ -1,4 +1,4 @@
-// VISTA (NARUTO): quién compone el cuadro del modo 2D. La GPU (WebGL2) si la hay; si no, la CPU (frame2D, el mismo
+// VISTA: quién compone el cuadro del modo 2D. La GPU (WebGL2) si la hay; si no, la CPU (frame2D, el mismo
 // cálculo y su oráculo), y lo dice en la consola: nunca pantalla negra.
 //
 // Si la GPU pierde el contexto (en el móvil pasa al ir a segundo plano), mientras tanto pinta la CPU en un lienzo 2D

@@ -1,4 +1,4 @@
-// Animación genérica por partes (NARUTO), para cualquier cuerpo de vóxeles (bichos de varias patas, criaturas...).
+// Animación genérica por partes, para cualquier cuerpo de vóxeles (bichos de varias patas, criaturas...).
 // Un rig dice qué vóxeles son cada parte (por su posición y su color en el modelo quieto) y, cuadro a cuadro, cuánto
 // se mueve cada una. Con eso se sacan los cuadros como modelos, igual que el walk de MAIA (src/anim/walk.ts, que se
 // queda aparte porque es su ciclo aprobado, con la cascada del pelo).

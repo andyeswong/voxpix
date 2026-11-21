@@ -1726,7 +1726,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
   // La ventana viva: al correrse, las máscaras caducan todas (StaticVoxels.shift / shiftJob) y el orden y las regiones de
   // este trabajo son de antes. Se para (sin volver a pedirse): lo que haga falta lo preparan las franjas del rehorneado,
   // con su plazo. Antes seguía, contaba las tandas de antes del corrimiento contra el tope del trozo y acababa en "lo
-  // expuesto no acaba" (FERN, abierto a 1x: el trabajo duraba ~6 s y cruzaba una docena de corrimientos)
+  // expuesto no acaba" (en un juego, a 1x: el trabajo duraba ~6 s y cruzaba una docena de corrimientos)
   // (y si se suelta su horneado, cancelRebakes: lo de la cola se descarta)
   const shifts = b.shifts ?? 0, epoch = b.rebakeEpoch ?? 0;
   const dead = () => (b.shifts ?? 0) !== shifts || (b.rebakeEpoch ?? 0) !== epoch;
@@ -1745,7 +1745,7 @@ function exposureJob(b: Baked, near?: { x: number; y: number }): ViewJob {
           if (batches > most) {
             // Si el trozo o un vecino cambió desde que se empezó (se escribió un trozo de la ventana, un corte, un golpe),
             // sus máscaras caducaron a mitad: no es un fallo, se vuelve a empezar con él sin apuntar nada (tres veces
-            // como mucho; FERN veía 0-2 avisos por carga tras morir lejos con la casa de muñecas)
+            // como mucho; un juego veía 0-2 avisos por carga tras morir lejos con la casa de muñecas)
             const ch = s.changedSince(since), cx = c % s.cols, cy = Math.floor(c / s.cols);
             const near = (q: number) => Math.abs((q % s.cols) - cx) + Math.abs(Math.floor(q / s.cols) - cy) <= 1;
             if (moved < 3 && ch.some(near)) { moved++; batches = 0; since = s.clock; }
@@ -1939,7 +1939,7 @@ export function shiftBakedJob(b: Baked, dcx: number, dcy: number, opts: { band?:
   };
   // (done, shift y prepared, con getters en el prototipo de ShiftJobState y no en un literal: los accesores de un literal se
   // guardan en la forma oculta del primer objeto creado aquí, con su contexto, y retenían para siempre el horneado del
-  // primer corrimiento; FERN, con una instantánea del montón)
+  // primer corrimiento; en un juego, con una instantánea del montón)
   const job: ShiftJob = Object.assign(new ShiftJobState({ done: () => done, shift: () => [tx, ty] as const, prepared: () => !done && (!tx && !ty || (next >= H && halo >= H)) }), {
     key: opts.key ?? 'shift',
     ...(opts.priority !== undefined ? { priority: opts.priority } : {}),

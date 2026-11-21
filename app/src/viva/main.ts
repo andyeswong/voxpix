@@ -1,4 +1,4 @@
-// El banco de andar de la ventana viva (NARUTO): MAIA anda por un mundo por regiones sin bordes (el spec de
+// El banco de andar de la ventana viva: MAIA anda por un mundo por regiones sin bordes (el spec de
 // scripts/ventana-mundo.ts con 12 bloques de alto, como el juego) a 6 bloques/s, de ida y vuelta sobre `bloques` bloques,
 // con LiveWindow (9 x 11 trozos, margen { x: 4, n: 6, s: 4 }), la cola del juego (FrameBudget(3, cercano 8 / 64)) y el
 // compositor de la GPU, en tiempo real (requestAnimationFrame). Al acabar `segundos`, deja en window.__viva:
@@ -366,7 +366,7 @@ void (async () => {
       for (let ty = tty - 2; ty <= tty + 4 && !hole; ty++) if (!win.isLoaded([tc, ty])) hole = true;
     }
     if (hole) holes++;
-    // La vara de FERN: el anillo tx ± 3, ty - 3 .. + 5 alrededor del trozo de MAIA
+    // La vara de un juego: el anillo tx ± 3, ty - 3 .. + 5 alrededor del trozo del personaje
     // (y por qué: algún trozo del anillo fuera de la ventana, o dentro sin escribir; y dónde va MAIA en la ventana)
     { const [mtx, mty] = win.trozoOf(x, Y); let r = false, out = false, unl = false;
       for (let ty = mty - 3; ty <= mty + 5; ty++) for (let tx = mtx - 3; tx <= mtx + 3; tx++) if (!win.isLoaded([tx, ty])) { r = true; if (tx < win.tx0 || tx >= win.tx0 + NXW || ty < win.ty0 || ty >= win.ty0 + NYW) out = true; else unl = true; }

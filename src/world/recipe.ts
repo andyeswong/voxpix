@@ -1,4 +1,4 @@
-// RECETA DE MUNDO (NARUTO, pedido de Andrés): un mundo entero descrito en DATOS (JSON), para que un agente lo construya
+// RECETA DE MUNDO: un mundo entero descrito en DATOS (JSON), para que un agente lo construya
 // sin escribir código: el generador y la semilla, los colores de cada papel, las columnas y los muebles como modelos de
 // vóxeles estampados, la vegetación, modelos sueltos, luces y efectos. buildRecipe la convierte en layout + mundo +
 // estado con las mismas piezas que usa el código (buildWorldState, WorldLook, planFoliage). La misma receta da siempre

@@ -1,4 +1,4 @@
-// API de MUNDOS para agentes (NARUTO, pedido de Andrés): window.voxpixWorld en la demo de escenario. Lo que hace la
+// API de MUNDOS para agentes: window.voxpixWorld en la demo de escenario. Lo que hace la
 // demo con el teclado, y construir un mundo entero desde una receta en datos (src/world/recipe.ts), sin escribir
 // código. Se ve en vivo: el agente construye y la persona lo ve. Todo en ejes del modelo del mundo (x este, y norte,
 // z arriba; 1 vóxel = 1 píxel del juego). Los errores dicen qué hacer, como window.voxpix en el editor.

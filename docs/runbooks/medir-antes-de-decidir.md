@@ -75,7 +75,7 @@ cola. `perf.ps1` solo recoge `window.__frames` y el HUD; `window.__seccion` lo r
   posteriori: se espera antes. `viva.ps1 -Calentar 150` (por defecto).
 - **Con `?hz=60`.** Edge sin ventana no tiene vsync y va a ~180 cuadros por segundo: la cola (~6 ms por cuadro)
   avanza tres veces más por segundo que en el juego. Así se escondió que la ventana viva se quedaba atrás en la página
-  de FERN.
+  del juego.
 - **Desde un worktree congelado, con vite reiniciado tras cada checkout** (`pkill -f "[v]ite app ..."` en una llamada
   aparte), y un banco corto de humo (15-20 s) antes del largo. Tres bancos seguidos midieron módulos viejos (huecos del
   65-74 % que desaparecieron al reiniciar vite) y otros se colgaron. `grep "page reload"` en el log de vite antes de
@@ -144,7 +144,7 @@ Sin `-Gpu`, `oracle.ps1` arranca Edge con SwiftShader (WebGL2 por software). Seg
 
 ## 5. Caso: el corte de frente
 
-El juego (FERN, 2026-11-16) pidió ver al jugador en un túnel con la cámara oblicua: quitar lo que tapa por delante, una
+Un juego (2026-11-16) pidió ver al jugador en un túnel con la cámara oblicua: quitar lo que tapa por delante, una
 caja de 32 x 224 desde los pies. En `bench-corte.ts` es `DOS=3`.
 
 **Rehornear no cupo.** El corte de vista (`WorldView.setCut` / `cutJob`, a5ad5e6, 209ea66, db2f9a6) quita vóxeles de

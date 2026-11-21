@@ -1,4 +1,4 @@
-// HOJA DE ICONOS (NARUTO): varios modelos pintados con el mismo ángulo y la misma escala, cada uno en su celda de una
+// HOJA DE ICONOS: varios modelos pintados con el mismo ángulo y la misma escala, cada uno en su celda de una
 // hoja, con un índice id -> recuadro. Para la barra de un juego (los bloques del inventario) sacados de los mismos
 // modelos con los que se construye el mundo. docs/editor.md, "Sets de bloques".
 import { Model } from './model';

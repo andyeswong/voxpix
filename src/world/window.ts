@@ -1,4 +1,4 @@
-// LA VENTANA VIVA, 1: los vóxeles de la ventana (NARUTO, fase 4, 3a).
+// LA VENTANA VIVA, 1: los vóxeles de la ventana (fase 4, 3a).
 //
 // Un mundo sin bordes se tiene en memoria a trozos: una ventana de nx x ny trozos alrededor del objetivo. Sus vóxeles van
 // en un StaticVoxels (store) con la esquina de la ventana en (0, 0): el trozo del mundo (tx, ty) está en

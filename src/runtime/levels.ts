@@ -1,4 +1,4 @@
-// MOVERSE POR NIVELES (NARUTO): un cuerpo con alto que anda por debajo de techos (túneles, cuevas, interiores), cae
+// MOVERSE POR NIVELES: un cuerpo con alto que anda por debajo de techos (túneles, cuevas, interiores), cae
 // por los huecos y salta. moveBody (body.ts) apoya los pies en lo más alto de cada columna, así que no puede estar
 // debajo de nada; esto es una variante aparte, para el juego que la quiera, y moveBody no cambia. Determinista: sin
 // reloj ni azar; la gravedad y el salto van por tick. docs/motor.md, "Moverse por niveles".

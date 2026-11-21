@@ -1,4 +1,4 @@
-// EL CICLO DEL DÍA (NARUTO): la luz ambiente (y, si se quiere, el fondo) a lo largo de un día, por claves. El día es
+// EL CICLO DEL DÍA: la luz ambiente (y, si se quiere, el fondo) a lo largo de un día, por claves. El día es
 // un número de ticks; la hora sale del tick de la simulación, así que es la misma en cualquier máquina y en una
 // partida repetida. Lo que se hace de noche (los bichos que salen, las antorchas que se encienden) es del juego.
 // docs/motor.md, "El ciclo del día".

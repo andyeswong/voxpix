@@ -111,7 +111,7 @@ interface Scenario {
 // La altura del suelo (la cara de arriba del más alto) bajo un punto
 function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { return state.solid.height[Math.floor(p.y) * state.solid.width + Math.floor(p.x)]!; }
 
-// Vegetación en un mundo generado (spec de KALADIN): hierba, flores y arbustos sobre la hierba, hierba sumergida en
+// Vegetación en un mundo generado: hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
 function vegetate(w: World, at: [number, number]): void {
   const m = w.model;

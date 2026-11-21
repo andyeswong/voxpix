@@ -1,4 +1,4 @@
-// VISTA (NARUTO): render() del núcleo en la GPU, para el editor. Mismo resultado que src/core/render.ts (que es su
+// VISTA: render() del núcleo en la GPU, para el editor. Mismo resultado que src/core/render.ts (que es su
 // oráculo: app/oraculo-render.html los compara píxel a píxel), pero lo caro se hace en shaders:
 //   1. una pasada por cara (vóxel x 6): si se ve (vecino vacío y de cara a la cámara) y su tono, con la normal
 //      suavizada (7x7x7 vecinos), la sombra (rayo DDA hacia la luz) y la oclusión ambiental, como toneFor;

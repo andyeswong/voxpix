@@ -35,5 +35,5 @@ $res = Send "Runtime.evaluate" @{ expression = "JSON.stringify({frames: window._
 if ($Shot) { $img = Send "Page.captureScreenshot" @{ format = "png" }; [IO.File]::WriteAllBytes($Shot, [Convert]::FromBase64String($img.result.data)) }
 try { $ws.Abort() } catch {}
 Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*ss-naruto-perf*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-CimInstance Win32_Process -Filter "Name='msedge.exe'" | Where-Object { $_.CommandLine -like "*voxpix-perf*" } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 "ok"

@@ -1,4 +1,4 @@
-// Explorar el mundo de la demo en primera persona (NARUTO, pedido de Andrés): el mismo render que la vista Explorar
+// Explorar el mundo de la demo en primera persona: el mismo render que la vista Explorar
 // del editor (renderFirstPerson del núcleo, en la GPU si hay) sobre los vóxeles estáticos del mundo, con el agua del
 // simulador como superficie (se mueve con las ondas) y las luces del mundo con su parpadeo. El personaje invisible
 // sale de donde está MAIA. Las entidades (MAIA, los flotantes) no se ven todavía: solo el escenario y el agua.

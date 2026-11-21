@@ -1,4 +1,4 @@
-// BLOQUES (NARUTO): un mundo hecho de bloques de N x N x N vóxeles, como un juego de construir y picar. Dos piezas:
+// BLOQUES: un mundo hecho de bloques de N x N x N vóxeles, como un juego de construir y picar. Dos piezas:
 //   - BlockSet: el catálogo de tipos de bloque (un .voxset.json, hecho con el editor): cada uno, un modelo de N^3 con
 //     su id y sus propiedades. Todos comparten una paleta.
 //   - BlockGrid: la rejilla de bloques de un mundo (cols x rows x layers), que es la fuente de verdad; los vóxeles son

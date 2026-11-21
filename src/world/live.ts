@@ -1,4 +1,4 @@
-// LA VENTANA VIVA (NARUTO, fase 4, 3a): un mundo sin bordes alrededor de un objetivo. Una ventana de nx x ny trozos
+// LA VENTANA VIVA (fase 4, 3a): un mundo sin bordes alrededor de un objetivo. Una ventana de nx x ny trozos
 // (cada uno de `chunk` x `chunk` bloques del set) se genera por regiones (regiongen.ts), se escribe de una vez por trozo
 // (BlockGrid.stampRegionJob), se hornea, y se corre cuando el objetivo se acerca a un borde (shiftBakedJob: la imagen y
 // los vóxeles por pasos en la cola, sin copiar ni rehornear lo que se queda). Todo el trabajo va a la FrameBudget de la
@@ -91,7 +91,7 @@ export interface LiveWindowOptions {
   // Al construir, con viewport: hornear solo lo que se ve (el núcleo, como turnTo: los trozos de vóxeles que caen en el
   // recuadro de la pantalla alrededor de `target`, recortado a él) y dejar lo demás de la imagen para la cola (rehorneado
   // de siempre). El primer cuadro enseña lo mismo que con la imagen entera; el resto se hace sin verse. Lo que queda para la
-  // cola es casi toda la imagen: con el mundo de FERN en 11 x 13, ~8700 trozos de vóxeles que tardan ~21 s a 1x en acabar
+  // cola es casi toda la imagen: con el mundo de un juego en 11 x 13, ~8700 trozos de vóxeles que tardan ~21 s a 1x en acabar
   // (por detrás, sin que se vean: andando no se llega a ver nada sin hacer). Un giro en ese tiempo hornea el giro nuevo
   // entero con turnTo, como siempre; lo que se queda a medias es la imagen del giro 0 fuera de la pantalla
   bakeFirst?: 'view';
@@ -577,7 +577,7 @@ export class LiveWindow {
     const turning = !!this.turnPrep || !!this.turnRest;
     // EL SALTO: el objetivo fuera de la ventana (aparecer lejos, un teletransporte). En vez de correrse trozo a trozo
     // (cada cambio descartaba y volvía a marcar lo encolado, y al final quedaba un rehorneado de casi toda la imagen que no
-    // se veía hasta acabar: 26-34 s en negro a 1x en la página de FERN), un solo cambio hasta la ventana centrada en él,
+    // se veía hasta acabar: 26-34 s en negro a 1x en la página de un juego), un solo cambio hasta la ventana centrada en él,
     // y la ventana nueva se carga del centro hacia fuera con prioridad cercana, como preload 'queue'. Lo que estaba por
     // escribir se olvida (sigue el trozo a medias, si lo hay)
     const outside = tx < this.tx0 || tx >= this.tx0 + nx || ty < this.ty0 || ty >= this.ty0 + ny;

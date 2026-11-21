@@ -1,4 +1,4 @@
-// VEGETACIÓN (NARUTO, spec de KALADIN): hierba, flores, juncos, nenúfares y arbustos sobre la superficie de un
+// VEGETACIÓN: hierba, flores, juncos, nenúfares y arbustos sobre la superficie de un
 // modelo. planFoliage solo PLANEA (devuelve los vóxeles a poner): quien llama los aplica, en un paso de deshacer.
 // Es determinista por semilla y mira el agua: más hierba cerca de la orilla, juncos donde cubre poco, nenúfares en
 // la superficie. Las formas son de pixel art (un vóxel = un píxel): matas de 1 o 2, flores de tallo y cabeza,

@@ -1,4 +1,4 @@
-// Lo que se aplasta (NARUTO, pedido de Andrés): la vegetación no se empuja, se aplasta al pasar o se rompe al
+// Lo que se aplasta: la vegetación no se empuja, se aplasta al pasar o se rompe al
 // golpearla. Trabaja sobre los vóxeles del mundo de los materiales con crush (materials.ts: follaje y arbusto), en las
 // columnas a menos de r de (x, y). No despierta nada: solo cambian vóxeles, y el rehorneado es el de siempre (local).
 import { decode, rampMaterial, material } from '../core';

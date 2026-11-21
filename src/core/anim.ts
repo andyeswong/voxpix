@@ -1,4 +1,4 @@
-// ANIMACIÓN (NARUTO, pedido de Andrés): un modelo con cuadros. Cada cuadro es el modelo entero (todos con la misma
+// ANIMACIÓN: un modelo con cuadros. Cada cuadro es el modelo entero (todos con la misma
 // paleta), con su duración. El archivo .voxpix.json sube a la versión 2 solo si hay más de un cuadro o un rig:
 //   { format: 'voxpix', version: 2, name, palette, voxels: <cuadro 0>, animation: { frames: [{ ms }, { ms, voxels }, ...], rig? } }
 // El cuadro 0 va en `voxels`, así quien lea la versión 1 ve el primer cuadro. Sin animación se guarda en la versión 1,

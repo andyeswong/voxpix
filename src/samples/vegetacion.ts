@@ -1,4 +1,4 @@
-// Muestra de vegetación (NARUTO): un prado con un árbol de copa de follaje, hierba, flores y un arbusto, para las
+// Muestra de vegetación: un prado con un árbol de copa de follaje, hierba, flores y un arbusto, para las
 // pruebas de la luz (sombra moteada, contraluz) y los oráculos CPU contra GPU.
 import { Model, material, box, type Palette } from '../core';
 

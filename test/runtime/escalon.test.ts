@@ -5,7 +5,7 @@ import { moveBody, restZ, type Body } from '../../src/runtime/body';
 
 // Subir escalones en diagonal: en un mismo movimiento el primer eje puede subir un escalón y el segundo tiene que
 // comprobar con los pies ya arriba. Si la altura se tomara solo al final del movimiento, el segundo eje vería los pies
-// abajo y el cuerpo se clavaría en una escalera que sí se sube (16 de 405 recorridos distintos, FERN 2026-10-31).
+// abajo y el cuerpo se clavaría en una escalera que sí se sube (16 de 405 recorridos distintos, en un juego, 2026-10-31).
 describe('escalones en diagonal', () => {
   // Sala de 120x120 con suelo en z = 1; escalera: +2 al cruzar x = 40 y otros +2 al cruzar además y = 40
   function sala(): WorldState {

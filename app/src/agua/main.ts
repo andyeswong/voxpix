@@ -1,4 +1,4 @@
-// El agua por columnas en un mundo de bloques alto (NARUTO): un mapa por semilla (generateMap) de 384 x 384 x 96
+// El agua por columnas en un mundo de bloques alto: un mapa por semilla (generateMap) de 384 x 384 x 96
 // vóxeles con lagos, el agua con mapWater y un WaterLayer sin pared por altura, y el cuadro de la GPU (o la CPU).
 //   ?medir=1: mide lo que cuesta el agua y lo deja en window.__agua:
 //     - el paso del agua por tick (WaterLayer.step) en la simulación, con pisotones y en reposo (sin nada despierto);

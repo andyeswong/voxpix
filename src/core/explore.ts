@@ -1,4 +1,4 @@
-// EXPLORAR (NARUTO, pedido de Andrés): caminar por dentro de un modelo, una escena o un mundo en primera persona, con
+// EXPLORAR: caminar por dentro de un modelo, una escena o un mundo en primera persona, con
 // un personaje invisible de la altura que se quiera. Aquí está la referencia en la CPU: el render con perspectiva por
 // trazado de rayos en la rejilla de vóxeles (Amanatides-Woo), con la paleta cerrada como el render de siempre (el sol
 // mueve el tono dentro de la rampa, con su sombra en unidades enteras de los materiales y la oclusión ambiental), y el

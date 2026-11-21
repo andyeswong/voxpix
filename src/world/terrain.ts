@@ -1,4 +1,4 @@
-// TERRENO POR SEMILLA para un mundo de bloques (NARUTO): la superficie (una altura por columna, con ruido), las capas
+// TERRENO POR SEMILLA para un mundo de bloques: la superficie (una altura por columna, con ruido), las capas
 // por profundidad, las vetas dentro de una capa y lo que se planta encima (estructuras: un árbol, una roca, lo que
 // sea, como lista de bloques). Todo como datos (TerrainSpec), determinista: la misma semilla da el mismo terreno en
 // cualquier máquina. Escribe en una BlockGrid antes de hornear. Sin cuevas (solo superficie).

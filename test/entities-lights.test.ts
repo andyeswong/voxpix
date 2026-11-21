@@ -118,7 +118,7 @@ describe('sombra de las entidades', () => {
   });
 });
 
-describe('ids deterministas (los tres detalles de FERN)', () => {
+describe('ids deterministas (los tres detalles de un juego)', () => {
   it('restore seguido de add da el mismo id que en la partida original', () => {
     const { state, body } = world();
     state.entities.add({ model: body, x: 1, y: 1, z: 1 });

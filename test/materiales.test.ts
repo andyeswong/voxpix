@@ -107,7 +107,7 @@ describe('el vidrio', () => {
   });
 });
 
-// FERN (medieval, semilla 1): la cúpula de un arbusto (alturas 1-2-3-4) se subía como una escalera con step 2, y desde
+// Un juego (medieval, semilla 1): la cúpula de un arbusto (alturas 1-2-3-4) se subía como una escalera con step 2, y desde
 // la cima el cuerpo pasaba a lo alto de la pared sur. Un arbusto no se sube ni se pisa (climb: false), a cualquier altura
 describe('los arbustos no se suben', () => {
   const PAL = { ramps: [{ name: 'suelo', colors: ['#404040'] }, { name: 'arbusto', colors: ['#2f6b32'], material: 'arbusto' }, { name: 'muro', colors: ['#606060'] }] };

@@ -162,7 +162,7 @@ describe('ventana viva: correr lo horneado', () => {
       expect(b.exposurePending).toBe(true);
       const exp = rebakeChangedJobs(b, local(0, 0)).find((j) => j.key.startsWith('exposure:'))!;
       expect(exp).toBeDefined();
-      // Varios corrimientos con el trabajo a medias (en la página de FERN cruzaba ~12), de ida y vuelta
+      // Varios corrimientos con el trabajo a medias (en la página de un juego cruzaba ~12), de ida y vuelta
       for (let k = 0; k < 8; k++) { exp.run(performance.now() + ms); shiftBaked(b, k % 2 ? -K : K, 0); }
       // Antes contaba las tandas de antes del corrimiento contra el tope de un trozo: "lo expuesto no acaba"
       let done = false;

@@ -1,4 +1,4 @@
-// Prueba de carga del compositor (NARUTO): el escenario con N entidades que andan en círculo con el walk de MAIA,
+// Prueba de carga del compositor: el escenario con N entidades que andan en círculo con el walk de MAIA,
 // para medir cuántas caben (un juego de hordas pide ~200). No es un juego: las mueve la vista, sin
 // runtime. ?n=200  ?ruta=cpu  ?tema=oficina  ?sombras=0 (sin sombra de verdad)
 //   ?antorchas=10: las 10 primeras llevan una antorcha (luz puntual que va con ellas)   ?linterna=1: y una linterna

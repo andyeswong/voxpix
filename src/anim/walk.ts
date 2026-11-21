@@ -1,4 +1,4 @@
-// El walk de MAIA en vóxeles (NARUTO), a partir de su modelo quieto. Es el mismo ciclo que el walk 2D aprobado
+// El walk de MAIA en vóxeles, a partir de su modelo quieto. Es el mismo ciclo que el walk 2D aprobado
 // (arte/aseprite-maia/v2_moonlighter/maia_anim.lua: 8 cuadros de 100 ms, contactos con el cuerpo 1 abajo, paso con
 // una pierna adelantada y la rodilla doblada, y la cascada de arrastre del pelo y los faldones). En 2D solo se podía
 // insinuar con tonos; en vóxeles las piernas y los brazos se mueven de verdad hacia delante y hacia atrás, así que

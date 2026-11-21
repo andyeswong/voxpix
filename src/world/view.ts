@@ -1,4 +1,4 @@
-// VISTA GIRADA (NARUTO): ver el mundo desde otro lado en cuartos de vuelta, sin que la simulación se entere.
+// VISTA GIRADA: ver el mundo desde otro lado en cuartos de vuelta, sin que la simulación se entere.
 //
 // El render 2D (horneado, frame2D, compositor de la GPU, agua, gotas) está escrito para la cámara oblicua que mira al
 // norte. En vez de generalizar cada fórmula, se gira EL MUNDO PARA LA VISTA: ViewCamera es la única que conoce la
@@ -425,7 +425,7 @@ export class WorldView implements RenderState {
       const touched = new Set<number>();
       // Sin vestido, por losas (un trozo entero, µs por losa): después de picar o al escribir un trozo entero (la ventana
       // viva) no se va vóxel a vóxel. En cualquier giro, con corte o sin él (la ventana viva con view: { cut: true }: antes
-      // cada trozo escrito eran ~1,5 M vóxeles uno a uno, 3,5 s de 4,8 en la carga tras morir en la página de FERN): con
+      // cada trozo escrito eran ~1,5 M vóxeles uno a uno, 3,5 s de 4,8 en la carga tras morir en la página de un juego): con
       // corte, se copia el trozo entero y se vuelve a esconder lo que el corte tiene escondido en sus columnas, como lo hace
       // applyCut. (La imagen distinta que salía de vez en cuando con esto era del cielo, no de la copia: 57ad404)
       if (!this.dress && StaticVoxels.slabCopyable(src, this.quarter)) {

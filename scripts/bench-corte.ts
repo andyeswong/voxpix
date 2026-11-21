@@ -115,7 +115,7 @@ const at = (x0: number): ViewCut | ViewCut[] => {
   // DOS=2: la caja de los pies como la de un juego: 24 de ancho centrada en la de siempre y 64 de fondo hacia la cámara
   // (y pequeñas) desde el borde del túnel, hasta los pies
   if (process.env.DOS === '2') return [roof, { x0: x0 + 4, y0: 191 - 63, x1: x0 + 27, y1: 191, zTop: 8 }];
-  // DOS=3: la caja de frente del juego (FERN, 2026-11-16): 32 de ancho y 224 de fondo hacia la cámara desde el túnel,
+  // DOS=3: la caja de frente de un juego (2026-11-16): 32 de ancho y 224 de fondo hacia la cámara desde el túnel,
   // de los pies (z 8) hacia arriba (unos 72 de alto con el relieve de aquí)
   if (process.env.DOS === '3') return [roof, { x0, y0: 191 - 223, x1: x0 + 31, y1: 191, zTop: 8 }];
   return process.env.DOS === '1' ? [roof, { x0, y0: 176, x1: x0 + 31, y1: 191, zTop: 8 }] : roof;

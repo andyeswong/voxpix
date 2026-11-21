@@ -56,7 +56,7 @@ describe('el rig guardable (RigSpec)', () => {
     expect(() => rigFromSpec({ frameMs: 100, frames: [], parts: [{ name: 'body' }] })).toThrow(/nombre/);
   });
 
-  // Los tres casos que pidió FERN, con formas genéricas: límites abiertos, una parte como unión de cajas, y el cuerpo
+  // Los tres casos que pidió un juego, con formas genéricas: límites abiertos, una parte como unión de cajas, y el cuerpo
   // que se mueve. Cada uno, el mismo resultado escrito con has() y como RigSpec (ida y vuelta por JSON)
   const same = (base: Model, code: Rig, spec: RigSpec) => {
     const a = rigFrames(base, code), b = rigFrames(base, rigFromSpec(JSON.parse(JSON.stringify(spec))));

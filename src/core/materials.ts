@@ -1,4 +1,4 @@
-// MATERIALES (NARUTO, pedido de Andrés): cada rampa de la paleta es un material, y un material es un juego de
+// MATERIALES: cada rampa de la paleta es un material, y un material es un juego de
 // PROPIEDADES que el motor lee por separado. Nadie pregunta "¿es follaje?": la luz pregunta cuánta luz deja pasar,
 // el agua si es fondo, la colisión si bloquea. Así un material nuevo (vidrio, metal, hielo...) es una fila de datos,
 // no código nuevo en cada sitio.

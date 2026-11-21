@@ -1,4 +1,4 @@
-// GUARDAR Y CARGAR (NARUTO): una instantánea del mundo (WorldState.snapshot) a bytes y de vuelta, para guardar una
+// GUARDAR Y CARGAR: una instantánea del mundo (WorldState.snapshot) a bytes y de vuelta, para guardar una
 // partida. El archivo:
 //   "VXSNAP" · versión (1 byte) · banderas (1 byte; 1 = diferencia contra una base) · largo del esqueleto (u32) ·
 //   el esqueleto en JSON (UTF-8) · los bloques binarios, cada uno: clase (u8), tipo (u8), largo (u32) y sus bytes

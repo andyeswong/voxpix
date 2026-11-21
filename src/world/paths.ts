@@ -1,4 +1,4 @@
-// CAMINOS SOBRE EL SUELO (NARUTO, a partir del campo de caminos del juego de ejemplo): una rejilla de celdas de
+// CAMINOS SOBRE EL SUELO (a partir del campo de caminos del juego de ejemplo): una rejilla de celdas de
 // `cell` vóxeles sobre las columnas del mundo, con el suelo de cada una (footing: lo más alto que se pisa) y si cabe en
 // ella un cuerpo de radio `radius`. Se pasa de una celda a una vecina (8 vecinas, sin cortar esquinas) si se sube como
 // mucho `step` y se baja como mucho `maxDrop`. Las distancias a una meta salen de un BFS hacia atrás y se rehacen solo
