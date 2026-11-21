@@ -1116,7 +1116,11 @@ water.follow(state.watchChanges());                                 // picar o p
 
   En anillo (para la ventana viva): `ShallowWater.shift(dx, dy)` corre la rejilla en celdas sin copiar nada. La celda
   (x, y) está en el índice físico `at(x, y)` (y `xy(i)` lo deshace); el origen corre y solo se limpia la franja que
-  entra, que queda seca, quieta y de pared hasta que se cargue. Sin correrse, `at(x, y)` es `y * w + x`, como siempre.
+  entra, que queda seca, quieta y de pared hasta que se cargue (por tramos seguidos de los arrays, con `fill`: en el
+  primer corrimiento de una partida el código corre en frío, y celda a celda era lo que más pesaba). Hay que vaciarlo
+  todo: `load` no toca `awake`, la pared seca la leen las vecinas, y los flujos van en la huella. Las despiertas
+  congeladas fuera del foco vuelven a la lista al correrse (correr sus cubos con la rejilla salía más caro, medido).
+  Sin correrse, `at(x, y)` es `y * w + x`, como siempre.
   `exportState` e `importState` van en el orden de la rejilla, corrida o no. Es lo mismo, byte a byte, que una
   simulación que se corre copiando (`test/agua-anillo.test.ts`), también a través de la costura del anillo.
 
@@ -1204,9 +1208,10 @@ water.follow(state.watchChanges());                                 // picar o p
     rejilla ni en los vóxeles, y lo que sale moviéndose vuelve como salió.
 
   La vista girada o con corte (`WaterView`) copiaba cada cuadro la rejilla entera del agua (fondo, pared, cuenca y
-  profundidad). Ahora copia solo lo que cambió: `WaterLayer.changesSince(seq)` da la caja de celdas que cambiaron
-  desde la copia anterior (un registro de una caja por tick, de los últimos 256; si se queda atrás, la copia entera),
-  y el corte apunta las columnas que reescribe. Con el agua quieta, nada (`visited` 0). En Bun, `frame()` de una vista
+  profundidad). Ahora copia solo lo que cambió: `WaterLayer.changedTiles(seq)` da las baldosas de 8 x 8 celdas que
+  cambiaron desde la copia anterior (de una lista de las 65.536 últimas; si se queda atrás, o tras un corrimiento que no
+  es de baldosas enteras, la copia entera), y el corte apunta las columnas que reescribe. `changesSince(seq)` sigue
+  dando la caja que las cubre a todas (un registro de los últimos 256 ticks), para quien quiera una sola caja. Con el agua quieta, nada (`visited` 0). En Bun, `frame()` de una vista
   girada en reposo pasa de 169 µs a 0,6 µs. Lo copiado es siempre lo mismo que la copia entera
   (`test/agua-vista.test.ts`). Quien escriba `sim.depth` a mano, que use `pour` o `disturb`: así queda apuntado.
 
