@@ -123,7 +123,7 @@ describe('agua: el foco', () => {
     expect(focused.sim.activeCount).toBeGreaterThan(0);
   });
 
-  it('retoma donde estaba: un lago aislado congelado K ticks y suelto después, igual que el mismo lago sin congelar', () => {
+  for (const how of ['sin foco', 'el foco se mueve hasta cubrirlo', 'instantánea a medias', 'corrimiento a medias'] as const) it(`retoma donde estaba (${how}): un lago aislado congelado K ticks y suelto después, igual que el mismo lago sin congelar`, () => {
     // Dos estanques separados por tierra alta: A (oeste) y B (este)
     const twoPonds = (x: number, y: number) => ((x >= 8 && x < 30 && y >= 20 && y < 60) || (x >= 60 && x < 88 && y >= 20 && y < 60) ? 4 : 16);
     const s = voxels(twoPonds);
@@ -133,8 +133,18 @@ describe('agua: el foco', () => {
     for (const w of [frozen, ref]) w.disturb(74, 40, 2.8, 3);
     frozen.disturb(18, 40, 2.8, 3);
     frozen.sim.focus = [0, 0, 44 / CELL, frozen.gh - 1];
-    for (let t = 0; t < 50; t++) frozen.step(1 / 60);
-    frozen.sim.focus = null;
+    for (let t = 0; t < 50; t++) {
+      frozen.step(1 / 60);
+      // (a medias: volver a una instantánea, o correr la rejilla y volver, con lo de B congelado)
+      if (t === 25 && how === 'instantánea a medias') frozen.importState(frozen.exportState());
+      if (t === 25 && how === 'corrimiento a medias') { frozen.shift(0, 0); frozen.sim.shift(4, 0); frozen.sim.shift(-4, 0); frozen.sim.focus = [0, 0, 44 / CELL, frozen.gh - 1]; }
+    }
+    expect(frozen.sim.frozenCount).toBeGreaterThan(how === 'corrimiento a medias' ? -1 : 50);
+    if (how === 'el foco se mueve hasta cubrirlo') {
+      // (de oeste a este en pasos de una celda, sin dar ticks: cada baldosa de B vuelve cuando el foco la toca)
+      for (let x1 = 44 / CELL; x1 < frozen.gw; x1++) frozen.sim.focus = [0, 0, x1, frozen.gh - 1];
+      expect(frozen.sim.frozenCount).toBe(0);
+    } else frozen.sim.focus = null;
     // B en frozen ahora = B en ref antes de dar ningún tick: M ticks en las dos y B igual byte a byte
     const cellsB: number[] = [];
     for (let gy = 0; gy < frozen.gh; gy++) for (let gx = 48 / CELL; gx < frozen.gw; gx++) cellsB.push(gy * frozen.gw + gx);
@@ -146,6 +156,36 @@ describe('agua: el foco', () => {
       }
     }
     expect(ref.sim.activeCount).toBeGreaterThan(0);
+  });
+
+  it('las congeladas: fuera de la lista mientras están fuera; dentro del foco, todas calculándose (foco que corta baldosas, tras correr, tras mover el foco)', () => {
+    const w = layer(voxels(), montaje), sim = w.sim;
+    // Despierto en todas partes
+    for (const [x, y] of [[20, 10], [70, 50], [30, 60], [16, 40], [80, 20], [48, 40]] as Array<[number, number]>) w.disturb(x, y, 2.8, 3);
+    for (let t = 0; t < 3; t++) w.step(1 / 60);
+    const check = (what: string) => {
+      const f = sim.focus!, aw = w.exportState().awake;
+      w.step(1 / 60);
+      const act = new Set([...sim.activeCells()].map((i) => sim.xy(i).join(',')));
+      let inside = 0;
+      for (let gy = f[1]; gy <= f[3]; gy++) for (let gx = f[0]; gx <= f[2]; gx++) if (aw[gy * w.gw + gx]! > 0) { inside++; if (!act.has(`${gx},${gy}`)) throw new Error(`${what}: ${gx},${gy} despierta dentro del foco y sin calcular`); }
+      // (la lista recorre solo lo de dentro: ninguna de fuera)
+      expect([what, sim.wokenCount <= inside + 4 * (f[2] - f[0] + f[3] - f[1] + 2)]).toEqual([what, true]);
+      expect([what, sim.frozenCount]).not.toEqual([what, 0]);
+      return inside;
+    };
+    // Un foco que corta las baldosas de 8 por la mitad, en los cuatro lados
+    sim.focus = [11, 6, 33, 29];
+    w.step(1 / 60);
+    expect(check('foco que corta baldosas')).toBeGreaterThan(20);
+    // Se corre la rejilla (las congeladas cambian de coordenadas) y el foco, el mismo recuadro de antes
+    sim.shift(8, 4);
+    sim.focus = [11, 6, 33, 29];
+    w.step(1 / 60);
+    check('tras correr');
+    // El foco se mueve a otro sitio (cortando baldosas)
+    sim.focus = [3, 13, 21, 37];
+    check('tras mover el foco');
   });
 
   it('setFocus: en vóxeles, un recuadro de celdas alrededor del punto, recortado a la rejilla; null, todo', () => {

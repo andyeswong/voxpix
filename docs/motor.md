@@ -1130,7 +1130,10 @@ water.follow(state.watchChanges());                                 // picar o p
   pared). Fuera queda congelado: lo despierto sigue despierto con sus flujos, no se empapa, no pierde ni gana agua, y al
   entrar en el foco sigue donde estaba (un lago congelado K ticks y suelto evoluciona igual que sin congelar). Con todo
   dentro del foco (también lo que despierta un pisotón), la misma huella que sin foco. Los eventos (pisotones, gotas)
-  tocan el agua donde caigan, dentro o fuera. Lo prueba `test/agua-foco.test.ts`.
+  tocan el agua donde caigan, dentro o fuera. Las despiertas de fuera no se recorren en cada paso: salen de la lista a
+  cubos por baldosa de 8 x 8 celdas y vuelven al entrar su baldosa en el foco (o al correrse la rejilla, o al volver a
+  una instantánea); con una ventana de 11 x 13 trozos, el paso en calma bajó de 0,045 a 0,004 ms (p50, sin freno), que
+  se iba casi todo en recorrer ~5.800 despiertas congeladas. Lo prueba `test/agua-foco.test.ts`.
 
   Cargar y guardar por trozos (la ventana viva): la capa nace sin cargar (`{ movable: true, unloaded: true }`, toda
   pared seca; el mundo puede traer `wet` y `waterTop` vacíos), se pone con `win.setWater(water)` (en el state,

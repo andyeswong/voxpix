@@ -20,6 +20,7 @@ export interface ShallowOptions {
 // despertarla: con menos, lo que bajaría en un subpaso no llega a lo que la mantiene despierta (2e-4 con k = 1/120 *
 // 400 / 2: 0,0144), y se volvería a dormir sin moverse
 const UPHILL = 0.02;
+const FROZEN_TILE = 8;      // lado (celdas) de los cubos de despiertas congeladas fuera del foco
 
 export class ShallowWater {
   readonly w: number;
@@ -54,10 +55,39 @@ export class ShallowWater {
   // EL FOCO: las celdas de la rejilla (x0, y0, x1, y1, extremos incluidos) que se calculan; null, todas. Dentro, el paso es
   // el de siempre, con lo de fuera como pared (ni entra ni sale agua por su borde). Fuera, lo despierto se queda congelado
   // (despierto, con sus flujos) y sigue donde estaba al volver a entrar. Sin foco, o con todo dentro, lo de siempre
-  focus: [number, number, number, number] | null = null;
+  // (las despiertas de fuera, congeladas, no se recorren en cada paso: van a cubos por baldosa de FROZEN_TILE celdas y
+  // vuelven a la lista al entrar su baldosa en el foco, al correrse la rejilla o al volver a una instantánea)
+  get focus(): [number, number, number, number] | null { return this.focusRect; }
+  set focus(f: [number, number, number, number] | null) {
+    this.focusRect = f ? [f[0], f[1], f[2], f[3]] : null;
+    if (!this.nFrozen) return;
+    if (!f) { this.thawAll(); return; }
+    const T = FROZEN_TILE, X = this.frozenX;
+    for (const [k, cells] of this.frozen) {
+      const tx = k % X, ty = (k - tx) / X, x0 = tx * T, y0 = ty * T;
+      if (x0 + T - 1 < f[0] || x0 > f[2] || y0 + T - 1 < f[1] || y0 > f[3]) continue;
+      for (const i of cells) this.woken[this.nWoken++] = i;
+      this.nFrozen -= cells.length;
+      this.frozen.delete(k);
+    }
+  }
+  private focusRect: [number, number, number, number] | null = null;
+  private readonly frozen = new Map<number, number[]>();
+  private nFrozen = 0;
+  private readonly frozenX: number;
+  // Todas las congeladas, de vuelta a la lista de despiertas (siguen marcadas en inWoken: nunca salieron de ella)
+  private thawAll(): void {
+    for (const cells of this.frozen.values()) for (const i of cells) this.woken[this.nWoken++] = i;
+    this.frozen.clear(); this.nFrozen = 0;
+  }
+  // (para medir y probar) cuántas despiertas hay congeladas fuera del foco
+  get frozenCount(): number { return this.nFrozen; }
+  // (para medir y probar) cuántas hay en la lista de despiertas (las que se recorren en cada paso)
+  get wokenCount(): number { return this.nWoken; }
 
   constructor(w: number, h: number, opts: ShallowOptions = {}) {
     this.w = w; this.h = h;
+    this.frozenX = Math.ceil(w / FROZEN_TILE);
     this.cell = opts.cell ?? 2;
     this.g = opts.gravity ?? 400;
     this.damping = opts.damping ?? 0.6;
@@ -99,6 +129,8 @@ export class ShallowWater {
   // cargue. Sin copiar: corre el origen y limpia la franja. Un corrimiento de todo el ancho o más lo limpia todo
   shift(dx: number, dy: number): void {
     if (!dx && !dy) return;
+    // (las congeladas están en cubos por coordenadas de la rejilla, que cambian: de vuelta a la lista)
+    this.thawAll();
     const { w, h } = this;
     this.ox = (((this.ox + dx) % w) + w) % w;
     this.oy = (((this.oy + dy) % h) + h) % h;
@@ -151,6 +183,7 @@ export class ShallowWater {
   // Vuelve a una instantánea (en el orden de la rejilla): el fondo y las paredes no van en ella; los que haya se pasan al
   // orden de la rejilla con el origen en (0, 0)
   importState(s: ReturnType<ShallowWater['exportState']>): void {
+    this.thawAll();
     if (this.ox || this.oy) { this.ground.set(this.logical(this.ground)); this.solid.set(this.logical(this.solid)); this.ox = 0; this.oy = 0; }
     this.depth.set(s.depth); this.fl.set(s.fl); this.fr.set(s.fr); this.ft.set(s.ft); this.fb.set(s.fb); this.awake.set(s.awake);
     for (let k = 0; k < this.nWoken; k++) this.inWoken[this.woken[k]!] = 0;
@@ -194,8 +227,15 @@ export class ShallowWater {
       const px = i % w, py = (i - px) / w;
       let lx = px - ox, ly = py - oy;
       if (lx < 0) lx += w; if (ly < 0) ly += h;
-      // (fuera del foco: sigue despierta, congelada, sin calcularse ni ella ni sus vecinas)
-      if (lx < fx0 || lx > fx1 || ly < fy0 || ly > fy1) continue;
+      // (fuera del foco: sigue despierta, congelada, sin calcularse ni ella ni sus vecinas; a su cubo, fuera de la lista)
+      if (lx < fx0 || lx > fx1 || ly < fy0 || ly > fy1) {
+        m--;
+        const key = Math.floor(lx / FROZEN_TILE) + Math.floor(ly / FROZEN_TILE) * this.frozenX;
+        let b = this.frozen.get(key);
+        if (!b) this.frozen.set(key, (b = []));
+        b.push(i); this.nFrozen++;
+        continue;
+      }
       add(i);
       if (lx > fx0) add(px > 0 ? i - 1 : i + w - 1);
       if (lx < fx1) add(px < w - 1 ? i + 1 : i - w + 1);
