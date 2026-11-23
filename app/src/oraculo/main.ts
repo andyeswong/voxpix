@@ -14,7 +14,7 @@ import { Model, box, material, planFoliage, rgbOf, lilyPadModels, FOLIAGE_RAMPS,
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, shiftBaked, type Baked } from '../../../src/world/bake';
-import { frame2DParts, shadeLayers, applyFog, clearTransparent, sectionFor, drawSectionBorder, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2D, frame2DParts, shadeLayers, applyFog, applyGhost, clearTransparent, sectionFor, drawSectionBorder, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
@@ -86,7 +86,8 @@ interface Scenario {
   // lleva el fondo de la sección, no transparente; secHoles cuenta lo sustituido transparente)
   // cross: con la ventana en cruz (SectionCut.window) de ese radio y ese brazo, centrada en el cuerpo del jugador; true:
   // la de por defecto (brazo 24, radio 40). border: la cruz con su borde dibujado (withBorder) de ese grosor
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number };
+  // (ghost: los vóxeles de la sección desde dz por encima de los pies del corte, semitransparentes con esa alpha)
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number; ghost?: { alpha: number; dz?: number; keepFacing?: boolean } };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -445,6 +446,16 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte al componer en cruz con borde sobre el lago con niebla, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, fog: true, section: { width: 96, painter: true, z: 1, cross: 16, border: 1 } });
   SCENARIOS.push({ ...ent, name: `corte al componer en cruz con borde, entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, cross: 12, border: 3 } });
   SCENARIOS.push({ name: `corte al componer en cruz con borde sin luces y fondo transparente, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, lights: false, clearBg: true, section: { width: 64, z: 1, cross: true, border: 2 } });
+  // Con vóxeles semitransparentes (SectionCut.ghost): la segunda superficie en la escena y el velo de la de delante en
+  // el paso final; con la caja de cada cuadro y por franjas (con otras alphas en los cuadros de antes), con caras opacas
+  // (keepFacing, desde el suelo del corte: de frente todo son caras que miran a la cámara, y el velo queda en las de
+  // arriba, el suelo), con entidades y luz dinámica, con niebla, por la cruz con borde, y sin luces sobre fondo transparente
+  SCENARIOS.push({ name: `corte con velo bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, ghost: { alpha: 0.35 } } });
+  SCENARIOS.push({ name: `corte con velo y caras opacas bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, ghost: { alpha: 0.35, dz: -1, keepFacing: true } } });
+  SCENARIOS.push({ name: `corte con velo por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, ghost: { alpha: 0.6 } } });
+  SCENARIOS.push({ ...ent, name: `corte con velo, entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, ghost: { alpha: 0.35, dz: 4 } } });
+  SCENARIOS.push({ name: `corte con velo en cruz con borde sobre el lago con niebla, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, fog: true, section: { width: 96, painter: true, z: 1, cross: 16, border: 1, ghost: { alpha: 0.5 } } });
+  SCENARIOS.push({ name: `corte con velo en cruz con borde sin luces y fondo transparente, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, lights: false, clearBg: true, section: { width: 64, z: 1, cross: true, border: 2, ghost: { alpha: 0.35 } } });
 }
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
@@ -467,6 +478,13 @@ interface Result {
   backSame?: { cpu: boolean; gpu: boolean };
   gpuShifts?: number;      // con shift: cuántas veces corrió la GPU sus texturas dentro de sí (sin volver a subirlas)   // con shift 'vuelta': la vista de después, igual byte a byte a la de antes
   secDiffer?: number;
+  // Con ghost en la sección: píxeles con velo en la vista; de ellos, con algo delante del vóxel (sin velo) y con algo
+  // entre las dos superficies; los que el velo cambia respecto a alpha 1 (la CPU), y los que difieren de la GPU
+  veilPx?: number;
+  veilFront?: number;
+  veilBetween?: number;
+  veilShown?: number;
+  veilDiffer?: number;
   secHoles?: number;       // con pit: píxeles sustituidos transparentes en la CPU (0: el fondo)
   secFill?: number;        // con pit: píxeles sustituidos con el fondo (sin cara)      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
   secMaxFinal?: number;
@@ -620,21 +638,24 @@ async function run(): Promise<void> {
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
     if (sc.section) {
       const p = rt.player, arm = sc.section.cross;
-      const at = (dx: number) => {
-        const cut = sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
+      const gh = sc.section.ghost;
+      const at = (dx: number, alpha = gh?.alpha ?? 0) => {
+        const zc = sc.section!.z ?? p.z;
+        const cut = { ...sectionAround(view.camera, p.x + dx, p.y, zc, sc.section!.width), ...(gh ? { ghost: { z: zc + (gh.dz ?? 8), alpha, ...(gh.keepFacing ? { keepFacing: true } : {}) } } : {}) };
         if (!arm) return cut;
         const [vx, vy] = view.camera.pointToView(p.x + dx, p.y), [wx, wy] = b.cam.project(vx, vy, p.z + 8);
         const border = sc.section!.border ? { color: '#ffd666', width: sc.section!.border } : null;
         return { ...cut, window: arm === true ? crossWindow(wx, wy, { border }) : crossWindow(wx, wy, { arm, r: arm, border }) };
       };
       const painter = sc.section.painter ? new SectionPainter(b) : null;
-      const step = (dx: number): Frame2DOptions => {
-        if (!painter) return { ...o, section: at(dx) };
-        painter.set(at(dx), 1);
+      const step = (dx: number, alpha?: number): Frame2DOptions => {
+        if (!painter) return { ...o, section: at(dx, alpha) };
+        painter.set(at(dx, alpha), 1);
         painter.job()?.run(Infinity);
         return { ...o, sectionLayer: painter.layer() };
       };
-      for (const dx of [-16, -8]) gpu.read(view.frame(), b, step(dx), 'color');
+      // (con ghost, los cuadros de antes con otras alphas y el cuadro entero: alpha cambia sin subir nada)
+      for (const [k, dx] of [-16, -8].entries()) gpu.read(view.frame(), b, step(dx, gh ? [0.9, 0.1][k] : undefined), gh ? 'frame' : 'color');
       o = step(0);
     }
     let before: { cpu: Uint8ClampedArray; gpu: Uint8Array } | null = null;
@@ -672,9 +693,13 @@ async function run(): Promise<void> {
     const parts = frame2DParts(rs, b, o);
     const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
     const secLine = sc.section?.border ? sectionFor(b, o) : null;
-    const cpuFinal = layers ? applyLayers(parts.view, layers) : o.fog || secLine ? parts.view.slice() : parts.view;
+    // (con ghost, el cuadro lleva el cielo de la superficie de delante en lo que queda delante de un vóxel con velo: hace
+    // falta la profundidad; las capas sueltas, sin ella, como las de la GPU)
+    const veiled = !!(sc.section?.ghost && sectionFor(b, o)?.ghost);
+    const cpuFinal = layers ? applyLayers(parts.view, veiled ? shadeLayers(parts.total!, o, b, parts.depth) : layers) : o.fog || secLine || veiled ? parts.view.slice() : parts.view;
     if (o.fog) applyFog(cpuFinal, parts.depth, b, o);
     if (o.background === 'transparent') clearTransparent(cpuFinal);
+    if (veiled) applyGhost(cpuFinal, parts.depth, rs, b, o);
     // (el borde de la ventana del corte va solo en el cuadro final, encima de todo)
     drawSectionBorder(cpuFinal, secLine, o);
     const c1 = performance.now();
@@ -730,6 +755,33 @@ async function run(): Promise<void> {
         if (fd) { r.secDiffer = (r.secDiffer ?? 0) + 1; r.secMaxFinal = Math.max(r.secMaxFinal ?? 0, fd); }
       }
       r.secPx = n1; r.secBorder = n2;
+      // El velo: cuántos píxeles lo llevan, qué hay delante y entre las dos superficies, y si se ve (contra alpha 1)
+      const G = L?.ghost;
+      if (sc.section.ghost) {
+        r.veilPx = 0; r.veilFront = 0; r.veilBetween = 0; r.veilShown = 0; r.veilDiffer = 0;
+        if (L && G) {
+          const a0 = G.alpha;
+          const o1: Frame2DOptions = o.section?.ghost ? { ...o, section: { ...o.section, ghost: { ...o.section.ghost, alpha: 1 } } } : o;
+          G.alpha = 1;
+          const opaque = frame2D(rs, b, o1);
+          if (o.section) sectionFor(b, o); else G.alpha = a0;
+          for (let j = 0; j < L.h; j++) for (let i = 0; i < L.w; i++) {
+            const qq = secIdx(L, L.x + i, j), x = L.x + i - vx, y = L.y + j - vy;
+            if (x < 0 || y < 0 || x >= VW || y >= VH || L.mask[qq] !== 1 || !G.on[qq]) continue;
+            const t = y * VW + x, d = parts.depth[t]!;
+            r.veilPx++;
+            if (d < L.depth[qq]! - 0.5) r.veilFront++; else if (d < G.depth[qq]! - 0.5) r.veilBetween++;
+            let shown = false, fd = 0;
+            for (let ch = 0; ch < 4; ch++) { if (cpuFinal[t * 4 + ch] !== opaque[t * 4 + ch]) shown = true; fd = Math.max(fd, Math.abs(cpuFinal[t * 4 + ch]! - gFinal[t * 4 + ch]!)); }
+            if (shown) r.veilShown++;
+            if (fd) r.veilDiffer++;
+          }
+        }
+        // (una escena con ghost sin velo a la vista, o en la que no cambia nada, no prueba nada)
+        if (!r.veilPx || !r.veilShown) r.pass = false;
+        // (y el velo tiene que salir igual en las dos: como mucho unos píxeles de redondeo)
+        if (r.veilDiffer > Math.max(4, r.veilPx * 0.005)) r.pass = false;
+      }
       // El borde dibujado de la ventana: cuántos píxeles lleva en la vista y en cuántos la GPU no da justo su color
       if (L?.window?.border) {
         const c = rgbOf(L.window.border.color);
@@ -743,7 +795,7 @@ async function run(): Promise<void> {
         r.secLine = n; r.secLineOff = off;
         if (off || !n) r.pass = false;
       }
-      r.secInfo = { cut: o.section ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z] };
+      r.secInfo = { cut: o.section ?? L?.box ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z], ghost: L?.ghost ? [L.ghost.z, L.ghost.count] : null };
     }
     results.push(r);
     shots[sc.name] = { cpu: toPng(cpuFinal), gpu: toPng(gFinal), diff: toPng(diffMask(cpuFinal, gFinal)), colorDiff: toPng(diffMask(parts.view, gColor)) };

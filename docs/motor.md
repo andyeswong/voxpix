@@ -1447,7 +1447,21 @@ piso de arriba sin dejar de verlo.
     con velo), 1,23 veces; 73,3 ms con `z` 32, 1,26 veces; con `keepFacing` (32 píxeles con velo), 58,1 ms.
 - Con `ghost.z` por debajo del suelo de la caja, de lo de debajo del suelo solo se ve la capa de justo debajo de
   `ghost.z` (la sección no recorre lo enterrado bajo la caja).
-- Por ahora el compositor de la GPU lo ignora (pinta la superficie de delante, como sin ghost).
+- En el compositor de la GPU:
+  - Las dos texturas de la capa llevan, en los píxeles con velo, la segunda superficie y un 128 más en la máscara: el
+    paso de escena no cambia (sigue con sus 15 samplers, sin sitio para más) y todo lo que compone lo hace sobre ella.
+  - La superficie de delante va en dos texturas más (color; profundidad, y del mundo, cara y cielo), del mismo anillo,
+    que se suben con las mismas columnas sucias y solo lee el paso final (`FRAG_SHADE`). Ahí se calcula su luz con las
+    mismas funciones que la escena (`LIGHT_FNS`) y se mezcla. El paso final queda con 10 samplers de 16: color, luz,
+    profundidad, cielo y máscara de la capa, más las dos del velo, la tabla de luces, los cuerpos que dan sombra y las
+    sombras de contacto.
+  - `alpha` es un uniform: cambiarla no sube nada. Apagado, un uniform a falso: ni texturas ni subida.
+  - Las capas sueltas (`read` con `color`, `multiply` o `add`) no llevan velo: son las de la escena con la segunda
+    superficie.
+  - Oráculo: 24 escenas con ghost (`corte con velo…`, en los 4 giros): con la caja de cada cuadro y por franjas, con
+    `keepFacing`, con antorchas, con entidades y luz dinámica, por la cruz con borde sobre el lago con niebla, y sin
+    luces sobre fondo transparente. En todas, ningún píxel con velo difiere entre la CPU y la GPU. Las 149 escenas de
+    antes salen iguales byte a byte (las cuatro imágenes de cada una) que antes del ghost.
 
 ### La forma del corte: una ventana en la imagen
 

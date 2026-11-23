@@ -39,7 +39,9 @@ float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
 // del mundo, cara (con el código de su luz por detrás, como uFace) y máscara (1 sustituido, 2 borde) + 16 * cielo con el
 // corte (enteros pequeños: exactos en un float); y un 8 más en la máscara en los píxeles de dentro de la ventana del
-// corte, si la hay (SectionCut.window), y un 4 en los de su borde dibujado, si lo lleva (withBorder)
+// corte, si la hay (SectionCut.window), y un 4 en los de su borde dibujado, si lo lleva (withBorder). Con ghost
+// (SectionCut.ghost), un 128 más en los píxeles con velo: ahí las dos texturas llevan la segunda superficie (lo que entra
+// en la escena) y la de delante va en otras dos que solo lee el paso final (FRAG_SHADE)
 const SECTION = `uniform bool uSec;
 uniform ivec4 uSecRect;                // x, y, w, h en la imagen horneada
 uniform int uSecTW;                    // la columna x de la imagen va en la x mod uSecTW de las texturas (un anillo)
@@ -67,7 +69,51 @@ bool secBorder(ivec2 s) {
   if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
   return (int(secGeo(s).a) & 4) != 0;
 }
-int secSky(ivec2 s) { return int(secGeo(s).a) >> 4; }`;
+// ¿El píxel s lleva velo (la capa tiene ahí la segunda superficie)?
+bool secGhost(ivec2 s) {
+  if (!uSec) return false;
+  ivec2 l = s - uSecRect.xy;
+  if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
+  return (int(secGeo(s).a) & 128) != 0;
+}
+int secSky(ivec2 s) { return (int(secGeo(s).a) >> 4) & 7; }`;
+
+// La luz de un punto del escenario: lo que aporta una luz y si el cuerpo de una entidad la tapa. Lo comparten la escena
+// y el velo del paso final (la misma cuenta en los dos). Necesita LIGHT_TABLE, uEntOccMin, uEntOccSize, uOcc y TIE
+const LIGHT_FNS = `float facing(float ndl, float back) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : back > 0.0 ? -ndl * back : 0.0; }
+
+float contribution(int i, vec3 P, vec3 n, float back) {
+  vec4 lp = lightPos(i);
+  vec3 dd = lp.xyz - P;
+  float d = length(dd);
+  if (d >= lp.w) return 0.0;
+  float k = 1.0 - d / lp.w;
+  return k * k * lightCol(i).w * (d < 1e-6 ? 1.0 : facing(dot(n, dd) / d, back)) * spot(i, -dd);
+}
+
+bool blockedByBody(int e, vec3 P, vec3 L) {
+  vec3 mn = vec3(uEntOccMin[e].xyz);
+  vec3 mx = mn + vec3(uEntOccSize[e]);
+  float t0 = 0.0, t1 = 1.0;
+  for (int i = 0; i < 3; i++) {
+    float d = L[i] - P[i];
+    if (abs(d) < 1e-9) { if (P[i] < mn[i] || P[i] > mx[i]) return false; continue; }
+    float a = (mn[i] - P[i]) / d, b = (mx[i] - P[i]) / d;
+    if (a > b) { float s = a; a = b; b = s; }
+    t0 = max(t0, a); t1 = min(t1, b);
+    if (t0 > t1) return false;
+  }
+  float len = length(L - P) * (t1 - t0);
+  int steps = max(1, int(ceil(len * 2.0)));
+  ivec3 imn = uEntOccMin[e].xyz, size = uEntOccSize[e];
+  for (int k = 0; k <= steps; k++) {
+    float t = t0 + (t1 - t0) * float(k) / float(steps);
+    ivec3 v = ivec3(floor(P + (L - P) * t + TIE)) - imn;   // el mismo desempate que la CPU (frame2d.ts)
+    if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, size))) continue;
+    if (texelFetch(uOcc, ivec3(v.x + uEntOccMin[e].w, v.y, v.z), 0).r > 0.0) return true;
+  }
+  return false;
+}`;
 
 const HEADER = `#version 300 es
 precision highp float;
@@ -144,40 +190,7 @@ layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oLight;
 layout(location = 2) out vec4 oDepth;
 
-float facing(float ndl, float back) { return ndl > 0.0 ? 0.35 + 0.65 * ndl : back > 0.0 ? -ndl * back : 0.0; }
-
-float contribution(int i, vec3 P, vec3 n, float back) {
-  vec4 lp = lightPos(i);
-  vec3 dd = lp.xyz - P;
-  float d = length(dd);
-  if (d >= lp.w) return 0.0;
-  float k = 1.0 - d / lp.w;
-  return k * k * lightCol(i).w * (d < 1e-6 ? 1.0 : facing(dot(n, dd) / d, back)) * spot(i, -dd);
-}
-
-bool blockedByBody(int e, vec3 P, vec3 L) {
-  vec3 mn = vec3(uEntOccMin[e].xyz);
-  vec3 mx = mn + vec3(uEntOccSize[e]);
-  float t0 = 0.0, t1 = 1.0;
-  for (int i = 0; i < 3; i++) {
-    float d = L[i] - P[i];
-    if (abs(d) < 1e-9) { if (P[i] < mn[i] || P[i] > mx[i]) return false; continue; }
-    float a = (mn[i] - P[i]) / d, b = (mx[i] - P[i]) / d;
-    if (a > b) { float s = a; a = b; b = s; }
-    t0 = max(t0, a); t1 = min(t1, b);
-    if (t0 > t1) return false;
-  }
-  float len = length(L - P) * (t1 - t0);
-  int steps = max(1, int(ceil(len * 2.0)));
-  ivec3 imn = uEntOccMin[e].xyz, size = uEntOccSize[e];
-  for (int k = 0; k <= steps; k++) {
-    float t = t0 + (t1 - t0) * float(k) / float(steps);
-    ivec3 v = ivec3(floor(P + (L - P) * t + TIE)) - imn;   // el mismo desempate que la CPU (frame2d.ts)
-    if (any(lessThan(v, ivec3(0))) || any(greaterThanEqual(v, size))) continue;
-    if (texelFetch(uOcc, ivec3(v.x + uEntOccMin[e].w, v.y, v.z), 0).r > 0.0) return true;
-  }
-  return false;
-}
+${LIGHT_FNS}
 
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
@@ -489,6 +502,10 @@ void main() {
 
 // ---- 4) La luz a pixel art (buildLayers + applyLayers, con steps 8 y brillo suave) y al lienzo
 export const FRAG_SHADE = `${HEADER}
+#define MAXL ${MAX_LIGHTS}
+#define MAXE ${MAX_CASTERS}
+#define REACH 48.0
+#define TIE (1.0 / 1024.0)
 uniform sampler2D uColorTex;
 uniform sampler2D uLightTex;
 uniform bool uLights;
@@ -511,7 +528,29 @@ uniform sampler2D uDepthTex;
 uniform vec4 uFogP;                 // z0, inv (1e30 sin tramo), fuerza, 0
 uniform vec3 uFogColor;             // 0..255
 uniform vec4 uUnproj;               // originY, a, f2, den
+// El velo de los vóxeles semitransparentes de la sección (frame2d.ts: applyGhost), solo en el cuadro: la superficie de
+// delante de los píxeles con velo (secGhost), con la luz de un píxel sustituido de la escena (FRAG_SCENE), su niebla, y
+// mezclada con uGhostK sobre lo que quedó, si eso no está delante del vóxel
+uniform bool uGhost;
+uniform float uGhostK;              // ghostMix(alpha)
+uniform sampler2D uGhostColor;
+uniform sampler2D uGhostGeo;        // profundidad, y del mundo, cara (con el código de su luz por detrás) y cielo
+uniform float uBack[16];
+uniform float uA, uOriginY;
+uniform vec3 uDirs[6];
+uniform int uNLights;
+${LIGHT_TABLE}
+uniform int uNEnt;
+uniform ivec4 uEntBox[MAXE];
+uniform vec3 uEntPos[MAXE];
+uniform ivec4 uEntOccMin[MAXE];
+uniform ivec3 uEntOccSize[MAXE];
+uniform uint uEntNear[MAXE];
+uniform sampler3D uOcc;
+uniform sampler2D uContact;
 out vec4 oColor;
+
+${LIGHT_FNS}
 
 const int BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 const int STEPS = 8;
@@ -522,15 +561,74 @@ float quantize(float v, int steps, float threshold) {
   return min(top, max(0.0, floor(v * top + threshold))) / top;
 }
 
-vec3 fogged(ivec2 t, vec3 c) {
-  if (!uFog) return c;
-  float d = texelFetch(uDepthTex, t, 0).r;
+vec3 foggedAt(ivec2 t, vec3 c, float d) {
   if (isinf(d)) return c;
   float P = uUnproj.x - (float(t.y + uView.y) + 0.5);
   float z = (P - uUnproj.y * P * uUnproj.z / uUnproj.w) + uUnproj.y / uUnproj.w * d;
   if (!(z < uFogP.x)) return c;
   float k = floor(uFogP.z * min(1.0, (uFogP.x - z) * uFogP.y) * 256.0 + 0.5) / 256.0;
   return floor(c + (uFogColor - c) * k + 0.5);
+}
+vec3 fogged(ivec2 t, vec3 c) {
+  if (!uFog) return c;
+  return foggedAt(t, c, texelFetch(uDepthTex, t, 0).r);
+}
+
+// La luz a pixel art de un píxel: sus capas (mul, add, 0..255) con la luz tot y el ambiente amb
+void layersOf(vec3 tot, vec3 amb, float threshold, out vec3 mul, out vec3 add) {
+  float lum = 0.3 * tot.r + 0.6 * tot.g + 0.1 * tot.b;
+  float soft = quantize(min(1.0, max(0.0, lum - 1.0) * GLOW), STEPS * 2, 0.5);
+  float peak = max(max(tot.r, tot.g), max(tot.b, 1e-6));
+  for (int ch = 0; ch < 3; ch++) {
+    float tt = tot[ch];
+    float base = min(1.0, amb[ch]);
+    float room = 1.0 - base;
+    float lit = room > 0.0 ? quantize(min(1.0, max(0.0, tt - base) / room), STEPS, threshold) * room : 0.0;
+    mul[ch] = floor((base + lit) * 255.0 + 0.5);
+    add[ch] = floor(soft * min(1.0, tt / peak) * 255.0 + 0.5);
+  }
+  mul = clamp(mul, 0.0, 255.0); add = clamp(add, 0.0, 255.0);
+}
+
+// La luz de la superficie de delante de un píxel con velo: la de un píxel sustituido de la escena (FRAG_SCENE con
+// sm == 1): su cielo, las luces fijas como las dinámicas, las sombras de las entidades y las de contacto
+vec3 veilLight(ivec2 t, ivec2 s, vec4 gg) {
+  vec3 total = uUseSky ? uSkyAmb[int(gg.a)] : uAmbient;
+  int fr = int(gg.b);
+  if (fr >= 0) {
+    int f = fr & 7;
+    float back = uBack[fr >> 3];
+    float Pp = uOriginY - (float(s.y) + 0.5);
+    vec3 P = vec3(float(s.x), gg.g, Pp - uA * gg.g);
+    vec3 n = uDirs[f];
+    for (int i = 0; i < uNLights; i++) {
+      if (lightMeta(i).z == 0.0 && !(lightMeta(i).x >= 0.0)) continue;
+      float w = contribution(i, P, n, back);
+      if (w != 0.0) total += lightCol(i).rgb * w;
+    }
+    for (int e = 0; e < uNEnt; e++) {
+      if (uEntNear[e] == 0u) continue;
+      ivec4 bx = uEntBox[e];
+      if (s.x < bx.x || s.y < bx.y || s.x > bx.z || s.y > bx.w) continue;
+      vec3 ep = uEntPos[e];
+      if (abs(P.x - ep.x) > REACH || abs(P.y - ep.y) > REACH) continue;
+      vec3 Pl = P + n * 0.05 - ep;
+      for (int i = 0; i < uNLights; i++) {
+        if ((uEntNear[e] & (1u << uint(i))) == 0u) continue;
+        if (!blockedByBody(e, Pl, lightPos(i).xyz - ep)) continue;
+        float w = contribution(i, P, n, back);
+        if (w == 0.0) continue;
+        total = max(vec3(0.0), total - lightCol(i).rgb * w);
+      }
+    }
+  }
+  return total * texelFetch(uContact, t, 0).rgb;
+}
+
+// El velo (rgb 0..255) sobre lo que quedó (res: rgb 0..255 y alfa 0 o 1)
+vec4 veilOver(vec4 res, vec3 lit) {
+  if (res.a == 0.0) return vec4(lit, floor(uGhostK * 255.0 + 0.5) / 255.0);
+  return vec4(floor(res.rgb + (lit - res.rgb) * uGhostK + 0.5), 1.0);
 }
 
 void main() {
@@ -542,30 +640,40 @@ void main() {
   // Con fondo transparente lo que no tiene nada encima sale con alfa 0 y color 0 (frame2d.ts: clearTransparent)
   bool clear = sc4.a == 0.0;
   if (uMode == 1) { oColor = clear ? vec4(0.0) : vec4(scene / 255.0, 1.0); return; }
-  if (!uLights) { oColor = clear && uMode == 0 ? vec4(0.0) : vec4(fogged(t, scene) / 255.0, 1.0); return; }
+  // El velo: ¿este píxel lo lleva?, la superficie de delante y lo que quedó en él
+  ivec2 s = t + uView;
+  bool gh = uGhost && secGhost(s);
+  vec4 gg = vec4(0.0);
+  float dNow = 0.0;
+  if (gh) { gg = texelFetch(uGhostGeo, secTexel(s), 0); dNow = texelFetch(uDepthTex, t, 0).r; }
+  bool veil = gh && uMode == 0 && dNow >= gg.r - 0.5;
+  if (!uLights) {
+    if (uMode != 0) { oColor = vec4(fogged(t, scene) / 255.0, 1.0); return; }
+    vec4 res = clear ? vec4(0.0) : vec4(fogged(t, scene), 1.0);
+    if (veil) { vec3 fc = floor(texelFetch(uGhostColor, secTexel(s), 0).rgb * 255.0 + 0.5); res = veilOver(res, uFog ? foggedAt(t, fc, gg.r) : fc); }
+    oColor = vec4(res.rgb / 255.0, res.a);
+    return;
+  }
   vec3 tot = texelFetch(uLightTex, t, 0).rgb;
   float threshold = (float(BAYER[(t.y & 3) * 4 + (t.x & 3)]) + 0.5) / 16.0;
-  float lum = 0.3 * tot.r + 0.6 * tot.g + 0.1 * tot.b;
-  float soft = quantize(min(1.0, max(0.0, lum - 1.0) * GLOW), STEPS * 2, 0.5);
-  float peak = max(max(tot.r, tot.g), max(tot.b, 1e-6));
   vec3 amb = uAmbient;
   if (uUseSky) {
-    ivec2 s = t + uView, ssz = textureSize(uSky, 0);
-    amb = uSkyAmb[secMask(s) > 0 ? secSky(s) : (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
+    ivec2 ssz = textureSize(uSky, 0);
+    // (lo que quedó delante de un vóxel con velo lleva el cielo de la superficie de delante, como sin ghost)
+    amb = uSkyAmb[secMask(s) > 0 ? (gh && dNow < gg.r - 0.5 ? int(gg.a) : secSky(s)) : (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
   }
   vec3 mul, add;
-  for (int ch = 0; ch < 3; ch++) {
-    float tt = tot[ch];
-    float base = min(1.0, amb[ch]);
-    float room = 1.0 - base;
-    float lit = room > 0.0 ? quantize(min(1.0, max(0.0, tt - base) / room), STEPS, threshold) * room : 0.0;
-    mul[ch] = floor((base + lit) * 255.0 + 0.5);
-    add[ch] = floor(soft * min(1.0, tt / peak) * 255.0 + 0.5);
-  }
-  mul = clamp(mul, 0.0, 255.0); add = clamp(add, 0.0, 255.0);
+  layersOf(tot, amb, threshold, mul, add);
   if (uMode == 2) { oColor = vec4(mul / 255.0, 1.0); return; }
   if (uMode == 3) { oColor = vec4(add / 255.0, 1.0); return; }
-  oColor = clear ? vec4(0.0) : vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)) / 255.0, 1.0);
+  vec4 res = clear ? vec4(0.0) : vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)), 1.0);
+  if (veil) {
+    vec3 fc = floor(texelFetch(uGhostColor, secTexel(s), 0).rgb * 255.0 + 0.5), fm, fa;
+    layersOf(veilLight(t, s, gg), uUseSky ? uSkyAmb[int(gg.a)] : uAmbient, threshold, fm, fa);
+    vec3 lit = clamp(roundEven(fc * fm / 255.0 + fa), 0.0, 255.0);
+    res = veilOver(res, uFog ? foggedAt(t, lit, gg.r) : lit);
+  }
+  oColor = vec4(res.rgb / 255.0, res.a);
 }`;
 
 

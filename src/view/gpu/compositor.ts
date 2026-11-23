@@ -13,7 +13,7 @@
 import { DIR_VECTORS, unkey, FX_STRIDE, rgbOf } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
-import { sectionFor } from '../../world/frame2d';
+import { sectionFor, ghostMix } from '../../world/frame2d';
 import { secIdx, windowBorderSpans, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
@@ -142,6 +142,17 @@ export class GpuCompositor {
   private secSize: [number, number] = [0, 0];
   private tSecColor: WebGLTexture | null = null;
   private tSecGeo: WebGLTexture | null = null;
+  // Con ghost (SectionCut.ghost): la superficie de delante de los píxeles con velo, para el paso final (las dos de
+  // arriba llevan ahí la segunda superficie, que es lo que entra en la escena). ghostOf: la capa con que están al día
+  private tGhostColor: WebGLTexture | null = null;
+  private tGhostGeo: WebGLTexture | null = null;
+  private ghostSize: [number, number] = [0, 0];
+  private ghostOf: SectionLayer | null = null;
+  // Lo de este cuadro que el velo del paso final necesita de la escena: cuántas luces, la capa de entidades y los cuerpos
+  // que dan sombra (setCasters)
+  private veilLights = 0;
+  private veilEnt: EntTarget | null = null;
+  private casters: { n: number; box: Int32Array; pos: Float32Array; omin: Int32Array; osize: Int32Array; near: Uint32Array } | null = null;
   // ms de la última subida de la capa (0 si no cambió)
   sectionMs = 0;
   private targets: [Target, Target] | null = null;
@@ -311,6 +322,7 @@ export class GpuCompositor {
     const E = this.ensureEntTarget(o.vw, o.vh);
     const sprites = state.entities.map((e) => entitySprite(b, e, o)).filter((d) => onView(d, o));
     this.drawEntities(state, b, sprites, E, o, lights.length);
+    this.veilEnt = E; this.veilLights = lights.length;
     this.parts.entities = performance.now() - up;
     upMs += this.parts.entities;
 
@@ -504,13 +516,34 @@ export class GpuCompositor {
     const border = this.secLayer?.window?.border ?? null;
     gl.uniform1i(p.u.uSecBorder, border ? 1 : 0);
     if (border) { const c = rgbOf(border.color); gl.uniform3f(p.u.uSecBorderColor, c[0] / 255, c[1] / 255, c[2] / 255); }
+    // El velo del ghost de la sección, solo en el cuadro: la superficie de delante, con la luz de la escena de este cuadro
+    // (las unidades de sus texturas se ponen siempre: un sampler3D no puede quedarse en la unidad de uno 2D)
+    const gs = mode === 0 && this.ghostOf === this.secLayer ? this.secLayer?.ghost ?? null : null;
+    const veil = !!gs && !!this.baked && ghostMix(gs.alpha) > 0;
+    gl.uniform1i(p.u.uGhost, veil ? 1 : 0);
+    bindTex(gl, 3, gl.TEXTURE_2D, veil ? this.tGhostColor : null, p.u.uGhostColor);
+    bindTex(gl, 4, gl.TEXTURE_2D, veil ? this.tGhostGeo : null, p.u.uGhostGeo);
+    bindTex(gl, 8, gl.TEXTURE_2D, veil ? this.tLights : null, p.u.uLightTab);
+    bindTex(gl, 7, gl.TEXTURE_3D, veil ? this.tOcc : null, p.u.uOcc);
+    bindTex(gl, 10, gl.TEXTURE_2D, veil ? this.veilEnt?.contact ?? null : null, p.u.uContact);
+    if (veil) {
+      const bk = this.baked!;
+      gl.uniform1f(p.u.uGhostK, ghostMix(gs!.alpha));
+      gl.uniform1f(p.u.uA, bk.options.oblique?.y ?? 1);
+      gl.uniform1f(p.u.uOriginY, bk.options.originY ?? 0);
+      gl.uniform3fv(p.u.uDirs, DIR_VECTORS.flat());
+      gl.uniform1fv(p.u.uBack, this.backVals);
+      gl.uniform1i(p.u.uNLights, o.lights ? this.veilLights : 0);
+      this.applyCasters(p.u);
+    }
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
     // La niebla por altura, solo en el cuadro (mode 0): las capas sueltas son las de antes
     const fog = mode === 0 && this.baked ? fogParams(o.fog) : null;
     gl.uniform1i(p.u.uFog, fog ? 1 : 0);
-    bindTex(gl, 2, gl.TEXTURE_2D, fog ? B.depth : null, p.u.uDepthTex);
+    // (la profundidad de lo que quedó: para la niebla y para saber qué queda delante de un vóxel con velo)
+    bindTex(gl, 2, gl.TEXTURE_2D, fog || veil ? B.depth : null, p.u.uDepthTex);
     if (fog) {
       const u = unprojector(this.baked!), c = o.fog!.color;
       gl.uniform4f(p.u.uFogP, fog.z0, Number.isFinite(fog.inv) ? fog.inv : 1e30, fog.strength, 0);
@@ -657,7 +690,7 @@ export class GpuCompositor {
     if (sec === this.secLayer && b === this.secOf) return;
     const up = this.secOf === b ? this.secLayer : null;
     this.secLayer = sec; this.secOf = b;
-    if (!sec) return;
+    if (!sec) { this.ghostOf = null; return; }
     const t0 = performance.now(), gl = this.gl;
     let full = !(sec.base && up && sec.base === up && sec.dirty && sec.y === up.y && sec.h === up.h);
     if (!this.tSecColor || sec.w > this.secSize[0] || sec.h > this.secSize[1]) {
@@ -670,6 +703,19 @@ export class GpuCompositor {
       this.secSize = [W, H];
       full = true;
     }
+    // Con ghost, las dos texturas de la superficie de delante, del mismo tamaño; enteras si no venían al día con la capa
+    // anterior (la primera con ghost, o tras una sin él)
+    if (sec.ghost) {
+      if (!this.tGhostColor || this.ghostSize[0] !== this.secSize[0] || this.ghostSize[1] !== this.secSize[1]) {
+        for (const tx of [this.tGhostColor, this.tGhostGeo]) if (tx) gl.deleteTexture(tx);
+        this.tGhostColor = tex2D(gl, gl.RGBA8, this.secSize[0], this.secSize[1], gl.RGBA, gl.UNSIGNED_BYTE, null);
+        this.tGhostGeo = tex2D(gl, gl.RGBA32F, this.secSize[0], this.secSize[1], gl.RGBA, gl.FLOAT, null);
+        this.ghostSize = [this.secSize[0], this.secSize[1]];
+        full = true;
+      }
+      if (this.ghostOf !== up || !up) full = true;
+    }
+    this.ghostOf = sec.ghost ? sec : null;
     const cols: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;
     for (const [g0, g1, r0, r1] of cols) {
       const a = Math.max(sec.x, g0), z = Math.min(sec.x + sec.w - 1, g1), j0 = Math.max(0, r0 ?? 0), j1 = Math.min(sec.h - 1, r1 ?? sec.h - 1);
@@ -686,11 +732,28 @@ export class GpuCompositor {
     const gl = this.gl, h = j1 - j0 + 1, n = g1 - g0 + 1, TW = this.secSize[0];
     const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
     const vals = this.backVals, win = sec.window ?? null, sp: number[] = [];
+    // Con ghost: en los píxeles con velo (máscara 1 y ghost.on), a las dos texturas de siempre va la segunda superficie
+    // con un 128 más en la máscara, y a las del velo, la de delante. En los demás, las del velo quedan a cero
+    const G = sec.ghost ?? null, ggeo = G ? new Float32Array(n * h * 4) : null, gcolor = G ? new Uint8Array(n * h * 4) : null;
+    const faceCode = (f: number, back: number) => (f >= 0 && back > 0 ? f + 8 * vals.indexOf(Math.fround(back), 1) : f);
     for (let j = j0; j <= j1; j++) {
       const row = (j - j0) * n;
       for (let k = 0; k < n; k++) {
         const q = secIdx(sec, g0 + k, j), o = (row + k) * 4, m = sec.mask[q]!;
         if (!m) { geo[o] = Infinity; continue; }
+        if (G && m === 1 && G.on[q]) {
+          color[o] = G.rgba[q * 4]!; color[o + 1] = G.rgba[q * 4 + 1]!; color[o + 2] = G.rgba[q * 4 + 2]!; color[o + 3] = G.rgba[q * 4 + 3]!;
+          geo[o] = G.depth[q]!;
+          geo[o + 1] = G.wy[q]!;
+          geo[o + 2] = faceCode(G.face[q]!, G.back[q]!);
+          geo[o + 3] = m + 128 + 16 * (G.sky ? G.sky[q]! : 0);
+          gcolor![o] = sec.rgba[q * 4]!; gcolor![o + 1] = sec.rgba[q * 4 + 1]!; gcolor![o + 2] = sec.rgba[q * 4 + 2]!; gcolor![o + 3] = sec.rgba[q * 4 + 3]!;
+          ggeo![o] = sec.depth[q]!;
+          ggeo![o + 1] = sec.wy[q]!;
+          ggeo![o + 2] = faceCode(sec.face[q]!, sec.back[q]!);
+          ggeo![o + 3] = sec.sky ? sec.sky[q]! : 0;
+          continue;
+        }
         color[o] = sec.rgba[q * 4]!; color[o + 1] = sec.rgba[q * 4 + 1]!; color[o + 2] = sec.rgba[q * 4 + 2]!; color[o + 3] = sec.rgba[q * 4 + 3]!;
         const f = sec.face[q]!, back = f >= 0 ? sec.back[q]! : 0;
         geo[o] = sec.depth[q]!;
@@ -715,6 +778,12 @@ export class GpuCompositor {
       gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.UNSIGNED_BYTE, color);
       uploadTo(gl, gl.TEXTURE_2D, this.tSecGeo!);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.FLOAT, geo);
+      if (G) {
+        uploadTo(gl, gl.TEXTURE_2D, this.tGhostColor!);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.UNSIGNED_BYTE, gcolor!);
+        uploadTo(gl, gl.TEXTURE_2D, this.tGhostGeo!);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, tx, j0, pw, h, gl.RGBA, gl.FLOAT, ggeo!);
+      }
       k0 += pw;
     }
     gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
@@ -905,12 +974,18 @@ export class GpuCompositor {
       lights.forEach((l, j) => { if (l.owner !== e.id && Math.hypot(l.x - ex, l.y - ey) < resolveLight(l, 0).radius + SHADOW_REACH) mask |= 1 << j; });
       near[i] = mask >>> 0;
     });
-    gl.uniform1i(u.uNEnt, ents.length);
-    gl.uniform4iv(u.uEntBox, box);
-    gl.uniform3fv(u.uEntPos, pos);
-    gl.uniform4iv(u.uEntOccMin, omin);
-    gl.uniform3iv(u.uEntOccSize, osize);
-    gl.uniform1uiv(u.uEntNear, near);
+    this.casters = { n: ents.length, box, pos, omin, osize, near };
+    this.applyCasters(u);
+  }
+  private applyCasters(u: Uniforms): void {
+    const gl = this.gl, c = this.casters;
+    if (!c) return;
+    gl.uniform1i(u.uNEnt, c.n);
+    gl.uniform4iv(u.uEntBox, c.box);
+    gl.uniform3fv(u.uEntPos, c.pos);
+    gl.uniform4iv(u.uEntOccMin, c.omin);
+    gl.uniform3iv(u.uEntOccSize, c.osize);
+    gl.uniform1uiv(u.uEntNear, c.near);
   }
 
   // Las entidades a la capa de entidades (color, su luz, profundidad, con z-buffer) y sus sombras de contacto
