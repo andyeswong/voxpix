@@ -568,40 +568,71 @@ export class SectionPainter {
   // (para medir) franjas que un recuadro publicado no dejó viejas porque no cambió nada de lo que pintan (revalidate)
   revalidated = 0;
   private ids = 0;
+  // La holgura con que set conserva la caja pintada mientras el objetivo se mueve, en vóxeles: el suelo de la caja puede
+  // quedar hasta zBelow por debajo de los pies y hasta zAbove por encima, y la caja puede acabar hasta yBehind filas
+  // detrás de los pies. Por defecto 1, 4 y STRIP. Un mundo de bloques de N vóxeles que no quiera repintar en cada
+  // escalón pone las suyas (se pueden cambiar en cualquier momento: valen desde el set siguiente)
+  slack: { zBelow: number; zAbove: number; yBehind: number };
+  // Lo pintado para la caja anterior (otra y u otra z), que se sigue enseñando hasta que la de ahora esté pintada entera
+  private held: SectionPainter | null = null;
+  // (la que guarda `held`: no pinta ni mira si lo suyo sigue al día)
+  private frozen = false;
 
-  constructor(readonly b: Baked, opts: { ahead?: number; behind?: number } = {}) {
+  constructor(readonly b: Baked, opts: { ahead?: number; behind?: number; slack?: { zBelow?: number; zAbove?: number; yBehind?: number } } = {}) {
     this.ahead = opts.ahead ?? 4; this.behind = opts.behind ?? 1;
+    this.slack = { zBelow: opts.slack?.zBelow ?? 1, zAbove: opts.slack?.zAbove ?? 4, yBehind: opts.slack?.yBehind ?? STRIP };
   }
 
   // La caja de este cuadro (o null: sin corte) y hacia dónde anda en x de la vista (-1, 0, 1). La caja se lleva a
   // franjas enteras en x (las que toca), y en y y en z se queda con holgura
   set(cut: SectionCut | null, dir = 0): void {
     this.dir = dir;
-    if (!cut) { this.cut = null; return; }
+    if (!cut) { this.cut = null; this.held = null; return; }
     // (con el mismo ancho siempre: la caja siguiente es esta desplazada una franja, y lo que se adelanta para ella vale)
     const x0 = Math.floor(cut.x0 / STRIP) * STRIP, x1 = x0 + Math.ceil((cut.x1 - cut.x0 + 1) / STRIP) * STRIP - 1;
     // En y y en z, con holgura: lo pintado sigue valiendo mientras el objetivo se mueve un poco (si no, cada vóxel que se
     // mueve en y o en z lo repinta todo). La caja nunca acaba más de una fila antes de los pies (siempre corta lo de
     // delante) y puede acabar hasta STRIP filas detrás; nunca corta más de un vóxel por debajo de los pies (el suelo) y
-    // puede empezar hasta 4 por encima. Fuera de eso, a los pies de ahora. (Redondear a bloques de 8 no vale: en un mundo
-    // cuyos pies no caen en múltiplos de 8, cortaba el suelo)
+    // puede empezar hasta 4 por encima (son las de por defecto: `slack`). Fuera de eso, a los pies de ahora. (Redondear
+    // a bloques de 8 no vale: en un mundo cuyos pies no caen en múltiplos de 8, cortaba el suelo)
     // Mientras se prepara un corrimiento, lo pintado se pone al día cada cuadro (fresh apunta el serial): al cambiar solo se
     // corre lo que estaba al día justo antes
     if (this.b.shifting) for (const i of this.strips.keys()) this.fresh(i);
     // La ventana se corrió (shiftBakedJob): lo pintado se corre con la imagen en vez de tirarlo
     const sh = this.b.shifts ?? 0;
     if (sh !== this.seenShifts) {
+      // (lo de la caja anterior no se corre: se deja de enseñar)
+      this.held = null;
       if (sh === this.seenShifts + 1 && this.b.lastShift && this.cut) this.shiftStrips(this.b.lastShift);
       else this.clearAll();
       this.seenShifts = sh;
     }
-    const prev = this.cut;
-    const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + STRIP ? prev.y1 : cut.y1;
-    const zMin = prev && prev.zMin >= cut.zMin - 1 && prev.zMin <= cut.zMin + 4 ? prev.zMin : cut.zMin;
+    const prev = this.cut, sl = this.slack;
+    const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + sl.yBehind ? prev.y1 : cut.y1;
+    const zMin = prev && prev.zMin >= cut.zMin - sl.zBelow && prev.zMin <= cut.zMin + sl.zAbove ? prev.zMin : cut.zMin;
+    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
+    // La caja cambió en y o en z: lo pintado no vale para la de ahora, pero se sigue enseñando hasta tener la nueva
+    if (track !== this.track) { if (this.track) this.resets++; this.hold(); this.track = track; this.clearAll(); }
     // (la ventana no cambia lo que se pinta: se aplica al componer)
     this.cut = { ...cut, x0, x1, y1, zMin };
-    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
-    if (track !== this.track) { if (this.track) this.resets++; this.track = track; this.clearAll(); }
+  }
+  // Aparta lo pintado para la caja de hasta ahora (this.cut), con su composición, para seguir enseñándolo. Si ya había
+  // algo apartado y lo de ahora no llegó a estar entero (cayendo varios escalones seguidos), se queda lo apartado
+  private hold(): void {
+    if (!this.cut || !this.strips.size || (this.held && !this.whole())) return;
+    const h = new SectionPainter(this.b, { ahead: this.ahead, behind: this.behind });
+    h.frozen = true; h.cut = this.cut; h.seenShifts = this.seenShifts; h.ids = this.ids;
+    h.strips = this.strips; h.edgeSkies = this.edgeSkies; h.wundo = this.wundo; h.undo = this.undo;
+    h.raw = this.raw; h.composed = this.composed; h.last = this.last; h.shaped = this.shaped;
+    this.strips = new Map(); this.edgeSkies = new Map(); this.wundo = []; this.undo = [];
+    this.held = h;
+  }
+  // ¿Están pintadas todas las franjas de la caja de ahora (al día o no)?
+  private whole(): boolean {
+    const c = this.cut;
+    if (!c) return true;
+    for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) if (i >= 0 && i * UNIT < this.b.source.width && !this.strips.has(i)) return false;
+    return true;
   }
   // (para medir) veces que lo pintado se tiró por moverse la caja en y o en z
   resets = 0;
@@ -665,6 +696,7 @@ export class SectionPainter {
   private fresh(i: number): boolean {
     const st = this.strips.get(i);
     if (!st) return false;
+    if (this.frozen) return true;
     const pub = this.b.published;
     if (pub.serial === st.serial) return true;
     // (lo publicado desde entonces: lo que se guarda y, de lo olvidado, lo que une cada tanda; null, ya no se sabe)
@@ -845,7 +877,15 @@ export class SectionPainter {
   private edgeValid(c: SectionCut, side: 0 | 1): boolean {
     const e = this.edgeSkies.get(this.edgeKey(c, side));
     if (!e) return false;
-    return this.edgeCols(c, side).every((x, k) => { const i = Math.floor(x / UNIT); return this.strips.get(i)?.layer === e.units[k] && (e.units[k] === undefined || this.fresh(i)); });
+    return this.edgeCols(c, side).every((x, k) => { const i = Math.floor(x / UNIT); return this.strips.get(i)?.layer === e.units[k]; });
+  }
+  // Lo que se enseña de la unidad i en una capa de filas ry..ry + h - 1: lo último que se pintó entero, esté al día o
+  // no (una franja que un rehorneado dejó vieja se sigue enseñando hasta que está la nueva: si no, cada edición dentro
+  // de la caja dejaba un hueco de varios cuadros). undefined: sin pintar (o pintada con otras filas); null: sin nada
+  private shown(i: number, ry: number, h: number): SectionLayer | null | undefined {
+    const st = this.strips.get(i);
+    if (!st) return undefined;
+    return st.layer && (st.layer.y !== ry || st.layer.h !== h) ? undefined : st.layer;
   }
   private edgeSky(c: SectionCut, side: 0 | 1, ry: number, h: number): Uint8Array {
     const key = this.edgeKey(c, side);
@@ -854,7 +894,7 @@ export class SectionPainter {
     const Y0 = Math.max(0, c.y0), Y1 = Math.min(b.source.depth - 1, c.y1);
     const out = new Uint8Array(m * h).fill(255), units: Array<SectionLayer | null | undefined> = [];
     for (let k = 0; k < m; k++) {
-      const x = side ? c.x1 - k : c.x0 + k, i = Math.floor(x / UNIT), st = this.fresh(i) ? this.strips.get(i)?.layer : undefined;
+      const x = side ? c.x1 - k : c.x0 + k, i = Math.floor(x / UNIT), st = this.shown(i, ry, h);
       units.push(st);
       if (!st) continue;
       const sk = (b.options.originX ?? 0) + x - st.x;
@@ -926,15 +966,23 @@ export class SectionPainter {
     return r.y1 >= ry0 - mr && r.y0 <= ry1 + mr;
   }
 
-  // La capa de la caja de ahora, con lo que ya está pintado (las franjas que falten, sin sustituir todavía)
+  // La capa de la caja de ahora, con lo que ya está pintado (las franjas que falten, sin sustituir todavía; las que un
+  // rehorneado dejó viejas, con lo que tenían hasta que se repintan). Tras cambiar la caja en y o en z, la de la caja
+  // anterior (con las x y la ventana de ahora) hasta que la de ahora está pintada entera: ni un cuadro con hueco
   layer(): SectionLayer | null {
     const c = this.cut;
     if (!c) return null;
+    const hd = this.held;
+    if (hd) {
+      if (this.whole()) this.held = null;
+      else { hd.cut = { ...hd.cut!, x0: c.x0, x1: c.x1, window: c.window }; return hd.layer(); }
+    }
     const i0 = c.x0 / UNIT, i1 = (c.x1 + 1) / UNIT - 1;
     let ready = '';
-    for (let i = i0; i <= i1; i++) ready += this.fresh(i) ? `${this.strips.get(i)!.id},` : '0,';
-    // (lo que cambia la capa: la caja, qué unidades están al día y lo pintado; no la imagen entera: un rehorneado lejos
-    // no la toca, y el de cerca deja su unidad sin estar al día)
+    // (fresh: pone al día las que un recuadro tocó sin cambiarles nada, revalidate, que puede rehacerles la máscara)
+    for (let i = i0; i <= i1; i++) { this.fresh(i); ready += `${this.strips.get(i)?.id ?? 0},`; }
+    // (lo que cambia la capa: la caja, qué unidades están pintadas y lo pintado; no la imagen entera: un rehorneado lejos
+    // no la toca, y el de cerca deja su unidad vieja, que se sigue enseñando hasta que se repinta)
     const key = `${c.x0},${c.x1}:${ready}`;
     const serial = this.b.published.serial;
     let layer: SectionLayer | null;
@@ -1048,8 +1096,8 @@ export class SectionPainter {
     for (let i = c.x0 / UNIT; i <= (c.x1 + 1) / UNIT - 1; i++) {
       const gx0 = Math.max(rx, ox + i * UNIT), gx1 = Math.min(rx1, ox + i * UNIT + UNIT - 1);
       if (gx0 > gx1) continue;
-      if (!this.fresh(i)) { put(null, gx0, gx1); continue; }
-      const L = this.strips.get(i)!.layer;
+      const L = this.shown(i, ry, h);
+      if (L === undefined) { put(null, gx0, gx1); continue; }
       raw.units.set(i, L);
       count += L ? unitCount(L, ox + i * UNIT) : 0;
       if (prev && prevUnits.get(i) === L && gx0 >= prevRx && gx1 < prevRx + prevW) continue;

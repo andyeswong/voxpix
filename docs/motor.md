@@ -1285,6 +1285,19 @@ compositor.frame(state, baked, { ...opts, section });                         //
     costura, y el cielo de 9 columnas, que la cola ya adelantó para la caja siguiente. Dos búferes se turnan: la capa
     devuelta vale hasta dos composiciones después;
   - una unidad caduca si se rehornea algo a 9 columnas de ella, y todas si cambian la fila del objetivo o sus pies;
+  - lo que caduca se sigue enseñando hasta que está lo nuevo, sin cuadros con hueco. Una unidad que un rehorneado dejó
+    vieja (una edición dentro de la caja) sale en la capa con lo que tenía hasta que se repinta. Y si la caja cambia
+    en y o en z (un escalón), `layer()` sigue devolviendo la de la caja anterior, con las x y la ventana de ahora,
+    hasta que la nueva está pintada entera; entonces la cambia de una vez y quien lleva una copia la sube entera
+    (`base` nulo). En una caída de varios escalones seguidos se queda la última que estuvo entera. Mientras tanto la
+    capa, y lo que se pica por ella, es de hace unos cuadros. Se suelta sin esperar si no hay corte (`set(null)`) o
+    si la ventana de trozos se corre. `ready()` y `boxState()` siguen diciendo lo que falta de la caja de ahora;
+  - la caja pintada se conserva mientras el objetivo se mueve poco: su suelo puede quedar hasta `slack.zBelow`
+    vóxeles por debajo de los pies y `slack.zAbove` por encima, y acabar hasta `slack.yBehind` filas detrás. Por
+    defecto 1, 4 y 8. En un mundo de bloques de N vóxeles, `new SectionPainter(baked, { slack: { zBelow: N, zAbove:
+    N } })` no repinta al subir o bajar un escalón; a cambio el suelo del corte puede quedar hasta N vóxeles por
+    encima o por debajo de los pies. `painter.slack` se puede cambiar después;
+  - pruebas de lo anterior: `test/corte-parpadeo.test.ts`;
   - un paso de pintado no se corta: dentro del trabajo, el siguiente solo empieza si cabe lo que costó el último, y
     entre trabajos manda la FrameBudget.
   - La capa compuesta es la misma que la de la caja entera (`test/corte-componer.test.ts`).
