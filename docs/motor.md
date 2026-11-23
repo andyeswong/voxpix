@@ -1458,10 +1458,31 @@ piso de arriba sin dejar de verlo.
   - `alpha` es un uniform: cambiarla no sube nada. Apagado, un uniform a falso: ni texturas ni subida.
   - Las capas sueltas (`read` con `color`, `multiply` o `add`) no llevan velo: son las de la escena con la segunda
     superficie.
-  - Oráculo: 24 escenas con ghost (`corte con velo…`, en los 4 giros): con la caja de cada cuadro y por franjas, con
+  - Que una capa lleve velo y la anterior de su cadena no (o al revés) no lo dicen sus columnas sucias: esa capa se
+    sube entera.
+  - Oráculo: 28 escenas con ghost (`corte con velo…`, en los 4 giros): con la caja de cada cuadro y por franjas, con
     `keepFacing`, con antorchas, con entidades y luz dinámica, por la cruz con borde sobre el lago con niebla, y sin
     luces sobre fondo transparente. En todas, ningún píxel con velo difiere entre la CPU y la GPU. Las 149 escenas de
-    antes salen iguales byte a byte (las cuatro imágenes de cada una) que antes del ghost.
+    antes salen iguales byte a byte (las cuatro imágenes de cada una) que antes del ghost. "Que se enciende y se
+    apaga" compara además cuadro a cuadro una secuencia (`veilSeq`): encendido, apagado, con un velo sin nada que
+    velar, de vuelta, con otra alpha, y dos capas hechas a mano que solo cambian en llevar o no el velo.
+- Banco en `app/viva.html` (`?velo=A` enciende el ghost desde `?veloz=N` vóxeles, 8, sobre el suelo de la caja), a 6x
+  con la GPU, 60 s andando con la caja de 16 bloques por la cruz (`seccion=16&cruz=24&radio=40`), 134 escalones por
+  pasada (cada uno cambia la z del velo y repinta la caja). Dos pasadas de cada, alternadas:
+
+  | | cuadro p50 | cuadro p95 | `gpu.frame` media | `componer` media | cuadros con la caja sin acabar | racha media hasta caja entera |
+  |---|---|---|---|---|---|---|
+  | antes del ghost | 19,1 / 18,8 ms | 25,5 / 24,9 ms | 1,59 / 1,50 ms | 2,19 / 2,06 ms | 17,6 / 17,3 % | (sin medir) |
+  | ghost apagado | 18,6 / 18,4 ms | 24,6 / 25,3 ms | 1,60 / 1,54 ms | 2,16 / 2,07 ms | 16,6 / 17,1 % | 4,05 / 4,20 cuadros |
+  | `velo=0.35` | 19,3 / 19,3 ms | 25,1 / 25,6 ms | 1,51 / 1,58 ms | 2,03 / 2,15 ms | 17,4 / 18,5 % | 4,24 / 4,63 cuadros |
+  | `velo=0.6` (una pasada) | 18,9 ms | 25,4 ms | 1,57 ms | 2,11 ms | 18,6 % | 4,61 cuadros |
+
+  Apagado no se distingue de antes. Encendido tampoco se sale del ruido entre pasadas, pero este banco exige poco al
+  velo: andando por la superficie la capa lleva como mucho 64 píxeles con velo (`seccion.velo` en el resultado), y con
+  el corte dos bloques bajo tierra (`seccionz=16`), 152 (ahí, una pasada de cada: p95 27,1 ms apagado y 24,9 encendido;
+  racha media 5,24 y 5,18 cuadros). El coste de pintar con mucho velo es el del túnel de más arriba (1,23 a 1,26 veces
+  el tiempo hasta caja entera, con 5024 píxeles con velo). El coste por cuadro en la GPU con muchos píxeles con velo
+  está sin medir.
 
 ### La forma del corte: una ventana en la imagen
 

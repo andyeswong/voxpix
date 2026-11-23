@@ -178,6 +178,8 @@ void (async () => {
   const over25By: Record<string, number> = {};
   const fases: Record<string, number[]> = {};
   const SECCION = Number(q.get('seccion') ?? 0), RAFAGA = Number(q.get('rafaga') ?? 0), SECZ = Number(q.get('seccionz') ?? 0), CRUZ = Number(q.get('cruz') ?? 0), RADIO = Number(q.get('radio') ?? 40), BORDE = Number(q.get('borde') ?? 0);
+  let veloMax = 0;                                       // (para medir) el máximo de píxeles con velo de la capa
+  const VELO = q.get('velo') === null ? null : Number(q.get('velo')), VELOZ = Number(q.get('veloz') ?? 8), VELOCARAS = q.get('velocaras') === '1';
   let sinHornear = 0, sinHornearPrimero = -1, muestras = 0;
   const captura: { primero?: string; final?: string; finalA?: number } = {}, CAPTURA = q.get('captura') === '1';
   let nextBurst = 2000;
@@ -339,10 +341,14 @@ void (async () => {
       // (?cruz=N: la sección solo por una ventana en cruz de brazo N, y ?radio=R, 40, alrededor del cuerpo; ?borde=G: con
       // su borde dibujado de G píxeles, del color de ?bordecolor=rrggbb)
       if (CRUZ) { const [vx, vy] = win.view.camera.pointToView(lx, ly), [wx, wy] = win.baked.cam.project(vx, vy, ground(x, Y) + 8); cut.window = crossWindow(wx, wy, { arm: CRUZ, r: RADIO, border: BORDE ? { color: `#${q.get('bordecolor') ?? 'ffd666'}`, width: BORDE } : null }); }
+      // (?velo=A: lo de la sección desde ?veloz=N vóxeles (8) por encima del suelo de la caja, semitransparente con alpha A;
+      // ?velocaras=1: con keepFacing. La z del velo cambia con cada escalón, como el suelo de la caja)
+      if (VELO !== null) cut.ghost = { z: cut.zMin + VELOZ, alpha: VELO, ...(VELOCARAS ? { keepFacing: true } : {}) };
       painter.set(cut, dir);
       const pj = painter.job();
       if (pj) timed.push(pj);
       o.sectionLayer = painter.layer();
+      veloMax = Math.max(veloMax, o.sectionLayer?.ghost?.count ?? 0);
       if (frames.length > 60) {
         secFrames++;
         const st = painter.boxState();
@@ -523,7 +529,7 @@ void (async () => {
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
-      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, velo: veloMax, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), media: +(secRuns.reduce((a, r) => a + r, 0) / Math.max(1, secRuns.length)).toFixed(2), p95: [...secRuns].sort((a, r) => a - r)[Math.floor(0.95 * Math.max(0, secRuns.length - 1))] ?? 0, hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       fases: Object.fromEntries(Object.entries(fases).map(([k, v]) => [k, { m: +avg(v).toFixed(2), p95: pq(v, 0.95) }])),
       agua: water ? {

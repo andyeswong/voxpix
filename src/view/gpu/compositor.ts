@@ -703,8 +703,8 @@ export class GpuCompositor {
       this.secSize = [W, H];
       full = true;
     }
-    // Con ghost, las dos texturas de la superficie de delante, del mismo tamaño; enteras si no venían al día con la capa
-    // anterior (la primera con ghost, o tras una sin él)
+    // Con ghost, las dos texturas de la superficie de delante, del mismo tamaño. Que una capa lleve velo y la anterior no
+    // (o al revés) no lo dicen sus columnas sucias: se sube entera
     if (sec.ghost) {
       if (!this.tGhostColor || this.ghostSize[0] !== this.secSize[0] || this.ghostSize[1] !== this.secSize[1]) {
         for (const tx of [this.tGhostColor, this.tGhostGeo]) if (tx) gl.deleteTexture(tx);
@@ -714,6 +714,10 @@ export class GpuCompositor {
         full = true;
       }
       if (this.ghostOf !== up || !up) full = true;
+    } else if (up && this.ghostOf === up) {
+      // (la anterior llevaba velo y esta no: en sus píxeles con velo las dos texturas de siempre tienen la segunda
+      // superficie, y lo que cambió de una a otra no dice nada de ellos)
+      full = true;
     }
     this.ghostOf = sec.ghost ? sec : null;
     const cols: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[sec.x, sec.x + sec.w - 1]] : sec.dirty!;

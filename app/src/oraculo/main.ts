@@ -25,7 +25,7 @@ import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
-import { sectionAround, SectionPainter, secIdx, crossWindow, sectionBorderAt } from '../../../src/world/section';
+import { sectionAround, SectionPainter, secIdx, crossWindow, sectionBorderAt, type SectionLayer } from '../../../src/world/section';
 import maiaFile from '../../../models/maia/maia.json';
 import { walkFrames } from '../../../src/anim/walk';
 
@@ -87,7 +87,7 @@ interface Scenario {
   // cross: con la ventana en cruz (SectionCut.window) de ese radio y ese brazo, centrada en el cuerpo del jugador; true:
   // la de por defecto (brazo 24, radio 40). border: la cruz con su borde dibujado (withBorder) de ese grosor
   // (ghost: los vóxeles de la sección desde dz por encima de los pies del corte, semitransparentes con esa alpha)
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number; ghost?: { alpha: number; dz?: number; keepFacing?: boolean } };
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number; ghost?: { alpha: number; dz?: number; keepFacing?: boolean; seq?: boolean } };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -455,6 +455,8 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte con velo por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, ghost: { alpha: 0.6 } } });
   SCENARIOS.push({ ...ent, name: `corte con velo, entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, ghost: { alpha: 0.35, dz: 4 } } });
   SCENARIOS.push({ name: `corte con velo en cruz con borde sobre el lago con niebla, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, fog: true, section: { width: 96, painter: true, z: 1, cross: 16, border: 1, ghost: { alpha: 0.5 } } });
+  // (y encendiéndolo y apagándolo cuadro a cuadro, después de comparar la escena: veilSeq)
+  SCENARIOS.push({ name: `corte con velo que se enciende y se apaga, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, ghost: { alpha: 0.35, seq: true } } });
   SCENARIOS.push({ name: `corte con velo en cruz con borde sin luces y fondo transparente, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, lights: false, clearBg: true, section: { width: 64, z: 1, cross: true, border: 2, ghost: { alpha: 0.35 } } });
 }
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
@@ -485,6 +487,9 @@ interface Result {
   veilBetween?: number;
   veilShown?: number;
   veilDiffer?: number;
+  // Con ghost y seq: el velo encendido, apagado, sin nada que velar y de vuelta, cuadro a cuadro: en cada paso, píxeles
+  // con el cuadro final distinto entre la CPU y la GPU, los que difieren en más de 2, y los que llevan velo
+  veilSeq?: Array<{ step: string; differ: number; big: number; veil: number }>;
   secHoles?: number;       // con pit: píxeles sustituidos transparentes en la CPU (0: el fondo)
   secFill?: number;        // con pit: píxeles sustituidos con el fondo (sin cara)      // de los píxeles con el final distinto, los que están en la capa (máscara 1 o 2)
   secMaxFinal?: number;
@@ -636,6 +641,8 @@ async function run(): Promise<void> {
     if (sc.prepared && !prep) prep = gpu.prepareJob(b);
     if (prep) { let n = 0; while (!prep.run(-Infinity)) if (++n > 100000) throw new Error('la subida por partes no acaba'); }
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
+    // (con ghost y seq: la secuencia de encender y apagar el velo, que se corre después de comparar la escena)
+    let ghostSeq: ((r: Result, rs: RenderState) => void) | null = null;
     if (sc.section) {
       const p = rt.player, arm = sc.section.cross;
       const gh = sc.section.ghost;
@@ -657,8 +664,54 @@ async function run(): Promise<void> {
       // (con ghost, los cuadros de antes con otras alphas y el cuadro entero: alpha cambia sin subir nada)
       for (const [k, dx] of [-16, -8].entries()) gpu.read(view.frame(), b, step(dx, gh ? [0.9, 0.1][k] : undefined), gh ? 'frame' : 'color');
       o = step(0);
+      // El velo que se enciende y se apaga, cuadro a cuadro (lo que hace un juego al salir de una cueva a un tramo sin
+      // nada que velar y volver a entrar): en cada paso, el cuadro de la GPU contra el de la CPU. Con el pintor, con la
+      // caja de cada cuadro, y con dos capas hechas a mano que dicen no haber cambiado nada salvo llevar o no el velo
+      if (gh && painter) ghostSeq = (r, rs) => {
+        const seq: NonNullable<Result['veilSeq']> = [];
+        const cmp = (name: string, oo: Frame2DOptions) => {
+          const cpu = frame2D(rs, b, oo), g = gpu.read(rs, b, oo, 'frame'), L = sectionFor(b, oo), G = L?.ghost;
+          let differ = 0, big = 0, veil = 0;
+          for (let i = 0; i < VW * VH; i++) {
+            let fd = 0;
+            for (let ch = 0; ch < 4; ch++) fd = Math.max(fd, Math.abs(cpu[i * 4 + ch]! - g[i * 4 + ch]!));
+            if (fd) differ++;
+            if (fd > 2) big++;
+          }
+          if (L && G) for (let j = 0; j < L.h; j++) for (let i = 0; i < L.w; i++) {
+            const qq = secIdx(L, L.x + i, j), x = L.x + i - oo.vx, y = L.y + j - oo.vy;
+            if (x >= 0 && y >= 0 && x < VW && y < VH && L.mask[qq] === 1 && G.on[qq]) veil++;
+          }
+          seq.push({ step: name, differ, big, veil });
+          if (big > 4 || differ / (VW * VH) > TOL_SHARE) r.pass = false;
+        };
+        const paint = (cut: ReturnType<typeof at>): Frame2DOptions => { painter.set(cut, 1); painter.job()?.run(Infinity); return { ...o, sectionLayer: painter.layer() }; };
+        const { ghost: _g, ...plain } = at(0);
+        void _g;
+        cmp('pintor: encendido', paint(at(0)));
+        cmp('pintor: apagado', paint(plain));
+        cmp('pintor: sin nada que velar', paint({ ...plain, ghost: { z: 100000, alpha: gh.alpha } }));
+        cmp('pintor: encendido otra vez', paint(at(0)));
+        cmp('pintor: otra alpha', paint(at(0, 0.8)));
+        const L = painter.layer();
+        if (L?.ghost) {
+          const bare: SectionLayer = { ...L, ghost: null, base: L, dirty: [] };
+          cmp('a mano: la misma capa sin velo, sin columnas sucias', { ...o, sectionLayer: bare });
+          cmp('a mano: y con velo otra vez, sin columnas sucias', { ...o, sectionLayer: { ...L, base: bare, dirty: [] } });
+          cmp('a mano: sin velo otra vez', { ...o, sectionLayer: { ...bare, base: null } });
+        }
+        const { sectionLayer: _l, ...noLayer } = o;
+        void _l;
+        cmp('caja de cada cuadro: encendido', { ...noLayer, section: at(0) });
+        cmp('caja de cada cuadro: apagado', { ...noLayer, section: plain });
+        cmp('caja de cada cuadro: encendido otra vez', { ...noLayer, section: at(0, 0.6) });
+        r.veilSeq = seq;
+        // (la secuencia tiene que pasar por pasos con velo y sin él)
+        if (!seq.some((s) => s.veil > 0) || !seq.some((s) => s.veil === 0)) r.pass = false;
+      };
     }
     let before: { cpu: Uint8ClampedArray; gpu: Uint8Array } | null = null;
+    if (ghostSeq && !sc.section?.ghost?.seq) ghostSeq = null;
     if (sc.shift) {
       const s0 = b.source, lights0 = view.frame().lights;
       const clone = new StaticVoxels(s0.palette, s0.width, s0.depth, s0.zMin, s0.zMax);
@@ -797,6 +850,7 @@ async function run(): Promise<void> {
       }
       r.secInfo = { cut: o.section ?? L?.box ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z], ghost: L?.ghost ? [L.ghost.z, L.ghost.count] : null };
     }
+    if (ghostSeq) ghostSeq(r, rs);
     results.push(r);
     shots[sc.name] = { cpu: toPng(cpuFinal), gpu: toPng(gFinal), diff: toPng(diffMask(cpuFinal, gFinal)), colorDiff: toPng(diffMask(parts.view, gColor)) };
     out.textContent += `  ${r.pass ? 'BIEN' : 'MAL '} difieren ${(r.share * 100).toFixed(3)} % (${r.differ}), color>2: ${r.colorOff}, luz a 1 nivel: ${r.mulOff1}, a más: ${r.mulOff2}, add a más: ${r.addOff2}, máx ${r.maxFinal}\n`;

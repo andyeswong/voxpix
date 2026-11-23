@@ -1,6 +1,6 @@
 # Oráculo: el cuadro de la GPU contra el de la CPU
 
-`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 149 escenas del mundo, cada una
+`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 177 escenas del mundo, cada una
 con su semilla, sus ticks y sus pisotones fijos. Entre otras:
 - salida en medieval, oficina y cyberpunk; el lago con pisotones, con y sin luces; con niebla por altura;
 - una columna rota, rehorneada DESPUÉS de un primer cuadro de la GPU (prueba lo que se sube al rehornear);
@@ -13,6 +13,16 @@ con su semilla, sus ticks y sus pisotones fijos. Entre otras:
 - el corte por una ventana en cruz ("corte al componer en cruz", 16 escenas) y la cruz con su borde dibujado ("en
   cruz con borde", 20): estas dicen cuántos píxeles de trazo hay en la vista (`secLine`) y en cuántos la GPU no da
   justo su color (`secLineOff`; si no es 0, o no hay trazo, la escena falla).
+- el corte con vóxeles semitransparentes (`SectionCut.ghost`; "corte con velo", 28 escenas): bajo tejado, con
+  `keepFacing`, por franjas con antorchas (con otras alphas en los cuadros de antes), con entidades y luz dinámica, por
+  la cruz con borde sobre el lago con niebla, y sin luces sobre fondo transparente. Dicen cuántos píxeles llevan velo
+  en la vista (`veilPx`), cuántos tienen algo delante del vóxel (`veilFront`) o entre las dos superficies
+  (`veilBetween`), en cuántos el velo cambia algo (`veilShown`) y en cuántos difieren la CPU y la GPU (`veilDiffer`).
+  Fallan si no hay velo a la vista, si no cambia nada o si difiere en más de 4 píxeles y del 0,5 %.
+  - "que se enciende y se apaga" corre además una secuencia cuadro a cuadro (`veilSeq`): con el pintor, encendido,
+    apagado, con un velo sin nada que velar, encendido otra vez y con otra alpha; con dos capas hechas a mano que solo
+    cambian en llevar o no el velo, sin columnas sucias; y con la caja de cada cuadro. En cada paso, el cuadro de la GPU
+    contra `frame2D`: falla con más de 4 píxeles que difieran en más de 2.
 - Muchas, en los 4 giros de la vista.
 
 `?solo=texto` corre solo las escenas con ese texto en el nombre (`oraculo.html?solo=corte%20al%20componer`).
