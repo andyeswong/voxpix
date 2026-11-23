@@ -1259,6 +1259,18 @@ compositor.frame(state, baked, { ...opts, section });                         //
   el tono de la costura sean los del corte.
 - En la sección no hay luz horneada. Lleva su ambiente con el cielo de cueva del mundo cortado, y las luces fijas le
   llegan como las dinámicas, sin sombras. El borde guarda su luz horneada.
+- `SectionCut.worldSky` (apagado por defecto) cambia ese cielo por el del mundo sin cortar. Por defecto la caja
+  quitada deja entrar el cielo, y un interior cerrado se ve iluminado de día con o sin luces. Con `worldSky: true` lo
+  que hay dentro de la caja sigue tapando el cielo: un interior cerrado queda a la luz de `cave`, salvo por sus luces
+  y por las aberturas que de verdad dan al cielo. Solo cambia la luz; lo que se quita y lo que se ve, igual.
+  - El cielo de cada píxel de la capa es el que el horneado le da a su vóxel y su cara (`skyFromPick`).
+  - Las caras que el corte destapa en roca maciza (la cara sur de la fila de detrás de la caja, el suelo de la caja)
+    quedan sin cielo: en el mundo entero están enterradas. En un corte a cielo abierto eso las oscurece.
+  - Un rayo que sale del mundo cuenta como cielo, como en el horneado: junto al canto del mundo entra luz.
+  - Hace falta `sky: true` en el horneado y `cave` en el cuadro; sin ellos no hay cielo de cueva y no cambia nada.
+  - Cambiarlo en un `SectionPainter` repinta la caja (se sigue viendo la anterior hasta tener la nueva).
+  - Pruebas: `test/corte-luz.test.ts` (una sala cerrada sin luz, con una luz dentro, con un pozo a la superficie, y
+    por franjas).
 - La capa se guarda por horneado, caja y número de serie de lo publicado: un rehorneado la rehace.
 - Contra el corte horneado (el mismo mundo con la caja quitada, horneado entero), en los 4 giros y con contorno `both`
   (`test/corte-componer.test.ts`):

@@ -22,6 +22,11 @@ export interface SectionCut {
   // La forma del corte en la imagen (opcional): de lo que la caja sustituiría, solo lo que cae dentro de la ventana; lo
   // demás se queda como horneado. Sin ella, toda la caja
   window?: SectionWindow | null;
+  // El cielo de cueva de lo sustituido (con sky: true en el horneado). Por defecto (false) se hace con la caja quitada:
+  // el interior recibe el cielo por el corte, y de día se ve iluminado aunque esté cerrado. Con true, el del mundo sin
+  // cortar: lo que hay dentro de la caja sigue tapando el cielo, así que un interior cerrado queda a oscuras salvo por
+  // sus luces y por las aberturas que de verdad dan al cielo. Solo cambia la luz: lo que se quita y se ve, igual
+  worldSky?: boolean;
 }
 
 // LA VENTANA DEL CORTE: una forma en píxeles de la imagen horneada (una cruz, un círculo, lo que sea). La caja dice qué
@@ -208,14 +213,14 @@ const SKY_DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const;
 // cols (opcional): solo esas columnas de vóxeles (x0..x1) del recuadro, con la caja del corte tal cual (puede ser más
 // ancha que ellas): así se pinta una sección por franjas (SectionPainter). Sin cols, las de la caja con 1 de margen
 // Los rayos de cielo (como skyOf del horneado) de la cara `f` del vóxel `k`, con la caja [X0, X1] x [Y0, Y1] desde zMin
-// cortada
-function cutSky(b: Baked, X0: number, X1: number, Y0: number, Y1: number, zMin: number, k: number, f: number): number {
+// cortada; o, con `world`, sin cortar nada (SectionCut.worldSky)
+function cutSky(b: Baked, X0: number, X1: number, Y0: number, Y1: number, zMin: number, k: number, f: number, world = false): number {
   if (Number.isNaN(k) || f < 0) return SKY_RAYS;
   const s = b.source;
-  const inBox = (x: number, y: number, z: number) => x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && z >= zMin;
+  const inBox = (x: number, y: number, z: number) => !world && x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && z >= zMin;
   const colTop = (x: number, y: number) => {
     let t = s.height[y * s.width + x]!;
-    if (x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && t > zMin) { t = zMin; while (t > s.zMin && !s.get(x, y, t - 1)) t--; }
+    if (!world && x >= X0 && x <= X1 && y >= Y0 && y <= Y1 && t > zMin) { t = zMin; while (t > s.zMin && !s.get(x, y, t - 1)) t--; }
     return t;
   };
   const [vx, vy, vz] = unkey(k), n = DIR_VECTORS[f]!;
@@ -339,7 +344,7 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
   let sky: Uint8Array | null = null;
   if (b.sky) {
     sky = new Uint8Array(w * h);
-    for (let q = 0; q < w * h; q++) if (mask[q]) sky[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick[q]!, face[q]!);
+    for (let q = 0; q < w * h; q++) if (mask[q]) sky[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick[q]!, face[q]!, !!cut.worldSky);
   }
   // La geometría de la luz por píxel
   const wy = new Float32Array(w * h), back = new Float32Array(w * h), u = unprojector(b), mt = materialsOf(s.palette);
@@ -610,7 +615,7 @@ export class SectionPainter {
     const prev = this.cut, sl = this.slack;
     const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + sl.yBehind ? prev.y1 : cut.y1;
     const zMin = prev && prev.zMin >= cut.zMin - sl.zBelow && prev.zMin <= cut.zMin + sl.zAbove ? prev.zMin : cut.zMin;
-    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}`;
+    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}${cut.worldSky ? ',mundo' : ''}`;
     // La caja cambió en y o en z: lo pintado no vale para la de ahora, pero se sigue enseñando hasta tener la nueva
     if (track !== this.track) { if (this.track) this.resets++; this.hold(); this.track = track; this.clearAll(); }
     // (la ventana no cambia lo que se pinta: se aplica al componer)
@@ -900,7 +905,7 @@ export class SectionPainter {
       const sk = (b.options.originX ?? 0) + x - st.x;
       for (let j = 0; j < h; j++) {
         const sq = j * st.w + sk;
-        if (st.mask[sq]) out[j * m + k] = cutSky(b, X0, X1, Y0, Y1, c.zMin, st.pick[sq]!, st.face[sq]!);
+        if (st.mask[sq]) out[j * m + k] = cutSky(b, X0, X1, Y0, Y1, c.zMin, st.pick[sq]!, st.face[sq]!, !!c.worldSky);
       }
     }
     this.edgeSkies.set(key, { sky: out, units });

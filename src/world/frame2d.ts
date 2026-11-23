@@ -59,7 +59,7 @@ const sectionCache = new WeakMap<Baked, { key: string; layer: SectionLayer | nul
 export function sectionFor(b: Baked, o: Frame2DOptions): SectionLayer | null {
   if (o.sectionLayer !== undefined) return o.sectionLayer;
   if (!o.section) return null;
-  const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''},${c.window ? c.window.key : ''}:${b.published.serial}:${b.version}`;
+  const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''},${c.window ? c.window.key : ''},${c.worldSky ? 'mundo' : ''}:${b.published.serial}:${b.version}`;
   const hit = sectionCache.get(b);
   if (hit && hit.key === key) return hit.layer;
   const layer = sectionLayer(b, c);
