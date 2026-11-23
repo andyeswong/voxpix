@@ -176,6 +176,40 @@ describe('corte al componer', () => {
   // Lo de entrar bajo tierra en el juego: el corte de la vista (view-cut) escribe los vóxeles enseguida, la sección se pinta
   // con ellos, y los recuadros del corte se publican cientos de ms después. Esos recuadros cambian el pick horneado de las
   // franjas, pero no lo que pintan (o casi): antes las dejaban todas viejas, y la caja quedaba con huecos ~15 cuadros
+  it('cambiar solo el fondo (fill) de la sección de un cuadro rehace la capa', () => {
+    // (el mismo pozo: lo sustituido sin nada detrás lleva el fondo)
+    const s = new StaticVoxels(pal, 64, 64, 0, 47);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) for (let z = 0; z < 16; z++) s.set(x, y, z, material(1, 1));
+    for (let y = 20; y < 36; y++) for (let x = 8; x < 56; x++) s.set(x, y, 16, material(0, 2));
+    for (let y = 26; y < 36; y++) for (let x = 24; x < 40; x++) for (let z = 0; z < 16; z++) s.set(x, y, z, 0);
+    const bf = bakeWorld({ model: s, lights: [], width: 64, depth: 64 }, { topZ: 48, incline: 0.5, outline: 'both', sky: true });
+    const cut = { x0: 4, x1: 59, y0: 0, y1: 39, zMin: 16 };
+    const o: Frame2DOptions = { vx: 0, vy: 0, vw: bf.width, vh: bf.height, time: 0, lights: false, ambient: [1, 1, 1] };
+    const layer = (fill?: string | null) => sectionFor(bf, { ...o, section: fill === undefined ? cut : { ...cut, fill } })!;
+    // El fondo: lo sustituido que sin fondo (fill: null) queda transparente
+    const none = layer(null), at: number[] = [];
+    for (let q = 0; q < none.w * none.h; q++) if (none.mask[q] === 1 && none.rgba[q * 4 + 3] === 0) at.push(q);
+    expect(at.length).toBeGreaterThan(10);
+    // Los colores de esos píxeles en una capa, y si lo demás es igual que sin fondo
+    const colors = (L: SectionLayer) => {
+      const set = new Set<string>(), bottom = new Set(at);
+      for (const q of at) set.add([L.rgba[q * 4], L.rgba[q * 4 + 1], L.rgba[q * 4 + 2], L.rgba[q * 4 + 3]].join(','));
+      for (let q = 0; q < L.w * L.h; q++) if (!bottom.has(q)) for (let c = 0; c < 4; c++) if (L.rgba[q * 4 + c] !== none.rgba[q * 4 + c]) expect(`píxel ${q}`).toBe('igual fuera del fondo');
+      return [...set];
+    };
+    const def = layer();
+    expect(def).not.toBe(none);
+    expect(colors(def)).toEqual(['14,13,20,255']);                           // SECTION_FILL
+    const red = layer('#ff0000');
+    expect(red).not.toBe(def);
+    expect(colors(red)).toEqual(['255,0,0,255']);
+    expect(colors(layer('#00ff00'))).toEqual(['0,255,0,255']);
+    // (con el mismo fondo, la misma capa: no se rehace)
+    expect(layer('#00ff00')).toBe(layer('#00ff00'));
+    expect(colors(layer(null))).toEqual(['0,0,0,0']);
+    expect(colors(layer())).toEqual(['14,13,20,255']);
+  });
+
   it('los recuadros del corte de la vista, publicados después de pintar con él, no dejan viejas las franjas que no cambian (igual que pintadas de nuevo); un vóxel cambiado cerca, sí', () => {
     const run = (q: Quarter, gx: number, edit: boolean) => {
       const st = new WorldState(build(null), [], null), view = new WorldView(st, q, { cut: true });
