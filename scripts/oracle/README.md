@@ -1,6 +1,6 @@
 # Oráculo: el cuadro de la GPU contra el de la CPU
 
-`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 97 escenas del mundo, cada una
+`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 149 escenas del mundo, cada una
 con su semilla, sus ticks y sus pisotones fijos. Entre otras:
 - salida en medieval, oficina y cyberpunk; el lago con pisotones, con y sin luces; con niebla por altura;
 - una columna rota, rehorneada DESPUÉS de un primer cuadro de la GPU (prueba lo que se sube al rehornear);
@@ -10,6 +10,9 @@ con su semilla, sus ticks y sus pisotones fijos. Entre otras:
   (la GPU dibuja antes con ella a un lado), bajo tejado, con antorcha fija, con entidades y luz dinámica, con
   `section` y con `SectionPainter`. Esas escenas dicen además cuántos píxeles de la capa hay en la vista (`secPx`,
   `secBorder`) y cuántos de los distintos caen dentro de ella (`secDiffer`).
+- el corte por una ventana en cruz ("corte al componer en cruz", 16 escenas) y la cruz con su borde dibujado ("en
+  cruz con borde", 20): estas dicen cuántos píxeles de trazo hay en la vista (`secLine`) y en cuántos la GPU no da
+  justo su color (`secLineOff`; si no es 0, o no hay trazo, la escena falla).
 - Muchas, en los 4 giros de la vista.
 
 `?solo=texto` corre solo las escenas con ese texto en el nombre (`oraculo.html?solo=corte%20al%20componer`).

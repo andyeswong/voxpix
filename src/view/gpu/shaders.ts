@@ -39,7 +39,7 @@ float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
 // del mundo, cara (con el código de su luz por detrás, como uFace) y máscara (1 sustituido, 2 borde) + 16 * cielo con el
 // corte (enteros pequeños: exactos en un float); y un 8 más en la máscara en los píxeles de dentro de la ventana del
-// corte, si la hay (SectionCut.window)
+// corte, si la hay (SectionCut.window), y un 4 en los de su borde dibujado, si lo lleva (withBorder)
 const SECTION = `uniform bool uSec;
 uniform ivec4 uSecRect;                // x, y, w, h en la imagen horneada
 uniform int uSecTW;                    // la columna x de la imagen va en la x mod uSecTW de las texturas (un anillo)
@@ -51,7 +51,7 @@ int secMask(ivec2 s) {
   if (!uSec) return 0;
   ivec2 l = s - uSecRect.xy;
   if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return 0;
-  return int(secGeo(s).a) & 7;
+  return int(secGeo(s).a) & 3;
 }
 // ¿El píxel s cae dentro de la ventana del corte? (solo vale con una capa con ventana)
 bool secWindow(ivec2 s) {
@@ -59,6 +59,13 @@ bool secWindow(ivec2 s) {
   ivec2 l = s - uSecRect.xy;
   if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
   return (int(secGeo(s).a) & 8) != 0;
+}
+// ¿El píxel s es del borde dibujado de la ventana?
+bool secBorder(ivec2 s) {
+  if (!uSec) return false;
+  ivec2 l = s - uSecRect.xy;
+  if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
+  return (int(secGeo(s).a) & 4) != 0;
 }
 int secSky(ivec2 s) { return int(secGeo(s).a) >> 4; }`;
 
@@ -493,6 +500,9 @@ uniform highp usampler2D uSky;
 uniform vec3 uSkyAmb[6];
 uniform ivec2 uView;
 ${SECTION}
+// El borde de la ventana del corte: su color tal cual, encima de todo, solo en el cuadro (frame2d.ts: drawSectionBorder)
+uniform bool uSecBorder;
+uniform vec3 uSecBorderColor;       // 0..1
 uniform bool uFlip;
 uniform int uHeight;
 // La niebla por altura (frame2d.ts: applyFog): z del punto de cada píxel por su profundidad y su fila
@@ -526,6 +536,7 @@ vec3 fogged(ivec2 t, vec3 c) {
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
   if (uFlip) t.y = uHeight - 1 - t.y;
+  if (uSecBorder && uMode == 0 && secBorder(t + uView)) { oColor = vec4(uSecBorderColor, 1.0); return; }
   vec4 sc4 = texelFetch(uColorTex, t, 0);
   vec3 scene = floor(sc4.rgb * 255.0 + 0.5);
   // Con fondo transparente lo que no tiene nada encima sale con alfa 0 y color 0 (frame2d.ts: clearTransparent)

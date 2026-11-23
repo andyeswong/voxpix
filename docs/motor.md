@@ -1430,6 +1430,54 @@ painter.set(cut, dirX);                                                        /
   `base` y `dirty`; y el agua. El oráculo tiene las escenas "corte al componer en cruz" (bajo tejado, con antorchas,
   sobre el lago, con entidades y luz dinámica) en los 4 giros.
 
+#### El borde dibujado de la ventana
+
+Una ventana puede llevar un trazo de un color liso por dentro de su contorno. Está apagado por defecto.
+
+```ts
+import { crossWindow, windowOf, withBorder } from '@voxpix/world/section';
+crossWindow(cx, cy, { arm: 24, r: 40, border: { color: '#ffd666', width: 1 } });
+windowOf(key, x0, y0, x1, y1, inside, { color: '#ffffff', width: 2 });
+withBorder(otraVentana, { color: '#ffd666' });            // cualquier SectionWindow; width por defecto, 1
+```
+
+- Es borde el píxel de dentro de la forma que tiene alguno de fuera a `width` píxeles o menos en cualquiera de las ocho
+  direcciones (las esquinas salen cuadradas). `windowBorderSpans(win, sy, out)` da sus tramos por fila,
+  `windowBorderAt(win, sx, sy)` lo dice de un píxel y `sectionBorderAt(layer, sx, sy)`, de un píxel de una capa.
+- Sale de la ventana, la misma con la que se hace la máscara: `frame2D` lo dibuja con `drawSectionBorder` y el compositor
+  de la GPU lo lleva en un bit de la máscara que sube (el 4) y lo pone en el paso final. Las dos rutas dan el mismo
+  píxel con el mismo color.
+- Se dibuja solo dentro del recuadro de la capa. Si la cruz es más ancha que la caja, o se sale de la imagen, el trazo
+  se corta ahí.
+- Va encima de todo el cuadro, con su color tal cual: no le afectan la luz, la niebla, el agua ni las entidades. Solo
+  sale en el cuadro final (`frame2D`, `GpuCompositor.frame`), no en las capas sueltas (`frame2DParts`, `read` con
+  `'color'`, `'multiply'` o `'add'`); quien componga a mano llama a `drawSectionBorder` al final.
+- No toca la máscara ni lo que se pica: `pickVoxel`, `pickBlock` y lo que ve un agente dicen lo que hay debajo del
+  trazo, igual que con la misma ventana sin borde. Todo lo que el corte sustituye queda del trazo hacia dentro.
+- El borde va en la clave de la ventana (`;borde:<grosor>,<color>`): cambiarlo rehace la máscara de la ventana y sube
+  su recuadro, como al moverla. No repinta franjas.
+- Pruebas: `test/corte-borde.test.ts` (los píxeles de borde contra el criterio a mano con la cruz, un disco y una forma
+  con huecos, en grosores 1, 2, 3 y 5; el cuadro con borde contra el de sin borde píxel a píxel, con luz, niebla, fondo
+  transparente y una entidad debajo; la máscara y lo que se pica, iguales; el pintor moviéndose, con una copia del bit
+  llevada al día solo con `base` y `dirty`). El oráculo tiene 20 escenas "corte al componer en cruz con borde" (5 por
+  giro): dicen cuántos píxeles de trazo hay en la vista (`secLine`) y en cuántos la GPU no da justo su color
+  (`secLineOff`, que tiene que ser 0).
+
+Lo que cuesta por cuadro, con la cruz de brazo 24 y radio 40 sobre una caja de 16 bloques. Apagado no cuesta nada (no
+se ejecuta nada suyo).
+
+| | apagado | grosor 1 | grosor 3 |
+|---|---|---|---|
+| CPU, dibujarlo en el cuadro (`drawSectionBorder`), p50 / p95, a 6x | 0 | 0,14 / 0,17 ms | 0,36 / 0,39 ms |
+| CPU, sus tramos al subir la máscara a la GPU, p50 / p95, a 6x | 0 | 0,12 / 0,15 ms | 0,33 / 0,38 ms |
+| GPU, `gpu.frame` de la ventana viva, media / p95, a 6x | 1,49–1,61 / 2,9–3,3 ms | 1,53 / 3,1 ms | 1,52–1,54 / 2,9–3,2 ms |
+| GPU, cuadro de la ventana viva, p50 / p95 | 16,7 / 25,0–25,1 ms | 16,7 / 25,0 ms | 16,7 / 25,0 ms |
+
+Las dos primeras filas son de `scripts/bench-seccion.ts` (`ANDAR=1 JUEGO=1 CRUZ=24 RADIO=40 BORDE=G`, dos pasadas) y
+los tramos se miden en todos los cuadros, aunque en un juego solo se pagan cuando la máscara de la ventana sube (al
+moverse). Las dos últimas, de `viva.html?segundos=60&bloques=200&hz=60&seccion=16&cruz=24&radio=40&borde=G` en la
+GPU (dos pasadas apagado y con grosor 3, una con grosor 1): en la GPU el borde no se distingue del ruido entre pasadas.
+
 ## Cámara con objetivo
 
 La ventana de la vista (`vx`, `vy` de `Frame2DOptions`) sigue a un punto, normalmente un cuerpo, con zona muerta y

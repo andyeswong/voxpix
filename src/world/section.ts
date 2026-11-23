@@ -33,6 +33,7 @@ export interface SectionCut {
 // - un píxel sustituido junto a uno de la caja que la ventana deja horneado lleva el contorno de la costura si lo
 //   horneado queda mucho más cerca (como en los lados de la caja);
 // - el agua de la caja deja de dibujarse solo en los píxeles de dentro de la ventana.
+// La ventana puede llevar un borde dibujado (withBorder, más abajo).
 // El tono (AO) y el cielo de cueva de lo sustituido son los de la caja entera cortada.
 // Para otra forma basta con dar un objeto con esta interfaz (windowOf lo hace con una función por píxel):
 //   painter.set({ ...sectionAround(camera, x, y, z, 128), window: crossWindow(cx, cy, { arm: 24, r: 40 }) }, dir);
@@ -43,28 +44,92 @@ export interface SectionWindow {
   // Los tramos de columnas [a, b] (incluidos) de la fila sy que caen dentro, añadidos a `out` de dos en dos, de
   // izquierda a derecha y sin tocarse
   spans(sy: number, out: number[]): void;
+  // El borde que se dibuja por dentro de su contorno (withBorder); sin él, ninguno
+  readonly border?: { readonly color: string; readonly width: number } | null;
+}
+
+// EL BORDE DE LA VENTANA: un trazo de un color liso sobre los píxeles de dentro de la ventana que están a `width` píxeles
+// o menos de uno de fuera (en cualquiera de las ocho direcciones: las esquinas salen cuadradas). Apagado por defecto. Va
+// con la ventana (cambia su clave), así que sale de lo mismo que la máscara: se dibuja solo dentro del recuadro de la
+// capa, encima de todo el cuadro (entidades, agua, luz y niebla), en frame2D y en el compositor de la GPU, que lo lleva
+// en un bit de la máscara que sube. No toca la máscara: pickVoxel, pickBlock y lo que ve un agente dicen lo que hay
+// debajo del trazo, y todo lo que el corte sustituye queda del trazo hacia dentro.
+//   crossWindow(cx, cy, { arm: 24, r: 40, border: { color: '#f0e0a0', width: 1 } })
+//   withBorder(windowOf(...), { color: '#ffffff', width: 2 })
+export interface WindowBorder { color: string; width?: number }
+export function withBorder(win: SectionWindow, border: WindowBorder | null | undefined): SectionWindow {
+  if (!border) return win;
+  const width = Math.max(1, Math.round(border.width ?? 1)), cut = win.border ? win.key.lastIndexOf(';borde:') : -1;
+  return {
+    key: `${cut < 0 ? win.key : win.key.slice(0, cut)};borde:${width},${border.color}`, x0: win.x0, y0: win.y0, x1: win.x1, y1: win.y1,
+    spans: (sy, out) => win.spans(sy, out), border: { color: border.color, width },
+  };
+}
+
+// Los tramos de columnas [a, b] de la fila sy de la imagen que son borde de la ventana (como spans; nada sin borde)
+export function windowBorderSpans(win: SectionWindow, sy: number, out: number[]): void {
+  const w = win.border ? win.border.width : 0;
+  if (w < 1 || sy < win.y0 || sy > win.y1) return;
+  const row = B_ROW, tmp = B_TMP;
+  row.length = 0;
+  win.spans(sy, row);
+  if (!row.length) return;
+  // Lo de dentro que no es borde: lo que queda de cada fila de sy - w a sy + w encogiendo sus tramos w por cada lado, y
+  // de eso lo común a todas (un píxel con todo su cuadrado de lado 2w + 1 dentro de la ventana)
+  let cur = B_A, nxt = B_B;
+  cur.length = 0;
+  for (let k = 0; k < row.length; k += 2) if (row[k]! + w <= row[k + 1]! - w) cur.push(row[k]! + w, row[k + 1]! - w);
+  for (let d = -w; d <= w && cur.length; d++) {
+    if (!d) continue;
+    tmp.length = 0;
+    if (sy + d >= win.y0 && sy + d <= win.y1) win.spans(sy + d, tmp);
+    nxt.length = 0;
+    for (let i = 0, j = 0; i < cur.length && j < tmp.length;) {
+      const a = Math.max(cur[i]!, tmp[j]! + w), b = Math.min(cur[i + 1]!, tmp[j + 1]! - w);
+      if (a <= b) nxt.push(a, b);
+      if (cur[i + 1]! < tmp[j + 1]! - w) i += 2; else j += 2;
+    }
+    const t = cur; cur = nxt; nxt = t;
+  }
+  // La fila menos eso
+  for (let k = 0, i = 0; k < row.length; k += 2) {
+    let a = row[k]!;
+    const b = row[k + 1]!;
+    for (; i < cur.length && cur[i]! <= b; i += 2) { out.push(a, cur[i]! - 1); a = cur[i + 1]! + 1; }
+    if (a <= b) out.push(a, b);
+  }
+}
+const B_ROW: number[] = [], B_TMP: number[] = [], B_A: number[] = [], B_B: number[] = [];
+
+// ¿El píxel (sx, sy) de la imagen es borde de la ventana?
+export function windowBorderAt(w: SectionWindow, sx: number, sy: number): boolean {
+  if (!w.border || sx < w.x0 || sx > w.x1 || sy < w.y0 || sy > w.y1) return false;
+  SPANS.length = 0;
+  windowBorderSpans(w, sy, SPANS);
+  for (let k = 0; k < SPANS.length; k += 2) if (sx >= SPANS[k]! && sx <= SPANS[k + 1]!) return true;
+  return false;
 }
 
 // Una cruz centrada en el píxel (cx, cy) de la imagen (redondeado): dos barras de `arm` píxeles de ancho (el brazo) que
 // llegan a `r` píxeles del centro en las cuatro direcciones. Un píxel a (dx, dy) del centro está dentro si
 // (|dx| <= arm / 2 y |dy| <= r) o (|dy| <= arm / 2 y |dx| <= r). Por defecto, brazo 24 y radio 40
 export const CROSS_ARM = 24, CROSS_RADIUS = 40;
-export function crossWindow(cx: number, cy: number, o: { arm?: number; r?: number } = {}): SectionWindow {
+export function crossWindow(cx: number, cy: number, o: { arm?: number; r?: number; border?: WindowBorder | null } = {}): SectionWindow {
   const X = Math.round(cx), Y = Math.round(cy), r = Math.max(1, Math.round(o.r ?? CROSS_RADIUS));
   const h = Math.max(0, Math.min(r, Math.floor((o.arm ?? CROSS_ARM) / 2)));
-  return {
+  return withBorder({
     key: `cruz:${X},${Y},${r},${h}`, x0: X - r, y0: Y - r, x1: X + r, y1: Y + r,
     spans(sy, out) {
       if (sy < Y - r || sy > Y + r) return;
       if (sy >= Y - h && sy <= Y + h) out.push(X - r, X + r); else out.push(X - h, X + h);
     },
-  };
+  }, o.border);
 }
 
 // Una ventana con la forma que diga `inside` (por píxel de la imagen) dentro de un recuadro. `key` tiene que cambiar si
-// cambia la forma
-export function windowOf(key: string, x0: number, y0: number, x1: number, y1: number, inside: (sx: number, sy: number) => boolean): SectionWindow {
-  return {
+// cambia la forma. Con `border`, con ese borde (withBorder)
+export function windowOf(key: string, x0: number, y0: number, x1: number, y1: number, inside: (sx: number, sy: number) => boolean, border?: WindowBorder | null): SectionWindow {
+  return withBorder({
     key, x0, y0, x1, y1,
     spans(sy, out) {
       if (sy < y0 || sy > y1) return;
@@ -75,7 +140,7 @@ export function windowOf(key: string, x0: number, y0: number, x1: number, y1: nu
         out.push(a, x);
       }
     },
-  };
+  }, border);
 }
 
 // ¿El píxel (sx, sy) de la imagen cae dentro de la ventana?
@@ -122,6 +187,11 @@ export interface SectionLayer {
 // El índice en los arrays de la capa del píxel de la columna de imagen gx y la fila j de la capa (sin mirar el recuadro)
 export function secIdx(L: SectionLayer, gx: number, j: number): number {
   return j * (L.stride ?? L.w) + (L.ring ? gx & (L.ring - 1) : gx - L.x);
+}
+
+// ¿Se dibuja el borde de la ventana de la capa en el píxel (sx, sy) de la imagen? (solo dentro del recuadro de la capa)
+export function sectionBorderAt(L: SectionLayer, sx: number, sy: number): boolean {
+  return !!L.window?.border && sx >= L.x && sy >= L.y && sx < L.x + L.w && sy < L.y + L.h && windowBorderAt(L.window, sx, sy);
 }
 
 // El índice en los arrays de la capa del píxel (sx, sy) de la imagen horneada si la capa lo sustituye o lo repinta

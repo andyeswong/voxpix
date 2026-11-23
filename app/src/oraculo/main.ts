@@ -10,11 +10,11 @@
 // más de un nivel de luz o en más de ±2 de color.
 import { generateLayout, TILE } from '../../../src/worldgen';
 import { THEMES, type ThemeId } from '../../../src/samples/themes';
-import { Model, box, material, planFoliage, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
+import { Model, box, material, planFoliage, rgbOf, lilyPadModels, FOLIAGE_RAMPS, type ModelFile } from '@core/index';
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, shiftBaked, type Baked } from '../../../src/world/bake';
-import { frame2DParts, shadeLayers, applyFog, clearTransparent, sectionFor, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2DParts, shadeLayers, applyFog, clearTransparent, sectionFor, drawSectionBorder, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
@@ -25,7 +25,7 @@ import { clearBox } from '../../../src/world/edit';
 import { WorldView, type Quarter } from '../../../src/world/view';
 import { NO_INPUT, Runtime } from '../../../src/runtime/runtime';
 import { GpuCompositor, type WarmItem } from '../../../src/view/gpu/compositor';
-import { sectionAround, SectionPainter, secIdx, crossWindow } from '../../../src/world/section';
+import { sectionAround, SectionPainter, secIdx, crossWindow, sectionBorderAt } from '../../../src/world/section';
 import maiaFile from '../../../models/maia/maia.json';
 import { walkFrames } from '../../../src/anim/walk';
 
@@ -85,8 +85,8 @@ interface Scenario {
   // (pit: una losa de un vóxel delante de MAIA sobre un pozo en el suelo, dentro de la caja: lo cortado sin nada detrás
   // lleva el fondo de la sección, no transparente; secHoles cuenta lo sustituido transparente)
   // cross: con la ventana en cruz (SectionCut.window) de ese radio y ese brazo, centrada en el cuerpo del jugador; true:
-  // la de por defecto (brazo 24, radio 40)
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true };
+  // la de por defecto (brazo 24, radio 40). border: la cruz con su borde dibujado (withBorder) de ese grosor
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -439,6 +439,12 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte al componer en cruz por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, cross: 24 } });
   SCENARIOS.push({ name: `corte al componer en cruz sobre el lago, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, section: { width: 96, painter: true, z: 1, cross: 16 } });
   SCENARIOS.push({ ...ent, name: `corte al componer en cruz con entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, cross: 12 } });
+  // Y la cruz con su borde dibujado: el trazo, el mismo en las dos rutas, encima de todo (agua, entidades, luz, niebla)
+  SCENARIOS.push({ name: `corte al componer en cruz con borde bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, section: { width: 64, z: 1, cross: true, border: 1 } });
+  SCENARIOS.push({ name: `corte al componer en cruz con borde por franjas con antorchas, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, cross: 24, border: 2 } });
+  SCENARIOS.push({ name: `corte al componer en cruz con borde sobre el lago con niebla, giro ${q}`, theme: 'medieval', pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, fog: true, section: { width: 96, painter: true, z: 1, cross: 16, border: 1 } });
+  SCENARIOS.push({ ...ent, name: `corte al componer en cruz con borde, entidades y luz dinámica, giro ${q}`, quarter: q, section: { width: 64, painter: true, cross: 12, border: 3 } });
+  SCENARIOS.push({ name: `corte al componer en cruz con borde sin luces y fondo transparente, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, lights: false, clearBg: true, section: { width: 64, z: 1, cross: true, border: 2 } });
 }
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
@@ -455,6 +461,8 @@ interface Result {
   waterPx?: number;        // con agua en un mundo alto: píxeles con un tono del agua en la CPU
   secPx?: number;          // con corte al componer: píxeles de la vista sustituidos (máscara 1) y de borde (2)
   secBorder?: number;
+  secLine?: number;                          // píxeles del borde dibujado de la ventana en la vista, y los que la GPU no da
+  secLineOff?: number;
   secInfo?: unknown;
   backSame?: { cpu: boolean; gpu: boolean };
   gpuShifts?: number;      // con shift: cuántas veces corrió la GPU sus texturas dentro de sí (sin volver a subirlas)   // con shift 'vuelta': la vista de después, igual byte a byte a la de antes
@@ -616,7 +624,8 @@ async function run(): Promise<void> {
         const cut = sectionAround(view.camera, p.x + dx, p.y, sc.section!.z ?? p.z, sc.section!.width);
         if (!arm) return cut;
         const [vx, vy] = view.camera.pointToView(p.x + dx, p.y), [wx, wy] = b.cam.project(vx, vy, p.z + 8);
-        return { ...cut, window: arm === true ? crossWindow(wx, wy) : crossWindow(wx, wy, { arm, r: arm }) };
+        const border = sc.section!.border ? { color: '#ffd666', width: sc.section!.border } : null;
+        return { ...cut, window: arm === true ? crossWindow(wx, wy, { border }) : crossWindow(wx, wy, { arm, r: arm, border }) };
       };
       const painter = sc.section.painter ? new SectionPainter(b) : null;
       const step = (dx: number): Frame2DOptions => {
@@ -662,9 +671,12 @@ async function run(): Promise<void> {
     const c0 = performance.now();
     const parts = frame2DParts(rs, b, o);
     const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
-    const cpuFinal = layers ? applyLayers(parts.view, layers) : o.fog ? parts.view.slice() : parts.view;
+    const secLine = sc.section?.border ? sectionFor(b, o) : null;
+    const cpuFinal = layers ? applyLayers(parts.view, layers) : o.fog || secLine ? parts.view.slice() : parts.view;
     if (o.fog) applyFog(cpuFinal, parts.depth, b, o);
     if (o.background === 'transparent') clearTransparent(cpuFinal);
+    // (el borde de la ventana del corte va solo en el cuadro final, encima de todo)
+    drawSectionBorder(cpuFinal, secLine, o);
     const c1 = performance.now();
     const gFinal = gpu.read(rs, b, o, 'frame');
     const c2 = performance.now();
@@ -718,6 +730,19 @@ async function run(): Promise<void> {
         if (fd) { r.secDiffer = (r.secDiffer ?? 0) + 1; r.secMaxFinal = Math.max(r.secMaxFinal ?? 0, fd); }
       }
       r.secPx = n1; r.secBorder = n2;
+      // El borde dibujado de la ventana: cuántos píxeles lleva en la vista y en cuántos la GPU no da justo su color
+      if (L?.window?.border) {
+        const c = rgbOf(L.window.border.color);
+        let n = 0, off = 0;
+        for (let y = 0; y < VH; y++) for (let x = 0; x < VW; x++) {
+          if (!sectionBorderAt(L, x + vx, y + vy)) continue;
+          n++;
+          const q = (y * VW + x) * 4;
+          if (gFinal[q] !== c[0] || gFinal[q + 1] !== c[1] || gFinal[q + 2] !== c[2] || gFinal[q + 3] !== 255) off++;
+        }
+        r.secLine = n; r.secLineOff = off;
+        if (off || !n) r.pass = false;
+      }
       r.secInfo = { cut: o.section ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z] };
     }
     results.push(r);

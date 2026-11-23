@@ -8,7 +8,7 @@ import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
-import { sectionLayer, secIdx, sectionAt, type SectionCut, type SectionLayer } from './section';
+import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
   vx: number; vy: number; vw: number; vh: number;      // ventana de la imagen horneada
@@ -166,7 +166,25 @@ export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8C
   const out = total ? applyLayers(view, shadeLayers(total, o, b)) : view;
   if (o.fog) applyFog(out, depth, b, o);
   if (o.background === 'transparent') clearTransparent(out);
+  if (o.section || o.sectionLayer) drawSectionBorder(out, sectionFor(b, o), o);
   return out;
+}
+
+// El borde de la ventana del corte (section.ts, withBorder), si lo lleva: su color tal cual sobre el cuadro ya acabado,
+// en los píxeles de borde que caen en el recuadro de la capa. Lo mismo que hace el compositor de la GPU al final
+export function drawSectionBorder(px: Uint8ClampedArray, sec: SectionLayer | null, o: Pick<Frame2DOptions, 'vx' | 'vy' | 'vw' | 'vh'>): void {
+  const win = sec?.window, bd = win?.border;
+  if (!sec || !win || !bd) return;
+  const c = rgbOf(bd.color), sp: number[] = [];
+  const x0 = Math.max(sec.x, o.vx), x1 = Math.min(sec.x + sec.w, o.vx + o.vw) - 1;
+  for (let sy = Math.max(sec.y, win.y0, o.vy), e = Math.min(sec.y + sec.h - 1, win.y1, o.vy + o.vh - 1); sy <= e; sy++) {
+    sp.length = 0;
+    windowBorderSpans(win, sy, sp);
+    for (let k = 0; k < sp.length; k += 2) for (let gx = Math.max(x0, sp[k]!), g1 = Math.min(x1, sp[k + 1]!); gx <= g1; gx++) {
+      const t = ((sy - o.vy) * o.vw + gx - o.vx) * 4;
+      px[t] = c[0]; px[t + 1] = c[1]; px[t + 2] = c[2]; px[t + 3] = 255;
+    }
+  }
 }
 
 // Con fondo transparente: lo que quedó con alfa 0 sale con color 0 (la luz le suma algo; la GPU hace lo mismo)

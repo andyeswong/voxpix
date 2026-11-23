@@ -10,11 +10,11 @@
 //   - una vez por modelo y giro: el sprite de la entidad (color, profundidad, vóxel y cara de cada píxel) y su cuerpo;
 //   - cada cuadro: la profundidad del agua de las columnas visibles, las gotas proyectadas, un registro por entidad
 //     (dónde va, qué sprite) y la tabla de luces.
-import { DIR_VECTORS, unkey, FX_STRIDE } from '../../core';
+import { DIR_VECTORS, unkey, FX_STRIDE, rgbOf } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
 import { sectionFor } from '../../world/frame2d';
-import { secIdx, type SectionLayer } from '../../world/section';
+import { secIdx, windowBorderSpans, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
@@ -500,6 +500,10 @@ export class GpuCompositor {
     if (useSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform2i(p.u.uView, o.vx, o.vy);
     this.bindSection(p, false);
+    // El borde de la ventana del corte, si lo lleva (va en la máscara de la capa)
+    const border = this.secLayer?.window?.border ?? null;
+    gl.uniform1i(p.u.uSecBorder, border ? 1 : 0);
+    if (border) { const c = rgbOf(border.color); gl.uniform3f(p.u.uSecBorderColor, c[0] / 255, c[1] / 255, c[2] / 255); }
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
@@ -676,7 +680,8 @@ export class GpuCompositor {
 
   // Las columnas de imagen g0..g1 de la capa (sus filas j0..j1) a las texturas del anillo (en dos trozos si dan la
   // vuelta). La y del mundo y la luz por detrás vienen hechas en la capa (se calculan al pintarla). Con ventana
-  // (SectionLayer.window), los píxeles de dentro llevan además un 8 en la máscara: lo mira el agua
+  // (SectionLayer.window), los píxeles de dentro llevan además un 8 en la máscara (lo mira el agua) y los de su borde
+  // dibujado, un 4 (lo mira el paso final)
   private uploadSectionCols(sec: SectionLayer, g0: number, g1: number, j0: number, j1: number): void {
     const gl = this.gl, h = j1 - j0 + 1, n = g1 - g0 + 1, TW = this.secSize[0];
     const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
@@ -697,6 +702,10 @@ export class GpuCompositor {
       sp.length = 0;
       win.spans(sec.y + j, sp);
       for (let t = 0; t < sp.length; t += 2) for (let gx = Math.max(g0, sp[t]!), e = Math.min(g1, sp[t + 1]!); gx <= e; gx++) { const o = (row + gx - g0) * 4 + 3; geo[o] = geo[o]! + 8; }
+      if (!win.border) continue;
+      sp.length = 0;
+      windowBorderSpans(win, sec.y + j, sp);
+      for (let t = 0; t < sp.length; t += 2) for (let gx = Math.max(g0, sp[t]!), e = Math.min(g1, sp[t + 1]!); gx <= e; gx++) { const o = (row + gx - g0) * 4 + 3; geo[o] = geo[o]! + 4; }
     }
     for (let k0 = 0; k0 < n;) {
       const tx = (g0 + k0) % TW, pw = Math.min(n - k0, TW - tx);

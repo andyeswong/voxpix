@@ -60,14 +60,15 @@ if (process.env.ANDAR === '1') {
     const rnd = () => { seed = (Math.imul(seed, 1103515245) + 12345) >>> 0; return seed / 4294967296; };
     let calls = 0, sectionSlow = 0, gapFrames = 0, sectionCalls: number[] = [];
     let lastL: ReturnType<typeof painter.layer> = null;
-    const up: number[] = [];
+    const up: number[] = [], lineDraw: number[] = [], lineSpans: number[] = [];
     for (let f = 0; f < 420 && x < W - 64; f++) {
       x += 40 / 60;
       const yy = game ? ty + Math.round(3 * Math.sin(f / 23)) : ty, zz = game ? tz + (Math.floor(f / 37) % 3 === 2 ? 1 : 0) : tz;
-      // CRUZ=N: con la ventana en cruz de brazo N (y RADIO, 40) alrededor del cuerpo (SectionCut.window)
-      const sec = await import('../src/world/section'), cruz = Number(process.env.CRUZ ?? 0);
+      // CRUZ=N: con la ventana en cruz de brazo N (y RADIO, 40) alrededor del cuerpo (SectionCut.window); BORDE=G: con su
+      // borde dibujado de G píxeles
+      const sec = await import('../src/world/section'), cruz = Number(process.env.CRUZ ?? 0), borde = Number(process.env.BORDE ?? 0);
       const [wx, wy] = b.cam.project(x, yy, zz + 8);
-      painter.set({ ...sec.sectionAround(null, x, yy, zz, width), ...(cruz ? { window: sec.crossWindow(wx, wy, { arm: cruz, r: Number(process.env.RADIO ?? 40) }) } : {}) }, 1);
+      painter.set({ ...sec.sectionAround(null, x, yy, zz, width), ...(cruz ? { window: sec.crossWindow(wx, wy, { arm: cruz, r: Number(process.env.RADIO ?? 40), border: borde ? { color: '#ffd666', width: borde } : null }) } : {}) }, 1);
       const j = painter.job();
       if (j) {
         const run0 = j.run.bind(j);
@@ -87,6 +88,17 @@ if (process.env.ANDAR === '1') {
       if (appear < 0 && ok) appear = f;
       else if (appear >= 0 && !ok) holes++;
       if (!ok) gapFrames++;
+      // El borde dibujado: lo que cuesta ponerlo en el cuadro de la CPU y marcarlo en lo que sube la GPU (sus tramos en
+      // las filas de la ventana), cada uno repetido 200 veces
+      if (L?.window?.border && f % 5 === 0) {
+        const fr = await import('../src/world/frame2d'), buf = new Uint8ClampedArray(VW * VH * 4), o2 = { vx: Math.max(0, Math.min(b.width - VW, Math.round(x) - VW / 2)), vy: base.vy, vw: VW, vh: VH }, sp: number[] = [];
+        let a2 = performance.now();
+        for (let r = 0; r < 200; r++) fr.drawSectionBorder(buf, L, o2);
+        lineDraw.push((performance.now() - a2) / 200 * KX);
+        a2 = performance.now();
+        for (let r = 0; r < 200; r++) for (let sy = L.window.y0; sy <= L.window.y1; sy++) { sp.length = 0; sec.windowBorderSpans(L.window, sy, sp); }
+        lineSpans.push((performance.now() - a2) / 200 * KX);
+      }
       if (f % 20 === 0 && L) {
         const opts = { ...base, vx: Math.max(0, Math.min(b.width - VW, Math.round(x) - VW / 2)) };
         a = performance.now(); frame2D(st, b, { ...opts, sectionLayer: L }); const tw = performance.now() - a;
@@ -94,6 +106,7 @@ if (process.env.ANDAR === '1') {
       }
     }
     console.log(`ancho ${width / 8} bloques: aparece en el cuadro ${appear}, huecos después ${holes}; componer p95 ${p(comp, 0.95).toFixed(2)} máx ${p(comp, 1).toFixed(1)} ms, andando ya pintada p50 ${compW.length ? p(compW, 0.5).toFixed(2) : '-'} p95 ${compW.length ? p(compW, 0.95).toFixed(2) : '-'} máx ${compW.length ? p(compW, 1).toFixed(1) : '-'} ms; pintar p50 ${p(paint, 0.5).toFixed(1)} p95 ${p(paint, 0.95).toFixed(1)} máx ${p(paint, 1).toFixed(1)} ms; cuadro de la CPU con capa, de más ${extra.length ? p(extra, 0.5).toFixed(1) : '-'} ms (todo a ${KX === 1 ? '1x' : '6x'}); unidades pintadas ${painter.painted}; cuadros sin la sección entera ${gapFrames} de ${comp.length}; llamadas de la sección ${calls} (p50 ${sectionCalls.length ? p(sectionCalls, 0.5).toFixed(1) : '-'}, máx ${sectionCalls.length ? p(sectionCalls, 1).toFixed(1) : '-'} ms, de más de 16 ms ${sectionSlow})`);
+    if (lineDraw.length) console.log(`  borde de la ventana, por cuadro: dibujarlo en la CPU p50 ${p(lineDraw, 0.5).toFixed(4)} p95 ${p(lineDraw, 0.95).toFixed(4)} ms; sus tramos para la subida p50 ${p(lineSpans, 0.5).toFixed(4)} p95 ${p(lineSpans, 0.95).toFixed(4)} ms (a ${KX === 1 ? '1x' : '6x'})`);
     console.log(`  subida a la GPU por cuadro (píxeles de la capa): p50 ${p(up, 0.5)} p95 ${p(up, 0.95)} máx ${p(up, 1)}, media ${Math.round(up.reduce((u, v) => u + v, 0) / up.length)}`);
   }
 }
