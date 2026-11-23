@@ -287,12 +287,16 @@ describe('ventana viva', () => {
     check(x, y, 0, 1);
   });
 
-  it('capa de sección: al correrse la ventana, lo pintado se corre con la imagen (la caja sigue pintada en el cuadro del cambio, sin repintar)', () => {
+  for (const veil of [false, true]) it(`capa de sección${veil ? ' con ghost' : ''}: al correrse la ventana, lo pintado se corre con la imagen (la caja sigue pintada en el cuadro del cambio, sin repintar)`, () => {
     const win = new LiveWindow({ blocks: set, spec: SPEC, nx: 5, ny: 5, chunk: TB, center: [0, 0], margin: 1, bake: OPTS, viewport: [64, 40] });
     const budget = stepBudget();
     const painter = new SectionPainter(win.baked, { ahead: 2, behind: 1 });
-    const cutOf = (x: number, y: number) => { const [lx, ly] = win.toLocal(x, y); return sectionAround(win.view.camera, lx, ly, win.store.height[Math.floor(ly) * win.store.width + Math.floor(lx)]! - 12, 24); };
-    let x = TV / 2;
+    // (con ghost: semitransparente lo de 6 por encima de los pies para arriba)
+    const cutOf = (x: number, y: number) => {
+      const [lx, ly] = win.toLocal(x, y), z = win.store.height[Math.floor(ly) * win.store.width + Math.floor(lx)]! - 12;
+      return { ...sectionAround(win.view.camera, lx, ly, z, 24), ...(veil ? { ghost: { z: z + 6, alpha: 0.5 } } : {}) };
+    };
+    let x = TV / 2, veils = 0;
     const y = TV / 2;
     const frame = (paint: boolean) => {
       win.update(x, y, budget);
@@ -333,6 +337,16 @@ describe('ventana viva', () => {
           let d = false;
           for (let ch = 0; ch < 4; ch++) if (A.rgba[l * 4 + ch] !== R.rgba[q * 4 + ch]) d = true;
           if (d || A.depth[l] !== R.depth[q] || A.face[l] !== R.face[q] || !Object.is(A.pick[l], R.pick[q]) || A.wy[l] !== R.wy[q] || A.sky![l] !== R.sky![q]) off++;
+          // (y la segunda superficie, corrida igual)
+          const ag = A.ghost, rg = R.ghost;
+          if (!!ag !== !!rg) { off++; continue; }
+          if (!ag || !rg || R.mask[q] !== 1) continue;
+          if (ag.on[l] !== rg.on[q]) { off++; continue; }
+          if (!rg.on[q]) continue;
+          veils++;
+          let e = false;
+          for (let ch = 0; ch < 4; ch++) if (ag.rgba[l * 4 + ch] !== rg.rgba[q * 4 + ch]) e = true;
+          if (e || ag.depth[l] !== rg.depth[q] || ag.face[l] !== rg.face[q] || !Object.is(ag.pick[l], rg.pick[q]) || ag.wy[l] !== rg.wy[q] || ag.sky![l] !== rg.sky![q]) off++;
         }
         expect(off).toBe(0);
         kept++;
@@ -341,6 +355,7 @@ describe('ventana viva', () => {
       for (let k = 0; k < 20000 && (win.busy || budget.pending || !painter.ready()); k++) frame(true);
     }
     expect(kept).toBe(3);
+    if (veil) expect(veils).toBeGreaterThan(100); else expect(veils).toBe(0);
   });
 
   it('capa de sección: un recuadro publicado en sus columnas pero lejos de sus filas no tira lo pintado; uno en sus filas, sí', () => {

@@ -579,7 +579,12 @@ interface Raw {
   // imagen donde no es cero
   wmask?: Uint8Array;
   wreg?: [number, number, number, number] | null;
+  // Con ghost (SectionCut.ghost): la segunda superficie, en el mismo anillo
+  g?: GhostArrays;
 }
+type GhostArrays = { on: Uint8Array; rgba: Uint8ClampedArray; depth: Float32Array; face: Int8Array; pick: Float64Array; sky: Uint8Array | null; wy: Float32Array; back: Float32Array };
+const ghostArrays = (n: number, sky: boolean): GhostArrays => ({ on: new Uint8Array(n), rgba: new Uint8ClampedArray(n * 4), depth: new Float32Array(n).fill(Infinity), face: new Int8Array(n).fill(-1),
+  pick: new Float64Array(n).fill(NaN), sky: sky ? new Uint8Array(n) : null, wy: new Float32Array(n), back: new Float32Array(n) });
 
 // Los tramos de las columnas de imagen gx0..gx1 que caen seguidos en el anillo: [gx, n]
 function ringRuns(RW: number, gx0: number, gx1: number): Array<[number, number]> {
@@ -595,7 +600,9 @@ function joinRows(parts: Array<SectionLayer | null>, fy0: number, fy1: number): 
   const w = first.w, h = fy1 - fy0 + 1, n = w * h;
   const mask = new Uint8Array(n), rgba = new Uint8ClampedArray(n * 4), depth = new Float32Array(n).fill(Infinity), face = new Int8Array(n).fill(-1);
   const pick = new Float64Array(n).fill(NaN), sky = first.sky ? new Uint8Array(n) : null, wy = new Float32Array(n), back = new Float32Array(n);
-  let count = 0;
+  // (la segunda superficie, si alguna banda la lleva)
+  const gf = parts.find((q) => q?.ghost)?.ghost, g = gf ? ghostArrays(n, !!first.sky) : null;
+  let count = 0, gn = 0;
   for (const q of parts) {
     if (!q) continue;
     const o = (q.y - fy0) * w;
@@ -603,8 +610,15 @@ function joinRows(parts: Array<SectionLayer | null>, fy0: number, fy1: number): 
     if (sky && q.sky) sky.set(q.sky, o);
     wy.set(q.wy, o); back.set(q.back, o);
     count += q.count;
+    const qg = q.ghost;
+    if (g && qg) {
+      g.on.set(qg.on, o); g.rgba.set(qg.rgba, o * 4); g.depth.set(qg.depth, o); g.face.set(qg.face, o); g.pick.set(qg.pick, o);
+      if (g.sky && qg.sky) g.sky.set(qg.sky, o);
+      g.wy.set(qg.wy, o); g.back.set(qg.back, o);
+      gn += qg.count;
+    }
   }
-  return count ? { x: first.x, y: fy0, w, h, mask, rgba, depth, face, pick, sky, wy, back, count } : null;
+  return count ? { x: first.x, y: fy0, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, ...(g && gn ? { ghost: { z: gf!.z, keepFacing: gf!.keepFacing, alpha: gf!.alpha, ...g, count: gn } } : {}) } : null;
 }
 
 // Columnas sin sección
@@ -614,7 +628,25 @@ function clearCols(to: Raw, gx0: number, gx1: number): void {
     to.mask.fill(0, a, z); to.rgba.fill(0, a * 4, z * 4); to.depth.fill(Infinity, a, z); to.face.fill(-1, a, z); to.pick.fill(NaN, a, z);
     to.wy.fill(0, a, z); to.back.fill(0, a, z);
     if (to.sky) to.sky.fill(0, a, z);
+    if (to.g) clearGhost(to.g, a, z);
   }
+}
+function clearGhost(g: GhostArrays, a: number, z: number): void {
+  g.on.fill(0, a, z); g.rgba.fill(0, a * 4, z * 4); g.depth.fill(Infinity, a, z); g.face.fill(-1, a, z); g.pick.fill(NaN, a, z);
+  g.wy.fill(0, a, z); g.back.fill(0, a, z);
+  if (g.sky) g.sky.fill(0, a, z);
+}
+// Los píxeles con velo de las UNIT columnas de una unidad (como unitCount)
+const UNIT_GHOST = new WeakMap<SectionLayer, number>();
+function unitGhost(L: SectionLayer, gx: number): number {
+  const g = L.ghost;
+  if (!g) return 0;
+  let n = UNIT_GHOST.get(L);
+  if (n !== undefined) return n;
+  n = 0;
+  for (let j = 0; j < L.h; j++) for (let k = gx - L.x; k < gx - L.x + UNIT; k++) if (k >= 0 && k < L.w && g.on[j * L.w + k] && L.mask[j * L.w + k] === 1) n++;
+  UNIT_GHOST.set(L, n);
+  return n;
 }
 
 // Los píxeles sustituidos de las UNIT columnas de una unidad (desde la columna de píxeles gx), una vez por capa
@@ -640,6 +672,17 @@ function copyCols(from: SectionLayer, to: Raw, gx0: number, gx1: number): void {
     to.wy.set(from.wy.subarray(fq, fq + n), tq);
     to.back.set(from.back.subarray(fq, fq + n), tq);
     if (to.sky && from.sky) to.sky.set(from.sky.subarray(fq, fq + n), tq);
+    const tg = to.g, fg = from.ghost;
+    if (!tg) continue;
+    if (!fg) { clearGhost(tg, tq, tq + n); continue; }
+    tg.on.set(fg.on.subarray(fq, fq + n), tq);
+    tg.rgba.set(fg.rgba.subarray(fq * 4, (fq + n) * 4), tq * 4);
+    tg.depth.set(fg.depth.subarray(fq, fq + n), tq);
+    tg.face.set(fg.face.subarray(fq, fq + n), tq);
+    tg.pick.set(fg.pick.subarray(fq, fq + n), tq);
+    tg.wy.set(fg.wy.subarray(fq, fq + n), tq);
+    tg.back.set(fg.back.subarray(fq, fq + n), tq);
+    if (tg.sky && fg.sky) tg.sky.set(fg.sky.subarray(fq, fq + n), tq);
   }
 }
 
@@ -711,7 +754,9 @@ export class SectionPainter {
     const prev = this.cut, sl = this.slack;
     const y1 = prev && prev.y1 >= cut.y1 - 1 && prev.y1 <= cut.y1 + sl.yBehind ? prev.y1 : cut.y1;
     const zMin = prev && prev.zMin >= cut.zMin - sl.zBelow && prev.zMin <= cut.zMin + sl.zAbove ? prev.zMin : cut.zMin;
-    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}${cut.worldSky ? ',mundo' : ''}`;
+    // (y con ghost, su z y keepFacing: la segunda superficie depende de ellos; alpha no)
+    const gh = cut.ghost ?? null;
+    const track = `${cut.y0},${y1},${zMin},${cut.depth ?? ''}${cut.worldSky ? ',mundo' : ''}${gh ? `,velo${Math.ceil(gh.z)}${gh.keepFacing ? 'f' : ''}` : ''}`;
     // La caja cambió en y o en z: lo pintado no vale para la de ahora, pero se sigue enseñando hasta tener la nueva
     if (track !== this.track) { if (this.track) this.resets++; this.hold(); this.track = track; this.clearAll(); }
     // (la ventana no cambia lo que se pinta: se aplica al componer)
@@ -785,9 +830,23 @@ export class SectionPainter {
         if (vx < 0 || vx >= sw) out = true;
         pick[q] = k2;
       }
+      // (y los de la segunda superficie)
+      const G = L.ghost;
+      let ghost: GhostSurface | null = null;
+      if (G && !out) {
+        const gp = new Float64Array(L.w * L.h);
+        for (let q = 0; q < gp.length && !out; q++) {
+          const k = G.pick[q]!;
+          if (!G.on[q] || k !== k) { gp[q] = k; continue; }
+          const k2 = k - dk, vx = Math.floor(Math.floor(k2 / KEY_SPAN) / KEY_SPAN) - KEY_OFF;
+          if (vx < 0 || vx >= sw) out = true;
+          gp[q] = k2;
+        }
+        ghost = { ...G, pick: gp };
+      }
       // (un vóxel suyo salió de la ventana: se repinta)
       if (out) continue;
-      this.strips.set(ni, { layer: { ...L, x: L.x - DX, pick }, serial: ls.serial - 1, id: st.id, rows: st.rows });
+      this.strips.set(ni, { layer: { ...L, x: L.x - DX, pick, ...(ghost ? { ghost } : {}) }, serial: ls.serial - 1, id: st.id, rows: st.rows });
     }
     const c = this.cut!;
     this.cut = { ...c, x0: c.x0 - DX, x1: c.x1 - DX };
@@ -865,7 +924,8 @@ export class SectionPainter {
       rgba.fill(0, q * 4, q * 4 + 4); depth[q] = Infinity; face[q] = -1; pick[q] = NaN; wy[q] = 0; back[q] = 0;
       if (sky) sky[q] = 0;
     }
-    st.layer = count ? { x: L!.x, y: L!.y, w, h, mask, rgba, depth, face, pick, sky, wy, back, count } : null;
+    // (la segunda superficie no cambia: solo cuenta donde la máscara es 1, y ahí nada cambió)
+    st.layer = count ? { x: L!.x, y: L!.y, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, ...(L!.ghost ? { ghost: L!.ghost } : {}) } : null;
     st.id = ++this.ids;
     this.revalidated++;
     return true;
@@ -1025,7 +1085,7 @@ export class SectionPainter {
   private pending = new Map<number, { serial: number; clock: number; snap: Float64Array; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
   private paintStep(i: number): void {
     const c = this.cut!, b = this.b;
-    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9, window: null, ghost: null };
+    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9, window: null };
     const [fy0, fy1] = sectionRows(b, wide);
     let p = this.pending.get(i);
     if (p && (!this.unchangedSince(i, p.serial) || p.fy0 !== fy0 || p.fy1 !== fy1)) p = undefined;
@@ -1076,7 +1136,12 @@ export class SectionPainter {
     const hd = this.held;
     if (hd) {
       if (this.whole()) this.held = null;
-      else { hd.cut = { ...hd.cut!, x0: c.x0, x1: c.x1, window: c.window }; return hd.layer(); }
+      else {
+        // (con las x, la ventana y la alpha de ahora)
+        const hg = hd.cut!.ghost;
+        hd.cut = { ...hd.cut!, x0: c.x0, x1: c.x1, window: c.window, ...(hg && c.ghost ? { ghost: { ...hg, alpha: c.ghost.alpha } } : {}) };
+        return hd.layer();
+      }
     }
     const i0 = c.x0 / UNIT, i1 = (c.x1 + 1) / UNIT - 1;
     let ready = '';
@@ -1089,6 +1154,8 @@ export class SectionPainter {
     let layer: SectionLayer | null;
     if (this.composed && this.composed.key === key && !this.edgeSkyChanged(c, this.composed.serial)) { this.composed.serial = serial; layer = this.composed.layer; }
     else { layer = this.compose(c); this.composed = { key, layer, serial }; }
+    // (la alpha de este cuadro: no cambia lo pintado ni la capa)
+    if (layer?.ghost && c.ghost) layer.ghost.alpha = c.ghost.alpha;
     return c.window || this.shaped ? this.shape(layer, c.window ?? null) : layer;
   }
 
@@ -1174,7 +1241,8 @@ export class SectionPainter {
     const old = this.raw;
     const prev = old && old.h === h && old.ry === ry && old.RW === RW ? old : null;
     const raw: Raw = prev ?? { RW, h, ry, rx, w, mask: new Uint8Array(RW * h), rgba: new Uint8ClampedArray(RW * h * 4), depth: new Float32Array(RW * h).fill(Infinity),
-      face: new Int8Array(RW * h).fill(-1), pick: new Float64Array(RW * h).fill(NaN), sky: b.sky ? new Uint8Array(RW * h) : null, wy: new Float32Array(RW * h), back: new Float32Array(RW * h), units: new Map(), edges: [0, -1] };
+      face: new Int8Array(RW * h).fill(-1), pick: new Float64Array(RW * h).fill(NaN), sky: b.sky ? new Uint8Array(RW * h) : null, wy: new Float32Array(RW * h), back: new Float32Array(RW * h), units: new Map(), edges: [0, -1],
+      ...(c.ghost ? { g: ghostArrays(RW * h, !!b.sky) } : {}) };
     const prevRx = prev ? prev.rx : 0, prevW = prev ? prev.w : 0, prevUnits = prev ? prev.units : new Map<number, SectionLayer | null>(), prevEdges = prev ? prev.edges : [0, -1];
     raw.rx = rx; raw.w = w; raw.units = new Map(); raw.edges = [ox + c.x0, ox + c.x1];
     // Lo de antes vale tal cual salvo los arreglos de sus bordes: se deshacen (se guardó lo que pisaron)
@@ -1187,7 +1255,7 @@ export class SectionPainter {
       dirty.push([prevEdges[0]! - 1, prevEdges[0]! + m], [prevEdges[1]! - m, prevEdges[1]! + 1]);
     } else this.undo.length = 0;
     // Las columnas: las que ya están se quedan; las demás, de una unidad o vacías
-    let count = 0;
+    let count = 0, gcount = 0;
     const put = (L: SectionLayer | null, gx0: number, gx1: number) => {
       if (L) copyCols(L, raw, gx0, gx1); else clearCols(raw, gx0, gx1);
       const d = dirty[dirty.length - 1];
@@ -1201,6 +1269,7 @@ export class SectionPainter {
       if (L === undefined) { put(null, gx0, gx1); continue; }
       raw.units.set(i, L);
       count += L ? unitCount(L, ox + i * UNIT) : 0;
+      gcount += L ? unitGhost(L, ox + i * UNIT) : 0;
       if (prev && prevUnits.get(i) === L && gx0 >= prevRx && gx1 < prevRx + prevW) continue;
       put(L, gx0, gx1);
     }
@@ -1212,7 +1281,8 @@ export class SectionPainter {
     dirty.push([ox + c.x0 - 1, ox + c.x0 + m], [ox + c.x1 - m, ox + c.x1 + 1]);
     if (!count) { this.last = null; return null; }
     // El cielo cerca de los bordes en x (a SKY_REACH + 1 columnas): con la caja de verdad (las franjas lo hicieron con
-    // la ancha, que deja ver cielo de lado)
+    // la ancha, que deja ver cielo de lado). El de la segunda superficie (ghost) no hace falta: detrás de la caja sus rayos
+    // no cruzan los lados de la caja, y bajo su suelo tiene encima el vóxel semitransparente, que los corta
     if (sky) {
       const m = SKY_REACH + 1;
       for (const side of [0, 1] as const) {
@@ -1252,7 +1322,9 @@ export class SectionPainter {
         }
       }
     }
-    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, base, dirty, stride: RW, ring: RW, box: c };
+    // (la segunda superficie, si algún píxel de la caja lleva velo)
+    const cg = c.ghost, ghost: GhostSurface | null = raw.g && cg && gcount ? { z: Math.ceil(cg.z), keepFacing: !!cg.keepFacing, alpha: cg.alpha, ...raw.g, count: gcount } : null;
+    const layer: SectionLayer = { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, base, dirty, stride: RW, ring: RW, box: c, ...(ghost ? { ghost } : {}) };
     this.last = layer;
     return layer;
   }

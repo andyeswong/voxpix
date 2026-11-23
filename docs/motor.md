@@ -1436,7 +1436,18 @@ piso de arriba sin dejar de verlo.
 - Quien compone a mano con `frame2DParts` pasa la profundidad a `shadeLayers(total, o, b, depth)` y llama a
   `applyGhost` después de la niebla.
 - Pruebas: `test/corte-velo.test.ts`.
-- Por ahora solo en `sectionLayer` y `frame2D` (la CPU). Un `SectionPainter` y el compositor de la GPU lo ignoran.
+- Con `SectionPainter`: las franjas se pintan con su segunda superficie y la capa compuesta la lleva en el mismo
+  anillo; lo que cambia (`dirty`) vale para las dos.
+  - `alpha` no entra en el seguimiento: `set` con otra alpha devuelve la misma capa, sin pintar ni componer.
+  - `z`, `keepFacing`, encender y apagar sí: se repinta la caja, y se sigue enseñando la capa anterior (con la alpha de
+    ahora) hasta que la nueva está entera, como al cambiar los pies.
+  - Solo pagan el segundo render las bandas con algún píxel con velo.
+  - Tiempo hasta caja entera, en el túnel de `scripts/bench-seccion.ts` (mundo de bloques, caja de 16 bloques, sin
+    freno, mediana de 7): 58,4 ms sin ghost; 71,9 ms con `z` 20 (todo lo de encima del túnel, 5024 de 18848 píxeles
+    con velo), 1,23 veces; 73,3 ms con `z` 32, 1,26 veces; con `keepFacing` (32 píxeles con velo), 58,1 ms.
+- Con `ghost.z` por debajo del suelo de la caja, de lo de debajo del suelo solo se ve la capa de justo debajo de
+  `ghost.z` (la sección no recorre lo enterrado bajo la caja).
+- Por ahora el compositor de la GPU lo ignora (pinta la superficie de delante, como sin ghost).
 
 ### La forma del corte: una ventana en la imagen
 

@@ -2,6 +2,8 @@
 // sobre una segunda superficie (lo que se ve detrás con todo lo de esa altura quitado).
 // - la capa: sus arrays de siempre (la superficie de delante) no cambian ni un byte, así que la máscara, pickVoxel, lo
 //   que ve un agente y entityAt son los de sin ghost; la segunda superficie es la de un mundo sin lo de z >= ghost.z;
+// - por franjas (SectionPainter): la misma capa que la de la caja entera, también lo que sube quien lleva una copia por
+//   columnas (dirty); alpha cambia sin repintar; al cambiar z o al apagarlo se sigue viendo lo anterior hasta tener lo nuevo;
 // - el cuadro: apagado es el de siempre; con alpha 1 también; con otra alpha, la mezcla exacta del cuadro de alpha 0
 //   con el de alpha 1, con luz, niebla y luces; una entidad delante del vóxel sale opaca, entre las dos superficies se
 //   ve a través del velo, detrás de la segunda no se ve; y sobre fondo transparente el velo lleva alfa = alpha.
@@ -10,9 +12,9 @@ import { material, Model, unkey, type Palette } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { BlockSet, BlockGrid, pickVoxel } from '../src/world/blocks';
 import { WorldView } from '../src/world/view';
-import { bakeWorld } from '../src/world/bake';
+import { bakeWorld, rebakeChangedJobs } from '../src/world/bake';
 import { frame2D, sectionFor, sceneLayer, ghostMix, type Frame2DOptions } from '../src/world/frame2d';
-import { sectionAround, sectionLayer, secIdx, FACING, type SectionCut, type SectionLayer } from '../src/world/section';
+import { sectionAround, sectionLayer, secIdx, FACING, SectionPainter, STRIP, UNIT, type SectionCut, type SectionLayer } from '../src/world/section';
 import { AgentHost, type AgentLook } from '../src/agent/agent';
 import type { WorldLight } from '../src/world/build';
 
@@ -278,5 +280,178 @@ describe('el cuadro con ghost', () => {
     const S = sceneLayer(L)!;
     expect(S.ghost ?? null).toBeNull();
     expect(S.mask).toBe(L.mask);
+  });
+});
+
+// La caja como la lleva el pintor: por franjas enteras en x
+const stripBox = (c: SectionCut): SectionCut => { const x0 = Math.floor(c.x0 / STRIP) * STRIP; return { ...c, x0, x1: x0 + Math.ceil((c.x1 - c.x0 + 1) / STRIP) * STRIP - 1 }; };
+// Lo que difiere entre la capa A (con anillo o sin él) y la de referencia R (sin anillo), de delante (salvo con front a
+// false) y de la segunda superficie
+function layerDiff(A: SectionLayer, R: SectionLayer, front = true): string[] {
+  const out: string[] = [];
+  if ([A.x, A.y, A.w, A.h, A.count].join() !== [R.x, R.y, R.w, R.h, R.count].join()) return [`recuadro ${[A.x, A.y, A.w, A.h, A.count]} / ${[R.x, R.y, R.w, R.h, R.count]}`];
+  if (!!A.ghost !== !!R.ghost) return [`ghost ${!!A.ghost} / ${!!R.ghost}`];
+  const ag = A.ghost, rg = R.ghost;
+  if (ag && rg && (ag.z !== rg.z || ag.keepFacing !== rg.keepFacing || ag.count !== rg.count)) out.push(`ghost ${[ag.z, ag.keepFacing, ag.count]} / ${[rg.z, rg.keepFacing, rg.count]}`);
+  for (let q = 0; q < R.w * R.h && out.length < 5; q++) {
+    const gx = R.x + (q % R.w), j = Math.floor(q / R.w), l = secIdx(A, gx, j);
+    if (A.mask[l] !== R.mask[q]) { out.push(`máscara ${gx},${j}`); continue; }
+    if (!R.mask[q]) continue;
+    let d = A.depth[l] !== R.depth[q] || A.face[l] !== R.face[q] || !Object.is(A.pick[l], R.pick[q]) || A.sky![l] !== R.sky![q] || A.wy[l] !== R.wy[q] || A.back[l] !== R.back[q];
+    for (let c = 0; c < 4; c++) if (A.rgba[l * 4 + c] !== R.rgba[q * 4 + c]) d = true;
+    if (d && front) out.push(`delante ${gx},${j}`);
+    if (!ag || !rg || R.mask[q] !== 1) continue;
+    if (ag.on[l] !== rg.on[q]) { out.push(`velo ${gx},${j}: ${ag.on[l]} / ${rg.on[q]}`); continue; }
+    if (!rg.on[q]) continue;
+    let e = ag.depth[l] !== rg.depth[q] || ag.face[l] !== rg.face[q] || !Object.is(ag.pick[l], rg.pick[q]) || ag.sky![l] !== rg.sky![q] || ag.wy[l] !== rg.wy[q] || ag.back[l] !== rg.back[q];
+    for (let c = 0; c < 4; c++) if (ag.rgba[l * 4 + c] !== rg.rgba[q * 4 + c]) e = true;
+    if (e) out.push(`segunda ${gx},${j}: prof ${ag.depth[l]} / ${rg.depth[q]}, cielo ${ag.sky![l]} / ${rg.sky![q]}, color ${ag.rgba.subarray(l * 4, l * 4 + 4)} / ${rg.rgba.subarray(q * 4, q * 4 + 4)}`);
+  }
+  return out;
+}
+
+describe('ghost por franjas (SectionPainter)', () => {
+  it('la misma capa que la de la caja entera al andar, y lo que cambia (dirty) basta para poner al día una copia', () => {
+    const { view, b, shot } = scene({ lights: [{ id: 'd', kind: 'torch', x: 46.5, y: 52.5, z: 14, baked: false }], ents: [{ x: 46, y: 52, z: R.z0 }] });
+    const p = new SectionPainter(b, { ahead: 2, behind: 1 });
+    // Una copia como la de la GPU, de la segunda superficie: por columnas de la imagen, solo con lo que dice cada capa
+    const BW = b.width;
+    let mirror: { y: number; h: number; on: Uint8Array; depth: Float32Array; rgba: Uint8Array; sky: Uint8Array } | null = null, seen: SectionLayer | null = null;
+    const sync = (L: SectionLayer | null) => {
+      if (!L || L === seen) return;
+      const full = !mirror || !L.base || L.base !== seen || mirror.y !== L.y || mirror.h !== L.h;
+      // (empieza con basura, como una textura: lo que no diga dirty se queda mal)
+      if (!mirror || mirror.y !== L.y || mirror.h !== L.h) mirror = { y: L.y, h: L.h, on: new Uint8Array(BW * L.h).fill(7), depth: new Float32Array(BW * L.h).fill(-3), rgba: new Uint8Array(BW * L.h * 4).fill(99), sky: new Uint8Array(BW * L.h).fill(9) };
+      const cols: ReadonlyArray<readonly [number, number, number?, number?]> = full ? [[L.x, L.x + L.w - 1]] : L.dirty!;
+      for (const [g0, g1] of cols) for (let g = Math.max(L.x, g0); g <= Math.min(L.x + L.w - 1, g1); g++) for (let j = 0; j < L.h; j++) {
+        const q = secIdx(L, g, j), m = j * BW + g, G = L.ghost, on = G && L.mask[q] === 1 && G.on[q] ? 1 : 0;
+        mirror.on[m] = on; mirror.depth[m] = on ? G!.depth[q]! : Infinity; mirror.sky[m] = on ? G!.sky![q]! : 0;
+        for (let c = 0; c < 4; c++) mirror.rgba[m * 4 + c] = on ? G!.rgba[q * 4 + c]! : 0;
+      }
+      seen = L;
+    };
+    let veils = 0;
+    // (con el velo desde encima de la sala y desde debajo del suelo de la caja: ahí la segunda superficie cae en las filas
+    // de la caja, y su cielo junto a los bordes en x depende de la caja de verdad)
+    for (const gz of [GZ, R.z0 - 2]) for (const gx of [40, 44, 52, 60, 52]) {
+      const c0 = { ...sectionAround(view.camera, gx, GY, R.z0, 32), ghost: { z: gz, alpha: 0.4 } };
+      p.set(c0, 1);
+      sync(p.layer());
+      p.job()?.run(Infinity);
+      const L = p.layer()!, Rf = sectionLayer(b, stripBox(c0))!;
+      sync(L);
+      expect(layerDiff(L, Rf)).toEqual([]);
+      expect(L.ghost!.alpha).toBe(0.4);
+      veils += L.ghost!.count;
+      for (let q = 0; q < Rf.w * Rf.h; q++) {
+        const g = Rf.x + (q % Rf.w), j = Math.floor(q / Rf.w), m = j * BW + g, on = Rf.mask[q] === 1 && Rf.ghost!.on[q] ? 1 : 0;
+        if (mirror!.on[m] !== on) expect(`copia: velo en ${g},${j}: ${mirror!.on[m]}`).toBe(`${on}`);
+        if (!on) continue;
+        if (mirror!.depth[m] !== Rf.ghost!.depth[q] || mirror!.sky[m] !== Rf.ghost!.sky![q]) expect(`copia: profundidad o cielo en ${g},${j}`).toBe('igual');
+        for (let c = 0; c < 4; c++) if (mirror!.rgba[m * 4 + c] !== Rf.ghost!.rgba[q * 4 + c]) expect(`copia: color en ${g},${j}`).toBe('igual');
+      }
+      // Y el cuadro con la capa del pintor es el de la caja entera
+      const fa = shot(null, { sectionLayer: L }), fr = shot(stripBox(c0));
+      expect(same(fa, fr)).toBe(0);
+    }
+    expect(veils).toBeGreaterThan(8000);
+  });
+
+  it('alpha cambia en cada cuadro sin repintar ni rehacer la capa', () => {
+    const { view, b, shot } = scene();
+    const p = new SectionPainter(b, { ahead: 0, behind: 0 }), cut = sectionAround(view.camera, GX, GY, R.z0, 32);
+    p.set({ ...cut, ghost: ghost(0.3) }, 0); p.paintAll();
+    const L = p.layer()!, n = p.painted, f3 = shot(null, { sectionLayer: L });
+    expect(L.ghost!.alpha).toBe(0.3);
+    for (const a of [0.7, 0, 1, 0.3]) {
+      p.set({ ...cut, ghost: ghost(a) }, 0);
+      expect(p.ready()).toBe(true);
+      p.job()?.run(Infinity);                                              // (si queda algo en la cola, no es pintar)
+      const L2 = p.layer()!;
+      expect(L2).toBe(L);
+      expect(L2.ghost!.alpha).toBe(a);
+      expect(p.painted).toBe(n);
+      expect(p.resets).toBe(0);
+      // (y el cuadro es el de esa alpha)
+      expect(same(shot(null, { sectionLayer: L2 }), shot(stripBox({ ...cut, ghost: ghost(a) })))).toBe(0);
+    }
+    expect(same(shot(null, { sectionLayer: p.layer() }), f3)).toBe(0);
+  });
+
+  it('al cambiar z, keepFacing, o al encender o apagar el ghost, se sigue viendo lo anterior hasta tener lo nuevo entero', () => {
+    const { view, b } = scene();
+    const p = new SectionPainter(b, { ahead: 0, behind: 0 }), cut = sectionAround(view.camera, GX, GY, R.z0, 32);
+    const steps: Array<[string, SectionCut]> = [
+      ['encender', { ...cut, ghost: ghost(0.3) }], ['otra z', { ...cut, ghost: { z: GZ + 6, alpha: 0.5 } }],
+      ['keepFacing', { ...cut, ghost: { z: GZ + 6, alpha: 0.5, keepFacing: true } }], ['apagar', cut],
+    ];
+    p.set(cut, 0); p.paintAll();
+    let prev = p.layer()!, prevCut: SectionCut = cut;
+    expect(prev.ghost ?? null).toBeNull();
+    for (const [name, c] of steps) {
+      p.set(c, 0);
+      const units = (stripBox(c).x1 - stripBox(c).x0 + 1) / UNIT;
+      let held = 0;
+      // Paso a paso (una banda de una unidad cada vez): mientras no está entera, la capa es la de antes
+      for (let k = 0; k < 4000 && !p.ready(); k++) {
+        const L = p.layer()!, before = p.painted;
+        const want = sectionLayer(b, stripBox({ ...prevCut, ...(prevCut.ghost && c.ghost ? { ghost: { ...prevCut.ghost, alpha: c.ghost.alpha } } : {}) }))!;
+        const d = layerDiff(L, want);
+        if (d.length) expect(`${name}, paso ${k}: ${d[0]}`).toBe('la capa de antes');
+        // (con la alpha de ahora, si las dos llevan ghost)
+        if (L.ghost && c.ghost && L.ghost.alpha !== c.ghost.alpha) expect(`${name}, paso ${k}: alpha ${L.ghost.alpha}`).toBe(`${c.ghost.alpha}`);
+        held++;
+        p.job()!.run(performance.now());                                   // sin sitio: STARVE llamadas y pinta un paso
+        if (p.painted === before) for (let s = 0; s < 40 && p.painted === before && !p.ready(); s++) p.job()?.run(performance.now());
+      }
+      expect(p.ready()).toBe(true);
+      expect(held).toBeGreaterThan(units - 1);
+      const L = p.layer()!;
+      expect(`${name}: ${layerDiff(L, sectionLayer(b, stripBox(c))!).join('; ')}`).toBe(`${name}: `);
+      expect(L).not.toBe(prev);
+      prev = L; prevCut = c;
+    }
+    expect(prev.ghost ?? null).toBeNull();
+    expect(p.resets).toBe(steps.length);
+  });
+});
+
+describe('ghost por franjas: lo que se repinta y lo apartado', () => {
+  it('una franja que al repintarse deja de tener velo lo pierde también en la capa', () => {
+    const { view, b } = scene();
+    const p = new SectionPainter(b, { ahead: 0, behind: 0 }), cut = { ...sectionAround(view.camera, GX, GY, R.z0, 32), ghost: ghost(0.5) };
+    p.set(cut, 0); p.paintAll();
+    const before = p.layer()!.ghost!.count;
+    // Un tajo a cielo abierto detrás del corte (x 40..55, de y 49 al fondo, de z GZ arriba): ahí ya no queda nada con velo
+    for (let y = 49; y < D; y++) for (let x = 40; x <= 55; x++) for (let z = GZ; z < TOP; z++) view.static.set(x, y, z, 0);
+    for (const j of rebakeChangedJobs(b, [])) while (!j.run(Infinity));
+    p.set(cut, 0);
+    expect(p.ready()).toBe(false);
+    p.paintAll();
+    const L = p.layer()!, Rf = sectionLayer(b, stripBox(cut))!;
+    // (solo la segunda superficie: junto al tajo, el contorno de 3 píxeles sin superficie de la de delante toma otro color
+    // por franjas que de una vez, con ghost o sin él)
+    expect(layerDiff(L, Rf, false)).toEqual([]);
+    expect(L.ghost!.count).toBeLessThan(before - 200);
+    // (las unidades del tajo, sin segunda superficie: ni un píxel con velo en sus columnas)
+    const ox = b.options.originX ?? 0;
+    for (let gx = ox + 44; gx <= ox + 51; gx++) for (let j = 0; j < L.h; j++) if (L.ghost!.on[secIdx(L, gx, j)]) expect(`velo en ${gx},${j}`).toBe('ninguno');
+  });
+
+  it('lo apartado al cambiar z sigue bien compuesto si la caja se mueve en x mientras tanto (el cielo de sus bordes)', () => {
+    const { view, b } = scene();
+    const p = new SectionPainter(b, { ahead: 2, behind: 2 });
+    const at = (gx: number, gz: number) => ({ ...sectionAround(view.camera, gx, GY, R.z0, 32), ghost: { z: gz, alpha: 0.5 } });
+    p.set(at(44, R.z0 - 2), 1);
+    p.layer();
+    p.job()?.run(Infinity);
+    expect(layerDiff(p.layer()!, sectionLayer(b, stripBox(at(44, R.z0 - 2)))!)).toEqual([]);
+    // Otra z y la caja una franja más allá y luego de vuelta, sin pintar nada: la capa es la de la z de antes en cada x
+    for (const gx of [52, 44, 36]) {
+      p.set(at(gx, GZ), 1);
+      expect(p.ready()).toBe(false);
+      const d = layerDiff(p.layer()!, sectionLayer(b, stripBox(at(gx, R.z0 - 2)))!);
+      expect(`x ${gx}: ${d.join('; ')}`).toBe(`x ${gx}: `);
+    }
   });
 });

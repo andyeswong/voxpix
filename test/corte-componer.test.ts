@@ -210,11 +210,11 @@ describe('corte al componer', () => {
     expect(colors(layer())).toEqual(['14,13,20,255']);
   });
 
-  it('los recuadros del corte de la vista, publicados después de pintar con él, no dejan viejas las franjas que no cambian (igual que pintadas de nuevo); un vóxel cambiado cerca, sí', () => {
+  for (const veil of [false, true]) it(`los recuadros del corte de la vista, publicados después de pintar con él, no dejan viejas las franjas que no cambian (igual que pintadas de nuevo); un vóxel cambiado cerca, sí${veil ? ' (con ghost: la segunda superficie también)' : ''}`, () => {
     const run = (q: Quarter, gx: number, edit: boolean) => {
       const st = new WorldState(build(null), [], null), view = new WorldView(st, q, { cut: true });
       const b = bakeWorld(view.bakeable(), { topZ: ZT, incline: 0.5, outline: 'both', sky: true });
-      const gy = 60, [vx, vy] = view.camera.cellToView(gx, gy), cut = sectionAround(view.camera, gx, gy, TZ0, 16);
+      const gy = 60, [vx, vy] = view.camera.cellToView(gx, gy), cut = { ...sectionAround(view.camera, gx, gy, TZ0, 16), ...(veil ? { ghost: { z: TZ0 + 4, alpha: 0.5 } } : {}) };
       view.setCut({ x0: vx - 16, y0: vy - 16, x1: vx + 16, y1: vy + 16, zTop: TZ1 + 1 });
       const p = new SectionPainter(b, { ahead: 0, behind: 0 });
       p.set(cut, 0); p.paintAll();
@@ -226,6 +226,7 @@ describe('corte al componer', () => {
       ref.set(cut, 0); ref.paintAll();
       return { p, L: p.layer(), R: ref.layer()! };
     };
+    let veils = 0;
     for (const gx of [30, 45, 90]) {
       const { p, L, R } = run(0, gx, false);
       expect(p.revalidated).toBe(4);
@@ -241,9 +242,20 @@ describe('corte al componer', () => {
         let d = L!.sky![a] !== R.sky![r] || !(L!.depth[a] === R.depth[r]) || !(L!.pick[a] === R.pick[r] || (L!.pick[a] !== L!.pick[a] && R.pick[r] !== R.pick[r]));
         for (let c = 0; c < 4 && !d; c++) d = L!.rgba[a * 4 + c] !== R.rgba[r * 4 + c];
         if (d) diff++;
+        // (la segunda superficie, donde lleva velo)
+        const lg = L!.ghost, rg = R.ghost;
+        if (!!lg !== !!rg) { diff++; continue; }
+        if (!lg || !rg || R.mask[r] !== 1) continue;
+        if (lg.on[a] !== rg.on[r]) { diff++; continue; }
+        if (!rg.on[r]) continue;
+        veils++;
+        let e = lg.sky![a] !== rg.sky![r] || !(lg.depth[a] === rg.depth[r]) || !Object.is(lg.pick[a], rg.pick[r]) || lg.face[a] !== rg.face[r];
+        for (let c = 0; c < 4 && !e; c++) e = lg.rgba[a * 4 + c] !== rg.rgba[r * 4 + c];
+        if (e) diff++;
       }
       expect(diff).toBe(0);
     }
+    if (veil) expect(veils).toBeGreaterThan(300); else expect(veils).toBe(0);
     // Con un vóxel cambiado en la caja: las franjas de cerca, viejas
     const { p } = run(0, 45, true);
     expect(p.ready()).toBe(false);
