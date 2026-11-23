@@ -27,7 +27,43 @@ export interface SectionCut {
   // cortar: lo que hay dentro de la caja sigue tapando el cielo, así que un interior cerrado queda a oscuras salvo por
   // sus luces y por las aberturas que de verdad dan al cielo. Solo cambia la luz: lo que se quita y se ve, igual
   worldSky?: boolean;
+  // Vóxeles semitransparentes (SectionGhost, más abajo). Sin el campo o null: nada
+  ghost?: SectionGhost | null;
 }
+
+// VÓXELES SEMITRANSPARENTES DE LA SECCIÓN: lo sustituido cuyo vóxel está en z >= `z` se compone con `alpha` (0..1: 0
+// no se ve, 1 opaco) sobre lo que tiene detrás, para ver lo que tapa (un techo, el piso de arriba) sin dejar de verlo.
+// Lo de detrás es una segunda superficie de la capa (SectionLayer.ghost): la sección pintada otra vez con todo lo de
+// z >= `z` quitado. Entre las dos superficies se componen las entidades, el agua y los efectos, con su luz; la de
+// delante va encima como un velo con su propia luz (la de siempre: su cielo, las luces y las sombras de las entidades),
+// así que con alpha 1 el cuadro es el de sin ghost. Lo que queda por delante del vóxel (una entidad más cerca) no
+// lleva velo.
+// Con keepFacing, las caras verticales que miran a la cámara (normal -y de la vista) se quedan opacas: solo las de
+// arriba y las demás van a alpha.
+// Solo cambia el color del cuadro: la máscara, pickVoxel / pickBlock, lo que ve un agente y entityAt son los de la
+// superficie de delante, como sin ghost. Los píxeles de borde (máscara 2) no cambian.
+// alpha puede cambiar en cada cuadro sin repintar nada; z y keepFacing sí repintan (la segunda superficie depende de
+// ellos).
+export interface SectionGhost { z: number; alpha: number; keepFacing?: boolean }
+
+// La segunda superficie de una capa con ghost: en los píxeles con `on` (y máscara 1), lo que se ve detrás del vóxel
+// semitransparente, con lo mismo que guarda la capa de la de delante. En los demás, nada
+export interface GhostSurface {
+  readonly z: number;                   // desde qué z (entera) son semitransparentes
+  readonly keepFacing: boolean;
+  alpha: number;                        // la de este cuadro (la pone quien hace la capa: no cambia lo pintado)
+  readonly on: Uint8Array;
+  readonly rgba: Uint8ClampedArray;
+  readonly depth: Float32Array;
+  readonly face: Int8Array;
+  readonly pick: Float64Array;
+  readonly sky: Uint8Array | null;
+  readonly wy: Float32Array;
+  readonly back: Float32Array;
+  readonly count: number;               // píxeles con `on`
+}
+// La cara vertical que mira a la cámara (DIR_VECTORS: normal -y de la vista)
+export const FACING = 3;
 
 // LA VENTANA DEL CORTE: una forma en píxeles de la imagen horneada (una cruz, un círculo, lo que sea). La caja dice qué
 // se quita del mundo; la ventana, por dónde se mira: un píxel solo se sustituye (mask 1) si su primera superficie está
@@ -187,6 +223,8 @@ export interface SectionLayer {
   readonly dirty?: ReadonlyArray<readonly [number, number, number?, number?]>;
   // La ventana con que se hizo la máscara (SectionCut.window), si la hay
   readonly window?: SectionWindow | null;
+  // La segunda superficie (SectionCut.ghost), si algún píxel la lleva. Los arrays de arriba son siempre los de delante
+  readonly ghost?: GhostSurface | null;
 }
 
 // El índice en los arrays de la capa del píxel de la columna de imagen gx y la fila j de la capa (sin mirar el recuadro)
@@ -347,49 +385,107 @@ export function sectionLayer(b: Baked, cut: SectionCut, cols?: { x0: number; x1:
     for (let q = 0; q < w * h; q++) if (mask[q]) sky[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick[q]!, face[q]!, !!cut.worldSky);
   }
   // La geometría de la luz por píxel
-  const wy = new Float32Array(w * h), back = new Float32Array(w * h), u = unprojector(b), mt = materialsOf(s.palette);
-  for (let j = 0; j < h; j++) {
-    const P = rowP(u, ry + j);
-    for (let i = 0; i < w; i++) {
-      const q = j * w + i;
-      if (!mask[q]) continue;
-      if (face[q]! >= 0 && depth[q] !== Infinity) wy[q] = worldYAt(u, P, depth[q]!);
-      if (mt && !Number.isNaN(pick[q]!)) { const [x, y, z] = unkey(pick[q]!); back[q] = mt.backlit[s.get(x, y, z)]!; }
+  const u = unprojector(b), mt = materialsOf(s.palette);
+  const lightGeo = (dp: Float32Array, fc: Int8Array, pk: Float64Array, sel: Uint8Array): { wy: Float32Array; back: Float32Array } => {
+    const wy = new Float32Array(w * h), back = new Float32Array(w * h);
+    for (let j = 0; j < h; j++) {
+      const P = rowP(u, ry + j);
+      for (let i = 0; i < w; i++) {
+        const q = j * w + i;
+        if (!sel[q]) continue;
+        if (fc[q]! >= 0 && dp[q] !== Infinity) wy[q] = worldYAt(u, P, dp[q]!);
+        if (mt && !Number.isNaN(pk[q]!)) { const [x, y, z] = unkey(pk[q]!); back[q] = mt.backlit[s.get(x, y, z)]!; }
+      }
     }
-  }
+    return { wy, back };
+  };
+  const { wy, back } = lightGeo(depth, face, pick, mask);
   // Lo sustituido donde detrás no se encontró nada (más allá de depth): si su rayo pasa por debajo de la tierra en alguna
   // fila de detrás de la caja (un pozo, una cueva, el suelo que sigue), el fondo de la sección (cut.fill, oscuro por
   // defecto); si va por encima de todo, transparente (el cielo del juego)
   const fill = cut.fill === null ? null : rgbOf(cut.fill ?? SECTION_FILL);
-  if (fill) for (let j = 0; j < h; j++) {
-    const P = O - (ry + j + 0.5);                                  // = a * y + z de la fila
-    for (let i = 0; i < w; i++) {
-      const q = j * w + i;
-      if (mask[q] !== 1 || rgba[q * 4 + 3]) continue;
-      const x = rx + i - ox;
-      if (x < 0 || x >= s.width) continue;
-      let under = false;
-      for (let y = Y1 + 1; y <= Math.min(s.depth - 1, Y1 + depthBack) && !under; y++) under = P - a * y < s.height[y * s.width + x]!;
-      if (!under) continue;
-      rgba[q * 4] = fill[0]; rgba[q * 4 + 1] = fill[1]; rgba[q * 4 + 2] = fill[2]; rgba[q * 4 + 3] = 255;
+  const fillUnder = (px: Uint8ClampedArray, sel: Uint8Array): void => {
+    if (fill) for (let j = 0; j < h; j++) {
+      const P = O - (ry + j + 0.5);                                  // = a * y + z de la fila
+      for (let i = 0; i < w; i++) {
+        const q = j * w + i;
+        if (sel[q] !== 1 || px[q * 4 + 3]) continue;
+        const x = rx + i - ox;
+        if (x < 0 || x >= s.width) continue;
+        let under = false;
+        for (let y = Y1 + 1; y <= Math.min(s.depth - 1, Y1 + depthBack) && !under; y++) under = P - a * y < s.height[y * s.width + x]!;
+        if (!under) continue;
+        px[q * 4] = fill[0]; px[q * 4 + 1] = fill[1]; px[q * 4 + 2] = fill[2]; px[q * 4 + 3] = 255;
+      }
+    }
+  };
+  fillUnder(rgba, mask);
+  // La segunda superficie (cut.ghost): lo que se ve detrás de lo sustituido en z >= ghost.z, con todo lo de esa altura
+  // quitado. Solo se pinta si algún píxel la lleva. Quitar un semiespacio solo destapa caras de arriba, las de los
+  // vóxeles de z = gz - 1 que tenían uno encima: se añaden a lo expuesto de siempre
+  let ghost: GhostSurface | null = null;
+  if (cut.ghost) {
+    const gz = Math.ceil(cut.ghost.z), keep = !!cut.ghost.keepFacing, on = new Uint8Array(w * h);
+    let n = 0;
+    for (let q = 0; q < w * h; q++) {
+      if (mask[q] !== 1 || Number.isNaN(pick[q]!) || (keep && face[q] === FACING)) continue;
+      if (unkey(pick[q]!)[2] >= gz) { on[q] = 1; n++; }
+    }
+    if (n) {
+      const get2 = (x: number, y: number, z: number) => (z >= gz ? 0 : get(x, y, z));
+      const src2: VoxelSource = {
+        palette: s.palette,
+        get: get2,
+        entries: src.entries,
+        forEachExposed: (fn) => {
+          src.forEachExposed!((x, y, z, v) => { if (z < gz) fn(x, y, z, v); });
+          const z = gz - 1;
+          if (z < zLo || z > zHi) return;
+          // (por debajo del suelo de la caja también lo de dentro de sus filas)
+          for (let y = z < zMin ? Y0 : Y1 + 1, ye = Math.min(s.depth - 1, Y1 + depthBack); y <= ye; y++) for (let x = bx0; x <= bx1; x++) {
+            if (!get(x, y, gz)) continue;
+            const v = get(x, y, z);
+            if (v) fn(x, y, z, v);
+          }
+        },
+      };
+      const img2 = render(src2, { ...b.options, width: w, height: h, originX: ox - rx, originY: O - ry, outline: b.options.outline === 'both' ? 'both' : 'none' });
+      const rgba2 = img2.rgba, depth2 = img2.depth, face2 = img2.pickFace!, pick2 = img2.pickKey!;
+      for (let q = 0; q < w * h; q++) if (!on[q]) { rgba2.fill(0, q * 4, q * 4 + 4); depth2[q] = Infinity; face2[q] = -1; pick2[q] = NaN; }
+      fillUnder(rgba2, on);
+      // (su cielo, con los vóxeles semitransparentes puestos: siguen estando y tapan)
+      let sky2: Uint8Array | null = null;
+      if (b.sky) {
+        sky2 = new Uint8Array(w * h);
+        for (let q = 0; q < w * h; q++) if (on[q]) sky2[q] = cutSky(b, X0, X1, Y0, Y1, zMin, pick2[q]!, face2[q]!, !!cut.worldSky);
+      }
+      ghost = { z: gz, keepFacing: keep, alpha: cut.ghost.alpha, on, rgba: rgba2, depth: depth2, face: face2, pick: pick2, sky: sky2, ...lightGeo(depth2, face2, pick2, on), count: n };
     }
   }
   if (oy0 === ry && oy1 === ry1) {
     // La ventana (solo con la caja entera: las franjas de SectionPainter se pintan sin ella y se les aplica al componer)
     const win = cols ? null : cut.window ?? null;
-    if (!win) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut };
+    if (!win) return { x: rx, y: ry, w, h, mask, rgba, depth, face, pick, sky, wy, back, count, box: cut, ...(ghost ? { ghost } : {}) };
     const shaped = new Uint8Array(w * h);
     const r = applyWindow(b, { x: rx, y: ry, w, h, rgba, depth, pick }, mask, shaped, win, null);
     // (sin nada sustituido pero con la ventana sobre la capa, la capa se queda: el agua de la caja mira la ventana)
     if (!r.region) return null;
-    return { x: rx, y: ry, w, h, mask: shaped, rgba, depth, face, pick, sky, wy, back, count: r.count, box: cut, window: win };
+    return { x: rx, y: ry, w, h, mask: shaped, rgba, depth, face, pick, sky, wy, back, count: r.count, box: cut, window: win, ...(ghost ? { ghost } : {}) };
   }
   // Solo las filas pedidas (sin el margen)
   const j0 = oy0 - ry, n = (oy1 - oy0 + 1) * w, a0 = j0 * w;
   let cnt = 0;
   for (let q = a0; q < a0 + n; q++) if (mask[q] === 1) cnt++;
+  let gs: GhostSurface | null = null;
+  if (ghost) {
+    const g = ghost, on = g.on.slice(a0, a0 + n);
+    let gn = 0;
+    for (let q = 0; q < n; q++) if (on[q]) gn++;
+    if (gn) gs = { z: g.z, keepFacing: g.keepFacing, alpha: g.alpha, on, rgba: g.rgba.slice(a0 * 4, (a0 + n) * 4), depth: g.depth.slice(a0, a0 + n), face: g.face.slice(a0, a0 + n),
+      pick: g.pick.slice(a0, a0 + n), sky: g.sky ? g.sky.slice(a0, a0 + n) : null, wy: g.wy.slice(a0, a0 + n), back: g.back.slice(a0, a0 + n), count: gn };
+  }
   return { x: rx, y: oy0, w, h: oy1 - oy0 + 1, mask: mask.slice(a0, a0 + n), rgba: rgba.slice(a0 * 4, (a0 + n) * 4), depth: depth.slice(a0, a0 + n),
-    face: face.slice(a0, a0 + n), pick: pick.slice(a0, a0 + n), sky: sky ? sky.slice(a0, a0 + n) : null, wy: wy.slice(a0, a0 + n), back: back.slice(a0, a0 + n), count: cnt };
+    face: face.slice(a0, a0 + n), pick: pick.slice(a0, a0 + n), sky: sky ? sky.slice(a0, a0 + n) : null, wy: wy.slice(a0, a0 + n), back: back.slice(a0, a0 + n), count: cnt, ...(gs ? { ghost: gs } : {}) };
 }
 
 // El fondo de lo sustituido bajo tierra donde detrás no hay nada (SectionCut.fill)
@@ -929,7 +1025,7 @@ export class SectionPainter {
   private pending = new Map<number, { serial: number; clock: number; snap: Float64Array; next: number; fy0: number; fy1: number; parts: Array<SectionLayer | null> }>();
   private paintStep(i: number): void {
     const c = this.cut!, b = this.b;
-    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9, window: null };
+    const wide: SectionCut = { ...c, x0: -1e9, x1: 1e9, window: null, ghost: null };
     const [fy0, fy1] = sectionRows(b, wide);
     let p = this.pending.get(i);
     if (p && (!this.unchangedSince(i, p.serial) || p.fy0 !== fy0 || p.fy1 !== fy1)) p = undefined;

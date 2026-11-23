@@ -59,12 +59,38 @@ const sectionCache = new WeakMap<Baked, { key: string; layer: SectionLayer | nul
 export function sectionFor(b: Baked, o: Frame2DOptions): SectionLayer | null {
   if (o.sectionLayer !== undefined) return o.sectionLayer;
   if (!o.section) return null;
-  const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''},${c.window ? c.window.key : ''},${c.worldSky ? 'mundo' : ''},${c.fill === null ? 'sin' : c.fill ?? ''}:${b.published.serial}:${b.version}`;
+  const c = o.section, key = `${c.x0},${c.x1},${c.y0},${c.y1},${c.zMin},${c.depth ?? ''},${c.window ? c.window.key : ''},${c.worldSky ? 'mundo' : ''},${c.fill === null ? 'sin' : c.fill ?? ''},${c.ghost ? `velo${Math.ceil(c.ghost.z)}${c.ghost.keepFacing ? 'f' : ''}` : ''}:${b.published.serial}:${b.version}`;
   const hit = sectionCache.get(b);
-  if (hit && hit.key === key) return hit.layer;
+  if (hit && hit.key === key) {
+    // (alpha no cambia lo pintado: solo se apunta la de este cuadro)
+    if (hit.layer?.ghost && c.ghost) hit.layer.ghost.alpha = c.ghost.alpha;
+    return hit.layer;
+  }
   const layer = sectionLayer(b, c);
   sectionCache.set(b, { key, layer });
   return layer;
+}
+// La capa tal como entra en la escena: con ghost (SectionCut.ghost), en los píxeles que lo llevan va la segunda
+// superficie (lo de detrás del vóxel semitransparente) en vez de la de delante; el velo de la de delante se pone al
+// final (applyGhost). Sin ghost, la capa misma. Se guarda por capa
+const sceneCache = new WeakMap<SectionLayer, SectionLayer>();
+export function sceneLayer(sec: SectionLayer | null): SectionLayer | null {
+  const g = sec?.ghost;
+  if (!sec || !g) return sec;
+  let m = sceneCache.get(sec);
+  if (m) return m;
+  const rgba = sec.rgba.slice(), depth = sec.depth.slice(), face = sec.face.slice(), pick = sec.pick.slice();
+  const sky = sec.sky ? sec.sky.slice() : null, wy = sec.wy.slice(), back = sec.back.slice();
+  for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
+    const q = secIdx(sec, sec.x + i, j);
+    if (sec.mask[q] !== 1 || !g.on[q]) continue;
+    rgba[q * 4] = g.rgba[q * 4]!; rgba[q * 4 + 1] = g.rgba[q * 4 + 1]!; rgba[q * 4 + 2] = g.rgba[q * 4 + 2]!; rgba[q * 4 + 3] = g.rgba[q * 4 + 3]!;
+    depth[q] = g.depth[q]!; face[q] = g.face[q]!; pick[q] = g.pick[q]!; wy[q] = g.wy[q]!; back[q] = g.back[q]!;
+    if (sky && g.sky) sky[q] = g.sky[q]!;
+  }
+  m = { ...sec, rgba, depth, face, pick, sky, wy, back, ghost: null };
+  sceneCache.set(sec, m);
+  return m;
 }
 // El índice en la capa del píxel (sx, sy) de la imagen horneada si se sustituye; -1 si no
 const secIndex = (sec: SectionLayer | null, sx: number, sy: number): number => (sec ? sectionAt(sec, sx, sy) : -1);
@@ -163,11 +189,69 @@ export const entityRenderCount = (): number => entityLru.size;
 
 export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
   const { view, total, depth } = frame2DParts(state, b, o);
-  const out = total ? applyLayers(view, shadeLayers(total, o, b)) : view;
+  const out = total ? applyLayers(view, shadeLayers(total, o, b, depth)) : view;
   if (o.fog) applyFog(out, depth, b, o);
   if (o.background === 'transparent') clearTransparent(out);
-  if (o.section || o.sectionLayer) drawSectionBorder(out, sectionFor(b, o), o);
+  if (o.section || o.sectionLayer) { applyGhost(out, depth, state, b, o); drawSectionBorder(out, sectionFor(b, o), o); }
   return out;
+}
+
+// La mezcla del velo (SectionGhost.alpha) en pasos de 1/256, como la niebla: la misma cuenta, exacta, en la CPU y la GPU
+export function ghostMix(alpha: number): number {
+  return Math.min(256, Math.max(0, Math.floor(alpha * 256 + 0.5))) / 256;
+}
+
+// El velo de los vóxeles semitransparentes de la sección (SectionCut.ghost) sobre el cuadro ya acabado (con luz y
+// niebla; px es la vista) y la profundidad de lo que quedó en cada píxel (frame2DParts.depth). En cada píxel con ghost
+// donde lo que quedó no está delante del vóxel: el color de la superficie de delante con su propia luz (la de un píxel
+// sustituido: su cielo, las luces y las sombras de las entidades) y su propia niebla, mezclado con alpha. Donde el cuadro no tenía nada (fondo
+// transparente), el color del velo con alfa = alpha. Lo mismo que hace el compositor de la GPU en su último paso
+export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: RenderState, b: Baked, o: Frame2DOptions): void {
+  const sec = o.section || o.sectionLayer ? sectionFor(b, o) : null, g = sec?.ghost;
+  if (!sec || !g) return;
+  const k = ghostMix(g.alpha);
+  if (k <= 0) return;
+  const { vx, vy, vw, vh } = o;
+  const view = new Uint8ClampedArray(vw * vh * 4), fd = new Float32Array(vw * vh).fill(Infinity);
+  const total = o.lights ? new Float32Array(vw * vh * 3) : null;
+  const sk = total && o.cave && b.sky && sec.sky ? skyAmbient(o.ambient, o.cave) : null;
+  const base = sk ? new Float32Array(vw * vh * 3) : null;
+  const at: number[] = [];
+  for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
+    const q = secIdx(sec, sec.x + i, j);
+    if (sec.mask[q] !== 1 || !g.on[q]) continue;
+    const x = sec.x + i - vx, y = sec.y + j - vy;
+    if (x < 0 || y < 0 || x >= vw || y >= vh) continue;
+    const t = y * vw + x;
+    if (!(depth[t]! >= sec.depth[q]! - 0.5)) continue;                // algo quedó delante del vóxel: sin velo
+    view[t * 4] = sec.rgba[q * 4]!; view[t * 4 + 1] = sec.rgba[q * 4 + 1]!; view[t * 4 + 2] = sec.rgba[q * 4 + 2]!; view[t * 4 + 3] = 255;
+    fd[t] = sec.depth[q]!;
+    if (total) for (let c = 0; c < 3; c++) {
+      const v = sk ? sk[sec.sky![q]! * 3 + c]! : o.ambient[c]!;
+      total[t * 3 + c] = v;
+      if (base) base[t * 3 + c] = v;
+    }
+    at.push(t);
+  }
+  if (!at.length) return;
+  let lit: Uint8ClampedArray = view;
+  if (total) {
+    // (la misma luz que un píxel sustituido de la capa: las fijas como las dinámicas, y las sombras de las entidades)
+    const st = withEffectLights(state);
+    for (const bl of b.lights) addDynamicLight(b, bl.light, total, o, sec, true, true);
+    for (const l of st.lights) if (l.baked === false) addDynamicLight(b, l, total, o, sec, true, true);
+    if (o.detail !== 'bajo') for (const e of shadowCasters(st, b, o)) castShadow(st, b, e, total, o, sec, true);
+    for (const e of st.entities) { const d = entitySprite(b, e, o); if (onView(d, o)) contactShadow(d, total, o); }
+    lit = applyLayers(view, buildLayers({ cell: 1, cols: vw, rows: vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: vw, height: vh }, { steps: 8, softGlow: true }));
+  }
+  if (o.fog) applyFog(lit, fd, b, o);
+  for (const t of at) {
+    const i = t * 4;
+    if (!px[i + 3]) { px[i] = lit[i]!; px[i + 1] = lit[i + 1]!; px[i + 2] = lit[i + 2]!; px[i + 3] = Math.floor(k * 255 + 0.5); continue; }
+    px[i] = Math.floor(px[i]! + (lit[i]! - px[i]!) * k + 0.5);
+    px[i + 1] = Math.floor(px[i + 1]! + (lit[i + 1]! - px[i + 1]!) * k + 0.5);
+    px[i + 2] = Math.floor(px[i + 2]! + (lit[i + 2]! - px[i + 2]!) * k + 0.5);
+  }
 }
 
 // El borde de la ventana del corte (section.ts, withBorder), si lo lleva: su color tal cual sobre el cuadro ya acabado,
@@ -231,16 +315,21 @@ export function applyFog(px: Uint8ClampedArray, depth: Float32Array, b: Baked, o
 }
 
 // Las capas de luz (MULTIPLY y ADD) de la luz por píxel de la vista. Con cielo (b.sky y o.cave), el ambiente de cada
-// píxel es el de su cielo (skyAmbient): lo que queda por debajo no lo levanta el de fuera
-export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked): LightLayers {
-  const base = b && o.cave && b.sky ? skyBase(b, o, skyAmbient(o.ambient, o.cave)) : undefined;
+// píxel es el de su cielo (skyAmbient): lo que queda por debajo no lo levanta el de fuera. depth (frame2DParts.depth):
+// con ghost en la sección hace falta para saber qué queda delante del vóxel semitransparente (ahí el cielo es el de la
+// superficie de delante, como sin ghost; sin ella, siempre el de la segunda)
+export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked, depth?: Float32Array): LightLayers {
+  const base = b && o.cave && b.sky ? skyBase(b, o, skyAmbient(o.ambient, o.cave), depth) : undefined;
   return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
 }
-function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array): Float32Array {
-  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!, sec = o.section || o.sectionLayer ? sectionFor(b, o) : null;
+function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Array): Float32Array {
+  const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front), g = depth ? front?.ghost : null;
+  const out = new Float32Array(o.vw * o.vh * 3), sky = b.sky!;
   for (let y = 0; y < o.vh; y++) for (let x = 0; x < o.vw; x++) {
     const gx = o.vx + x, gy = o.vy + y, si = sec ? secIndex(sec, gx, gy) : -1;
-    const k = si >= 0 && sec!.sky ? sec!.sky[si]! : gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
+    // (lo que quedó delante de un vóxel con ghost: el cielo de la superficie de delante)
+    const fs = g && si >= 0 && front!.mask[si] === 1 && g.on[si] && depth![y * o.vw + x]! < front!.depth[si]! - 0.5 ? front! : sec;
+    const k = si >= 0 && fs!.sky ? fs!.sky[si]! : gx >= 0 && gy >= 0 && gx < b.width && gy < b.height ? sky[gy * b.width + gx]! : SKY_RAYS, i = (y * o.vw + x) * 3;
     out[i] = t[k * 3]!; out[i + 1] = t[k * 3 + 1]!; out[i + 2] = t[k * 3 + 2]!;
   }
   return out;
@@ -267,7 +356,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
   } else for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = 0; view[i - 2] = 0; view[i - 1] = 0; }
   // El corte al componer: lo de detrás de la caja en los píxeles cuya primera superficie estaba en ella
-  const sec = o.section || o.sectionLayer ? sectionFor(b, o) : null;
+  // (con ghost, en sus píxeles entra la segunda superficie: el velo de la de delante va al final, applyGhost)
+  const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   if (sec) {
     const bg = o.background === 'transparent' ? null : o.background ?? BACKGROUND;
     for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
@@ -383,8 +473,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con
-  // lo que tiene detrás
-  const depth = drop && o.fog ? depthBuf.slice() : depthBuf;
+  // lo que tiene detrás. Y el velo del ghost, lo mismo
+  const depth = drop && (o.fog || front?.ghost) ? depthBuf.slice() : depthBuf;
   if (drop) state.drops.draw(b, view, depthBuf, total, vx, vy, vw, vh, drop.color, drop.light);
   return { view, total, depth };
 }
@@ -668,8 +758,8 @@ export function screenBox(b: Baked, x: number, y: number, z: number, r: number, 
 }
 
 // sec: con un corte al componer, en sus píxeles la luz va con lo que se ve en ellos (la capa); onlySec: solo ahí (las
-// luces fijas, que fuera de la capa ya están horneadas)
-function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null, onlySec = false): void {
+// luces fijas, que fuera de la capa ya están horneadas); veil: solo en los píxeles con ghost (la luz del velo)
+function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null, onlySec = false, veil = false): void {
   const p = resolveLight(l, o.time);
   const box = screenBox(b, l.x, l.y, l.z, p.radius, o);
   if (!box) return;
@@ -685,7 +775,7 @@ function addDynamicLight(b: Baked, l: WorldLight, total: Float32Array, o: Frame2
     for (let sx = x0; sx <= x1; sx++) {
       const idx = sy * b.width + sx;
       const si = sec ? secIndex(sec, sx, sy) : -1;
-      if (onlySec && (si < 0 || sec!.mask[si] !== 1)) continue;
+      if (onlySec && (si < 0 || sec!.mask[si] !== 1 || (veil && !sec!.ghost!.on[si]))) continue;
       const f = si >= 0 ? sec!.face[si]! : b.face[idx]!;
       if (f < 0) continue;
       const d = si >= 0 ? sec!.depth[si]! : b.depth[idx]!;
@@ -758,7 +848,7 @@ function blockedByBody(occ: ReturnType<typeof occupancy>, P: [number, number, nu
 
 export const SHADOW_REACH = 48;     // hasta dónde se busca sombra alrededor de la entidad (en planta)
 
-function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null): void {
+function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array, o: Frame2DOptions, sec: SectionLayer | null = null, veil = false): void {
   const occ = occupancy(e.model, e.yaw);
   const ex = Math.round(e.x), ey = Math.round(e.y), ez = e.z;
   // Las luces que llegan a la zona de la entidad
@@ -773,6 +863,8 @@ function castShadow(state: RenderState, b: Baked, e: Entity, total: Float32Array
   const u = sec ? unprojector(b) : null;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const si = sec ? secIndex(sec, sx, sy) : -1;
+    // (veil: solo en los píxeles con ghost, la luz del velo)
+    if (veil && (si < 0 || sec!.mask[si] !== 1 || !sec!.ghost!.on[si])) continue;
     const f = si >= 0 ? sec!.face[si]! : b.face[sy * b.width + sx]!;
     if (f < 0) continue;
     let P: [number, number, number] | null;

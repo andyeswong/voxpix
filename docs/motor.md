@@ -1404,6 +1404,40 @@ compositor.frame(state, baked, { ...opts, section });                         //
   siguiente. La y del mundo (`wy`) y la luz por detrás (`back`) de cada píxel se calculan al pintar la unidad, no al
   subir.
 
+### Vóxeles semitransparentes en la sección (`ghost`)
+
+`SectionCut.ghost = { z, alpha, keepFacing? }` (apagado por defecto): lo sustituido cuyo vóxel está en `z >= ghost.z`
+se compone con `alpha` (0 no se ve, 1 opaco) sobre lo que tapa. Sirve para ver lo que hay debajo de un techo o del
+piso de arriba sin dejar de verlo.
+
+- La capa lleva una segunda superficie (`SectionLayer.ghost`): la sección pintada otra vez con todo lo de
+  `z >= ghost.z` quitado, solo en los píxeles con velo (`ghost.on`). Los arrays de siempre de la capa son la superficie
+  de delante y no cambian ni un byte.
+- Solo cambia el color del cuadro. La máscara, `pickVoxel` / `pickBlock`, lo que ve un agente (`visibleCells`) y
+  `entityAt` son los de sin ghost: una entidad que se ve a través del velo no la devuelve `entityAt`.
+- Entre las dos superficies se compone todo lo demás, con la segunda como escenario: entidades, agua, efectos, sus
+  luces y sombras. La de delante va al final como un velo, después de la niebla y antes del borde de la ventana
+  (`applyGhost`), con la luz de un píxel sustituido cualquiera (su cielo, las luces, las sombras de las entidades y
+  las de contacto) y su propia niebla.
+  - Una entidad por delante del vóxel sale opaca, como sin ghost.
+  - Entre las dos superficies, se ve a través del velo.
+  - Detrás de la segunda, no se ve (con `xray`, su silueta se mide contra la segunda).
+- Con `alpha: 1` el cuadro es el de sin ghost, byte a byte. Con otra alpha, cada canal es
+  `floor(detrás + (delante - detrás) * k + 0,5)` con `k = ghostMix(alpha)` en pasos de 1/256.
+- Sobre fondo transparente, el velo donde detrás no hay nada sale con alfa `floor(k * 255 + 0,5)`: es el único caso
+  en que el cuadro lleva un alfa que no es 0 ni 255.
+- `keepFacing`: las caras verticales que miran a la cámara (normal -y de la vista) se quedan opacas; van a alpha las
+  de arriba y las demás.
+- `alpha` puede cambiar en cada cuadro sin repintar nada. `z` y `keepFacing` repintan la capa.
+- El tono (AO) de la segunda superficie es el de un mundo sin los vóxeles de arriba; su cielo de cueva y su luz, con
+  ellos puestos.
+- Los píxeles de borde (máscara 2) no llevan velo. Las gotas y las partículas no escriben profundidad: las que pasan
+  por delante de un vóxel con velo quedan también debajo de él.
+- Quien compone a mano con `frame2DParts` pasa la profundidad a `shadeLayers(total, o, b, depth)` y llama a
+  `applyGhost` después de la niebla.
+- Pruebas: `test/corte-velo.test.ts`.
+- Por ahora solo en `sectionLayer` y `frame2D` (la CPU). Un `SectionPainter` y el compositor de la GPU lo ignoran.
+
 ### La forma del corte: una ventana en la imagen
 
 La caja dice qué se quita del mundo; la ventana (`SectionCut.window`, opcional), por dónde se mira. Es una forma en
