@@ -1967,3 +1967,24 @@ cualquier máquina. La vista (cámara, parpadeo, presupuesto por cuadro) usa el 
 En un portátil con GPU dedicada, el cuadro del modo 2D cuesta unos 0,2 ms de CPU con unas pocas entidades. Con 200
 entidades, 10 antorchas y una linterna, a 6x de freno de CPU, da un p95 de ~16,7 ms. Las medidas y cómo repetirlas
 están en `scripts/perf/README.md`.
+
+## El clima
+
+`Weather` (`src/world/weather.ts`) da el viento, la lluvia, la nieve, las nubes y el sol como números de 0 a 1 que salen
+de una semilla y del tick: el mismo clima en cualquier máquina y en una partida repetida.
+
+```ts
+const weather = new Weather({ seed: 7, levels: { wind: [0.5, 0.1], gust: 0.6, clouds: 0.3 } });
+weather.set({ rain: 1, clouds: 0.9 }, tick, 600);       // a mano: en 600 ticks se llega a eso
+weather.play({ period: 36000, keys: [{ at: 0, ticks: 900, levels: { rain: 1 } }, { at: 9000, levels: { rain: 0 } }] }, tick);
+weather.advance(tick);                                  // una vez por cuadro o por tick: el programa y lo acumulado
+weather.levels(tick); weather.windAt(x, y, tick); weather.cloudAt(x, y, tick); weather.cover;   // { snow, wet }
+```
+
+- `wind` es hacia dónde va el aire en el plano del mundo (x este, y norte); su largo es la fuerza. `gust` es cuánto cambia
+  de un sitio a otro: las ráfagas cruzan el mapa con el viento, y las nubes también, más despacio. Al cambiar de viento
+  no saltan: siguen desde donde estaban.
+- Los sitios van en vóxeles del mundo. En una ventana que se corre, el juego suma el origen de la ventana.
+- `cover` es lo acumulado (nieve en el suelo, humedad); `advance` da lo mismo llamado cada tick que de tarde en tarde.
+- Estado: `Weather` es una parte de estado. Si solo se usa para pintar no tiene que estar en el mundo; si la simulación lo
+  lee, `state.addPart('weather', weather)` lo lleva a la instantánea y a la huella.
