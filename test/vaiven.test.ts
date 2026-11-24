@@ -6,7 +6,8 @@ import { frame2D, frame2DParts, type Frame2DOptions } from '../src/world/frame2d
 import { StaticVoxels, WorldState } from '../src/world/state';
 import { WorldView, type Quarter } from '../src/world/view';
 import { Weather } from '../src/world/weather';
-import { climateTable, type WeatherFrame } from '../src/world/climate';
+import type { SectionLayer } from '../src/world/section';
+import { climateTable, type ClimateTable, type WeatherFrame } from '../src/world/climate';
 import { swayCode, swayShift, swaySources, swayTable, SWAY_AQUATIC, SWAY_UNIT } from '../src/world/sway';
 
 const PAL: Palette = { ramps: [
@@ -146,6 +147,79 @@ describe('el vaivén', () => {
     const lean = ([0, 2] as Quarter[]).map((q) => { const { view, b } = setup(q), c = climateTable(b, opts(b, { weather: new Weather({ seed: 5, levels: { wind: [1, 0] } }), tick: 40, camera: view.camera }))!; let s = 0; for (let i = 0; i < c.w * c.h; i++) s += c.data[i * 4]!; return s / (c.w * c.h); });
     expect(lean[0]).toBeGreaterThan(0.2);
     expect(lean[1]).toBeLessThan(-0.2);
+  });
+
+  // Una tabla del clima hecha a mano: la misma inclinación en todas partes
+  const flat = (lean: number): ClimateTable => ({ x0: 0, y0: 0, w: 1, h: 1, kx: 0, ky: 0, data: Float32Array.of(lean, lean, 1, 0), sway: true, levels: new Weather({ seed: 1 }).levels(0), key: `plano${lean}` });
+  it('hacia dónde: con inclinación 1 la punta va 3 píxeles a la derecha, con -1 a la izquierda, y el hueco sale del lado de donde viene', () => {
+    const { b } = setup();
+    for (const lean of [1, -1]) {
+      const from = swaySources(b, null, null, flat(lean), 0, 0, b.width, b.height)!;
+      let tips = 0, holes = 0;
+      for (let t = 0; t < from.length; t++) {
+        const x = t % b.width;
+        if (pickRamp(b, t) !== 3 || unk(b.pick[t]!)[2] !== 9) continue;
+        expect(from[t + 3 * lean]).toBe(x);                                    // la punta llega a su sitio
+        tips++;
+        expect(from[t]).toBe(x - lean);                                        // y en el suyo queda lo quieto de al lado
+        holes++;
+      }
+      expect(tips).toBeGreaterThan(2);
+      expect(holes).toBe(tips);
+    }
+  });
+  it('el hueco no se llena con algo que está más cerca, y sin nada que lo llene queda lo que había', () => {
+    const { b, s } = setup();
+    // Un pilar delante, pegado a la mata de x 36 por la izquierda
+    for (let z = 1; z < 24; z++) for (let y = 10; y < 13; y++) for (let x = 25; x < 36; x++) s.set(x, y, z, TRONCO);
+    rebakeChanged(b, []);
+    const from = swaySources(b, null, null, flat(1), 0, 0, b.width, b.height)!;
+    let n = 0;
+    for (let t = 0; t < from.length; t++) if (pickRamp(b, t) === 3 && unk(b.pick[t]!)[0] === 36 && unk(b.pick[t]!)[2] === 9) { if (pickRamp(b, t - 1) !== 1) continue; expect(from[t]).toBe(t % b.width); n++; }
+    expect(n).toBeGreaterThan(0);
+  });
+  it('la mitad de vaivén es la mitad de inclinación, y cambiar de viento rehace la tabla', () => {
+    const { b } = setup(), w = strong();
+    const full = climateTable(b, opts(b, { weather: w, tick: 45 }))!.data.slice(), half = climateTable(b, opts(b, { weather: w, tick: 45, sway: 0.5 }))!.data.slice();
+    expect(full.some((v, i) => i % 4 === 0 && Math.abs(v) > 0.3)).toBe(true);
+    for (let i = 0; i < full.length; i += 4) expect(Math.abs(half[i]! - full[i]! / 2)).toBeLessThanOrEqual(1 / 256);
+    climateTable(b, opts(b, { weather: w, tick: 45 }));
+    w.set({ wind: [0, 1] }, 45, 0);
+    expect(climateTable(b, opts(b, { weather: w, tick: 45 }))!.data).not.toEqual(full);
+  });
+  it('lo que se mece lleva su luz: la del píxel del que sale', () => {
+    const s = world(), state = new WorldState(s, [{ id: 'l', kind: 'torch', x: 40.5, y: 16.5, z: 8 }], null, { seed: 1 });
+    const b = bakeWorld({ model: s, lights: [...state.lights], width: 64, depth: 64 }, { topZ: 40, incline: 0.5 });
+    const o = { ...opts(b, { weather: strong(), tick: 45 }), ambient: [0.2, 0.2, 0.2] as const };
+    const still = frame2DParts(state, b, { ...o, weather: null }).total!, p = frame2DParts(state, b, o).total!;
+    const from = swaySources(b, null, null, climateTable(b, o)!, 0, 0, b.width, b.height)!;
+    let diff = 0;
+    for (let t = 0; t < from.length; t++) { const q = t - (t % b.width) + from[t]!; for (let c = 0; c < 3; c++) { expect(p[t * 3 + c]).toBe(still[q * 3 + c]); if (p[t * 3 + c] !== still[t * 3 + c]) diff++; } }
+    expect(diff).toBeGreaterThan(20);
+  });
+  it('en el corte: lo de dentro no sale, lo de fuera no entra, y los píxeles con velo no se mecen', () => {
+    const { b } = setup();
+    // Una capa a mano: las columnas x0..x1 de la imagen, sustituidas por lo mismo que había
+    const layer = (x0: number, x1: number, on: boolean): SectionLayer => {
+      const w = x1 - x0 + 1, h = b.height, mask = new Uint8Array(w * h).fill(1), depth = new Float32Array(w * h), pick = new Float64Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = x0; x <= x1; x++) { depth[y * w + x - x0] = b.depth[y * b.width + x]!; pick[y * w + x - x0] = b.pick[y * b.width + x]!; }
+      return { x: x0, y: 0, w, h, rw: w, ox: 0, mask, depth, pick, ghost: on ? { on: new Uint8Array(w * h).fill(1) } : null } as unknown as SectionLayer;
+    };
+    // (la mata de x 36 entra en la capa; la de x 42, fuera, a 2 de su borde)
+    const L = layer(30, 40, false), V = layer(30, 40, true);
+    let seen = 0, out = 0;
+    for (const lean of [1, -1]) {
+      const from = swaySources(b, L, null, flat(lean), 0, 0, b.width, b.height)!, veiled = swaySources(b, V, V.ghost!.on, flat(lean), 0, 0, b.width, b.height)!;
+      const inL = (x: number) => x >= 30 && x <= 40;
+      for (let t = 0; t < from.length; t++) {
+        const x = t % b.width;
+        if (inL(x) !== inL(from[t]!)) out++;
+        if (inL(x) && from[t] !== x && pickRamp(b, t - x + from[t]!) === 3) seen++;
+        if (inL(x)) expect(veiled[t]).toBe(x);
+      }
+    }
+    expect(out).toBe(0);
+    expect(seen).toBeGreaterThan(5);
   });
 
   it('con contorno y en los 4 giros sigue habiendo algo que se mece', () => {
