@@ -8,8 +8,15 @@ import { climateTie, climateStep, CLIMATE_CX, CLIMATE_CY, type ClimateTable, typ
 export const CLOUD_DARK = 0.8;                  // lo que quita una nube del todo encima
 const ENT = 0.75;                               // lo que le llega a una entidad, sobre lo que le llega al suelo
 
-// faces: lo que se suma a cada cara (6 x rgb) con todo el cielo y sin nubes; entity: lo de una entidad
-export interface SunLook { faces: Float32Array<ArrayBuffer>; entity: [number, number, number] }
+// El sol no va en la luz que se trama (lighting/shade.ts): es parte de lo plano, como el ambiente. Tramado, llenaba el suelo de
+// damero y la trama, que es de la pantalla, bailaba al mover la cámara. Cada píxel lleva cuánto sol recibe (un número, en
+// 1 / SUN_Q) y el último paso suma ese sol al ambiente y a la luz. Donde hay luz propia, 0
+export const SUN_Q = 512;
+export const sunQ = (v: number): number => Math.floor(v * SUN_Q + 0.5) / SUN_Q;
+export interface SunField { amount: Float32Array; color: readonly [number, number, number] }
+
+// faces: cuánto recibe cada cara con todo el cielo y sin nubes; entity: una entidad
+export interface SunLook { faces: Float32Array<ArrayBuffer>; entity: number; color: [number, number, number] }
 export function sunLook(b: Baked, f: WeatherFrame | null | undefined): SunLook | null {
   const s = f?.sunlight;
   if (!f || !s || !b.sky) return null;
@@ -17,9 +24,8 @@ export function sunLook(b: Baked, f: WeatherFrame | null | undefined): SunLook |
   const d = s.dir ?? [-0.4, -0.5, 0.77], len = Math.hypot(d[0], d[1], d[2]) || 1;
   if (k <= 0 || d[2] <= 0) return null;                                            // (por debajo del horizonte)
   const [vx, vy] = f.camera ? f.camera.dirToView(d[0] / len, d[1] / len) : [d[0] / len, d[1] / len], vz = d[2] / len;
-  const faces = new Float32Array(18);
-  DIR_VECTORS.forEach((n, i) => { const w = Math.max(0, n[0] * vx + n[1] * vy + n[2] * vz) * k; for (let c = 0; c < 3; c++) faces[i * 3 + c] = s.color[c]! * w; });
-  return { faces, entity: [0, 1, 2].map((c) => Math.fround(faces[4 * 3 + c]! * ENT)) as [number, number, number] };
+  const faces = Float32Array.from(DIR_VECTORS, (n) => Math.max(0, n[0] * vx + n[1] * vy + n[2] * vz) * k);
+  return { faces, entity: Math.fround(faces[4]! * ENT), color: [s.color[0], s.color[1], s.color[2]] };
 }
 
 // La sombra de las nubes en un punto de la vista (1 sin nube): entre las cuatro casillas de alrededor

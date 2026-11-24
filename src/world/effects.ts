@@ -29,13 +29,14 @@ export function withEffectLights(state: RenderState): RenderState {
 }
 
 export function drawEffectsLayer(fx: EffectsLayer, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null,
-  vx: number, vy: number, vw: number, vh: number): void {
-  for (const s of fx.sources) drawEffects(s, b, view, depthBuf, total, vx, vy, vw, vh);
+  vx: number, vy: number, vw: number, vh: number, sun: Float32Array | null = null): void {
+  for (const s of fx.sources) drawEffects(s, b, view, depthBuf, total, vx, vy, vw, vh, sun);
 }
 
 // Pinta los puntos de un efecto en la vista (CPU; la GPU hace lo mismo en compositor.ts)
+// (sun: cuánto sol lleva cada píxel, frame2d.ts; una partícula con luz propia, ninguno)
 export function drawEffects(src: FxSource, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null,
-  vx: number, vy: number, vw: number, vh: number): void {
+  vx: number, vy: number, vw: number, vh: number, sun: Float32Array | null = null): void {
   const n = src.count, d = src.packed;
   for (let k = 0; k < n; k++) {
     const q = k * FX_STRIDE;
@@ -49,6 +50,7 @@ export function drawEffects(src: FxSource, b: Baked, view: Uint8ClampedArray, de
       if (depth >= depthBuf[t]! - 0.3) continue;
       view[t * 4] = d[q + 3]!; view[t * 4 + 1] = d[q + 4]!; view[t * 4 + 2] = d[q + 5]!; view[t * 4 + 3] = 255;
       if (em && total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
+      if (em && sun) sun[t] = 0;
     }
   }
 }

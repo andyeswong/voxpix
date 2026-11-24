@@ -2026,12 +2026,13 @@ Ponerlas o quitarlas con `follow` no cambia el agua. Lo guardado no cambia: las 
 ### Lluvia y nieve
 
 ```ts
-weather: { weather, tick, origin, camera, fall: { max: 240 }, cover: true, solid: state.solid }
+weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid: state.solid }
 ```
 
 - `fall`: gotas y copos que caen inclinados por el viento hasta lo más alto de su columna, nunca por debajo de ello (ni bajo
-  un techo, ni en una cueva, ni dentro de un corte al componer). Son puntos calculados del tick: no hay partículas guardadas.
-  `max` es cuántas a la vez (240; con lluvia y nieve juntas se reparte). Con `WorldView.setCut` hay que dar `solid` (los
+  un techo, ni en una cueva). En los píxeles que sustituye un corte al componer y en su borde no cae nada, tampoco en un corte
+  a cielo abierto. Son puntos calculados del tick: no hay partículas guardadas.
+  `max` es cuántas a la vez (350; con lluvia y nieve juntas se reparte). Con `WorldView.setCut` hay que dar `solid` (los
   vóxeles del mundo sin cortar): si no, lo cortado cuenta como cielo.
 - `cover`, con un horneado con `{ sky: true }`: nieve sobre las caras de arriba que ven el cielo (en trama mientras cuaja) y lo
   mojado más oscuro, según `weather.cover`. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
@@ -2051,8 +2052,8 @@ weather: { weather, tick, origin, camera, sunlight: daySun(day.phase(tick)) }   
 
 Con un horneado con `{ sky: true }`, suma una luz direccional a lo que ve el cielo, según la cara (y el agua, y las entidades
 por el cielo de sus pies), por la fuerza `sun` del clima y con las sombras de las nubes, que van con el viento. Sin rehornear.
-No proyecta sombras de los vóxeles: lo tapado lo dice el cielo horneado. Se suma a `ambient`, así que con sol conviene un
-ambiente más bajo (por encima de 1 sale brillo). `daySun` (`lighting/daycycle.ts`) da dirección, fuerza y color de una hora.
+No proyecta sombras de los vóxeles: lo tapado lo dice el cielo horneado. Se suma a `ambient` (plano, sin trama: la trama
+es de las luces), así que con sol conviene un ambiente más bajo. `daySun` (`lighting/daycycle.ts`) da dirección, fuerza y color de una hora.
 
 ### Detalles del clima
 

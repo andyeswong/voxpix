@@ -89,9 +89,9 @@ describe('plantas en el agua', () => {
   it('el sol alumbra la superficie del agua', () => {
     const { state } = pool(2, 0), view = new WorldView(state, 0), b = bakeWorld(view.bakeable(), { topZ: 32, incline: 0.5, sky: true });
     const o: Frame2DOptions = { vx: 0, vy: 0, vw: b.width, vh: b.height, time: 0, lights: true, ambient: [0.4, 0.4, 0.4] }, [x, y] = b.cam.project(30, 30, 8);
-    const i = (Math.floor(y) * b.width + Math.floor(x)) * 3, dry = frame2DParts(state, b, o).total![i]!;
-    const lit = frame2DParts(state, b, { ...o, weather: { weather: new Weather({ seed: 1 }), tick: 0, sunlight: { color: [1, 1, 1], intensity: 0.5, dir: [0, 0, 1] } } }).total![i]!;
-    expect(lit - dry).toBeCloseTo(0.5, 2);
+    const i = Math.floor(y) * b.width + Math.floor(x);
+    const lit = frame2DParts(state, b, { ...o, weather: { weather: new Weather({ seed: 1 }), tick: 0, sunlight: { color: [1, 1, 1], intensity: 0.5, dir: [0, 0, 1] } } }).sun!.amount[i]!;
+    expect(lit).toBeCloseTo(0.5, 2);
   });
   it('cuanto más hondas, más teñidas, hasta un tope', () => {
     const k = [0, 2, 6, 40].map((g) => seenThrough(g, 0.5, 0.8, -0.6));

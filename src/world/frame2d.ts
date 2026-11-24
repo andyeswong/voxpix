@@ -11,7 +11,7 @@ import { withEffectLights, drawEffectsLayer, drawEffects } from './effects';
 import { climateTable, type ClimateTable, type WeatherFrame } from './climate';
 import { fallSource, coverLook, applyCover, coverInCut, type CoverLook } from './precipitation';
 import { waveTile } from './waves';
-import { sunLook, sunAmount, type SunLook } from './sunlight';
+import { sunLook, sunAmount, sunQ, type SunLook, type SunField } from './sunlight';
 import { swaySources, aquaticMask, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
@@ -195,8 +195,8 @@ function cacheTouch(model: object, ck: string, id: string): void {
 export const entityRenderCount = (): number => entityLru.size;
 
 export function frame2D(state: RenderState, b: Baked, o: Frame2DOptions): Uint8ClampedArray {
-  const { view, total, depth } = frame2DParts(state, b, o);
-  const out = total ? applyLayers(view, shadeLayers(total, o, b, depth)) : view;
+  const { view, total, depth, sun } = frame2DParts(state, b, o);
+  const out = total ? applyLayers(view, shadeLayers(total, o, b, depth, sun)) : view;
   if (o.fog) applyFog(out, depth, b, o);
   if (o.background === 'transparent') clearTransparent(out);
   if (o.section || o.sectionLayer) { applyGhost(out, depth, state, b, o); drawSectionBorder(out, sectionFor(b, o), o); }
@@ -224,6 +224,7 @@ export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: Re
   const sk = total && o.cave && b.sky && sec.sky ? skyAmbient(o.ambient, o.cave) : null;
   const base = sk ? new Float32Array(vw * vh * 3) : null;
   const at: number[] = [], clim = total ? climateTable(b, o) : null, sun = clim ? sunLook(b, o.weather) : null, un = unprojector(b);
+  const sunS = sun ? new Float32Array(vw * vh) : null;
   for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
     const q = secIdx(sec, sec.x + i, j);
     if (sec.mask[q] !== 1 || !g.on[q]) continue;
@@ -238,7 +239,7 @@ export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: Re
       total[t * 3 + c] = v;
       if (base) base[t * 3 + c] = v;
     }
-    if (total && sun && sec.sky) addSun(total, t * 3, sun, clim!, sec.face[q]!, sec.sky[q]!, sec.x + i, worldYAt(un, rowP(un, sec.y + j), sec.depth[q]!));
+    if (sunS && sec.sky) sunS[t] = sunOf(sun!, clim!, sec.face[q]!, sec.sky[q]!, sec.x + i, worldYAt(un, rowP(un, sec.y + j), sec.depth[q]!));
     at.push(t);
   }
   if (!at.length) return;
@@ -249,8 +250,8 @@ export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: Re
     for (const bl of b.lights) addDynamicLight(b, bl.light, total, o, sec, true, true);
     for (const l of st.lights) if (l.baked === false) addDynamicLight(b, l, total, o, sec, true, true);
     if (o.detail !== 'bajo') for (const e of shadowCasters(st, b, o)) castShadow(st, b, e, total, o, sec, true);
-    for (const e of st.entities) { const d = entitySprite(b, e, o); if (onView(d, o)) contactShadow(d, total, o); }
-    lit = applyLayers(view, buildLayers({ cell: 1, cols: vw, rows: vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: vw, height: vh }, { steps: 8, softGlow: true }));
+    for (const e of st.entities) { const d = entitySprite(b, e, o); if (onView(d, o)) contactShadow(d, total, o, sunS); }
+    lit = applyLayers(view, layersWith(total, o, base, sunS ? { amount: sunS, color: sun!.color } : null));
   }
   if (o.fog) applyFog(lit, fd, b, o);
   for (const t of at) {
@@ -326,8 +327,20 @@ export function applyFog(px: Uint8ClampedArray, depth: Float32Array, b: Baked, o
 // píxel es el de su cielo (skyAmbient): lo que queda por debajo no lo levanta el de fuera. depth (frame2DParts.depth):
 // con ghost en la sección hace falta para saber qué queda delante del vóxel semitransparente (ahí el cielo es el de la
 // superficie de delante, como sin ghost; sin ella, siempre el de la segunda)
-export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked, depth?: Float32Array): LightLayers {
-  const base = b && o.cave && b.sky ? skyBase(b, o, skyAmbient(o.ambient, o.cave), depth) : undefined;
+// sun (frame2DParts.sun): el sol de cada píxel, que va en lo plano (en el ambiente y en la luz a la vez)
+export function shadeLayers(total: Float32Array, o: Frame2DOptions, b?: Baked, depth?: Float32Array, sun?: SunField | null): LightLayers {
+  return layersWith(total, o, b && o.cave && b.sky ? skyBase(b, o, skyAmbient(o.ambient, o.cave), depth) : null, sun ?? null);
+}
+function layersWith(total: Float32Array, o: Frame2DOptions, base: Float32Array | null, sun: SunField | null): LightLayers {
+  if (sun) {
+    const b2 = new Float32Array(total.length), t2 = new Float32Array(total.length), [r, g, bl] = sun.color, n = total.length / 3;
+    for (let t = 0; t < n; t++) {
+      const s = sunQ(sun.amount[t]!), i = t * 3;
+      b2[i] = (base ? base[i]! : o.ambient[0]) + r * s; b2[i + 1] = (base ? base[i + 1]! : o.ambient[1]) + g * s; b2[i + 2] = (base ? base[i + 2]! : o.ambient[2]) + bl * s;
+      t2[i] = total[i]! + r * s; t2[i + 1] = total[i + 1]! + g * s; t2[i + 2] = total[i + 2]! + bl * s;
+    }
+    base = b2; total = t2;
+  }
   return buildLayers({ cell: 1, cols: o.vw, rows: o.vh, ambient: o.ambient, total, ...(base ? { base } : {}) }, { x: 0, y: 0, width: o.vw, height: o.vh }, { steps: 8, softGlow: true });
 }
 function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Array): Float32Array {
@@ -343,13 +356,9 @@ function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Ar
   return out;
 }
 
-function addSun(total: Float32Array, i: number, s: SunLook, t: ClimateTable, face: number, sky: number, x: number, wy: number): void {
-  if (face < 0 || sky <= 0) return;
-  const k = sunAmount(t, x, wy, sky);
-  for (let c = 0; c < 3; c++) total[i + c] = total[i + c]! + s.faces[face * 3 + c]! * k;
-}
+const sunOf = (s: SunLook, t: ClimateTable, face: number, sky: number, x: number, wy: number): number => (face < 0 || sky <= 0 ? 0 : s.faces[face]! * sunAmount(t, x, wy, sky));
 // Lo quieto de un cuadro antes de las entidades: la imagen horneada con el corte, y la luz que le llega
-interface StaticParts { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array }
+interface StaticParts { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array; sun: Float32Array | null }
 function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null, meteo: { cover: CoverLook | null; sun: SunLook | null; table: ClimateTable } | null): StaticParts {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
@@ -413,13 +422,14 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
     }
     for (const bl of b.lights) addDynamicLight(b, bl.light, total, o, sec, true);
   }
-  if (total && meteo?.sun) {
+  const sunS = total && meteo?.sun ? new Float32Array(vw * vh) : null;
+  if (sunS) {
     const u = unprojector(b);
     for (let y = 0; y < vh; y++) for (let x = 0, P = rowP(u, vy + y); x < vw; x++) {
       const t = y * vw + x, gx = vx + x, gy = vy + y;
       if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
       const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
-      addSun(total, t * 3, meteo.sun, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
+      sunS[t] = sunOf(meteo!.sun!, meteo!.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
     }
   }
   if (total) {
@@ -428,23 +438,24 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
     // Sombras de las entidades: lo que su cuerpo tapa de cada luz (solo las MAX_CASTERS más cercanas al centro)
     if (o.detail !== 'bajo') for (const e of shadowCasters(state, b, o)) castShadow(state, b, e, total, o, sec);
   }
-  return { view, total, depth: depthBuf };
+  return { view, total, depth: depthBuf, sun: sunS };
 }
 // Cada píxel de la vista, de la columna de la imagen que dice from (swaySources), en lo compuesto desde x0 con ancho w
 function gather(p: StaticParts, from: Int32Array, x0: number, w: number, vw: number, vh: number): StaticParts {
-  const view = new Uint8ClampedArray(vw * vh * 4), depth = new Float32Array(vw * vh), total = p.total ? new Float32Array(vw * vh * 3) : null;
+  const view = new Uint8ClampedArray(vw * vh * 4), depth = new Float32Array(vw * vh), total = p.total ? new Float32Array(vw * vh * 3) : null, sun = p.sun ? new Float32Array(vw * vh) : null;
   for (let t = 0; t < vw * vh; t++) {
     const q = Math.floor(t / vw) * w + from[t]! - x0;
     for (let c = 0; c < 4; c++) view[t * 4 + c] = p.view[q * 4 + c]!;
     depth[t] = p.depth[q]!;
+    if (sun) sun[t] = p.sun![q]!;
     if (total) for (let c = 0; c < 3; c++) total[t * 3 + c] = p.total![q * 3 + c]!;
   }
-  return { view, total, depth };
+  return { view, total, depth, sun };
 }
 
 // El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
 // hace lo mismo; la prueba del oráculo compara los dos.
-export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array } {
+export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array; sun: SunField | null } {
   state = withEffectLights(state);
   const { vx, vy, vw, vh, ambient } = o;
   // (con ghost, en sus píxeles entra la segunda superficie: el velo de la de delante va al final, applyGhost)
@@ -456,7 +467,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   const cover = clim ? coverLook(b, o.weather) : null;
   let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover || sun ? { cover, sun, table: clim! } : null);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
-  const { view, depth: depthBuf, total } = fixed;
+  const { view, depth: depthBuf, total, sun: sunS } = fixed;
   // Las plantas de agua, que se ven a través de ella (donde no las tape una entidad)
   const clear = state.water ? aquaticMask(b, sec, front?.ghost?.on ?? null, from, vx, vy, vw, vh) : null;
   // Las entidades: primero todas las sombras de contacto (en el suelo), después, en cada píxel, la entidad más
@@ -469,7 +480,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     const x = Math.min(vw - 1, Math.max(0, d.fx - vx)), y = Math.min(vh - 1, Math.max(0, d.fy - vy)), q = (y * vw + x) * 3;
     return [total[q]!, total[q + 1]!, total[q + 2]!] as const;
   }) : [];
-  if (total) for (const d of sprites) contactShadow(d, total, o);
+  if (total) for (const d of sprites) contactShadow(d, total, o, sunS);
   // El resalte: el aro con su color y luz propia (después de las sombras de contacto, antes de las entidades)
   const hl = o.highlight ? highlightMask(b, o.highlight) : null;
   if (hl) {
@@ -482,6 +493,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       view[t * 4] = c[0]; view[t * 4 + 1] = c[1]; view[t * 4 + 2] = c[2]; view[t * 4 + 3] = 255;
       if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
       if (clear) clear[t] = 0;
+      if (sunS) sunS[t] = 0;
     }
   }
   // La profundidad de cada píxel de entidad se calcula en float32 y se compara por la misma clave que el z-buffer de
@@ -500,6 +512,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       if (key < entKey[t]!) { entKey[t] = key; entDepth[t] = dd; entOf[t] = k; entPx[t] = s; }
     }
   });
+  const esun = sunS ? sprites.map((d) => sun!.entity * entitySun(b, d, clim!)) : null;
   const etotals = total && !low ? sprites.map((d) => entityLight(state, d, o, b)) : [];
   const xr = o.xray?.color;
   for (let t = 0; t < vw * vh; t++) {
@@ -509,6 +522,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       // Silueta solo si lo de delante está claramente delante (XRAY_MARGIN): el suelo en el que se hunde un pie no cuenta
       if (xr && entDepth[t]! > depthBuf[t]! + XRAY_MARGIN && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
         if (clear) clear[t] = 0;
+        if (sunS) sunS[t] = 0;
         view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2]; view[t * 4 + 3] = 255;
         if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
       }
@@ -516,6 +530,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     }
     const d = sprites[k]!, s = entPx[t]!;
     if (clear) clear[t] = 0;
+    if (sunS) sunS[t] = (d.e.tint && !Number.isNaN(d.img.pickKey?.[s] ?? NaN)) || emissiveMask(d)?.[s] ? 0 : esun![k]!;
     depthBuf[t] = entDepth[t]!;
     view[t * 4] = d.img.rgba[s * 4]!; view[t * 4 + 1] = d.img.rgba[s * 4 + 1]!; view[t * 4 + 2] = d.img.rgba[s * 4 + 2]!; view[t * 4 + 3] = 255;
     const et = etotals[k], fl = feetLight[k];
@@ -532,16 +547,19 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
 
   // El agua (tapa lo sumergido), los efectos y las gotas
-  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear || waves || sun ? { clear, waves, sun: sun ? { look: sun, table: clim! } : null } : null);
-  if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
+  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear || waves || sun ? { clear, waves, sun: sunS ? { look: sun!, table: clim!, amount: sunS } : null } : null);
+  if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh, sunS);
   const falling = fallSource(b, o, front);
   if (falling) drawEffects(falling, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con
   // lo que tiene detrás. Y el velo del ghost, lo mismo
   const depth = drop && (o.fog || front?.ghost) ? depthBuf.slice() : depthBuf;
+  const before = drop && sunS ? depthBuf.slice() : null;
   if (drop) state.drops.draw(b, view, depthBuf, total, vx, vy, vw, vh, drop.color, drop.light);
-  return { view, total, depth };
+  // (una gota lleva su luz: sin sol. Las gotas escriben la profundidad: donde cambió, hay una)
+  if (before) for (let t = 0; t < before.length; t++) if (before[t] !== depthBuf[t]) sunS![t] = 0;
+  return { view, total, depth, sun: sunS ? { amount: sunS, color: sun!.color } : null };
 }
 
 export const BACKGROUND = [13, 12, 18] as const;
@@ -698,10 +716,7 @@ export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptio
     .filter((l) => Math.hypot(l.x, l.y) < l.radius + 20 && (!pick || pick.includes(l.index)));
   const { e } = d;
   // Las entidades se iluminan como sólidas, en la CPU y en la GPU: los materiales (follaje, vidrio) son del escenario
-  const clim = b && o.weather?.sunlight ? climateTable(b, o) : null, sun = clim ? sunLook(b!, o.weather) : null;
-  let amb = entityAmbient(b, d, o);
-  if (sun) { const k = entitySun(b!, d, clim!); amb = [amb[0] + sun.entity[0] * k, amb[1] + sun.entity[1] * k, amb[2] + sun.entity[2] * k]; }
-  const total = lightField3D(e.model, d.img, camera(d.ro), lights, amb, { floor: false, materials: false });
+  const total = lightField3D(e.model, d.img, camera(d.ro), lights, entityAmbient(b, d, o), { floor: false, materials: false });
   // Lo emisivo lleva su propia luz: se ve con su color, sin que la luz del mundo lo oscurezca
   const em = emissiveMask(d);
   if (em) for (let i = 0; i < em.length; i++) if (em[i]) total.fill(EMISSIVE_LIGHT, i * 3, i * 3 + 3);
@@ -779,7 +794,7 @@ function spriteDepthRange(img: Rendered): [number, number] {
 }
 
 // Sombra de contacto bajo los pies: oscurece la luz del suelo en una elipse
-function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions): void {
+function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions, sun: Float32Array | null): void {
   const { vx, vy, vw, vh } = o;
   const { fx, fy, sry } = d;
   for (let y = -Math.ceil(sry); y <= Math.ceil(sry); y++) for (let x = -6; x <= 6; x++) {
@@ -788,6 +803,7 @@ function contactShadow(d: EntitySprite, total: Float32Array, o: Frame2DOptions):
     if (sx < 0 || sy < 0 || sx >= vw || sy >= vh) continue;
     const q = (sy * vw + sx) * 3;
     total[q] = total[q]! * 0.7; total[q + 1] = total[q + 1]! * 0.7; total[q + 2] = total[q + 2]! * 0.72;
+    if (sun) sun[sy * vw + sx] = sun[sy * vw + sx]! * 0.7;
   }
 }
 

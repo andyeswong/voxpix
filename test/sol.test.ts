@@ -32,21 +32,36 @@ describe('el sol', () => {
   });
   it('suma según la cara y el cielo: nada bajo techo, y cada cara lo suyo', () => {
     const { b, state } = setup(), f = { weather: W(), tick: 0, sunlight: SUN };
-    const ref = frame2DParts(state, b, opts(b, null)).total!, p = frame2DParts(state, b, opts(b, f)).total!, look = sunLook(b, f)!;
+    const ref = frame2DParts(state, b, opts(b, null)), p = frame2DParts(state, b, opts(b, f)), look = sunLook(b, f)!;
+    expect(p.total).toEqual(ref.total);          // (la luz que se trama no lleva el sol)
+    expect(ref.sun).toBeNull();
     let dark = 0, lit = 0;
     for (let t = 0; t < b.width * b.height; t++) {
       if (b.face[t]! < 0) continue;
-      const add = p[t * 3]! - ref[t * 3]!;
-      expect(add).toBeCloseTo(look.faces[b.face[t]! * 3]! * b.sky![t]! / 5, 5);
+      const add = p.sun!.amount[t]!;
+      expect(add).toBeCloseTo(look.faces[b.face[t]!]! * b.sky![t]! / 5, 5);
       if (b.sky![t] === 0) dark++; else if (add > 0.1) lit++;
     }
     expect(dark).toBeGreaterThan(100); expect(lit).toBeGreaterThan(1000);
+  });
+  it('no se trama con la pantalla: mover la cámara un píxel no cambia lo que se ve; y alumbra con el color del sol', () => {
+    const { b, state } = setup(), shot = (dx: number, clouds: number) => frame2D(state, b, { ...opts(b, { weather: W({ clouds }), tick: 0, sunlight: SUN }), vx: 30 + dx, vy: 40, vw: 80, vh: 60 });
+    for (const clouds of [0, 0.2, 0.6]) for (const dx of [1, 2, 3]) {
+      const a = shot(0, clouds), c = shot(dx, clouds);
+      let diff = 0;
+      for (let y = 0; y < 60; y++) for (let x = dx; x < 80; x++) for (let ch = 0; ch < 3; ch++) if (Math.abs(a[(y * 80 + x) * 4 + ch]! - c[(y * 80 + x - dx) * 4 + ch]!) > 0) diff++;
+      expect(diff).toBe(0);
+    }
+    // Un suelo plano con todo el cielo y sin nubes sale de un solo tono por color de vóxel
+    const a = shot(0, 0), by = new Map<string, Set<string>>();
+    for (let y = 0; y < 60; y++) for (let x = 0; x < 80; x++) { const q = (40 + y) * b.width + 30 + x; if (b.face[q] !== 4 || b.sky![q] !== 5) continue; const i = (y * 80 + x) * 4, k = `${b.rgba[q * 4]}`; (by.get(k) ?? by.set(k, new Set()).get(k)!).add(`${a[i]},${a[i + 1]},${a[i + 2]}`); }
+    for (const s of by.values()) expect(s.size).toBe(1);
   });
   it('en los 4 giros viene del mismo sitio del mundo', () => {
     // El sol al este: la cara este (0, en ejes del mundo) es la que más recibe, sea cual sea en la vista
     for (const q of [0, 1, 2, 3] as Quarter[]) {
       const { b, view } = setup(q), l = sunLook(b, { weather: W(), tick: 0, camera: view.camera, sunlight: { ...SUN, dir: [1, 0, 0.2] } })!;
-      const best = [0, 1, 2, 3].reduce((m, i) => (l.faces[i * 3]! > l.faces[m * 3]! ? i : m), 0);
+      const best = [0, 1, 2, 3].reduce((m, i) => (l.faces[i]! > l.faces[m]! ? i : m), 0);
       const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]] as const, [wx, wy] = view.camera.dirToWorld(dirs[best]![0], dirs[best]![1]);
       expect([wx + 0, wy + 0]).toEqual([1, 0]);
     }
@@ -76,7 +91,7 @@ describe('el sol', () => {
       void s;
       const p = frame2DParts(state, b, opts(b, weather)), ref = frame2DParts(setup().state, b, opts(b, null)).view;
       let sum = 0, n = 0;
-      for (let t = 0; t < p.view.length / 4; t++) if (p.view[t * 4] === 208 && ref[t * 4] !== 208) { sum += p.total![t * 3]!; n++; }
+      for (let t = 0; t < p.view.length / 4; t++) if (p.view[t * 4] === 208 && ref[t * 4] !== 208) { sum += p.sun?.amount[t] ?? 0; n++; }
       return sum / n;
     };
     const f = { weather: W(), tick: 0, sunlight: SUN };

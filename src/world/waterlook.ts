@@ -6,7 +6,8 @@ import type { WaveTile } from './waves';
 export interface WaterLook {
   // Por píxel de la vista: 1 donde lo que quedó es una planta de agua (MaterialProps.aquatic), que se ve a través del agua
   clear?: Uint8Array | null;
-  sun?: { look: SunLook; table: ClimateTable } | null;   // el sol sobre la superficie (sunlight.ts)
+  // El sol sobre la superficie (sunlight.ts): amount, cuánto lleva cada píxel de la vista, que aquí se completa
+  sun?: { look: SunLook; table: ClimateTable; amount: Float32Array } | null;
   waves?: WaveTile | null;      // el rizado del viento y la lluvia (waves.ts)
 }
 

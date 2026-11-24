@@ -8,8 +8,8 @@ import { secIdx, sectionBorderAt, type SectionLayer } from './section';
 import { lattice } from '../worldgen/noise';
 import { climateTie, type ClimateTable, type WeatherFrame } from './climate';
 
-export const FALL_MAX = 240;                         // gotas o copos como mucho (WeatherFrame.fall.max)
-const RAIN = { speed: 230, height: 80, drift: 70, colors: [[154, 180, 216], [122, 148, 188]], points: 2, gap: 2 } as const;
+export const FALL_MAX = 350;                         // gotas o copos como mucho (WeatherFrame.fall.max)
+const RAIN = { speed: 230, height: 80, drift: 70, colors: [[154, 180, 216], [122, 148, 188]], points: 3, gap: 1.6 } as const;
 const SNOW = { speed: 16, height: 64, drift: 12, colors: [[255, 255, 255], [228, 236, 246]], points: 1, gap: 0 } as const;
 
 interface View { vx: number; vy: number; vw: number; vh: number; weather?: WeatherFrame | null }

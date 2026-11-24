@@ -3,7 +3,8 @@
 // celdas de agua que se repite, fija en el mundo, calculada en la CPU 12 veces por segundo y leída igual por la CPU y la GPU.
 import { lattice } from '../worldgen/noise';
 import type { Baked } from './bake';
-import { climateStep, type ClimateTable, type WeatherFrame } from './climate';
+import type { Weather } from './weather';
+import { climateStep, climateStepTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
 export const WAVE_T = 64;
 export const WAVE_CELL = 2;                     // vóxeles por celda de agua (WATER_CELL)
@@ -12,34 +13,58 @@ const RINGS = 70;                               // anillos a la vez en una baldo
 const RING_S = 0.9, RING_R = 5;                 // lo que dura uno (segundos) y hasta dónde llega (celdas)
 
 // data: por celda, la inclinación (x, y) del viento a fuerza 1 y la de los anillos. kx, ky: lo que se suma a la celda de la vista
-export interface WaveTile { data: Float32Array; kx: number; ky: number; climate: ClimateTable; key: string }
+export interface WaveTile { data: Float32Array; kx: number; ky: number; climate: ClimateTable }
 
-const cache = new WeakMap<Baked, WaveTile>();
-export function waveTile(b: Baked, f: WeatherFrame | null | undefined, c: ClimateTable | null): WaveTile | null {
-  const amount = Math.max(0, Math.min(1, f?.waves ?? 0));
-  if (!f || !c || amount <= 0) return null;
-  // (en otro tick que la tabla del clima, para no hacer las dos cosas en el mismo cuadro)
-  const tick = climateStep(f.tick + 2) - 2, l = f.weather.levels(tick), len = Math.hypot(l.wind[0], l.wind[1]);
+// Los datos de una baldosa, y la baldosa a medias: un tren de ondas o los anillos por paso (run)
+interface Want { weather: Weather; rev: number; tick: number; amount: number; dx: number; dy: number; rain: number }
+const same = (a: Want, b: Want): boolean => a.weather === b.weather && a.rev === b.rev && a.tick === b.tick && a.amount === b.amount && a.dx === b.dx && a.dy === b.dy && a.rain === b.rain;
+class Building {
+  readonly data = new Float32Array(WAVE_T * WAVE_T * 4);
+  private step = 0;
+  constructor(readonly want: Want) {}
+  run(steps: number): void {
+    const { weather, tick, amount, dx, dy, rain } = this.want;
+    for (; steps > 0 && this.step < 4; steps--, this.step++) {
+      if (this.step < 3) { if (dx || dy) windWave(this.data, WAVES[this.step]!, dx, dy, tick, amount); } else if (rain > 0) rainRings(this.data, weather.seed, tick, rain, amount);
+    }
+  }
+}
+// (en otro tick que la tabla del clima, para no hacer las dos cosas en el mismo cuadro)
+const waveStep = (tick: number): number => climateStep(tick + 2) - 2;
+function wantOf(f: WeatherFrame, tick: number): Want | null {
+  const amount = Math.max(0, Math.min(1, f.waves ?? 0));
+  if (amount <= 0) return null;
+  const l = f.weather.levels(tick), len = Math.hypot(l.wind[0], l.wind[1]);
   if (len <= 0 && l.rain <= 0) return null;
-  const cam = f.camera ?? null, [ox, oy] = f.origin ?? [0, 0], base = cam ? cam.pointToWorld(0, 0) : [0, 0];
-  const [Kx, Ky] = cam ? cam.dirToView(base[0]! + ox, base[1]! + oy) : [base[0]! + ox, base[1]! + oy];
-  const mod = (v: number) => ((Math.floor(v / WAVE_CELL) % WAVE_T) + WAVE_T) % WAVE_T;
-  const dir = len > 0 ? (cam ? cam.dirToView(l.wind[0] / len, l.wind[1] / len) : [l.wind[0] / len, l.wind[1] / len]) : [1, 0];
-  const key = [f.weather.seed, tick, amount, dir, len > 0, l.rain, Kx, Ky].join(',');
-  const hit = cache.get(b);
-  if (hit && hit.key === key && hit.climate === c) return hit;
-  let data: Float32Array;
-  if (hit && hit.key === key) data = hit.data;
-  else { data = new Float32Array(WAVE_T * WAVE_T * 4); if (len > 0) windWaves(data, dir[0]!, dir[1]!, tick, amount); if (l.rain > 0) rainRings(data, f.weather.seed, tick, l.rain, amount); }
-  const t: WaveTile = { data, kx: mod(Kx), ky: mod(Ky), climate: c, key };
-  cache.set(b, t);
-  return t;
+  const [dx, dy] = len <= 0 ? [0, 0] : f.camera ? f.camera.dirToView(l.wind[0] / len, l.wind[1] / len) : [l.wind[0] / len, l.wind[1] / len];
+  return { weather: f.weather, rev: f.weather.revision, tick, amount, dx, dy, rain: l.rain };
+}
+const cache = new WeakMap<Baked, { want: Want; data: Float32Array; next: Building | null }>();
+export function waveTile(b: Baked, f: WeatherFrame | null | undefined, c: ClimateTable | null): WaveTile | null {
+  const want = f && c ? wantOf(f, waveStep(f.tick)) : null;
+  if (!want) return null;
+  let hit = cache.get(b);
+  if (!hit || !same(hit.want, want)) {
+    const build = hit?.next && same(hit.next.want, want) ? hit.next : new Building(want);
+    build.run(4);
+    cache.set(b, (hit = { want, data: build.data, next: null }));
+  }
+  const [Kx, Ky] = viewOffset(f!), mod = (v: number) => ((Math.floor(v / WAVE_CELL) % WAVE_T) + WAVE_T) % WAVE_T;
+  return { data: hit.data, kx: mod(Kx), ky: mod(Ky), climate: c! };
+}
+// Adelanta la baldosa del paso siguiente (como climateAhead)
+export function waveAhead(b: Baked, f: WeatherFrame | null | undefined): void {
+  const hit = f && cache.get(b), want = hit ? wantOf(f, waveStep(f.tick) + climateStepTicks) : null;
+  if (!hit || !want) return;
+  if (!hit.next || !same(hit.next.want, want)) hit.next = new Building(want);
+  hit.next.run(1);
 }
 
 // Tres trenes de ondas con vueltas enteras en la baldosa (así casa consigo misma): el del viento y dos a sus lados
-function windWaves(out: Float32Array, dx: number, dy: number, tick: number, amount: number): void {
+const WAVES = [[0, 6, 0.5, 0.9], [0.55, 9, 0.3, 1.2], [-0.7, 11, 0.2, 1.5]] as const;
+function windWave(out: Float32Array, [turn, n, amp, hz]: (typeof WAVES)[number], dx: number, dy: number, tick: number, amount: number): void {
   const sec = tick / 60, T = WAVE_T;
-  for (const [turn, n, amp, hz] of [[0, 6, 0.5, 0.9], [0.55, 9, 0.3, 1.2], [-0.7, 11, 0.2, 1.5]] as const) {
+  {
     const ux = dx * Math.cos(turn) - dy * Math.sin(turn), uy = dx * Math.sin(turn) + dy * Math.cos(turn);
     const kx = Math.round(ux * n), ky = Math.round(uy * n), kl = Math.hypot(kx, ky) || 1;
     const wx = new Float32Array(T), wy = new Float32Array(T);

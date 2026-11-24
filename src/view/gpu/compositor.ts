@@ -20,10 +20,10 @@ import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type Baked
 import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import { fallSource, coverLook, coverInCut } from '../../world/precipitation';
-import { waveTile, WAVE_T, type WaveTile } from '../../world/waves';
+import { waveTile, waveAhead, WAVE_T, type WaveTile } from '../../world/waves';
 import { sunLook, type SunLook } from '../../world/sunlight';
 import { swayTable, swayCode, SWAY_FILL } from '../../world/sway';
-import { climateTable, CLIMATE_W, type ClimateTable } from '../../world/climate';
+import { climateTable, climateAhead, CLIMATE_W, type ClimateTable } from '../../world/climate';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource, FxSource } from '../../core';
@@ -245,7 +245,7 @@ export class GpuCompositor {
     this.occAtlas = new Atlas3D(this.tOcc);
   }
 
-  // Pinta el cuadro en el lienzo
+  // Pinta el cuadro en el lienzo, y adelanta un poco lo del clima del paso siguiente
   frame(state: RenderState, b: Baked, o: Frame2DOptions): void {
     this.frameNo++;
     this.usedNow = 0;
@@ -253,6 +253,7 @@ export class GpuCompositor {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     this.present(o, 0, true);
+    if (o.weather) { climateAhead(b, o); waveAhead(b, o.weather); }
   }
 
   // Para la prueba del oráculo: una salida del cuadro en RGBA, fila 0 arriba (como frame2D)
@@ -540,7 +541,7 @@ export class GpuCompositor {
   private veilSun: { look: SunLook; table: ClimateTable } | null = null;
   private setSun(p: Program, sun: SunLook | null, c: ClimateTable | null): void {
     this.gl.uniform1i(p.u.uSun, sun ? 1 : 0);
-    if (sun && c) { this.setClimate(p, c); this.gl.uniform3fv(p.u.uSunFace, sun.faces); }
+    if (sun && c) { this.setClimate(p, c); this.gl.uniform1fv(p.u.uSunFace, sun.faces); this.gl.uniform3f(p.u.uSunCol, sun.color[0], sun.color[1], sun.color[2]); }
   }
   private setClimate(p: Program, c: ClimateTable): void {
     const gl = this.gl;
@@ -589,9 +590,9 @@ export class GpuCompositor {
       gl.uniform1fv(p.u.uBack, this.backVals);
       gl.uniform1i(p.u.uNLights, o.lights ? this.veilLights : 0);
       this.applyCasters(p.u);
-      if (this.veilSun) bindTex(gl, 5, gl.TEXTURE_2D, this.tClim, p.u.uClimTab);
-      this.setSun(p, this.veilSun?.look ?? null, this.veilSun?.table ?? null);
     }
+    if (this.veilSun) bindTex(gl, 5, gl.TEXTURE_2D, this.tClim, p.u.uClimTab);
+    this.setSun(p, this.veilSun?.look ?? null, this.veilSun?.table ?? null);
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
     gl.uniform1i(p.u.uHeight, o.vh);
@@ -1133,7 +1134,7 @@ export class GpuCompositor {
     gl.uniform1i(p.u.uLights, o.lights ? 1 : 0);
     gl.uniform3f(p.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
     const entSky = !!(o.lights && o.cave && b.sky);
-    gl.uniform3f(p.u.uSunEnt, sun?.look.entity[0] ?? 0, sun?.look.entity[1] ?? 0, sun?.look.entity[2] ?? 0);
+    gl.uniform1f(p.u.uSunEnt, sun?.look.entity ?? 0);
     gl.uniform1i(p.u.uUseSky, entSky ? 1 : 0);
     if (entSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform3fv(p.u.uDirs, DIR_VECTORS.flat());

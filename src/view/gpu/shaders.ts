@@ -5,7 +5,7 @@
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
 import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
-import { CLOUD_DARK } from '../../world/sunlight';
+import { CLOUD_DARK, SUN_Q } from '../../world/sunlight';
 import { SNOW_COLOR, SNOW_MIX } from '../../world/precipitation';
 import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
 
@@ -51,7 +51,10 @@ vec4 climateAt(float vx, float vy) {
 }
 // El sol (src/world/sunlight.ts): lo que suma a cada cara, y la sombra de las nubes
 uniform bool uSun;
-uniform vec3 uSunFace[6];
+uniform float uSunFace[6];
+// Cuánto sol lleva un píxel va en el alfa de su luz: aqua (0 o 1, la planta de agua) + 2 * el sol en 1 / SUN_Q
+float sunCode(float s) { return 2.0 * floor(s * ${SUN_Q}.0 + 0.5); }
+float sunOfCode(float a) { return floor(a * 0.5) / ${SUN_Q}.0; }
 float cloudAt(ivec2 c) { c = clamp(c - uClim.xy, ivec2(0), uClim.zw - 1); return texelFetch(uClimTab, c, 0).a; }
 float cloudShade(float vx, float vy) {
   vec2 u = vec2((vx + uClimK.x) / 16.0, (vy + uClimK.y + 1.0 / 1024.0) / 32.0) - 0.5, f = fract(u);
@@ -59,7 +62,7 @@ float cloudShade(float vx, float vy) {
   float a = cloudAt(i) * (1.0 - f.x) + cloudAt(i + ivec2(1, 0)) * f.x, b = cloudAt(i + ivec2(0, 1)) * (1.0 - f.x) + cloudAt(i + ivec2(1, 1)) * f.x;
   return 1.0 - ${CLOUD_DARK} * (a * (1.0 - f.y) + b * f.y);
 }
-vec3 sunOn(int face, float sky, float vx, float vy) { return uSunFace[face] * (sky / 5.0 * cloudShade(vx, vy)); }`;
+float sunOn(int face, float sky, float vx, float vy) { return uSunFace[face] * (sky / 5.0 * cloudShade(vx, vy)); }`;
 
 // El corte al componer (frame2d.ts, Frame2DOptions.section / sectionLayer): la capa en su recuadro de la imagen
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
@@ -295,7 +298,7 @@ void main() {
     }
   }
   float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
-  float aqua = 0.0;
+  float aqua = 0.0, sunS = 0.0;
   if (uAquatic) { int cd = sm > 0 ? (secGhost(s) ? 0 : secSway(s)) : texelFetch(uFace, s, 0).r >> 7; if (cd >= 128) aqua = 1.0; }
   vec3 total = uAmbient;
   if (uUseSky) {
@@ -322,7 +325,7 @@ void main() {
       float wy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
       vec3 P = vec3(float(s.x), wy, Pp - uA * wy);
       vec3 n = uDirs[f];
-      if (uSun) total += sunOn(f, float(sm > 0 ? secSky(s) : int(texelFetch(uSky, s, 0).r)), float(s.x), wy);
+      if (uSun) sunS = sunOn(f, float(sm > 0 ? secSky(s) : int(texelFetch(uSky, s, 0).r)), float(s.x), wy);
       for (int i = 0; i < uNLights; i++) {
         if (lightMeta(i).z == 0.0 && !(sm == 1 && lightMeta(i).x >= 0.0)) continue;
         float w = contribution(i, P, n, back);
@@ -352,15 +355,17 @@ void main() {
     }
   }
   // Las sombras de contacto, y encima la entidad más cercana si está delante de lo que hay
-  if (uLights) total *= texelFetch(uContact, t, 0).rgb;
+  if (uLights) { vec3 ct = texelFetch(uContact, t, 0).rgb; total *= ct; sunS *= ct.r; }
+  float sunC = sunCode(sunS);
   if (uHl) {
     ivec2 h = home - uHlRect.xy;
-    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; aqua = 0.0; }
+    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; aqua = 0.0; sunC = 0.0; }
   }
   float ed = texelFetch(uEntDepth, t, 0).r;
   if (ed < depth - 0.5) {
     depth = ed;
     aqua = 0.0;
+    sunC = texelFetch(uEntLight, t, 0).a;
     col = texelFetch(uEntColor, t, 0).rgb;
     cov = 1.0;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
@@ -368,11 +373,12 @@ void main() {
     // Tapada por el escenario: su silueta, en damero y con luz propia
     col = uXrayColor;
     aqua = 0.0;
+    sunC = 0.0;
     total = vec3(${EMISSIVE});
     cov = 1.0;
   }
   oColor = vec4(col, uBgClear ? cov : 1.0);
-  oLight = vec4(total, aqua);
+  oLight = vec4(total, aqua + sunC);
   oDepth = vec4(depth, 0.0, 0.0, 0.0);
 }`;
 
@@ -496,7 +502,7 @@ void main() {
   vec3 tc = uTones[tone];
   float alpha = !basin ? min(0.6, d) : d >= 1.5 ? 1.0 : min(1.0, 0.45 + d * 0.35 + (tone == 4 ? 0.4 : 0.0));
   vec3 lt = max(vec3(uGlow), uAmbient * vec3(1.25, 1.25, 1.3));
-  if (uSun && uLights) lt += uSunFace[4] * cloudShade(float(gx * CELL + 1), float(gy * CELL + 1));
+  float sunS = uSun && uLights ? uSunFace[4] * cloudShade(float(gx * CELL + 1), float(gy * CELL + 1)) : 0.0;
   vec3 sp3 = vec3(0.0);
   float spec = 0.0;
   float caustic = 1.0 + clamp(-lap * 6.0, -0.6, 2.5);
@@ -526,7 +532,7 @@ void main() {
     ivec2 t2 = ivec2(clamp(t.x + shift, 0, vw - 1), t.y);
     vec3 b = texelFetch(uSrcColor, t2, 0).rgb;
     oColor = vec4(b.r * 0.85, b.g * 0.92, min(1.0, b.b * 1.05), 1.0);
-    if (uLights) oLight = vec4(uAmbient + (texelFetch(uSrcLight, t2, 0).rgb - uAmbient) * caustic, 0.0);
+    if (uLights) oLight = vec4(uAmbient + (texelFetch(uSrcLight, t2, 0).rgb - uAmbient) * caustic, texelFetch(uSrcLight, t2, 0).a);
     return;
   }
   // Superficie: su color, el reflejo de lo que tiene encima y el brillo de las fuentes
@@ -547,17 +553,17 @@ void main() {
     break;
   }
   // Lo sumergido que se ve a través del agua (waterlook.ts, seenThrough)
-  if (sl.a > 0.5) {
+  if (mod(sl.a, 2.0) > 0.5) {
     float down = abs(uA * (sd - depthHere) / (uF1 - uA * uF2));
     float k = floor(min(${CLEAR_MAX}, ${CLEAR_BASE} + ${CLEAR_STEP} * down) * 64.0 + 0.5) / 64.0;
     vec3 under = floor(sc.rgb * 255.0 + 0.5);
     cc = floor(under + (cc - under) * k + 0.5);        // (redondeado aquí, como la CPU: un empate no depende de cómo guarda el byte)
-    if (uLights) ltt = mix(sl.rgb, ltt, k);
+    if (uLights) { ltt = mix(sl.rgb, ltt, k); sunS = mix(sunOfCode(sl.a), sunS, k); }
   }
   if (spec > 0.35) cc = uTones[4];
   oColor = vec4(clamp(cc / 255.0, 0.0, 1.0), 1.0);
   oDepth = vec4(depthHere, 0.0, 0.0, 0.0);
-  if (uLights) oLight = vec4(ltt, 0.0);
+  if (uLights) oLight = vec4(ltt, sunCode(sunS));
 }`;
 
 // ---- 3) Las gotas: puntos ya proyectados (x, y de la vista y profundidad); tapadas si hay algo delante
@@ -665,6 +671,7 @@ uniform ivec3 uEntOccSize[MAXE];
 uniform uint uEntNear[MAXE];
 uniform sampler3D uOcc;
 uniform sampler2D uContact;
+uniform vec3 uSunCol;
 out vec4 oColor;
 
 ${CLIMATE}
@@ -710,7 +717,8 @@ void layersOf(vec3 tot, vec3 amb, float threshold, out vec3 mul, out vec3 add) {
 
 // La luz de la superficie de delante de un píxel con velo: la de un píxel sustituido de la escena (FRAG_SCENE con
 // sm == 1): su cielo, las luces fijas como las dinámicas, las sombras de las entidades y las de contacto
-vec3 veilLight(ivec2 t, ivec2 s, vec4 gg) {
+vec3 veilLight(ivec2 t, ivec2 s, vec4 gg, out float sunS) {
+  sunS = 0.0;
   vec3 total = uUseSky ? uSkyAmb[int(gg.a)] : uAmbient;
   int fr = int(gg.b);
   if (fr >= 0) {
@@ -719,7 +727,7 @@ vec3 veilLight(ivec2 t, ivec2 s, vec4 gg) {
     float Pp = uOriginY - (float(s.y) + 0.5);
     vec3 P = vec3(float(s.x), gg.g, Pp - uA * gg.g);
     vec3 n = uDirs[f];
-    if (uSun) total += sunOn(f, gg.a, float(s.x), gg.g);
+    if (uSun) sunS = sunOn(f, gg.a, float(s.x), gg.g);
     for (int i = 0; i < uNLights; i++) {
       if (lightMeta(i).z == 0.0 && !(lightMeta(i).x >= 0.0)) continue;
       float w = contribution(i, P, n, back);
@@ -741,7 +749,9 @@ vec3 veilLight(ivec2 t, ivec2 s, vec4 gg) {
       }
     }
   }
-  return total * texelFetch(uContact, t, 0).rgb;
+  vec3 ct = texelFetch(uContact, t, 0).rgb;
+  sunS = sunOfCode(sunCode(sunS * ct.r));
+  return total * ct;
 }
 
 // El velo (rgb 0..255) sobre lo que quedó (res: rgb 0..255 y alfa 0 o 1)
@@ -773,7 +783,8 @@ void main() {
     oColor = vec4(res.rgb / 255.0, res.a);
     return;
   }
-  vec3 tot = texelFetch(uLightTex, t, 0).rgb;
+  vec4 tot4 = texelFetch(uLightTex, t, 0);
+  vec3 tot = tot4.rgb, sunV = uSun ? uSunCol * sunOfCode(tot4.a) : vec3(0.0);
   float threshold = (float(BAYER[(t.y & 3) * 4 + (t.x & 3)]) + 0.5) / 16.0;
   vec3 amb = uAmbient;
   if (uUseSky) {
@@ -782,13 +793,15 @@ void main() {
     amb = uSkyAmb[secMask(s) > 0 ? (gh && dNow < gg.r - 0.5 ? int(gg.a) : secSky(s)) : (s.x >= 0 && s.y >= 0 && s.x < ssz.x && s.y < ssz.y) ? int(texelFetch(uSky, s, 0).r) : 5];
   }
   vec3 mul, add;
-  layersOf(tot, amb, threshold, mul, add);
+  layersOf(tot + sunV, amb + sunV, threshold, mul, add);
   if (uMode == 2) { oColor = vec4(mul / 255.0, 1.0); return; }
   if (uMode == 3) { oColor = vec4(add / 255.0, 1.0); return; }
   vec4 res = clear ? vec4(0.0) : vec4(fogged(t, clamp(roundEven(scene * mul / 255.0 + add), 0.0, 255.0)), 1.0);
   if (veil) {
     vec3 fc = floor(texelFetch(uGhostColor, secTexel(s), 0).rgb * 255.0 + 0.5), fm, fa;
-    layersOf(veilLight(t, s, gg), uUseSky ? uSkyAmb[int(gg.a)] : uAmbient, threshold, fm, fa);
+    float vs;
+    vec3 vl = veilLight(t, s, gg, vs), va = uUseSky ? uSkyAmb[int(gg.a)] : uAmbient, vv = uSunCol * vs;
+    layersOf(vl + vv, va + vv, threshold, fm, fa);
     vec3 lit = clamp(roundEven(fc * fm / 255.0 + fa), 0.0, 255.0);
     res = veilOver(res, uFog ? foggedAt(t, lit, gg.r) : lit);
   }
@@ -849,7 +862,7 @@ flat in uint vMask;
 flat in vec4 vTint;
 flat in float vSky;
 flat in float vSun;
-uniform vec3 uSunEnt;
+uniform float uSunEnt;
 layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oLight;
 layout(location = 2) out vec4 oDepth;
@@ -902,10 +915,10 @@ void main() {
   float depth = texelFetch(uSprDepth, ivec3(ij, layer), 0).r + vPlace.w;
   gl_FragDepth = clamp((depth - uDepthRange.x) * uDepthRange.y, 0.0, 1.0);
   vec3 total = uUseSky ? uSkyAmb[int(vSky + 0.5)] : uAmbient;
-  if (uLights) total += uSunEnt * vSun;
+  float sunC = uLights ? 2.0 * floor(uSunEnt * vSun * ${SUN_Q}.0 + 0.5) : 0.0;
   uvec4 vx = texelFetch(uSprVox, ivec3(ij, layer), 0);
-  if (vTint.w > 0.5 && vx.a != 255u) { c.rgb = vTint.rgb; total = vec3(${EMISSIVE}); }   // tinte plano (Entity.tint)
-  else if (vx.a != 255u && (vx.a & 128u) != 0u) total = vec3(${EMISSIVE});    // emisivo: su propia luz (frame2d.ts)
+  if (vTint.w > 0.5 && vx.a != 255u) { c.rgb = vTint.rgb; total = vec3(${EMISSIVE}); sunC = 0.0; }   // tinte plano (Entity.tint)
+  else if (vx.a != 255u && (vx.a & 128u) != 0u) { total = vec3(${EMISSIVE}); sunC = 0.0; }    // emisivo: su propia luz (frame2d.ts)
   else if (uLights && vOccSize.w != 0.0 && vx.a != 255u) {
     vec3 v = vec3(vx.rgb) - 128.0;
     vec3 n = uDirs[int(vx.a & 127u)];
@@ -931,7 +944,7 @@ void main() {
     }
   }
   oColor = vec4(c.rgb, 1.0);
-  oLight = vec4(total, 0.0);
+  oLight = vec4(total, sunC);
   oDepth = vec4(depth, 0.0, 0.0, 0.0);
 }`;
 

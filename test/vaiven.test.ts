@@ -150,7 +150,7 @@ describe('el vaivén', () => {
   });
 
   // Una tabla del clima hecha a mano: la misma inclinación en todas partes
-  const flat = (lean: number): ClimateTable => ({ x0: 0, y0: 0, w: 1, h: 1, kx: 0, ky: 0, data: Float32Array.of(lean, lean, 1, 0), sway: true, key: `plano${lean}` });
+  const flat = (lean: number): ClimateTable => ({ x0: 0, y0: 0, w: 1, h: 1, kx: 0, ky: 0, data: Float32Array.of(lean, lean, 1, 0), sway: true });
   it('hacia dónde: con inclinación 1 la punta va 3 píxeles a la derecha, con -1 a la izquierda, y el hueco sale del lado de donde viene', () => {
     const { b } = setup();
     for (const lean of [1, -1]) {

@@ -44,7 +44,7 @@ describe('lo que cae', () => {
   it('con tope, también con lluvia y nieve a la vez', () => {
     const { b } = setup();
     for (const max of [10, 60]) for (let tick = 0; tick < 60; tick += 5) {
-      expect(points(b, { weather: W({ rain: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max * 2);
+      expect(points(b, { weather: W({ rain: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max * 3);
       expect(points(b, { weather: W({ snow: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max);
     }
     const both = points(b, { weather: W({ rain: 1, snow: 1 }), tick: 20, fall: { max: 60 } }).length, one = points(b, { weather: W({ rain: 1 }), tick: 20, fall: { max: 60 } }).length;
@@ -54,7 +54,7 @@ describe('lo que cae', () => {
     const { b } = setup();
     const count = (rain: number) => { let n = 0; for (let t = 0; t < 60; t += 4) n += points(b, { weather: W({ rain }), tick: t, fall: {} }).length; return n; };
     expect(count(0.9)).toBeGreaterThan(count(0.4) * 1.5);
-    const lean = (wind: [number, number]) => { const p = points(b, { weather: W({ rain: 1, wind }), tick: 20, fall: {} }); let s = 0, m = 0; for (let k = 0; k + 1 < p.length; k++) if (Math.abs(p[k + 1]![2] - p[k]![2] - 2) < 1e-3) { s += p[k + 1]![0] - p[k]![0]; m++; } return s / m; };
+    const lean = (wind: [number, number]) => { const p = points(b, { weather: W({ rain: 1, wind }), tick: 20, fall: {} }); let s = 0, m = 0; for (let k = 0; k + 1 < p.length; k++) if (Math.abs(p[k + 1]![2] - p[k]![2] - 1.6) < 1e-3) { s += p[k + 1]![0] - p[k]![0]; m++; } return s / m; };
     expect(lean([1, 0])).toBeLessThan(-0.2);            // la de más arriba, más atrás
     expect(lean([-1, 0])).toBeGreaterThan(0.2);
     expect(Math.abs(lean([0, 0]))).toBeLessThan(1e-6);

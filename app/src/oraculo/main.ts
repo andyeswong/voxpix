@@ -814,7 +814,7 @@ async function run(): Promise<void> {
       const s0 = b.source, lights0 = view.frame().lights;
       const clone = new StaticVoxels(s0.palette, s0.width, s0.depth, s0.zMin, s0.zMax);
       clone.importChunks(s0.exportChunks());
-      const cpuFinalOf = (rs: RenderState) => { const pp = frame2DParts(rs, b, o), ll = pp.total ? shadeLayers(pp.total, o, b) : null; return ll ? applyLayers(pp.view, ll) : pp.view.slice(); };
+      const cpuFinalOf = (rs: RenderState) => { const pp = frame2DParts(rs, b, o), ll = pp.total ? shadeLayers(pp.total, o, b, undefined, pp.sun) : null; return ll ? applyLayers(pp.view, ll) : pp.view.slice(); };
       if (sc.shift === 'vuelta') before = { cpu: cpuFinalOf(view.frame()), gpu: gpu.read(view.frame(), b, o, 'frame').slice() };
       else gpu.read(view.frame(), b, o, 'color');
       const c0 = gpu.shiftCount;
@@ -842,12 +842,12 @@ async function run(): Promise<void> {
     const rs: RenderState = view.frame();
     const c0 = performance.now();
     const parts = frame2DParts(rs, b, o);
-    const layers = parts.total ? shadeLayers(parts.total, o, b) : null;
+    const layers = parts.total ? shadeLayers(parts.total, o, b, undefined, parts.sun) : null;
     const secLine = sc.section?.border ? sectionFor(b, o) : null;
     // (con ghost, el cuadro lleva el cielo de la superficie de delante en lo que queda delante de un vóxel con velo: hace
     // falta la profundidad; las capas sueltas, sin ella, como las de la GPU)
     const veiled = !!(sc.section?.ghost && sectionFor(b, o)?.ghost);
-    const cpuFinal = layers ? applyLayers(parts.view, veiled ? shadeLayers(parts.total!, o, b, parts.depth) : layers) : o.fog || secLine || veiled ? parts.view.slice() : parts.view;
+    const cpuFinal = layers ? applyLayers(parts.view, veiled ? shadeLayers(parts.total!, o, b, parts.depth, parts.sun) : layers) : o.fog || secLine || veiled ? parts.view.slice() : parts.view;
     if (o.fog) applyFog(cpuFinal, parts.depth, b, o);
     if (o.background === 'transparent') clearTransparent(cpuFinal);
     if (veiled) applyGhost(cpuFinal, parts.depth, rs, b, o);
@@ -874,7 +874,7 @@ async function run(): Promise<void> {
       const r0 = compare(sc.name, { color: p0.view, mul: l0?.multiply ?? empty, add: l0?.add ?? empty, final: c0f }, { color: gpu.read(rs, b, o0, 'color'), mul: gpu.read(rs, b, o0, 'multiply'), add: gpu.read(rs, b, o0, 'add'), final: gpu.read(rs, b, o0, 'frame') }, ambient, o.lights, [0, 0], p0.total);
       r.control = { differ: r0.differ, mulOff2: r0.mulOff2, addOff2: r0.addOff2, colorOff: r0.colorOff };
       // (un clima que no cambia nada no prueba nada)
-      if (!sc.name.startsWith('clima sin')) { r.climaPx = 0; for (let i = 0; i < VW * VH; i++) if ([0, 1, 2].some((ch) => parts.view[i * 4 + ch] !== p0.view[i * 4 + ch] || (parts.total && parts.total[i * 3 + ch] !== p0.total![i * 3 + ch]))) r.climaPx++; if (r.climaPx < 100) r.pass = false; }
+      if (!sc.name.startsWith('clima sin')) { r.climaPx = 0; for (let i = 0; i < VW * VH; i++) if ([0, 1, 2].some((ch) => parts.view[i * 4 + ch] !== p0.view[i * 4 + ch] || (parts.total && (parts.total[i * 3 + ch] !== p0.total![i * 3 + ch] || parts.sun?.amount[i])))) r.climaPx++; if (r.climaPx < 100) r.pass = false; }
       const room = Math.ceil((VW * VH) / 20000);
       if (!r.pass && (r.climaPx ?? 100) >= 100 && r.share <= TOL_SHARE && !r.colorOff && !r.alphaOff && r.mulOff2 <= r0.mulOff2 + room && r.addOff2 <= r0.addOff2 + room) r.pass = true;
     }

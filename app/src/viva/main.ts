@@ -411,9 +411,10 @@ void (async () => {
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     if (CLIMA.size) {
       const tick = Math.round((now - start) * 0.06);
-      o.weather = { weather: meteo, tick, origin: [win.tx0 * T, win.ty0 * T], camera: win.view.camera, sway: CLIMA.has('viento') ? 1 : 0, waves: CLIMA.has('agua') ? 1 : 0, fall: CLIMA.has('cae') ? {} : null, solid: win.store, cover: CLIMA.has('suelo'), sunlight: CLIMA.has('sol') ? daySun(0.4) : null };
+      o.weather = { weather: meteo, tick, origin: [win.tx0 * T, win.ty0 * T], camera: win.view.camera, sway: CLIMA.has('viento') ? 1 : 0, waves: CLIMA.has('agua') ? 1 : 0, fall: CLIMA.has('cae') ? { max: 600 } : null, solid: win.store, cover: CLIMA.has('suelo'), sunlight: CLIMA.has('sol') ? daySun(0.4) : null };
     }
     compositor.frame(win.view.frame(), win.baked, o);
+    const t4b = performance.now();
     if (water && frames.length > 60) {
       agua.copia.push((win.view.water as unknown as { visited?: number } | null)?.visited ?? 0);
       // ?aguacheck=N: la textura del fondo del agua de la GPU contra la vista (lo que acaba de pintar)
@@ -471,6 +472,7 @@ void (async () => {
     }
     espera('componer');
     const t5 = performance.now();
+    if (frames.length > 60) (fases['tras-componer'] ??= []).push(t5 - t4b);          // (lo del banco después de componer: no es del motor)
     // Lo que subió este cuadro: sprites nuevos y cuerpos de sombra (el primer cuadro de cada modelo y giro)
     { const u = compositor.uploadStats(); if (u && (u.sprites || u.occFull || u.occParts || u.bodyFull || u.bodyParts) && uploads.length < 60) uploads.push({ at: +((now - start) / 1000).toFixed(1), sprites: u.sprites, occ: u.occFull + u.occParts, body: u.bodyFull + u.bodyParts, componer: +(t5 - t4).toFixed(1) }); }
     if (t5 - t4 > 8) slowCompose.push(+((now - start) / 1000).toFixed(1));

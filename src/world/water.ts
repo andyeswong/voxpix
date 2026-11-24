@@ -792,7 +792,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
   // Hacia la cámara (para el brillo especular)
   const vlen = Math.hypot(f1, f2), Vy = -f1 / vlen, Vz = -f2 / vlen;
   // Lo de debajo y de alrededor, tal como estaba antes del agua (para el reflejo y la refracción)
-  const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null;
+  const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null, srcSun = look?.sun ? look.sun.amount.slice() : null;
   const white = w.tones[4]!;
   // Altura de la superficie de una vecina (los bordes secos o sólidos cuentan como la propia celda)
   const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);
@@ -834,10 +834,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
     const glow = w.glow ?? 0;
     let lr = Math.max(glow, ambient[0] * 1.25), lg = Math.max(glow, ambient[1] * 1.25), lb = Math.max(glow, ambient[2] * 1.3), spec = 0, sr = 0, sg = 0, sb = 0;
-    if (total && look?.sun) {
-      const { look: s, table } = look.sun, k = cloudShade(table, gx * CELL + 1, gy * CELL + 1);
-      lr += s.faces[12]! * k; lg += s.faces[13]! * k; lb += s.faces[14]! * k;
-    }
+    const sunHere = look?.sun ? look.sun.look.faces[4]! * cloudShade(look.sun.table, gx * CELL + 1, gy * CELL + 1) : 0;
     const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
     if (total) for (const l of lights) {
       const cx = gx * CELL + 1, cy = gy * CELL + 1;
@@ -873,6 +870,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
           const t2 = ty * vw + Math.max(0, Math.min(vw - 1, tx + shift));
           view[o] = srcView[t2 * 4]! * 0.85; view[o + 1] = srcView[t2 * 4 + 1]! * 0.92; view[o + 2] = Math.min(255, srcView[t2 * 4 + 2]! * 1.05); view[o + 3] = 255;
           if (total && srcTotal) for (let c = 0; c < 3; c++) total[q + c] = ambient[c]! + (srcTotal[t2 * 3 + c]! - ambient[c]!) * caustic;
+          if (srcSun) look!.sun!.amount[t] = srcSun[t2]!;
           continue;
         }
         // Superficie: su color, el reflejo de lo que tiene encima y el brillo de las fuentes
@@ -894,16 +892,19 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
             break;
           }
         }
+        let sunS = sunHere;
         // Lo sumergido que se ve a través del agua (MaterialProps.aquatic): más teñido cuanto más hondo
         if (look?.clear?.[t]) {
           const k = seenThrough(srcDepth[t]! - depthHere, a, f1, f2);
           const mix = (u: number, c: number) => Math.floor(u + (c - u) * k + 0.5);
           cr = mix(srcView[o]!, cr); cg = mix(srcView[o + 1]!, cg); cb = mix(srcView[o + 2]!, cb);
+          if (srcSun) sunS = srcSun[t]! + (sunS - srcSun[t]!) * k;
           if (srcTotal) { ltr = srcTotal[q]! + (ltr - srcTotal[q]!) * k; ltg = srcTotal[q + 1]! + (ltg - srcTotal[q + 1]!) * k; ltb = srcTotal[q + 2]! + (ltb - srcTotal[q + 2]!) * k; }
         }
         if (spec > 0.35) { cr = white[0]; cg = white[1]; cb = white[2]; }
         view[o] = cr; view[o + 1] = cg; view[o + 2] = cb; view[o + 3] = 255;
         depthBuf[t] = depthHere;
+        if (srcSun) look!.sun!.amount[t] = sunS;
         if (total) { total[q] = ltr; total[q + 1] = ltg; total[q + 2] = ltb; }
       }
     }

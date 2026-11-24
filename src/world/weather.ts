@@ -72,6 +72,7 @@ export interface WeatherState {
 
 export class Weather implements StatePart {
   readonly seed: number;
+  revision = 0;                              // sube cada vez que cambia el clima puesto: quien guarda algo de un tick lo mira
   private from: WeatherLevels;
   private to: WeatherLevels;
   private t0 = 0;
@@ -104,6 +105,7 @@ export class Weather implements StatePart {
     this.from = now; this.to = fill(now, target);
     this.dx = dx; this.dy = dy;
     this.t0 = tick; this.t1 = tick + Math.max(0, ticks);
+    this.revision++;
   }
 
   // Sigue un programa desde ese tick (null: deja el clima que haya). Lo aplica advance
@@ -196,6 +198,7 @@ export class Weather implements StatePart {
     this.from = s.from; this.to = s.to; this.t0 = s.t0; this.t1 = s.t1;
     [this.dx, this.dy] = s.drift;
     this.snowCover = s.snow; this.wetness = s.wet; this.stepN = s.step;
+    this.revision++;
     this.program = s.program; this.programAt = s.programAt; this.next = s.next;
   }
   hashInto(h: StateHasher): void {
