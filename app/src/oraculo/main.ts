@@ -528,7 +528,7 @@ SCENARIOS.push({ name: 'agua rizada, la ventana corrida', theme: 'medieval', pos
 const solar = { color: [1, 0.86, 0.66] as const, intensity: 0.5, dir: [0.45, -0.5, 0.7] as const };
 for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `sol con nubes bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, clima: { levels: { clouds: 0.5, wind: [0.6, 0.2] }, frame: { sunlight: solar } } });
-  SCENARIOS.push({ name: `todo el clima, giro ${q}`, theme: 'medieval', veg: true, algas: true, cave: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { clouds: 0.6, wind: [0.8, 0.4], gust: 0.7, rain: 0.6, snow: 0.3 }, frame: { sunlight: solar, fall: {}, cover: true, waves: 1 }, snow: 0.4, wet: 0.6 } });
+  SCENARIOS.push({ name: `todo el clima, giro ${q}`, theme: 'medieval', veg: true, algas: true, cave: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { clouds: 0.6, wind: [0.8, 0.4], gust: 0.7, rain: 0.6, snow: 0.3 }, frame: { sunlight: solar, fall: {}, cover: true, waves: 1, origin: [23, 41] }, snow: 0.4, wet: 0.6 } });
   SCENARIOS.push({ name: `sol con corte y velo, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, clima: { levels: { clouds: 0.5 }, frame: { sunlight: solar } }, section: { width: 64, painter: true, z: 1, ghost: { alpha: 0.5 } } });
 }
 SCENARIOS.push({ name: 'sol con multitud', theme: 'medieval', cave: true, ticks: 40, setup: crowd(60), clima: { levels: { clouds: 0.4 }, frame: { sunlight: solar } } });
