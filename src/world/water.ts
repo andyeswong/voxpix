@@ -16,7 +16,7 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
-import { cloudShade } from './sunlight';
+import { cloudShade, sunQ } from './sunlight';
 import { waveSlope } from './waves';
 import { climateCell } from './climate';
 import { seenThrough, type WaterLook } from './waterlook';
@@ -792,7 +792,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
   // Hacia la cámara (para el brillo especular)
   const vlen = Math.hypot(f1, f2), Vy = -f1 / vlen, Vz = -f2 / vlen;
   // Lo de debajo y de alrededor, tal como estaba antes del agua (para el reflejo y la refracción)
-  const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null, srcSun = look?.sun ? look.sun.amount.slice() : null;
+  const srcView = view.slice(), srcDepth = depthBuf.slice(), srcTotal = total ? total.slice() : null, srcSun = look?.sun ? look.sun.amount.map(sunQ) : null;      // (el sol, en sus pasos, como lo lee la GPU)
   const white = w.tones[4]!;
   // Altura de la superficie de una vecina (los bordes secos o sólidos cuentan como la propia celda)
   const sAt = (j: number, own: number) => (sim.solid[j] || sim.depth[j]! <= 0.01 ? own : sim.ground[j]! + sim.depth[j]!);

@@ -1,6 +1,6 @@
 # Oráculo: el cuadro de la GPU contra el de la CPU
 
-`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 263 escenas del mundo, cada una
+`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 265 escenas del mundo, cada una
 con su semilla, sus ticks y sus pisotones fijos. Entre otras:
 - salida en medieval, oficina y cyberpunk; el lago con pisotones, con y sin luces; con niebla por altura;
 - una columna rota, rehorneada DESPUÉS de un primer cuadro de la GPU (prueba lo que se sube al rehornear);

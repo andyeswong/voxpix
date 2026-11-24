@@ -543,6 +543,10 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `todo el clima, giro ${q}`, theme: 'medieval', veg: true, algas: true, cave: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { clouds: 0.6, wind: [0.8, 0.4], gust: 0.7, rain: 0.6, snow: 0.3 }, frame: { sunlight: solar, fall: {}, cover: true, waves: 1, origin: [23, 41] }, snow: 0.4, wet: 0.6 } });
   SCENARIOS.push({ name: `sol con corte y velo, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, clima: { levels: { clouds: 0.5 }, frame: { sunlight: solar } }, section: { width: 64, painter: true, z: 1, ghost: { alpha: 0.5 } } });
 }
+// El sol con partículas con luz propia y sin ella, entidades, agua con algas y velo, todo a la vez (el alfa de la luz lo comparten)
+for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `sol con partículas, agua, algas y velo, giro ${q}`, theme: 'medieval', veg: true, algas: true, cave: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, setup: (s, rt) => {
+  for (const [dx, dy] of [[-14, 0], [12, 6], [0, -10], [20, 14]] as const) { const x = rt.player.x + dx, y = rt.player.y + dy, z = s.groundAt(x, y) + 6; s.fx.add('brasas', x, y, z); s.fx.add('humo', x + 3, y, z); s.fx.add('chispas', x, y + 4, z); }
+}, clima: { levels: { clouds: 0.3, wind: [0.5, 0.2], rain: 0.5 }, frame: { sunlight: solar, fall: {}, waves: 1 } }, section: { width: 96, painter: true, z: 1, ghost: { alpha: 0.5 } } });
 SCENARIOS.push({ name: 'sol con multitud', theme: 'medieval', cave: true, ticks: 40, setup: crowd(60), clima: { levels: { clouds: 0.4 }, frame: { sunlight: solar } } });
 SCENARIOS.push({ name: 'sol con la ventana corrida', theme: 'medieval', cave: true, pos: [172, 170], ticks: 60, shift: 'ida', clima: { levels: { clouds: 0.5 }, frame: { sunlight: solar } } });
 SCENARIOS.push({ ...SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!, name: 'clima sin nada que se meza', clima: wind });
@@ -938,7 +942,7 @@ async function run(): Promise<void> {
             let shown = false, fd = 0;
             for (let ch = 0; ch < 4; ch++) { if (cpuFinal[t * 4 + ch] !== opaque[t * 4 + ch]) shown = true; fd = Math.max(fd, Math.abs(cpuFinal[t * 4 + ch]! - gFinal[t * 4 + ch]!)); }
             if (shown) r.veilShown++;
-            if (fd) r.veilDiffer++;
+            if (fd > (sc.clima ? 1 : 0)) r.veilDiffer++;        // (con clima, un ±1 es redondeo de lo que hay debajo: agua que se ve a través, sol)
           }
         }
         // (una escena con ghost sin velo a la vista, o en la que no cambia nada, no prueba nada)

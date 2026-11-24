@@ -57,6 +57,20 @@ describe('el sol', () => {
     for (let y = 0; y < 60; y++) for (let x = 0; x < 80; x++) { const q = (40 + y) * b.width + 30 + x; if (b.face[q] !== 4 || b.sky![q] !== 5) continue; const i = (y * 80 + x) * 4, k = `${b.rgba[q * 4]}`; (by.get(k) ?? by.set(k, new Set()).get(k)!).add(`${a[i]},${a[i + 1]},${a[i + 2]}`); }
     for (const s of by.values()) expect(s.size).toBe(1);
   });
+  it('con una luz tramada a la vez, al mover la cámara solo cambia lo que esa luz alumbra (su trama, como siempre)', () => {
+    const { b, state } = setup();
+    state.lights.add({ kind: 'torch', x: 110, y: 30, z: 10 });
+    const o = (dx: number) => ({ ...opts(b, { weather: W({ clouds: 0.2 }), tick: 0, sunlight: SUN }), vx: 60 + dx, vy: 40, vw: 80, vh: 60 });
+    const a = frame2D(state, b, o(0)), c = frame2D(state, b, o(1)), t = frame2DParts(state, b, o(0)).total!;
+    let lit = 0, plain = 0;
+    for (let y = 0; y < 60; y++) for (let x = 1; x < 80; x++) {
+      const i = (y * 80 + x) * 4, j = i - 4, dark = [0, 1, 2].every((ch) => t[(y * 80 + x) * 3 + ch] === Math.fround(0.4));
+      const diff = [0, 1, 2].some((ch) => a[i + ch] !== c[j + ch]);
+      if (dark) { plain++; expect(diff).toBe(false); } else if (diff) lit++;
+    }
+    expect(plain).toBeGreaterThan(300);
+    expect(lit).toBeGreaterThan(50);
+  });
   it('en los 4 giros viene del mismo sitio del mundo', () => {
     // El sol al este: la cara este (0, en ejes del mundo) es la que más recibe, sea cual sea en la vista
     for (const q of [0, 1, 2, 3] as Quarter[]) {

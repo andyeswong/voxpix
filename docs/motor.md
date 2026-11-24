@@ -2057,6 +2057,10 @@ es de las luces), así que con sol conviene un ambiente más bajo. `daySun` (`li
 
 ### Detalles del clima
 
+- El alfa de la luz en la GPU (`oLight.a`, destinos RGBA32F): 2 × el sol del píxel en 1/512 (entero) + 1 si es una planta de
+  agua. Es exacto hasta 2^24, o sea hasta un sol de 16384. Lo leen el agua (la planta y el sol del fondo) y el último paso (el
+  sol); las partículas con luz propia y las gotas lo dejan a 0, y ninguna pasada mezcla (`blend`) sobre él.
+
 - `reach: 0` con `anchor: 'root'` (o `'top'`): el alcance es lo que mide cada planta, para que una baja y una alta de la misma
   rampa se mezan del todo en su punta.
 - Dos bloques que comparten rampa comparten su `sway`: si la tierra usa los tonos de las hojas, se mece también. Rampas
