@@ -2,6 +2,7 @@
 // igual por la CPU y la GPU (así las dos dan lo mismo): cuánto inclina el aire lo que se mece, la fuerza del viento y la
 // sombra de las nubes. Las casillas están fijas en el mundo: correr la ventana o girar la vista no las mueve.
 import type { Baked } from './bake';
+import type { StaticVoxels } from './state';
 import type { Weather, WeatherLevels } from './weather';
 import { lattice } from '../worldgen/noise';
 
@@ -13,6 +14,12 @@ export interface WeatherFrame {
   origin?: readonly [number, number];
   camera?: { pointToWorld(x: number, y: number): [number, number]; dirToView(x: number, y: number): [number, number]; dirToWorld(x: number, y: number): [number, number] } | null;
   sway?: number;                             // 0..1: cuánto se mece lo que se mece (1)
+  // Lluvia y nieve que caen (precipitation.ts): como mucho max a la vez. solid: los vóxeles del mundo sin girar ni cortar, de
+  // donde sale lo alto de cada columna (por defecto, los del horneado)
+  fall?: { max?: number } | null;
+  solid?: StaticVoxels;
+  // Lo que dejan, con un horneado con cielo: nieve sobre las caras de arriba y lo mojado (Weather.cover)
+  cover?: boolean;
 }
 
 export const CLIMATE_W = 128, CLIMATE_H = 64;       // las casillas que caben en la tabla
@@ -29,7 +36,7 @@ export interface ClimateTable {
   levels: WeatherLevels;
   key: string;
 }
-const tie = 1 / 1024;
+export const climateTie = 1 / 1024;
 
 const cache = new WeakMap<Baked, ClimateTable>();
 // La tabla de un cuadro (null sin clima). Cambia 12 veces por segundo, o al moverse la vista a otras casillas
@@ -77,7 +84,7 @@ export function climateTable(b: Baked, o: { vx: number; vy: number; vw: number; 
 
 // La casilla de un punto de la vista (su índice en data)
 export function climateCell(c: ClimateTable, vx: number, vy: number): number {
-  const i = Math.floor((vx + c.kx) / CLIMATE_CX) - c.x0, j = Math.floor((Math.fround(vy) + c.ky + tie) / CLIMATE_CY) - c.y0;
+  const i = Math.floor((vx + c.kx) / CLIMATE_CX) - c.x0, j = Math.floor((Math.fround(vy) + c.ky + climateTie) / CLIMATE_CY) - c.y0;
   return (Math.max(0, Math.min(c.h - 1, j)) * c.w + Math.max(0, Math.min(c.w - 1, i))) * 4;
 }
 export const climateLean = (c: ClimateTable, vx: number, vy: number, aquatic: boolean): number => c.data[climateCell(c, vx, vy) + (aquatic ? 1 : 0)]!;

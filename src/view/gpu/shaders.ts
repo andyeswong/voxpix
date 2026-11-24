@@ -5,6 +5,7 @@
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
 import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
+import { SNOW_COLOR, SNOW_MIX } from '../../world/precipitation';
 import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
@@ -207,6 +208,11 @@ ${LIGHT_FNS}
 
 // EL VAIVÉN (src/world/sway.ts, swaySources): de qué píxel de la imagen sale lo quieto de cada píxel de la vista
 uniform bool uSway;
+// Lo que dejan la lluvia y la nieve (src/world/precipitation.ts): nieve en dieciseisavos, y lo que quita lo mojado arriba y a
+// los lados; z: 1 si también dentro del corte
+uniform bool uCover;
+uniform vec4 uCoverP;
+const int SBAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 uniform bool uAquatic;                 // alguna rampa es de planta de agua: su luz lleva un 1 en el alfa (lo lee el agua)
 ${CLIMATE}
 #define SWAY_MAX 3
@@ -259,6 +265,21 @@ void main() {
   vec4 c = sm > 0 ? texelFetch(uSecColor, secTexel(s), 0) : texelFetch(uColor, s, 0);
   float depth = sm > 0 ? sg.r : texelFetch(uDepth, s, 0).r;
   vec3 col = c.a == 0.0 ? uBg : c.rgb;
+  if (uCover && !isinf(depth) && !(sm == 1 && uCoverP.w < 0.5)) {
+    int fc = sm > 0 ? int(sg.b) : texelFetch(uFace, s, 0).r;
+    int sk = sm > 0 ? secSky(s) : int(texelFetch(uSky, s, 0).r), ff = fc & 7;
+    if (fc >= 0 && ff != 5 && sk > 0) {
+      vec3 cb = floor(col * 255.0 + 0.5);
+      float wet = (ff == 4 ? uCoverP.y : uCoverP.z) * (float(sk) / 5.0);
+      if (wet > 0.0) cb = floor(cb * (1.0 - floor(wet * 256.0 + 0.5) / 256.0) + 0.5);
+      if (ff == 4 && uCoverP.x > 0.0) {
+        float cy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
+        int bx = (s.x + int(uClimK.x)) & 3, by = int(floor(cy + uClimK.y + TIE)) & 3;
+        if (SBAYER[by * 4 + bx] < int(uCoverP.x) - (5 - sk) * 4) cb = floor(cb + (vec3(${SNOW_COLOR.map((v) => v.toFixed(1)).join(', ')}) - cb) * ${SNOW_MIX} + 0.5);
+      }
+      col = cb / 255.0;
+    }
+  }
   float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
   float aqua = 0.0;
   if (uAquatic) { int cd = sm > 0 ? (secGhost(s) ? 0 : secSway(s)) : texelFetch(uFace, s, 0).r >> 7; if (cd >= 128) aqua = 1.0; }

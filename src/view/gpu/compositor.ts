@@ -19,11 +19,12 @@ import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
+import { fallSource, coverLook, coverInCut } from '../../world/precipitation';
 import { swayTable, swayCode, SWAY_FILL } from '../../world/sway';
 import { climateTable, CLIMATE_W, CLIMATE_H, type ClimateTable } from '../../world/climate';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
-import type { Rendered, VoxelSource } from '../../core';
+import type { Rendered, VoxelSource, FxSource } from '../../core';
 import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, CLIMATE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
@@ -363,8 +364,11 @@ export class GpuCompositor {
     // El cielo: la luz ambiente de cada píxel según cuánto cielo ve (la misma tabla que lightView en la CPU)
     const useSky = !!(o.lights && o.cave && b.sky && this.tSky);
     gl.uniform1i(s.u.uUseSky, useSky ? 1 : 0);
-    bindTex(gl, 13, gl.TEXTURE_2D, useSky ? this.tSky : null, s.u.uSky);
+    const cover = clim && this.tSky ? coverLook(b, o.weather) : null;
+    bindTex(gl, 13, gl.TEXTURE_2D, useSky || cover ? this.tSky : null, s.u.uSky);
     if (useSky) gl.uniform3fv(s.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
+    gl.uniform1i(s.u.uCover, cover ? 1 : 0);
+    if (cover) gl.uniform4f(s.u.uCoverP, cover.snow, cover.wetTop, cover.wetSide, coverInCut(sec) ? 1 : 0);
     // El resalte de un objeto del escenario: la máscara del aro se sube solo cuando cambia (highlightMask la guarda)
     const hl = o.highlight ? highlightMask(b, o.highlight) : null;
     gl.uniform1i(s.u.uHl, hl ? 1 : 0);
@@ -477,7 +481,8 @@ export class GpuCompositor {
 
     // 3) los efectos y las gotas, sobre lo que dejó el agua
     up = performance.now();
-    const nfx = state.effects ? this.projectFx(state, b, o) : 0;
+    const falling = fallSource(b, o);
+    const nfx = state.effects || falling ? this.projectFx([...(state.effects?.sources ?? []), ...(falling ? [falling] : [])], b, o) : 0;
     this.parts.fx = performance.now() - up;
     if (nfx) {
       const p = this.fx;
@@ -1397,15 +1402,15 @@ export class GpuCompositor {
   }
 
   // Los puntos de los efectos, proyectados en la CPU (como las gotas: así la GPU pinta los mismos píxeles)
-  private projectFx(state: RenderState, b: Baked, o: Frame2DOptions): number {
+  private projectFx(sources: readonly FxSource[], b: Baked, o: Frame2DOptions): number {
     const gl = this.gl;
     let total = 0;
-    for (const s of state.effects!.sources) total += s.count;
+    for (const s of sources) total += s.count;
     if (!total) return 0;
     if (this.fxData.length < total * 8) this.fxData = new Float32Array(Math.max(256, total * 2) * 8);
     let out = this.fxData;
     let n = 0;
-    for (const s of state.effects!.sources) {
+    for (const s of sources) {
       const d = s.packed;
       for (let k = 0; k < s.count; k++) {
         const q = k * FX_STRIDE;

@@ -7,8 +7,9 @@ import { lightView, worldPointAt, unprojector, rowP, worldYAt, skyAmbient, SKY_R
 import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
-import { withEffectLights, drawEffectsLayer } from './effects';
-import { climateTable, type WeatherFrame } from './climate';
+import { withEffectLights, drawEffectsLayer, drawEffects } from './effects';
+import { climateTable, type ClimateTable, type WeatherFrame } from './climate';
+import { fallSource, coverLook, applyCover, coverInCut, type CoverLook } from './precipitation';
 import { swaySources, aquaticMask, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
@@ -341,7 +342,7 @@ function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Ar
 
 // Lo quieto de un cuadro antes de las entidades: la imagen horneada con el corte, y la luz que le llega
 interface StaticParts { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array }
-function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null): StaticParts {
+function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null, cover: { look: CoverLook; table: ClimateTable } | null): StaticParts {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
   const depthBuf = new Float32Array(vw * vh).fill(Infinity);
@@ -371,6 +372,17 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
       if (sec.rgba[q * 4 + 3]) { view[t * 4] = sec.rgba[q * 4]!; view[t * 4 + 1] = sec.rgba[q * 4 + 1]!; view[t * 4 + 2] = sec.rgba[q * 4 + 2]!; view[t * 4 + 3] = 255; }
       else if (bg) { view[t * 4] = bg[0]; view[t * 4 + 1] = bg[1]; view[t * 4 + 2] = bg[2]; view[t * 4 + 3] = 255; }
       else { view[t * 4] = 0; view[t * 4 + 1] = 0; view[t * 4 + 2] = 0; view[t * 4 + 3] = 0; }
+    }
+  }
+  // La nieve y lo mojado, sobre el color
+  if (cover) {
+    const u = unprojector(b), inCut = coverInCut(sec);
+    for (let y = 0; y < vh; y++) for (let x = 0, P = rowP(u, vy + y); x < vw; x++) {
+      const t = y * vw + x, gx = vx + x, gy = vy + y;
+      if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
+      const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
+      if (si >= 0 && sec!.mask[si] === 1 && !inCut) continue;
+      applyCover(view, t * 4, cover.look, cover.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
     }
   }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
@@ -422,7 +434,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   // El viento: de qué columna de la imagen sale cada píxel. Lo quieto se compone con un margen a los lados y se recoge
   const clim = climateTable(b, o), from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh) : null;
-  let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec);
+  const cover = clim ? coverLook(b, o.weather) : null;
+  let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover ? { look: cover, table: clim! } : null);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
   const { view, depth: depthBuf, total } = fixed;
   // Las plantas de agua, que se ven a través de ella (donde no las tape una entidad)
@@ -502,6 +515,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   // El agua (tapa lo sumergido), los efectos y las gotas
   state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear ? { clear } : null);
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
+  const falling = fallSource(b, o);
+  if (falling) drawEffects(falling, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con
   // lo que tiene detrás. Y el velo del ghost, lo mismo
