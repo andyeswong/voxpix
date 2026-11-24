@@ -443,7 +443,8 @@ void (async () => {
     if (!boot.primerCuadro) boot.primerCuadro = Math.round(performance.now());
     // Cuadros (uno de cada 5) con algo de la pantalla en trozos de vóxeles aún por rehornear (cambiados desde el horneado):
     // lo que se vería a medio hacer
-    if (frameNo % 5 === 0) {
+    // (?muestras=0: sin esto, que con algo pendiente recorre todos los trozos de la ventana: ~6 ms a 6x que son del banco)
+    if (frameNo % 5 === 0 && q.get('muestras') !== '0') {
       const ch = win.baked.source.changedSince(win.baked.version);
       if (ch.length) {
         const vis = bakeMod.chunksInScreen(win.baked, { x0: o.vx, y0: o.vy, x1: o.vx + VW - 1, y1: o.vy + VH - 1 });

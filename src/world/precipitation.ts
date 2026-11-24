@@ -6,33 +6,43 @@ import { FX_STRIDE, type FxSource } from '../core';
 import type { Baked } from './bake';
 import { secIdx, sectionBorderAt, type SectionLayer } from './section';
 import { hash30, HASH_ONE } from '../worldgen/noise';
-import { climateTie, type ClimateTable, type WeatherFrame } from './climate';
+import { climateTie, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
 export const FALL_MAX = 350;                         // gotas o copos como mucho (WeatherFrame.fall.max)
 const RAIN = { speed: 230, height: 80, drift: 70, colors: [[154, 180, 216], [122, 148, 188]], points: 3, gap: 1.6 } as const;
 const SNOW = { speed: 16, height: 64, drift: 12, colors: [[255, 255, 255], [228, 236, 246]], points: 1, gap: 0 } as const;
 
+const FALL_STEP = 2, SNAP = 16;
 interface View { vx: number; vy: number; vw: number; vh: number; weather?: WeatherFrame | null }
 // El búfer de puntos de cada horneado, que se reutiliza de un cuadro al siguiente
 class Points implements FxSource {
+  // packed0: todos los del paso (all); packed, count: los de este cuadro (con un corte, sin los que caen en él)
+  packed0 = new Float32Array(1024 * FX_STRIDE);
+  all = 0;
+  packed = this.packed0;
   count = 0;
-  packed = new Float32Array(1024 * FX_STRIDE);
-  at = new Float64Array(0);
-  room(n: number): void { if (n * FX_STRIDE > this.packed.length) { const grown = new Float32Array(n * 2 * FX_STRIDE); grown.set(this.packed); this.packed = grown; } }
-  // Quita los puntos cuyo píxel es de lo que sustituye el corte o de su borde dibujado
-  cut(b: Baked, sec: SectionLayer): void {
-    const d = this.packed, n = this.count;
-    if (this.at.length < n * 3) this.at = new Float64Array(n * 6);
-    const at = this.at;
+  private cutBuf = new Float32Array(0);
+  private at = new Float64Array(0);
+  // De qué salieron
+  tick = NaN; vx = 0; vy = 0; vw = 0; vh = 0; rev = 0; max = 0; Kx = 0; Ky = 0;
+  weather: WeatherFrame['weather'] | null = null;
+  solid: WeatherFrame['solid'] = undefined;
+  cam: WeatherFrame['camera'] = null;
+  room(n: number): void { if (n * FX_STRIDE > this.packed0.length) { const grown = new Float32Array(n * 2 * FX_STRIDE); grown.set(this.packed0); this.packed0 = grown; } }
+  // Los de este cuadro: con un corte, sin los puntos cuyo píxel es de lo que sustituye o de su borde dibujado
+  select(b: Baked, sec: SectionLayer | null): void {
+    const d = this.packed0, n = this.all;
+    if (!sec) { this.packed = d; this.count = n; return; }
+    if (this.at.length < n * 3) { this.at = new Float64Array(n * 6); this.cutBuf = new Float32Array(n * 2 * FX_STRIDE); }
+    const at = this.at, out = this.cutBuf;
     b.cam.projectMany(d, n, FX_STRIDE, at);
-    let m = 0;
+    let w = 0;
     for (let k = 0; k < n; k++) {
       const sx = Math.floor(at[k * 3]!), sy = Math.floor(at[k * 3 + 1]!), j = sy - sec.y;
       if (sx >= sec.x && j >= 0 && sx < sec.x + sec.w && j < sec.h && (sec.mask[secIdx(sec, sx, j)] === 1 || sectionBorderAt(sec, sx, sy))) continue;
-      if (m !== k) d.copyWithin(m * FX_STRIDE, k * FX_STRIDE, (k + 1) * FX_STRIDE);
-      m++;
+      for (let c = 0, q = k * FX_STRIDE; c < FX_STRIDE; c++) out[w++] = d[q + c]!;
     }
-    this.count = m;
+    this.packed = out; this.count = w / FX_STRIDE;
   }
 }
 const buffers = new WeakMap<Baked, Points>();
@@ -42,26 +52,31 @@ const buffers = new WeakMap<Baked, Points>();
 export function fallSource(b: Baked, o: View, sec: SectionLayer | null): FxSource | null {
   const f = o.weather;
   if (!f?.fall) return null;
-  const l = f.weather.levels(f.tick);
+  // A 30 veces por segundo, y para un recuadro que va de 16 en 16 píxeles: mientras no cambian, los puntos son los mismos
+  // (los de fuera de la vista los quita quien pinta; un vóxel que cambia lo nota el paso siguiente)
+  const tick = Math.floor(f.tick / FALL_STEP) * FALL_STEP;
+  const l = f.weather.levels(tick);
   if (l.rain <= 0 && l.snow <= 0) return null;
+  const vx = Math.floor(o.vx / SNAP) * SNAP, vy = Math.floor(o.vy / SNAP) * SNAP, v: View = { vx, vy, vw: o.vw + SNAP, vh: o.vh + SNAP };
   const max = Math.max(0, Math.min(2000, Math.floor(f.fall.max ?? FALL_MAX)));
   let out = buffers.get(b);
   if (!out) buffers.set(b, (out = new Points()));
-  out.count = 0;
-  if (!max) return out;
+  if (!max) { out.count = 0; out.all = 0; out.tick = NaN; return out; }
+  const [Kx, Ky] = viewOffset(f);
+  if (out.tick === tick && out.vx === vx && out.vy === vy && out.vw === v.vw && out.vh === v.vh && out.rev === f.weather.revision && out.weather === f.weather && out.max === max && out.Kx === Kx && out.Ky === Ky && out.solid === f.solid && out.cam === (f.camera ?? null)) { out.select(b, sec); return out; }
+  out.tick = tick; out.vx = vx; out.vy = vy; out.vw = v.vw; out.vh = v.vh; out.rev = f.weather.revision; out.weather = f.weather; out.max = max; out.Kx = Kx; out.Ky = Ky; out.solid = f.solid; out.cam = f.camera ?? null;
+  out.all = 0;
   // (el tope es del conjunto: se reparte según lo que cae de cada cosa, así con las dos a la vez no se dobla)
   const sum = l.rain + l.snow, share = Math.min(1, 1 / sum);
-  if (l.rain > 0) fall(b, o, f, RAIN, l.rain * share, max, 1, out);
-  if (l.snow > 0) fall(b, o, f, SNOW, l.snow * share, max, 2, out);
-  if (sec) out.cut(b, sec);
+  if (l.rain > 0) fall(b, v, f, tick, Kx, Ky, RAIN, l.rain * share, max, 1, out);
+  if (l.snow > 0) fall(b, v, f, tick, Kx, Ky, SNOW, l.snow * share, max, 2, out);
+  out.select(b, sec);
   return out;
 }
 
 // (sin crear nada por gota: lo que sale de los ruidos son enteros, y las alturas también)
-function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, level: number, max: number, kind: number, out: Points): void {
+function fall(b: Baked, o: View, f: WeatherFrame, tick: number, Kx: number, Ky: number, k: typeof RAIN | typeof SNOW, level: number, max: number, kind: number, out: Points): void {
   const s = f.solid ?? b.source, cam = f.camera ?? null, a = b.options.oblique?.y ?? 1, O = b.options.originY;
-  const [ox, oy] = f.origin ?? [0, 0], base = cam ? cam.pointToWorld(0, 0) : [0, 0];
-  const [Kx, Ky] = cam ? cam.dirToView(base[0]! + ox, base[1]! + oy) : [base[0]! + ox, base[1]! + oy];
   // (el giro de la vista al mundo como cuentas, sin crear nada por gota)
   const turn = f.solid && cam ? cam : null, [tx, ty] = turn ? turn.pointToWorld(0, 0) : [0, 0], [ux, uy] = turn ? turn.dirToWorld(1, 0) : [1, 0], [wxx, wyy] = turn ? turn.dirToWorld(0, 1) : [0, 1];
   const ax = tx!, ay = ty!, bx = ux!, by = uy!, cx_ = wxx!, cy_ = wyy!, sw = s.width, sd = s.depth, heights = s.height, turned = !!turn;
@@ -69,15 +84,15 @@ function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, 
   const lo = (O - (o.vy + o.vh) - s.zMax - 1) / a, hi = (O - o.vy - s.zMin) / a;
   // El lado de la casilla: una gota por casilla, sin pasar del tope (y en pasos, para que no cambie al moverse la vista)
   const cell = Math.max(8, Math.ceil(Math.sqrt(((o.vw + 64) * (hi - lo + 32)) / max) / 4) * 4);
-  const w = f.weather, lv = w.levels(f.tick), wind = cam ? cam.dirToView(lv.wind[0], lv.wind[1]) : lv.wind;
+  const w = f.weather, lv = w.levels(tick), wind = cam ? cam.dirToView(lv.wind[0], lv.wind[1]) : lv.wind;
   const sx = wind[0]! * k.drift / k.speed * (kind === 2 ? 1.6 : 1), sy = wind[1]! * k.drift / k.speed * (kind === 2 ? 1.6 : 1);   // cuánto se va de lado por vóxel que baja
-  const period = k.height / k.speed, secs = f.tick / 60, seed = (w.seed ^ (kind * 0x3d4d51cb)) | 0;
+  const period = k.height / k.speed, secs = tick / 60, seed = (w.seed ^ (kind * 0x3d4d51cb)) | 0;
   const mx = Math.abs(sx) * k.height, cx0 = Math.floor((o.vx - 8 - mx + Kx) / cell), cx1 = Math.floor((o.vx + o.vw + 8 + mx + Kx) / cell);
   const cy0 = Math.floor((lo + Ky) / cell), cy1 = Math.floor((hi + Ky) / cell);
   const wantH = level * HASH_ONE;
-  out.room(out.count + max * k.points);
-  const d = out.packed;
-  let q = out.count * FX_STRIDE, n = 0;
+  out.room(out.all + max * k.points);
+  const d = out.packed0;
+  let q = out.all * FX_STRIDE, n = 0;
   for (let cy = cy0; cy <= cy1 && n < max; cy++) for (let cx = cx0; cx <= cx1 && n < max; cx++) {
     const phase = hash30(cx, cy, seed) / HASH_ONE + secs / period, lap = Math.floor(phase), t = phase - lap;
     const h1 = hash30(cx + lap * 7919, cy, seed + 1);
@@ -103,7 +118,7 @@ function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, 
     }
     if (drawn) n++;
   }
-  out.count = q / FX_STRIDE;
+  out.all = q / FX_STRIDE;
 }
 
 // ---- lo que dejan
