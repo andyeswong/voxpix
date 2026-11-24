@@ -248,7 +248,7 @@ void swayAt(ivec2 p, out int code, out int shift, out int cls, out float depth) 
   if ((code & 127) == 0) return;
   if (m == 0) wy = texelFetch(uWorldY, p, 0).r;
   vec4 cl = climateAt(float(p.x), wy);
-  shift = clamp(int(floor(float(code & 127) / 32.0 * (code >= 128 ? cl.g : cl.r) + 0.5)), -SWAY_MAX, SWAY_MAX);
+  shift = clamp(int(floor(float(code & 127) / 32.0 * ((code & 128) != 0 ? cl.g : cl.r) + 0.5)), -SWAY_MAX, SWAY_MAX);
 }
 ivec2 swaySource(ivec2 s) {
   int hc, hs, hk, c, sh, k;
@@ -289,7 +289,8 @@ void main() {
       vec3 cb = floor(col * 255.0 + 0.5);
       float wet = (ff == 4 ? uCoverP.y : uCoverP.z) * (float(sk) / 5.0);
       if (wet > 0.0) cb = floor(cb * (1.0 - floor(wet * 256.0 + 0.5) / 256.0) + 0.5);
-      if (ff == 4 && uCoverP.x > 0.0) {
+      int bc = sm > 0 ? secSway(s) : fc >> 7;                 // (256: de una rampa que no toma nieve)
+      if (ff == 4 && uCoverP.x > 0.0 && (bc & 256) == 0) {
         float cy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
         int bx = (s.x + int(uClimK.x)) & 3, by = int(floor(cy + uClimK.y + TIE)) & 3;
         if (SBAYER[by * 4 + bx] < int(uCoverP.x) - (5 - sk) * 4) cb = floor(cb + (vec3(${SNOW_COLOR.map((v) => v.toFixed(1)).join(', ')}) - cb) * ${SNOW_MIX} + 0.5);
@@ -299,7 +300,7 @@ void main() {
   }
   float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
   float aqua = 0.0, sunS = 0.0;
-  if (uAquatic) { int cd = sm > 0 ? (secGhost(s) ? 0 : secSway(s)) : texelFetch(uFace, s, 0).r >> 7; if (cd >= 128) aqua = 1.0; }
+  if (uAquatic) { int cd = sm > 0 ? (secGhost(s) ? 0 : secSway(s)) : texelFetch(uFace, s, 0).r >> 7; if ((cd & 128) != 0) aqua = 1.0; }
   vec3 total = uAmbient;
   if (uUseSky) {
     ivec2 ssz = textureSize(uSky, 0);

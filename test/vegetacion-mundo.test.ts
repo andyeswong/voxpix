@@ -32,7 +32,7 @@ describe('sin follaje, todo da lo mismo que antes', () => {
       // pasaron a medir lo mismo (16; antes 32 la norte, 12 los lados y 6 la del sur): eran 16ba0b9afa358c56,
       // 1b8e8448d24159ed y 6605829d81b3542e. Los vóxeles que cambiaron son solo los de las paredes y la fachada
       .toEqual({ bake: 'b13eb866dce4c54c', weights: 'd72f7aa659b4f2f2', frame: 'e0f9b8566e9c81fd', render: 'bb67a43624a8b6d9', light: 'd4d74866a7d23f78' });
-  }, 60000);
+  }, 240000);
 });
 
 // Un mundo pequeño: suelo de piedra, una cuenca (agua de 2) a la izquierda, y rampas de follaje

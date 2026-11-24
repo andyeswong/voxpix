@@ -182,6 +182,9 @@ void (async () => {
   const [EF, EMS, ECADA] = (q.get('espera') ?? '::').split(':') as [string, string, string];
   const espera = (fase: string) => { if (EF === fase && frameNo % Number(ECADA) === 0) { const u = performance.now() + Number(EMS); while (performance.now() < u); esperas.push(frameNo); } };
   const esperas: number[] = [];
+  // Los cuadros de más de 33 ms, todos: sus fases, si la ventana se corrió, y cuántos MB cambió el montón (si baja, pasó el recolector)
+  const picos: Array<Record<string, number>> = [];
+  let picoHeap = 0;
   let prevPhases: Record<string, number> | null = null, prevShift = false, shiftsSeen = 0, prevPaso = 0;
   const over25By: Record<string, number> = {};
   const fases: Record<string, number[]> = {};
@@ -411,7 +414,7 @@ void (async () => {
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
     if (CLIMA.size) {
       const tick = Math.round((now - start) * 0.06);
-      o.weather = { weather: meteo, tick, origin: [win.tx0 * T, win.ty0 * T], camera: win.view.camera, sway: CLIMA.has('viento') ? 1 : 0, waves: CLIMA.has('agua') ? 1 : 0, fall: CLIMA.has('cae') ? { max: 600 } : null, solid: win.store, cover: CLIMA.has('suelo'), sunlight: CLIMA.has('sol') ? daySun(0.4) : null };
+      o.weather = { weather: meteo, tick, origin: [win.tx0 * T, win.ty0 * T], camera: win.view.camera, sway: CLIMA.has('viento') ? 1 : 0, waves: CLIMA.has('agua') ? 1 : 0, fall: CLIMA.has('cae') ? { max: 600 } : null, solid: win.store, cover: CLIMA.has('suelo'), ...(q.get('ritmo') ? { rate: { tables: Number(q.get('ritmo')!.split(',')[0]), fall: Number(q.get('ritmo')!.split(',')[1]) } } : {}), sunlight: CLIMA.has('sol') ? daySun(0.4) : null };
     }
     compositor.frame(win.view.frame(), win.baked, o);
     const t4b = performance.now();
@@ -490,6 +493,8 @@ void (async () => {
         over25By[top] = (over25By[top] ?? 0) + 1;
         if (prevShift) over25By.conCorrimiento = (over25By.conCorrimiento ?? 0) + 1;
       }
+      if (iv > 33 && picos.length < 400) { const cs = prevPhases as Record<string, number>; picos.push({ ...cs, iv: +iv.toFixed(1), at: +((now - start) / 1000).toFixed(1), fuera: +(iv - prevPaso).toFixed(1), shift: prevShift ? 1 : 0, heap: +((mem() - picoHeap) / 1048576).toFixed(1) }); }
+      picoHeap = mem();
       if (worst.length < 8 || iv > worst[worst.length - 1]!.iv) {
         const ours = Object.values(prevPhases).reduce((u, v) => u + v, 0);
         worst.push({ iv: +iv.toFixed(1), at: +((now - start) / 1000).toFixed(1), cuadro: frameNo - 1, ...prevPhases, paso: +prevPaso.toFixed(1), sinMedir: +(prevPaso - ours).toFixed(1), fuera: +(iv - prevPaso).toFixed(1), shift: prevShift });
@@ -544,7 +549,7 @@ void (async () => {
       vistaSinHornear: { muestras, conPendiente: sinHornear, primeroA: sinHornearPrimero },
       entrada: ENTRAR ? { corteMs: entrada.corteMs ?? null, seccionMs: entrada.seccionMs ?? null, abiertoMs: entrada.abiertoMs ?? null, finalMs: entrada.finalMs ?? null, rects800: entrada.rects800 ?? null, pendientes800: entrada.pendientes800 ?? null, cola800: entrada.cola800 ?? null, iguales: !!entrada.final && entrada.c800 === entrada.final, c800: entrada.c800 ?? null, final: entrada.final ?? null } : null,
       captura: CAPTURA ? { iguales: !!captura.final && captura.primero === captura.final, finalA: captura.finalA ?? null, primero: captura.primero ?? null, final: captura.final ?? null } : null,
-      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, velo: veloMax, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), media: +(secRuns.reduce((a, r) => a + r, 0) / Math.max(1, secRuns.length)).toFixed(2), p95: [...secRuns].sort((a, r) => a - r)[Math.floor(0.95 * Math.max(0, secRuns.length - 1))] ?? 0, hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
+      arranque: { ...boot, ventanaPorDentro: win.startup, horneado: win.baked.ms }, adelantados: budget.starvedRuns, cielo: win.baked.skyStats ? { ...win.baked.skyStats, ms: Math.round(win.baked.skyStats.ms) } : null, viewPending, seccion: SECCION ? { frames: secFrames, sinPintar: secUnready, pct: +(100 * secUnready / Math.max(1, secFrames)).toFixed(1), pintadas: painter?.painted ?? 0, velo: veloMax, avances: secMoves, tiradas: painter?.resets ?? 0, porque: secWhy, rachas: { n: secRuns.length, max: Math.max(0, ...secRuns), media: +(secRuns.reduce((a, r) => a + r, 0) / Math.max(1, secRuns.length)).toFixed(2), p95: [...secRuns].sort((a, r) => a - r)[Math.floor(0.95 * Math.max(0, secRuns.length - 1))] ?? 0, hist: secRuns.reduce((h: Record<string, number>, r) => { const k = r <= 2 ? '1-2' : r <= 5 ? '3-5' : r <= 10 ? '6-10' : '>10'; h[k] = (h[k] ?? 0) + 1; return h; }, {}) } } : null, over25By, picos, uploads, slowCompose: { n: slowCompose.length, primeros: slowCompose.slice(0, 20) }, worst, esperas: esperas.slice(0, 20), ringHoles, ringOut, ringUnloaded, posHist, negro, queueByKind: Object.fromEntries([...byKind].map(([k, v]) => [k, { ms: Math.round(v.ms), calls: v.calls }])),
       over25perMin: +(f.filter((v) => v > 25).length / (SECONDS / 60)).toFixed(1), shifts, holes,
       fases: Object.fromEntries(Object.entries(fases).map(([k, v]) => [k, { m: +avg(v).toFixed(2), p95: pq(v, 0.95) }])),
       agua: water ? {

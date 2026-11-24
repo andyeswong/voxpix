@@ -98,6 +98,7 @@ interface Scenario {
   shift?: 'ida' | 'vuelta';
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   // El clima del cuadro (Frame2DOptions.weather): sus niveles y las opciones; con veg, sus rampas se mecen
+  bare?: boolean;         // con veg y clima: la hierba y las flores no toman nieve (MaterialProps.snow)
   algas?: boolean;        // con veg y clima: plantas en el agua del lago (MaterialProps.aquatic)
   clima?: { levels: Partial<WeatherLevels>; frame?: Partial<WeatherFrame>; snow?: number; wet?: number };   // (snow, wet: lo ya acumulado)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
@@ -122,13 +123,13 @@ function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { retu
 
 // Vegetación en un mundo generado: hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
-function vegetate(w: World, at: [number, number], wind = false, algae = false): void {
+function vegetate(w: World, at: [number, number], wind = false, algae = false, bare = false): void {
   const m = w.model;
   const names = ['hierba-alta', 'flor-roja', 'flor-amarilla', 'arbusto'];
   m.palette = { ...m.palette, ramps: [...m.palette.ramps, ...names.map((n) => structuredClone(FOLIAGE_RAMPS[n]!)), { name: 'hojas', colors: ['#14301f', '#1f4a2a', '#2f6b32', '#4f8f3c', '#86b84e'], kind: 'foliage' }] };
   if (wind) for (const r of m.palette.ramps) {
     if (r.name === 'hojas') r.props = { sway: 2, anchor: 'self' };
-    else if (names.includes(r.name)) r.props = { sway: 3, anchor: 'root', reach: r.name === 'arbusto' ? 4 : 3 };
+    else if (names.includes(r.name)) r.props = { ...(bare ? { snow: false } : {}), sway: 3, anchor: 'root', reach: r.name === 'arbusto' ? 4 : 3 };
   }
   const ri = (n: string) => m.palette.ramps.findIndex((r) => r.name === n);
   const put = (plan: { voxels: Array<[number, number, number, number]> }, keep?: (x: number, y: number) => boolean) => { for (const [x, y, z, v] of plan.voxels) if (!keep || keep(x, y)) m.set(x, y, z, v); };
@@ -522,6 +523,9 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `lluvia sobre la cruz, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 64, clima: { levels: { rain: 1, wind: [0.5, 0.2] }, frame: { fall: { max: 1500 } } }, section: { width: 64, painter: true, z: 1, cross: true, border: 2 } });
   SCENARIOS.push({ name: `velo con agua y algas, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { rain: 1, wind: [0.8, 0.3], gust: 0.6 }, frame: { fall: {}, waves: 1 } }, section: { width: 96, painter: true, z: 1, ghost: { alpha: 0.5 } } });
 }
+for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `nieve con rampas que no la toman, giro ${q}`, theme: 'medieval', veg: true, bare: true, cave: true, pos: [196, 172], quarter: q, ticks: 64, clima: { levels: { snow: 0.8, wind: [-0.4, 0.5] }, frame: { fall: { snow: { colors: [[255, 200, 120], [120, 200, 255]], glow: true } }, cover: true, rate: { tables: 8, fall: 20 } }, snow: 1 } });
+SCENARIOS.push({ name: 'nieve con rampas que no la toman, con corte', theme: 'medieval', veg: true, bare: true, cave: true, pos: [196, 172], ticks: 64, clima: { levels: { snow: 0.8, wind: [0.8, 0.3] }, frame: { cover: true }, snow: 1 }, section: { width: 64, painter: true, z: 3 } });
+SCENARIOS.push({ name: 'nieve con rampas que no la toman, la ventana corrida y vuelta', theme: 'medieval', veg: true, bare: true, cave: true, pos: [196, 172], ticks: 64, shift: 'vuelta', clima: { levels: { snow: 0.8, wind: [0.8, 0.3] }, frame: { cover: true }, snow: 1 } });
 SCENARIOS.push({ name: 'nieve con niebla sin luces', theme: 'medieval', cave: true, ticks: 64, lights: false, fog: true, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 0.7 } });
 SCENARIOS.push({ name: 'lluvia con fondo transparente', theme: 'medieval', cave: true, clearBg: true, ticks: 64, clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: { max: 1000 }, cover: true }, wet: 1 } });
 SCENARIOS.push({ name: 'lluvia con la ventana corrida y vuelta', theme: 'medieval', veg: true, cave: true, pos: [172, 170], ticks: 60, shift: 'vuelta', clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: {}, cover: true }, wet: 1, snow: 0.4 } });
@@ -672,7 +676,7 @@ async function run(): Promise<void> {
     if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld(!!sc.highWater.dig));
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
-      if (sc.veg) vegetate(world, [204, 184], !!sc.clima, !!sc.algas);
+      if (sc.veg) vegetate(world, [204, 184], !!sc.clima, !!sc.algas, !!sc.bare);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
       addWorldFloaters(state, world);

@@ -6,6 +6,7 @@ import type { StaticVoxels } from './state';
 import type { Weather } from './weather';
 import { hash30, HASH_ONE } from '../worldgen/noise';
 
+export interface FallLook { colors?: readonly [readonly [number, number, number], readonly [number, number, number]]; glow?: boolean }
 // El clima de un cuadro. tick: el de la simulación. origin: el vóxel del mundo que es el (0, 0) del horneado sin girar (la
 // ventana que se corre). camera: la de la vista girada (WorldView.camera)
 export interface WeatherFrame {
@@ -16,19 +17,21 @@ export interface WeatherFrame {
   sway?: number;                             // 0..1: cuánto se mece lo que se mece (1)
   // Lluvia y nieve que caen (precipitation.ts): como mucho max a la vez. solid: los vóxeles del mundo sin girar ni cortar, de
   // donde sale lo alto de cada columna (por defecto, los del horneado)
-  fall?: { max?: number } | null;
+  // rain, snow: los dos colores (0..255) entre los que sale cada gota o copo, y glow: con luz propia (se ven igual de noche)
+  fall?: { max?: number; rain?: FallLook; snow?: FallLook } | null;
   solid?: StaticVoxels;
   // Lo que dejan, con un horneado con cielo: nieve sobre las caras de arriba y lo mojado (Weather.cover)
   cover?: boolean;
   // El sol (sunlight.ts), con un horneado con cielo: su color, su fuerza y hacia dónde está (ejes del mundo, hacia el sol).
   // daySun (lighting/daycycle.ts) da los tres de una hora del día. null: sin sol, lo de siempre
   sunlight?: { color: readonly [number, number, number]; intensity: number; dir?: readonly [number, number, number] } | null;
+  // Cuántas veces por segundo cambian la tabla del clima y las olas (tables, 12) y lo que cae (fall, 30): menos, más barato
+  rate?: { tables?: number; fall?: number };
   waves?: number;                            // 0..1: cuánto rizan el agua el viento y la lluvia (0)
 }
 
 export const CLIMATE_W = 128, CLIMATE_H = 64;       // las casillas que caben en la tabla
 export const CLIMATE_CX = 16, CLIMATE_CY = 32;      // lo que cubre cada una, en vóxeles de la vista
-const STEP = 5;                                     // ticks entre dos posturas de lo que se mece (12 por segundo)
 const SWAY_HZ = 0.85, CURRENT_HZ = 0.35;
 const Q = 256;                                      // los valores van en 1 / Q: exactos en float32
 
@@ -38,8 +41,11 @@ export interface ClimateTable {
   data: Float32Array;                               // w * h * 4: inclinación, inclinación de lo de agua, viento, nubes
   sway: boolean;
 }
-export const climateStepTicks = STEP;
-export const climateStep = (tick: number): number => Math.floor(tick / STEP) * STEP;
+// Ticks entre dos pasos a hz veces por segundo
+export const rateTicks = (hz: number): number => (hz > 0 ? Math.max(1, Math.min(600, Math.round(60 / hz))) : 600);
+export const climateStepTicks = (f: WeatherFrame): number => rateTicks(f.rate?.tables ?? 12);
+// El tick del paso en que está el cuadro
+export const climateStep = (f: WeatherFrame): number => { const n = climateStepTicks(f); return Math.floor(f.tick / n) * n; };
 export const climateTie = 1 / 1024;
 
 // Los datos de los que sale una tabla (con los mismos, la misma)
@@ -104,11 +110,11 @@ function wantOf(b: Baked, o: View, f: WeatherFrame, tick: number): Want {
     w: Math.max(1, Math.min(CLIMATE_W, Math.floor((o.vx + o.vw + 8 + kx) / CLIMATE_CX) - x0 + 1)), h: Math.max(1, Math.min(CLIMATE_H, Math.floor((yHi + ky) / CLIMATE_CY) - y0 + 1)) };
 }
 const cache = new WeakMap<Baked, { want: Want; table: ClimateTable; next: Building | null }>();
-// La tabla de un cuadro (null sin clima). Cambia 12 veces por segundo, o al moverse la vista a otras casillas
+// La tabla de un cuadro (null sin clima). Cambia 12 veces por segundo (WeatherFrame.rate), o al moverse la vista a otras casillas
 export function climateTable(b: Baked, o: View): ClimateTable | null {
   const f = o.weather;
   if (!f) return null;
-  const want = wantOf(b, o, f, climateStep(f.tick)), hit = cache.get(b);
+  const want = wantOf(b, o, f, climateStep(f)), hit = cache.get(b);
   if (hit && same(hit.want, want)) return hit.table;
   // (si es la que se estaba haciendo por adelantado, solo lo que le falte)
   const build = hit?.next && same(hit.next.want, want) ? hit.next : new Building(want, mod(want.Kx, CLIMATE_CX), mod(want.Ky, CLIMATE_CY));
@@ -121,9 +127,9 @@ export function climateTable(b: Baked, o: View): ClimateTable | null {
 export function climateAhead(b: Baked, o: View): void {
   const f = o.weather, hit = f && cache.get(b);
   if (!hit) return;
-  const want = wantOf(b, o, f, climateStep(f.tick) + STEP);
+  const step = climateStepTicks(f), want = wantOf(b, o, f, climateStep(f) + step);
   if (!hit.next || !same(hit.next.want, want)) hit.next = new Building(want, mod(want.Kx, CLIMATE_CX), mod(want.Ky, CLIMATE_CY));
-  hit.next.run(Math.ceil(want.h / (STEP - 1)));
+  hit.next.run(Math.ceil(want.h / Math.max(1, step - 1)));
 }
 
 // La casilla de un punto de la vista (su índice en data)

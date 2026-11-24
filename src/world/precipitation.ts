@@ -6,13 +6,13 @@ import { FX_STRIDE, type FxSource } from '../core';
 import type { Baked } from './bake';
 import { secIdx, sectionBorderAt, type SectionLayer } from './section';
 import { hash30, HASH_ONE } from '../worldgen/noise';
-import { climateTie, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
+import { climateTie, rateTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
 export const FALL_MAX = 350;                         // gotas o copos como mucho (WeatherFrame.fall.max)
 const RAIN = { speed: 230, height: 80, drift: 70, colors: [[154, 180, 216], [122, 148, 188]], points: 3, gap: 1.6 } as const;
 const SNOW = { speed: 16, height: 64, drift: 12, colors: [[255, 255, 255], [228, 236, 246]], points: 1, gap: 0 } as const;
 
-const FALL_STEP = 2, SNAP = 16;
+const SNAP = 16;
 interface View { vx: number; vy: number; vw: number; vh: number; weather?: WeatherFrame | null }
 // El búfer de puntos de cada horneado, que se reutiliza de un cuadro al siguiente
 class Points implements FxSource {
@@ -28,6 +28,18 @@ class Points implements FxSource {
   weather: WeatherFrame['weather'] | null = null;
   solid: WeatherFrame['solid'] = undefined;
   cam: WeatherFrame['camera'] = null;
+  // El aspecto: por lluvia y nieve, los dos colores y si llevan luz propia
+  readonly look = new Float64Array(14);
+  private static readonly tmp = new Float64Array(14);
+  private static fill(out: Float64Array, f: NonNullable<WeatherFrame['fall']>): void {
+    for (let k = 0; k < 2; k++) {
+      const l = k ? f.snow : f.rain, c = l?.colors ?? (k ? SNOW : RAIN).colors;
+      for (let i = 0; i < 2; i++) for (let ch = 0; ch < 3; ch++) out[k * 7 + i * 3 + ch] = c[i]![ch]!;
+      out[k * 7 + 6] = l?.glow ? 1 : 0;
+    }
+  }
+  sameLook(f: NonNullable<WeatherFrame['fall']>): boolean { const t = Points.tmp; Points.fill(t, f); for (let i = 0; i < 14; i++) if (t[i] !== this.look[i]) return false; return true; }
+  setLook(f: NonNullable<WeatherFrame['fall']>): void { Points.fill(this.look, f); }
   room(n: number): void { if (n * FX_STRIDE > this.packed0.length) { const grown = new Float32Array(n * 2 * FX_STRIDE); grown.set(this.packed0); this.packed0 = grown; } }
   // Los de este cuadro: con un corte, sin los puntos cuyo píxel es de lo que sustituye o de su borde dibujado
   select(b: Baked, sec: SectionLayer | null): void {
@@ -52,9 +64,9 @@ const buffers = new WeakMap<Baked, Points>();
 export function fallSource(b: Baked, o: View, sec: SectionLayer | null): FxSource | null {
   const f = o.weather;
   if (!f?.fall) return null;
-  // A 30 veces por segundo, y para un recuadro que va de 16 en 16 píxeles: mientras no cambian, los puntos son los mismos
+  // A 30 veces por segundo (WeatherFrame.rate), y para un recuadro que va de 16 en 16 píxeles: mientras no cambian, los puntos son los mismos
   // (los de fuera de la vista los quita quien pinta; un vóxel que cambia lo nota el paso siguiente)
-  const tick = Math.floor(f.tick / FALL_STEP) * FALL_STEP;
+  const step = rateTicks(f.rate?.fall ?? 30), tick = Math.floor(f.tick / step) * step;
   const l = f.weather.levels(tick);
   if (l.rain <= 0 && l.snow <= 0) return null;
   const vx = Math.floor(o.vx / SNAP) * SNAP, vy = Math.floor(o.vy / SNAP) * SNAP, v: View = { vx, vy, vw: o.vw + SNAP, vh: o.vh + SNAP };
@@ -63,8 +75,9 @@ export function fallSource(b: Baked, o: View, sec: SectionLayer | null): FxSourc
   if (!out) buffers.set(b, (out = new Points()));
   if (!max) { out.count = 0; out.all = 0; out.tick = NaN; return out; }
   const [Kx, Ky] = viewOffset(f);
-  if (out.tick === tick && out.vx === vx && out.vy === vy && out.vw === v.vw && out.vh === v.vh && out.rev === f.weather.revision && out.weather === f.weather && out.max === max && out.Kx === Kx && out.Ky === Ky && out.solid === f.solid && out.cam === (f.camera ?? null)) { out.select(b, sec); return out; }
+  if (out.tick === tick && out.vx === vx && out.vy === vy && out.vw === v.vw && out.vh === v.vh && out.rev === f.weather.revision && out.weather === f.weather && out.max === max && out.Kx === Kx && out.Ky === Ky && out.solid === f.solid && out.cam === (f.camera ?? null) && out.sameLook(f.fall)) { out.select(b, sec); return out; }
   out.tick = tick; out.vx = vx; out.vy = vy; out.vw = v.vw; out.vh = v.vh; out.rev = f.weather.revision; out.weather = f.weather; out.max = max; out.Kx = Kx; out.Ky = Ky; out.solid = f.solid; out.cam = f.camera ?? null;
+  out.setLook(f.fall);
   out.all = 0;
   // (el tope es del conjunto: se reparte según lo que cae de cada cosa, así con las dos a la vez no se dobla)
   const sum = l.rain + l.snow, share = Math.min(1, 1 / sum);
@@ -91,7 +104,7 @@ function fall(b: Baked, o: View, f: WeatherFrame, tick: number, Kx: number, Ky: 
   const cy0 = Math.floor((lo + Ky) / cell), cy1 = Math.floor((hi + Ky) / cell);
   const wantH = level * HASH_ONE;
   out.room(out.all + max * k.points);
-  const d = out.packed0;
+  const d = out.packed0, look = out.look, glow = look[(kind - 1) * 7 + 6]!;
   let q = out.all * FX_STRIDE, n = 0;
   for (let cy = cy0; cy <= cy1 && n < max; cy++) for (let cx = cx0; cx <= cx1 && n < max; cx++) {
     const phase = hash30(cx, cy, seed) / HASH_ONE + secs / period, lap = Math.floor(phase), t = phase - lap;
@@ -101,7 +114,7 @@ function fall(b: Baked, o: View, f: WeatherFrame, tick: number, Kx: number, Ky: 
     const lx = (cx + hash30(cx, cy + lap * 7919, seed + 2) / HASH_ONE) * cell - Kx, ly = (cy + hash30(cx, cy + lap * 104729, seed + 3) / HASH_ONE) * cell - Ky;
     const down = (1 - t) * k.height;                                // lo que le falta por bajar
     const wob = kind === 2 ? Math.sin(secs * 1.7 + h1 / HASH_ONE * 40) * Math.min(3, down * 0.2) : 0;
-    const c = k.colors[(h1 >> 8) & 1]!;
+    const c = (kind - 1) * 7 + ((h1 >> 8) & 1) * 3;
     let ground = 0, drawn = false;
     // (p -1: la columna donde acaba; después, cada punto, que tiene que estar por encima de todo lo de la suya: bajo un techo, no)
     for (let p = -1; p < k.points; p++) {
@@ -112,7 +125,7 @@ function fall(b: Baked, o: View, f: WeatherFrame, tick: number, Kx: number, Ky: 
       const inside = gx >= 0 && gy >= 0 && gx < sw && gy < sd;
       if (p < 0) { if (!inside) break; ground = heights[gy * sw + gx]!; continue; }
       if (inside && z < heights[gy * sw + gx]!) continue;
-      d[q] = x; d[q + 1] = y; d[q + 2] = z; d[q + 3] = c[0]; d[q + 4] = c[1]; d[q + 5] = c[2]; d[q + 6] = 1; d[q + 7] = 0; d[q + 8] = 1;
+      d[q] = x; d[q + 1] = y; d[q + 2] = z; d[q + 3] = look[c]!; d[q + 4] = look[c + 1]!; d[q + 5] = look[c + 2]!; d[q + 6] = 1; d[q + 7] = glow; d[q + 8] = 1;
       q += FX_STRIDE;
       drawn = true;
     }
@@ -135,13 +148,14 @@ export function coverLook(b: Baked, f: WeatherFrame | null | undefined): CoverLo
   const snow = Math.floor(c.snow * 16 + 0.5), wetTop = q(c.wet * WET_TOP), wetSide = q(c.wet * WET_SIDE);
   return snow || wetTop ? { snow, wetTop, wetSide } : null;
 }
+// (bare: de una rampa que no toma nieve, MaterialProps.snow)
 // Pinta la nieve y lo mojado sobre el color de un píxel de lo quieto (px[i..i + 2]): su cara, su cielo (0..5), su columna y su
 // y en la vista. La misma cuenta, con enteros, que la GPU (FRAG_SCENE)
-export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, wy: number): void {
+export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, wy: number, bare = false): void {
   if (face < 0 || face === 5 || sky <= 0) return;
   const wet = (face === 4 ? c.wetTop : c.wetSide) * (sky / 5);
   if (wet > 0) { const k = 1 - Math.floor(wet * 256 + 0.5) / 256; for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! * k + 0.5); }
-  if (face !== 4 || !c.snow) return;
+  if (face !== 4 || !c.snow || bare) return;
   const bx = (x + t.kx) & 3, by = Math.floor(Math.fround(wy) + t.ky + climateTie) & 3;
   if (BAYER[by * 4 + bx]! >= c.snow - (5 - sky) * 4) return;
   for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! + (SNOW_COLOR[ch]! - px[i + ch]!) * SNOW_MIX + 0.5);

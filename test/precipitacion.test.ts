@@ -59,6 +59,32 @@ describe('lo que cae', () => {
     expect(lean([-1, 0])).toBeGreaterThan(0.2);
     expect(Math.abs(lean([0, 0]))).toBeLessThan(1e-6);
   });
+  it('el aspecto: colores propios y con luz propia; sin decir nada, los de siempre; y la caché no los mezcla', () => {
+    const { b } = setup(), cols = (fall: NonNullable<WeatherFrame['fall']>, kind: 'rain' | 'snow') => { const s = fallSource(b, opts(b, { weather: w[kind], tick: 8, fall }), null)!; const c = new Set<string>(); for (let k = 0; k < s.count; k++) c.add(s.packed.slice(k * FX_STRIDE + 3, k * FX_STRIDE + 8).join()); return [...c].sort(); };
+    const w = { rain: W({ rain: 1 }), snow: W({ snow: 1 }) };
+    const plain = cols({}, 'rain');
+    expect(plain).toEqual(['122,148,188,1,0', '154,180,216,1,0']);
+    expect(cols({ rain: { colors: [[1, 2, 3], [4, 5, 6]] } }, 'rain')).toEqual(['1,2,3,1,0', '4,5,6,1,0']);
+    expect(cols({ rain: { glow: true } }, 'rain')).toEqual(['122,148,188,1,1', '154,180,216,1,1']);
+    expect(cols({ snow: { colors: [[1, 2, 3], [1, 2, 3]] } }, 'rain')).toEqual(plain);
+    expect(cols({ snow: { colors: [[9, 9, 9], [9, 9, 9]], glow: true } }, 'snow')).toEqual(['9,9,9,1,1']);
+    expect(cols({}, 'rain')).toEqual(plain);
+  });
+  it('a 30 veces por segundo, o las que se digan; y con otra vista, corte o clima en el mismo paso, lo que toca', () => {
+    const { b } = setup(), weather = W({ rain: 1 }), at = (tick: number, rate?: { fall: number }, vx = 0) => JSON.stringify(Array.from((() => { const s = fallSource(b, { ...opts(b, { weather, tick, fall: {}, ...(rate ? { rate } : {}) }), vx, vw: 60 }, null)!; return s.packed.slice(0, s.count * FX_STRIDE); })()));
+    expect(at(8)).toBe(at(9)); expect(at(8)).not.toBe(at(10));
+    expect(at(6, { fall: 20 })).toBe(at(8, { fall: 20 })); expect(at(6, { fall: 20 })).not.toBe(at(9, { fall: 20 }));
+    expect(at(8)).toBe(at(8, undefined, 3)); expect(at(8)).not.toBe(at(8, undefined, 40));
+    const before = at(8);
+    weather.set({ rain: 0.3 }, 8, 0);
+    expect(at(8)).not.toBe(before);
+    weather.set({ rain: 1 }, 8, 0);
+    expect(at(8)).toBe(before);
+    // (con un corte en medio y sin él después: los de sin corte)
+    const L = sectionLayer(b, { x0: 0, x1: 127, y0: 0, y1: 60, zMin: 3, depth: 40 })!, n = (sec: typeof L | null) => fallSource(b, opts(b, { weather, tick: 8, fall: {} }), sec)!.count, all = n(null);
+    expect(n(L)).toBeLessThan(all);
+    expect(n(null)).toBe(all);
+  });
   it('con la ventana corrida (origen al día), las mismas gotas en el mismo sitio del mundo', () => {
     const { b } = setup(), weather = W({ rain: 1, wind: [0.5, 0.2] });
     const inner = (p: Array<[number, number, number]>, dx: number) => p.map(([x, y, z]) => [x + dx, y, z].map((v) => Math.round(v * 100)).join()).filter((k) => { const [x, y] = k.split(',').map(Number) as [number, number]; return x > 8100 && x < 12000 && y > 3000 && y < 8000; }).sort();
@@ -140,6 +166,19 @@ describe('lo que dejan', () => {
     const part = (sky: number) => { let n = 0, m = 0; for (let t = 0; t < b.width * b.height; t++) if (b.face[t] === 4 && b.sky![t] === sky) { m++; if (p[t * 4] !== ref[t * 4]) n++; } return n / m; };
     expect(part(5)).toBeGreaterThan(0.5);
     expect(part(4)).toBeLessThan(part(5) - 0.15);
+  });
+  it('una rampa con snow: false no toma nieve, y sí se moja', () => {
+    const { b, state } = setup(), bare: Palette = { ramps: [PAL.ramps[0]!, { ...PAL.ramps[1]!, props: { snow: false } }] };
+    state.solid.palette = bare;
+    const ref = frame2DParts(state, b, opts(b, null)).view, run = (snow: number, wet: number) => frame2DParts(state, b, opts(b, { weather: covered(snow, wet), tick: 0, cover: true })).view;
+    const s = run(1, 0), w = run(0, 1);
+    let roof = 0, floor = 0;
+    for (let t = 0; t < b.width * b.height; t++) {
+      if (b.face[t] !== 4 || b.sky![t] !== 5) continue;
+      const isRoof = b.depth[t] !== Infinity && ref[t * 4] === 0x70 && ref[t * 4 + 1] === 0x40;
+      if (isRoof) { roof++; expect(s[t * 4]).toBe(ref[t * 4]); expect(w[t * 4]).toBeLessThan(ref[t * 4]!); } else { floor++; expect(s[t * 4]).toBeGreaterThan(200); }
+    }
+    expect(roof).toBeGreaterThan(200); expect(floor).toBeGreaterThan(200);
   });
   it('lo mojado: oscurece lo que ve el cielo, más arriba que a los lados; lo de bajo techo, no', () => {
     const { b, state } = setup(), ref = frame2DParts(state, b, opts(b, null)).view, p = frame2DParts(state, b, opts(b, { weather: covered(0, 1), tick: 0, cover: true })).view;

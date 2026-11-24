@@ -2057,6 +2057,13 @@ es de las luces), así que con sol conviene un ambiente más bajo. `daySun` (`li
 
 ### Detalles del clima
 
+- `weather.rate: { tables: 12, fall: 30 }`: veces por segundo que cambian las tablas (vaivén, olas, nubes) y lo que cae. Menos,
+  más barato (p. ej. 8 y 20).
+- `weather.fall.rain` y `.snow`: `{ colors: [[r, g, b], [r, g, b]], glow: true }` (0..255; con `glow` llevan luz propia y se ven
+  igual de noche). Sin decir nada, los de siempre.
+- `props: { snow: false }` en una rampa: la nieve no cuaja en ella (una flor, una hoja que flota); sí se moja. Con alguna, la
+  cara de cada píxel sube en 32 bits.
+
 - El alfa de la luz en la GPU (`oLight.a`, destinos RGBA32F): 2 × el sol del píxel en 1/512 (entero) + 1 si es una planta de
   agua. Es exacto hasta 2^24, o sea hasta un sol de 16384. Lo leen el agua (la planta y el sol del fondo) y el último paso (el
   sol); las partículas con luz propia y las gotas lo dejan a 0, y ninguna pasada mezcla (`blend`) sobre él.

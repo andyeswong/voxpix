@@ -36,13 +36,14 @@ export interface MaterialProps {
   anchor: 'self' | 'root' | 'top';
   reach: number;
   aquatic: boolean;
+  snow: boolean;      // ¿la nieve del clima cuaja en sus caras de arriba? (WeatherFrame.cover); false: una flor, una hoja que flota
 }
 
 // El lado de un vóxel en metros: una loseta de 16 vóxeles es 1 m. La masa de un vóxel es density * VOXEL_M³
 export const VOXEL_M = 1 / 16;
 export const VOXEL_M3 = VOXEL_M ** 3;
 
-export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false, sway: 0, anchor: 'self', reach: 12, aquatic: false };
+export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false, sway: 0, anchor: 'self', reach: 12, aquatic: false, snow: true };
 
 // La lista de materiales. Añadir uno es añadir una fila; las propiedades que no se dicen son las del sólido.
 export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>>> = {

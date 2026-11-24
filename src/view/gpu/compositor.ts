@@ -1547,23 +1547,23 @@ interface BakedGpu {
 }
 
 // La cara con el código de su luz por detrás (+8 * código)
-// (Int8Array, o Int16Array si alguna rampa se mece: entonces, además, + 128 * su código)
+// (Int8Array, o Int16Array si alguna rampa se mece, o Int32Array si alguna no toma nieve: entonces, además, + 128 * su código)
 const voxelOf = (s: Baked['source'], k: number): number => { const r = Math.floor(k / KEY_SPAN); return s.get(Math.floor(r / KEY_SPAN) - KEY_OFF, (r % KEY_SPAN) - KEY_OFF, (k % KEY_SPAN) - KEY_OFF); };
-type FaceUp = Int8Array<ArrayBuffer> | Int16Array<ArrayBuffer>;
+type FaceUp = Int8Array<ArrayBuffer> | Int16Array<ArrayBuffer> | Int32Array<ArrayBuffer>;
 const makeFaceUp = (b: Baked, vals: Float32Array): FaceUp | null =>
-  swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+  swayTable(b.source.palette)?.anyBare ? new Int32Array(b.width * b.height) : swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
 function faceFormat(gl: WebGL2RenderingContext, f: FaceUp | null): { internal: number; type: number } {
-  return f instanceof Int16Array ? { internal: gl.R16I, type: gl.SHORT } : { internal: gl.R8I, type: gl.BYTE };
+  return f instanceof Int32Array ? { internal: gl.R32I, type: gl.INT } : f instanceof Int16Array ? { internal: gl.R16I, type: gl.SHORT } : { internal: gl.R8I, type: gl.BYTE };
 }
 function fillFace(b: Baked, out: FaceUp, vals: Float32Array, x0: number, y0: number, x1: number, y1: number): void {
-  const mt = materialsOf(b.source.palette), sw = out instanceof Int16Array ? swayTable(b.source.palette) : null;
+  const mt = materialsOf(b.source.palette), sw = !(out instanceof Int8Array) ? swayTable(b.source.palette) : null;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const i = sy * b.width + sx, f = b.face[i]!;
     if (f < 0) { out[i] = f; continue; }
     if (sw) {
       // (el vóxel se lee una vez: la mayoría ni se mece ni recibe luz por detrás)
       const k = b.pick[i]!, v = Number.isNaN(k) ? 0 : voxelOf(b.source, k), back = mt ? mt.backlit[v]! : 0;
-      out[i] = (back > 0 ? f + 8 * vals.indexOf(back, 1) : f) + (sw.amount[v]! > 0 || sw.aquatic[v] ? 128 * swayCode(sw, b.source, k) : 0);
+      out[i] = (back > 0 ? f + 8 * vals.indexOf(back, 1) : f) + (sw.amount[v]! > 0 || sw.aquatic[v] || sw.bare[v] ? 128 * swayCode(sw, b.source, k) : 0);
       continue;
     }
     const back = backlitAt(b, mt, i);

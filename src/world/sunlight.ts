@@ -20,7 +20,7 @@ export interface SunLook { faces: Float32Array<ArrayBuffer>; entity: number; col
 export function sunLook(b: Baked, f: WeatherFrame | null | undefined): SunLook | null {
   const s = f?.sunlight;
   if (!f || !s || !b.sky) return null;
-  const k = Math.max(0, s.intensity) * f.weather.levels(climateStep(f.tick)).sun;
+  const k = Math.max(0, s.intensity) * f.weather.levels(climateStep(f)).sun;
   const d = s.dir ?? [-0.4, -0.5, 0.77], len = Math.hypot(d[0], d[1], d[2]) || 1;
   if (k <= 0 || d[2] <= 0) return null;                                            // (por debajo del horizonte)
   const [vx, vy] = f.camera ? f.camera.dirToView(d[0] / len, d[1] / len) : [d[0] / len, d[1] / len], vz = d[2] / len;

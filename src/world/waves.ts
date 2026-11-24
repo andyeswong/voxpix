@@ -4,7 +4,7 @@
 import { hash30, HASH_ONE } from '../worldgen/noise';
 import type { Baked } from './bake';
 import type { Weather } from './weather';
-import { climateStep, climateStepTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
+import { climateStepTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
 export const WAVE_T = 64;
 export const WAVE_CELL = 2;                     // vóxeles por celda de agua (WATER_CELL)
@@ -30,7 +30,7 @@ class Building {
   }
 }
 // (en otro tick que la tabla del clima, para no hacer las dos cosas en el mismo cuadro)
-const waveStep = (tick: number): number => climateStep(tick + 2) - 2;
+const waveStep = (f: WeatherFrame): number => { const n = climateStepTicks(f), k = n >> 1; return Math.floor((f.tick + k) / n) * n - k; };
 function wantOf(f: WeatherFrame, tick: number): Want | null {
   const amount = Math.max(0, Math.min(1, f.waves ?? 0));
   if (amount <= 0) return null;
@@ -41,7 +41,7 @@ function wantOf(f: WeatherFrame, tick: number): Want | null {
 }
 const cache = new WeakMap<Baked, { want: Want; data: Float32Array; next: Building | null }>();
 export function waveTile(b: Baked, f: WeatherFrame | null | undefined, c: ClimateTable | null): WaveTile | null {
-  const want = f && c ? wantOf(f, waveStep(f.tick)) : null;
+  const want = f && c ? wantOf(f, waveStep(f)) : null;
   if (!want) return null;
   let hit = cache.get(b);
   if (!hit || !same(hit.want, want)) {
@@ -54,7 +54,7 @@ export function waveTile(b: Baked, f: WeatherFrame | null | undefined, c: Climat
 }
 // Adelanta la baldosa del paso siguiente (como climateAhead)
 export function waveAhead(b: Baked, f: WeatherFrame | null | undefined): void {
-  const hit = f && cache.get(b), want = hit ? wantOf(f, waveStep(f.tick) + climateStepTicks) : null;
+  const hit = f && cache.get(b), want = hit ? wantOf(f, waveStep(f) + climateStepTicks(f)) : null;
   if (!hit || !want) return;
   if (!hit.next || !same(hit.next.want, want)) hit.next = new Building(want);
   hit.next.run(1);
