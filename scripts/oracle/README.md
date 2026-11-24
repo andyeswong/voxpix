@@ -1,6 +1,6 @@
 # Oráculo: el cuadro de la GPU contra el de la CPU
 
-`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 177 escenas del mundo, cada una
+`app/oraculo.html` (código: `app/src/oraculo/main.ts`, la lista `SCENARIOS`) construye 197 escenas del mundo, cada una
 con su semilla, sus ticks y sus pisotones fijos. Entre otras:
 - salida en medieval, oficina y cyberpunk; el lago con pisotones, con y sin luces; con niebla por altura;
 - una columna rota, rehorneada DESPUÉS de un primer cuadro de la GPU (prueba lo que se sube al rehornear);
@@ -107,3 +107,8 @@ dinámica. Las dos rutas siguen las mismas reglas:
 - el rayo de la luz propia sale desplazado igual en las dos (`RAY_NUDGE`).
 
 Resultado: pasan los 9 escenarios en la GPU de la Alienware (máx. 0,16 %, diferencia 1) y en SwiftShader (máx. 0,04 %).
+
+Las escenas con clima (`clima` en la escena: `Frame2DOptions.weather`) llevan un control: la misma escena sin él. La luz de
+algunas escenas tiene empates sueltos a más de un nivel entre la CPU y la GPU que ya salen en el control; con clima se
+admiten los del control y 5 más, y en el color ninguno. Las del viento fallan además si no se mece nada o si difiere más del
+0,5 % de lo que se mece. `?sinclima=1` las corre todas sin clima.

@@ -35,6 +35,16 @@ float spotOf(int i, vec3 v, vec3 dir) {
 }
 float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 
+// La tabla del clima (src/world/climate.ts), en la misma textura que las luces, debajo de ellas
+export const CLIMATE_ROW = MAX_LIGHTS;
+const CLIMATE = `uniform ivec4 uClim;                   // la primera casilla (x, y) y cuántas
+uniform vec2 uClimK;
+vec4 climateAt(float vx, float vy) {
+  ivec2 c = ivec2(int(floor((vx + uClimK.x) / 16.0)), int(floor((vy + uClimK.y + 1.0 / 1024.0) / 32.0))) - uClim.xy;
+  c = clamp(c, ivec2(0), uClim.zw - 1);
+  return texelFetch(uLightTab, ivec2(c.x, c.y + ${MAX_LIGHTS}), 0);
+}`;
+
 // El corte al componer (frame2d.ts, Frame2DOptions.section / sectionLayer): la capa en su recuadro de la imagen
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
 // del mundo, cara (con el código de su luz por detrás, como uFace) y máscara (1 sustituido, 2 borde) + 16 * cielo con el
@@ -76,7 +86,9 @@ bool secGhost(ivec2 s) {
   if (l.x < 0 || l.y < 0 || l.x >= uSecRect.z || l.y >= uSecRect.w) return false;
   return (int(secGeo(s).a) & 128) != 0;
 }
-int secSky(ivec2 s) { return (int(secGeo(s).a) >> 4) & 7; }`;
+int secSky(ivec2 s) { return (int(secGeo(s).a) >> 4) & 7; }
+// Cuánto se mece lo de la capa en el píxel s (el código de src/world/sway.ts)
+int secSway(ivec2 s) { return int(secGeo(s).a) >> 8; }`;
 
 // La luz de un punto del escenario: lo que aporta una luz y si el cuerpo de una entidad la tapa. Lo comparten la escena
 // y el velo del paso final (la misma cuenta en los dos). Necesita LIGHT_TABLE, uEntOccMin, uEntOccSize, uOcc y TIE
@@ -192,9 +204,53 @@ layout(location = 2) out vec4 oDepth;
 
 ${LIGHT_FNS}
 
+// EL VAIVÉN (src/world/sway.ts, swaySources): de qué píxel de la imagen sale lo quieto de cada píxel de la vista
+uniform bool uSway;
+${CLIMATE}
+#define SWAY_MAX 3
+#define SWAY_FILL 5
+// Un píxel de la imagen: su código, cuánto se corre, su clase (1 sustituido por el corte, 2 fuera) y su profundidad
+void swayAt(ivec2 p, out int code, out int shift, out int cls, out float depth) {
+  code = 0; shift = 0; cls = 2; depth = 1e30;
+  ivec2 sz = textureSize(uDepth, 0);
+  if (p.x < 0 || p.y < 0 || p.x >= sz.x || p.y >= sz.y) return;
+  int m = secMask(p);
+  float wy = 0.0;
+  if (m > 0) { vec4 g = secGeo(p); depth = g.r; wy = g.g; code = secGhost(p) ? 0 : secSway(p); }
+  else { depth = texelFetch(uDepth, p, 0).r; int fr = texelFetch(uFace, p, 0).r; code = fr < 0 ? 0 : fr >> 7; }
+  cls = m == 1 ? 1 : 0;
+  if (isinf(depth)) { depth = 1e30; return; }
+  if ((code & 127) == 0) return;
+  if (m == 0) wy = texelFetch(uWorldY, p, 0).r;
+  vec4 cl = climateAt(float(p.x), wy);
+  shift = clamp(int(floor(float(code & 127) / 32.0 * (code >= 128 ? cl.g : cl.r) + 0.5)), -SWAY_MAX, SWAY_MAX);
+}
+ivec2 swaySource(ivec2 s) {
+  int hc, hs, hk, c, sh, k;
+  float hd, d, bd = 2e30;
+  swayAt(s, hc, hs, hk, hd);
+  int best = 99;
+  if (hs == 0) { best = 0; bd = hd; }
+  for (int n = 1; n <= SWAY_MAX; n++) for (int g = 0; g < 2; g++) {
+    int e = g == 0 ? n : -n;
+    swayAt(s - ivec2(e, 0), c, sh, k, d);
+    if (sh == e && k == hk && d < bd) { best = -e; bd = d; }
+  }
+  if (best == 99) {
+    int dir = hs > 0 ? -1 : 1;
+    best = 0;
+    for (int n = 1; n <= SWAY_FILL; n++) {
+      swayAt(s + ivec2(dir * n, 0), c, sh, k, d);
+      if (k == hk && (c & 127) == 0 && d > hd - 0.5) { best = dir * n; break; }
+    }
+  }
+  return s + ivec2(best, 0);
+}
+
 void main() {
   ivec2 t = ivec2(gl_FragCoord.xy);
-  ivec2 s = t + uView;
+  ivec2 home = t + uView;
+  ivec2 s = uSway ? swaySource(home) : home;
   // En la capa del corte (sm 1: sustituido, 2: borde) lo que se ve es lo de la capa
   int sm = secMask(s);
   vec4 sg = sm > 0 ? secGeo(s) : vec4(0.0);
@@ -221,7 +277,7 @@ void main() {
     int fr = sm > 0 ? int(sg.b) : texelFetch(uFace, s, 0).r;
     if (fr >= 0) {
       int f = fr & 7;
-      float back = uBack[fr >> 3];             // luz por detrás de su material (compositor.ts, fillFace)
+      float back = uBack[(fr >> 3) & 15];      // luz por detrás de su material (compositor.ts, fillFace)
       // El punto del mundo que se ve aquí (worldPointAt) y su normal
       float Pp = uOriginY - (float(s.y) + 0.5);
       float wy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
@@ -258,7 +314,7 @@ void main() {
   // Las sombras de contacto, y encima la entidad más cercana si está delante de lo que hay
   if (uLights) total *= texelFetch(uContact, t, 0).rgb;
   if (uHl) {
-    ivec2 h = s - uHlRect.xy;
+    ivec2 h = home - uHlRect.xy;
     if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; }
   }
   float ed = texelFetch(uEntDepth, t, 0).r;
@@ -267,7 +323,7 @@ void main() {
     col = texelFetch(uEntColor, t, 0).rgb;
     cov = 1.0;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
-  } else if (uXray && !isinf(ed) && ed > depth + ${XRAY_MARGIN} && ((s.x + s.y) & 1) == 0) {
+  } else if (uXray && !isinf(ed) && ed > depth + ${XRAY_MARGIN} && ((home.x + home.y) & 1) == 0) {
     // Tapada por el escenario: su silueta, en damero y con luz propia
     col = uXrayColor;
     total = vec3(${EMISSIVE});

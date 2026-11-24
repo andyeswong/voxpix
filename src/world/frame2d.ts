@@ -8,6 +8,8 @@ import { key, unkey, DIR_VECTORS, type VoxelSource } from '../core';
 import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
+import { climateTable, type WeatherFrame } from './climate';
+import { swaySources, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
@@ -51,6 +53,8 @@ export interface Frame2DOptions {
   section?: SectionCut | null;
   // La capa ya hecha (SectionPainter.layer(): la sección pintada por franjas, por delante). Si está, manda sobre section
   sectionLayer?: SectionLayer | null;
+  // El clima (weather.ts): el viento mece lo que se mece (MaterialProps.sway). null o sin campo: el cuadro de siempre
+  weather?: WeatherFrame | null;
 }
 
 // La capa de sección de unas opciones (o null), guardada por horneado: se rehace si cambia la caja o la imagen
@@ -335,10 +339,9 @@ function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Ar
   return out;
 }
 
-// El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
-// hace lo mismo; la prueba del oráculo compara los dos.
-export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array } {
-  state = withEffectLights(state);
+// Lo quieto de un cuadro antes de las entidades: la imagen horneada con el corte, y la luz que le llega
+interface StaticParts { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array }
+function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null): StaticParts {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
   const depthBuf = new Float32Array(vw * vh).fill(Infinity);
@@ -356,8 +359,6 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = bg[0]; view[i - 2] = bg[1]; view[i - 1] = bg[2]; view[i] = 255; }
   } else for (let i = 3; i < view.length; i += 4) if (!view[i]) { view[i - 3] = 0; view[i - 2] = 0; view[i - 1] = 0; }
   // El corte al componer: lo de detrás de la caja en los píxeles cuya primera superficie estaba en ella
-  // (con ghost, en sus píxeles entra la segunda superficie: el velo de la de delante va al final, applyGhost)
-  const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   if (sec) {
     const bg = o.background === 'transparent' ? null : o.background ?? BACKGROUND;
     for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
@@ -398,7 +399,32 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     // Sombras de las entidades: lo que su cuerpo tapa de cada luz (solo las MAX_CASTERS más cercanas al centro)
     if (o.detail !== 'bajo') for (const e of shadowCasters(state, b, o)) castShadow(state, b, e, total, o, sec);
   }
+  return { view, total, depth: depthBuf };
+}
+// Cada píxel de la vista, de la columna de la imagen que dice from (swaySources), en lo compuesto desde x0 con ancho w
+function gather(p: StaticParts, from: Int32Array, x0: number, w: number, vw: number, vh: number): StaticParts {
+  const view = new Uint8ClampedArray(vw * vh * 4), depth = new Float32Array(vw * vh), total = p.total ? new Float32Array(vw * vh * 3) : null;
+  for (let t = 0; t < vw * vh; t++) {
+    const q = Math.floor(t / vw) * w + from[t]! - x0;
+    for (let c = 0; c < 4; c++) view[t * 4 + c] = p.view[q * 4 + c]!;
+    depth[t] = p.depth[q]!;
+    if (total) for (let c = 0; c < 3; c++) total[t * 3 + c] = p.total![q * 3 + c]!;
+  }
+  return { view, total, depth };
+}
 
+// El cuadro antes de la luz: el color de cada píxel y la luz que le llega (null sin luces). El compositor de la GPU
+// hace lo mismo; la prueba del oráculo compara los dos.
+export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array } {
+  state = withEffectLights(state);
+  const { vx, vy, vw, vh, ambient } = o;
+  // (con ghost, en sus píxeles entra la segunda superficie: el velo de la de delante va al final, applyGhost)
+  const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
+  // El viento: de qué columna de la imagen sale cada píxel. Lo quieto se compone con un margen a los lados y se recoge
+  const clim = climateTable(b, o), from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh) : null;
+  let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec);
+  if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
+  const { view, depth: depthBuf, total } = fixed;
   // Las entidades: primero todas las sombras de contacto (en el suelo), después, en cada píxel, la entidad más
   // cercana a la cámara, y esa tapa el escenario si está delante. Es lo mismo que hace la GPU con su z-buffer.
   const sprites = state.entities.map((e) => entitySprite(b, e, o)).filter((d) => onView(d, o));

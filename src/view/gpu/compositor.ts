@@ -19,10 +19,12 @@ import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
 import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
+import { swayTable, swayCode, SWAY_FILL } from '../../world/sway';
+import { climateTable, CLIMATE_W, CLIMATE_H, type ClimateTable } from '../../world/climate';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource } from '../../core';
-import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
+import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, CLIMATE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 // Un modelo para precalentar: en qué giros (por defecto los 8 rumbos) y si da sombra de verdad
@@ -83,7 +85,8 @@ export class GpuCompositor {
   private worldY: Float32Array<ArrayBuffer> = new Float32Array(0);
   // La cara de cada píxel tal como se sube: con materiales que reciben luz por detrás, cara + 8 * código, y el
   // código elige su valor en backVals (0 = nada); si la paleta no tiene, b.face tal cual
-  private faceUp: Int8Array | null = null;
+  // Con rampas que se mecen (sway.ts), la textura es de 16 bits y lleva además su código (* 128)
+  private faceUp: FaceUp | null = null;
   private backVals: Float32Array<ArrayBuffer> = new Float32Array(16);
   private tHl: WebGLTexture | null = null;
   private hlMask: Uint8Array | null = null;
@@ -125,6 +128,8 @@ export class GpuCompositor {
   private tOcc: WebGLTexture;
   private tLights: WebGLTexture;
   private lightTab = new Float32Array(4 * MAX_LIGHTS * 4);
+  private climUp: ClimateTable | null = null;        // la tabla del clima que está subida (debajo de las luces)
+  private climRoom = false;
   private occPlace: Array<{ min: [number, number, number]; size: [number, number, number]; ax: number }> = [];
   // Agua
   private tWDepth: WebGLTexture | null = null;
@@ -314,6 +319,19 @@ export class GpuCompositor {
       tab.set([baked ? layer : -1, baked ? p.intensity / zones[layer]!.intensity : 0, l.baked === false ? 1 : 0, p.spot?.cosInner ?? 1], (i * 4 + 2) * 4);
       tab.set(p.spot ? [...p.spot.dir, p.spot.cosOuter] : [0, 0, 0, -2], (i * 4 + 3) * 4);
     });
+    // El clima: su tabla, en la misma textura (se agranda la primera vez que hace falta)
+    const clim = climateTable(b, o);
+    if (clim && !this.climRoom) {
+      gl.deleteTexture(this.tLights);
+      this.tLights = tex2D(gl, gl.RGBA32F, CLIMATE_W, CLIMATE_ROW + CLIMATE_H, gl.RGBA, gl.FLOAT, null);
+      this.climRoom = true;
+    }
+    const sway = !!clim?.sway && !!swayTable(b.source.palette);
+    if (clim && clim !== this.climUp) {
+      uploadTo(gl, gl.TEXTURE_2D, this.tLights);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, CLIMATE_ROW, clim.w, clim.h, gl.RGBA, gl.FLOAT, clim.data);
+      this.climUp = clim;
+    }
     uploadTo(gl, gl.TEXTURE_2D, this.tLights);
     gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 4, MAX_LIGHTS, gl.RGBA, gl.FLOAT, tab);
 
@@ -373,6 +391,8 @@ export class GpuCompositor {
     gl.uniform3f(s.u.uBg, bg[0] / 255, bg[1] / 255, bg[2] / 255);
     gl.uniform1i(s.u.uBgClear, clearBg ? 1 : 0);
     gl.uniform3f(s.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
+    gl.uniform1i(s.u.uSway, sway ? 1 : 0);
+    if (clim) this.setClimate(s, clim);
     gl.uniform1i(s.u.uLights, o.lights ? 1 : 0);
     gl.uniform1f(s.u.uA, a);
     gl.uniform1f(s.u.uOriginY, b.options.originY ?? 0);
@@ -395,7 +415,8 @@ export class GpuCompositor {
     gl.uniform1i(s.u.uNLights, lights.length);
     bindTex(gl, 8, gl.TEXTURE_2D, this.tLights, s.u.uLightTab);
     up = performance.now();
-    this.setCasters(state, b, o, lights.map((x) => x.l));
+    // (con el vaivén, lo que se ve en un píxel puede venir de una columna de al lado de la vista)
+    this.setCasters(state, b, sway ? { ...o, vx: o.vx - SWAY_FILL, vw: o.vw + 2 * SWAY_FILL } : o, lights.map((x) => x.l));
     this.parts.casters = performance.now() - up;
     upMs += this.parts.casters;
     gl.drawArrays(gl.TRIANGLES, 0, 3);
@@ -492,6 +513,12 @@ export class GpuCompositor {
       gl.drawArrays(gl.POINTS, 0, n);
       gl.bindVertexArray(this.vao);
     }
+  }
+
+  private setClimate(p: Program, c: ClimateTable): void {
+    const gl = this.gl;
+    gl.uniform4i(p.u.uClim, c.x0, c.y0, c.w, c.h);
+    gl.uniform2f(p.u.uClimK, c.kx, c.ky);
   }
 
   // 4) la luz a pixel art, al lienzo (dando la vuelta) o a una textura (fila 0 arriba)
@@ -592,9 +619,9 @@ export class GpuCompositor {
     return { run: (deadline: number) => {
       if (this.baked === b || this.bakedCache.has(b)) return true;
       if (!e) {
-        const backVals = backlitCodes(b), faceUp = backVals.some((v) => v > 0) ? new Int8Array(W * H) : null;
+        const backVals = backlitCodes(b), faceUp = makeFaceUp(b, backVals);
         e = { serial, tColor: tex2D(gl, gl.RGBA8, W, H, gl.RGBA, gl.UNSIGNED_BYTE, null), tDepth: tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null),
-          tFace: tex2D(gl, gl.R8I, W, H, gl.RED_INTEGER, gl.BYTE, null), tWorldY: tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null),
+          tFace: tex2D(gl, faceFormat(gl, faceUp).internal, W, H, gl.RED_INTEGER, faceFormat(gl, faceUp).type, null), tWorldY: tex2D(gl, gl.R32F, W, H, gl.RED, gl.FLOAT, null),
           worldY: new Float32Array(W * H), faceUp, backVals, tWeights: null, weightZones: [], weightW: 0, weightH: 0,
           tSky: b.sky ? tex2D(gl, gl.R8UI, W, H, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null) : null };
         if (performance.now() >= deadline) return false;
@@ -605,7 +632,7 @@ export class GpuCompositor {
         subImage(gl, g.tColor, 0, y0, W, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, W, 4);
         subImage(gl, g.tDepth, 0, y0, W, h, gl.RED, gl.FLOAT, b.depth, W, 1);
         if (g.faceUp) fillFace(b, g.faceUp, g.backVals, 0, y0, W - 1, y1);
-        subImage(gl, g.tFace, 0, y0, W, h, gl.RED_INTEGER, gl.BYTE, g.faceUp ?? b.face, W, 1);
+        subImage(gl, g.tFace, 0, y0, W, h, gl.RED_INTEGER, faceFormat(gl, g.faceUp).type, g.faceUp ?? b.face, W, 1);
         fillWorldY(b, g.worldY, 0, y0, W - 1, y1);
         subImage(gl, g.tWorldY, 0, y0, W, h, gl.RED, gl.FLOAT, g.worldY, W, 1);
         if (g.tSky && b.sky) subImage(gl, g.tSky, 0, y0, W, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, W, 1);
@@ -637,9 +664,9 @@ export class GpuCompositor {
         this.tColor = tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba);
         this.tDepth = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, b.depth);
         this.backVals = backlitCodes(b);
-        this.faceUp = this.backVals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+        this.faceUp = makeFaceUp(b, this.backVals);
         if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
-        this.tFace = tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face);
+        this.tFace = tex2D(gl, faceFormat(gl, this.faceUp).internal, b.width, b.height, gl.RED_INTEGER, faceFormat(gl, this.faceUp).type, this.faceUp ?? b.face);
         this.worldY = new Float32Array(b.width * b.height);
         fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
         this.tWorldY = tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, this.worldY);
@@ -670,7 +697,7 @@ export class GpuCompositor {
       subImage(gl, tColor, 0, 0, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
       subImage(gl, this.tDepth!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, b.depth, b.width, 1);
       if (this.faceUp) fillFace(b, this.faceUp, this.backVals, 0, 0, b.width - 1, b.height - 1);
-      subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
+      subImage(gl, this.tFace!, 0, 0, b.width, b.height, gl.RED_INTEGER, faceFormat(gl, this.faceUp).type, this.faceUp ?? b.face, b.width, 1);
       fillWorldY(b, this.worldY, 0, 0, b.width - 1, b.height - 1);
       subImage(gl, this.tWorldY!, 0, 0, b.width, b.height, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
       if (this.tSky && b.sky) subImage(gl, this.tSky, 0, 0, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
@@ -735,6 +762,7 @@ export class GpuCompositor {
   private uploadSectionCols(sec: SectionLayer, g0: number, g1: number, j0: number, j1: number): void {
     const gl = this.gl, h = j1 - j0 + 1, n = g1 - g0 + 1, TW = this.secSize[0];
     const geo = new Float32Array(n * h * 4), color = new Uint8Array(n * h * 4);
+    const sw = this.secOf ? swayTable(this.secOf.source.palette) : null;
     const vals = this.backVals, win = sec.window ?? null, sp: number[] = [];
     // Con ghost: en los píxeles con velo (máscara 1 y ghost.on), a las dos texturas de siempre va la segunda superficie
     // con un 128 más en la máscara, y a las del velo, la de delante. En los demás, las del velo quedan a cero
@@ -763,7 +791,7 @@ export class GpuCompositor {
         geo[o] = sec.depth[q]!;
         geo[o + 1] = sec.wy[q]!;
         geo[o + 2] = back > 0 ? f + 8 * vals.indexOf(Math.fround(back), 1) : f;
-        geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0);
+        geo[o + 3] = m + 16 * (sec.sky ? sec.sky[q]! : 0) + (sw ? 256 * swayCode(sw, this.secOf!.source, sec.pick[q]!) : 0);
       }
       if (!win) continue;
       sp.length = 0;
@@ -810,7 +838,7 @@ export class GpuCompositor {
     subImage(gl, this.tColor!, r.x0, r.y0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, b.rgba, b.width, 4);
     subImage(gl, this.tDepth!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, b.depth, b.width, 1);
     if (this.faceUp) fillFace(b, this.faceUp, this.backVals, r.x0, r.y0, r.x1, r.y1);
-    subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.BYTE, this.faceUp ?? b.face, b.width, 1);
+    subImage(gl, this.tFace!, r.x0, r.y0, w, h, gl.RED_INTEGER, faceFormat(gl, this.faceUp).type, this.faceUp ?? b.face, b.width, 1);
     fillWorldY(b, this.worldY, r.x0, r.y0, r.x1, r.y1);
     subImage(gl, this.tWorldY!, r.x0, r.y0, w, h, gl.RED, gl.FLOAT, this.worldY, b.width, 1);
     if (this.tSky && b.sky) subImage(gl, this.tSky, r.x0, r.y0, w, h, gl.RED_INTEGER, gl.UNSIGNED_BYTE, b.sky, b.width, 1);
@@ -827,13 +855,14 @@ export class GpuCompositor {
   private spareSize: [number, number] = [0, 0];
   private prepareSpares(b: Baked): void {
     const gl = this.gl;
+    this.dropFaceSpare();
     if (this.spareSize[0] !== b.width || this.spareSize[1] !== b.height) {
       for (const k of Object.keys(this.spares)) { const x = this.spares[k]; if (x) gl.deleteTexture(x); this.spares[k] = null; }
       this.spareSize = [b.width, b.height];
     }
     const make: Record<string, () => WebGLTexture> = {
       color: () => tex2D(gl, gl.RGBA8, b.width, b.height, gl.RGBA, gl.UNSIGNED_BYTE, null),
-      face: () => tex2D(gl, gl.R8I, b.width, b.height, gl.RED_INTEGER, gl.BYTE, null),
+      face: () => tex2D(gl, faceFormat(gl, this.faceUp).internal, b.width, b.height, gl.RED_INTEGER, faceFormat(gl, this.faceUp).type, null),
       sky: () => tex2D(gl, gl.R8UI, b.width, b.height, gl.RED_INTEGER, gl.UNSIGNED_BYTE, null),
       depth: () => tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, null),
       worldY: () => tex2D(gl, gl.R32F, b.width, b.height, gl.RED, gl.FLOAT, null),
@@ -845,7 +874,15 @@ export class GpuCompositor {
     this.spares[k] = null;
     return x ?? create();
   }          // cuántas veces se corrieron las texturas dentro de la GPU (para probar)
+  // (el repuesto de la cara es del formato de la que había: si otro horneado la lleva de otro, fuera)
+  private spareFace = 0;
+  private dropFaceSpare(): void {
+    const now = faceFormat(this.gl, this.faceUp).internal;
+    if (this.spareFace !== now && this.spares.face) { this.gl.deleteTexture(this.spares.face); this.spares.face = null; }
+    this.spareFace = now;
+  }
   private gpuShift(b: Baked, ls: NonNullable<Baked['lastShift']>): void {
+    this.dropFaceSpare();
     const t0 = performance.now(), gl = this.gl, W = b.width, H = b.height, { dx, rows } = ls;
     const rd = gl.createFramebuffer()!, dr = gl.createFramebuffer()!;
     const dx0 = Math.max(0, -dx), dx1 = W - Math.max(0, dx), dy0 = Math.max(0, rows), dy1 = H + Math.min(0, rows);
@@ -875,7 +912,7 @@ export class GpuCompositor {
       return dst;
     };
     this.tColor = blit('color', this.tColor!, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, () => gl.clearBufferfv(gl.COLOR, 0, [0, 0, 0, 0]));
-    this.tFace = blit('face', this.tFace!, gl.R8I, gl.RED_INTEGER, gl.BYTE, () => gl.clearBufferiv(gl.COLOR, 0, [-1, 0, 0, 0]));
+    this.tFace = blit('face', this.tFace!, faceFormat(gl, this.faceUp).internal, gl.RED_INTEGER, faceFormat(gl, this.faceUp).type, () => gl.clearBufferiv(gl.COLOR, 0, [-1, 0, 0, 0]));
     if (this.tSky) this.tSky = blit('sky', this.tSky, gl.R8UI, gl.RED_INTEGER, gl.UNSIGNED_BYTE, () => gl.clearBufferuiv(gl.COLOR, 0, [SKY_RAYS, 0, 0, 0]));
     const p = this.shiftF;
     const pass = (k: string, src: WebGLTexture, delta: number, empty: number): WebGLTexture => {
@@ -1465,16 +1502,23 @@ function backlitCodes(b: Baked): Float32Array<ArrayBuffer> {
 // Lo subido de un horneado que no es el de este cuadro (GpuCompositor.bakedCache)
 interface BakedGpu {
   serial: number; tColor: WebGLTexture; tDepth: WebGLTexture; tFace: WebGLTexture; tWorldY: WebGLTexture;
-  worldY: Float32Array<ArrayBuffer>; faceUp: Int8Array | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: Array<BakedLight | null>; weightW: number; weightH: number; tSky: WebGLTexture | null;
+  worldY: Float32Array<ArrayBuffer>; faceUp: FaceUp | null; backVals: Float32Array<ArrayBuffer>; tWeights: WebGLTexture | null; weightZones: Array<BakedLight | null>; weightW: number; weightH: number; tSky: WebGLTexture | null;
 }
 
 // La cara con el código de su luz por detrás (+8 * código)
-function fillFace(b: Baked, out: Int8Array, vals: Float32Array, x0: number, y0: number, x1: number, y1: number): void {
-  const mt = materialsOf(b.source.palette);
+// (Int8Array, o Int16Array si alguna rampa se mece: entonces, además, + 128 * su código)
+type FaceUp = Int8Array<ArrayBuffer> | Int16Array<ArrayBuffer>;
+const makeFaceUp = (b: Baked, vals: Float32Array): FaceUp | null =>
+  swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+function faceFormat(gl: WebGL2RenderingContext, f: FaceUp | null): { internal: number; type: number } {
+  return f instanceof Int16Array ? { internal: gl.R16I, type: gl.SHORT } : { internal: gl.R8I, type: gl.BYTE };
+}
+function fillFace(b: Baked, out: FaceUp, vals: Float32Array, x0: number, y0: number, x1: number, y1: number): void {
+  const mt = materialsOf(b.source.palette), sw = out instanceof Int16Array ? swayTable(b.source.palette) : null;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const i = sy * b.width + sx, f = b.face[i]!;
     const back = f >= 0 ? backlitAt(b, mt, i) : 0;
-    out[i] = back > 0 ? f + 8 * vals.indexOf(back, 1) : f;
+    out[i] = (back > 0 ? f + 8 * vals.indexOf(back, 1) : f) + (sw && f >= 0 ? 128 * swayCode(sw, b.source, b.pick[i]!) : 0);
   }
 }
 

@@ -1988,3 +1988,23 @@ weather.levels(tick); weather.windAt(x, y, tick); weather.cloudAt(x, y, tick); w
 - `cover` es lo acumulado (nieve en el suelo, humedad); `advance` da lo mismo llamado cada tick que de tarde en tarde.
 - Estado: `Weather` es una parte de estado. Si solo se usa para pintar no tiene que estar en el mundo; si la simulación lo
   lee, `state.addPart('weather', weather)` lo lleva a la instantánea y a la huella.
+
+### El viento en la vegetación
+
+Se mece lo que dicen las rampas de la paleta (o del set de bloques), en sus `props`:
+
+```ts
+{ name: 'hojas', material: 'follaje', props: { sway: 1.5, anchor: 'self' } }              // una copa: entera
+{ name: 'hierba-alta', material: 'follaje', props: { sway: 2, anchor: 'root', reach: 12 } }   // la raíz quieta
+frame2D(state, baked, { ...o, weather: { weather, tick, origin, camera: view.camera, sway: 1 } });
+```
+
+- `sway` son los píxeles que se corre como mucho con viento 1 (tope 3; 0, lo de siempre). `anchor: 'root'` va de nada abajo a
+  todo a `reach` vóxeles; `'top'`, desde arriba (lo que cuelga); `'self'`, entero. El tronco, sin `sway`, no se mueve.
+- `origin` es el vóxel del mundo que es el (0, 0) del horneado sin girar: en una ventana que se corre, el juego lo pone al
+  día con el corrimiento. `camera` hace falta en una vista girada.
+- Se corre la imagen al componer (CPU y GPU igual), sin rehornear: cada píxel lleva el color, la luz y la profundidad del
+  vóxel quieto. El hueco se llena con lo quieto de al lado, del lado de donde viene. El pick, la máscara, la colisión y lo
+  que ve un agente no cambian. El corrimiento es en horizontal de pantalla y a saltos de 1/12 s.
+- Los píxeles con velo (`ghost`) no se mecen, y lo del corte no se sale de su recuadro.
+- Una paleta con rampas que se mecen sube la cara de cada píxel en 16 bits en vez de 8; las demás, como siempre.

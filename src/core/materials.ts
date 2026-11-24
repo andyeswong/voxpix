@@ -29,13 +29,20 @@ export interface MaterialProps {
   crush: boolean;     // se aplasta o se rompe al pasar o al golpearlo (world/crush.ts): la vegetación
   ladder: boolean;    // se trepa: mientras un cuerpo de moveBodyLevels lo toca, sube y baja con la entrada vertical y no
                       // cae (runtime/levels.ts). El motor no sabe qué es: quien lo usa marca el material
+  // El viento (world/sway.ts), solo al componer con Frame2DOptions.weather: cuántos píxeles se mece como mucho (0: nada) y
+  // desde dónde: 'self', entero (una copa); 'root', anclado abajo, nada en la raíz y todo a `reach` vóxeles (una mata);
+  // 'top', anclado arriba (lo que cuelga). aquatic: además se mece con la corriente y se ve a través del agua
+  sway: number;
+  anchor: 'self' | 'root' | 'top';
+  reach: number;
+  aquatic: boolean;
 }
 
 // El lado de un vóxel en metros: una loseta de 16 vóxeles es 1 m. La masa de un vóxel es density * VOXEL_M³
 export const VOXEL_M = 1 / 16;
 export const VOXEL_M3 = VOXEL_M ** 3;
 
-export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false };
+export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false, sway: 0, anchor: 'self', reach: 12, aquatic: false };
 
 // La lista de materiales. Añadir uno es añadir una fila; las propiedades que no se dicen son las del sólido.
 export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>>> = {

@@ -14,10 +14,13 @@ import { Model, box, material, planFoliage, rgbOf, lilyPadModels, FOLIAGE_RAMPS,
 import { buildWorldState, addWorldFloaters, worldWaterDepth, DEFAULT_WALL_H, type WorldLook } from '../../../src/world/build';
 import type { ShapeSpec } from '../../../src/worldgen';
 import { bakeWorld, rebakeChanged, shiftBaked, type Baked } from '../../../src/world/bake';
-import { frame2D, frame2DParts, shadeLayers, applyFog, applyGhost, clearTransparent, sectionFor, drawSectionBorder, type Frame2DOptions } from '../../../src/world/frame2d';
+import { frame2D, frame2DParts, shadeLayers, applyFog, applyGhost, clearTransparent, sectionFor, sceneLayer, drawSectionBorder, type Frame2DOptions } from '../../../src/world/frame2d';
 import { applyLayers } from '../../../src/lighting/shade';
 import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/state';
 import type { World } from '../../../src/world/build';
+import { Weather, type WeatherLevels } from '../../../src/world/weather';
+import { climateTable, type WeatherFrame } from '../../../src/world/climate';
+import { swaySources } from '../../../src/world/sway';
 import { WaterLayer } from '../../../src/world/water';
 import { generateMap, applyMap, mapWater } from '../../../src/world/mapgen';
 import { BlockSet, BlockGrid } from '../../../src/world/blocks';
@@ -94,6 +97,8 @@ interface Scenario {
   // de antes, en CPU y en GPU
   shift?: 'ida' | 'vuelta';
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
+  // El clima del cuadro (Frame2DOptions.weather): sus niveles y las opciones; con veg, sus rampas se mecen
+  clima?: { levels: Partial<WeatherLevels>; frame?: Partial<WeatherFrame> };
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
   highlight?: (w: World) => [number, number, number, number, number, number];   // resaltar esa caja del mundo
@@ -116,10 +121,14 @@ function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { retu
 
 // Vegetación en un mundo generado: hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
-function vegetate(w: World, at: [number, number]): void {
+function vegetate(w: World, at: [number, number], wind = false): void {
   const m = w.model;
   const names = ['hierba-alta', 'flor-roja', 'flor-amarilla', 'arbusto'];
   m.palette = { ...m.palette, ramps: [...m.palette.ramps, ...names.map((n) => structuredClone(FOLIAGE_RAMPS[n]!)), { name: 'hojas', colors: ['#14301f', '#1f4a2a', '#2f6b32', '#4f8f3c', '#86b84e'], kind: 'foliage' }] };
+  if (wind) for (const r of m.palette.ramps) {
+    if (r.name === 'hojas') r.props = { sway: 2, anchor: 'self' };
+    else if (names.includes(r.name)) r.props = { sway: 3, anchor: 'root', reach: r.name === 'arbusto' ? 4 : 3 };
+  }
   const ri = (n: string) => m.palette.ramps.findIndex((r) => r.name === n);
   const put = (plan: { voxels: Array<[number, number, number, number]> }, keep?: (x: number, y: number) => boolean) => { for (const [x, y, z, v] of plan.voxels) if (!keep || keep(x, y)) m.set(x, y, z, v); };
   const all = [0, 0, m.width - 1, m.depth - 1] as const;
@@ -459,6 +468,22 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `corte con velo que se enciende y se apaga, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, section: { width: 96, painter: true, torch: true, ghost: { alpha: 0.35, seq: true } } });
   SCENARIOS.push({ name: `corte con velo en cruz con borde sin luces y fondo transparente, giro ${q}`, theme: 'medieval', quarter: q, ticks: 30, lights: false, clearBg: true, section: { width: 64, z: 1, cross: true, border: 2, ghost: { alpha: 0.35 } } });
 }
+// El viento en la vegetación (Frame2DOptions.weather, world/sway.ts): la vegetación de arriba con sus rampas meciéndose, en
+// los 4 giros, con entidades y luces, bajo el cielo, con el corte (por franjas y con velo), corrida la ventana y sin luces
+const wind = { levels: { wind: [0.9, 0.35], gust: 0.6 } as Partial<WeatherLevels> };
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `viento en la vegetación, giro ${q}`, theme: 'medieval', veg: true, pos: [176, 174], quarter: q, ticks: 97, stompEvery: 42, clima: wind });
+  SCENARIOS.push({ name: `viento en la vegetación con corte, giro ${q}`, theme: 'medieval', veg: true, pos: [224, 172], quarter: q, ticks: 60, clima: wind, section: { width: 64, painter: true, z: 3, torch: true } });
+  SCENARIOS.push({ name: `viento en la vegetación con velo, giro ${q}`, theme: 'medieval', veg: true, pos: [224, 172], quarter: q, ticks: 60, clima: wind, section: { width: 64, z: 1, ghost: { alpha: 0.35, dz: 4 } } });
+}
+for (const q of [0, 1] as Quarter[]) {
+  SCENARIOS.push({ name: `viento con la ventana corrida, giro ${q}`, theme: 'medieval', veg: true, pos: [172, 170], quarter: q, ticks: 60, shift: 'ida', clima: wind });
+  SCENARIOS.push({ name: `viento con la ventana corrida y vuelta, giro ${q}`, theme: 'medieval', veg: true, pos: [172, 170], quarter: q, ticks: 60, shift: 'vuelta', clima: wind });
+}
+SCENARIOS.push({ name: 'viento en la vegetación, sin luces', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, lights: false, clima: wind });
+SCENARIOS.push({ name: 'viento en la vegetación bajo el cielo, con niebla', theme: 'medieval', veg: true, pos: [196, 172], ticks: 45, cave: true, fog: true, clima: wind });
+SCENARIOS.push({ name: 'viento en la vegetación, subido por partes', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, prepared: true, clima: wind });
+SCENARIOS.push({ ...SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!, name: 'clima sin nada que se meza', clima: wind });
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
 
@@ -471,6 +496,9 @@ function viewOf(depth: number, b: Baked, x: number, y: number, z: number): { vx:
 }
 
 interface Result {
+  control?: { differ: number; mulOff2: number; addOff2: number; colorOff: number };   // con clima: la escena sin él
+  swayPx?: number;         // con clima: píxeles de la vista que salen de otra columna, y de ellos los que difieren
+  swayDiffer?: number;
   waterPx?: number;        // con agua en un mundo alto: píxeles con un tono del agua en la CPU
   secPx?: number;          // con corte al componer: píxeles de la vista sustituidos (máscara 1) y de borde (2)
   secBorder?: number;
@@ -575,7 +603,7 @@ async function run(): Promise<void> {
     if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld(!!sc.highWater.dig));
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
-      if (sc.veg) vegetate(world, [204, 184]);
+      if (sc.veg) vegetate(world, [204, 184], !!sc.clima);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
       addWorldFloaters(state, world);
@@ -638,6 +666,9 @@ async function run(): Promise<void> {
       ...(sc.xray ? { xray: { color: [120, 220, 255] as const } } : {}), ...(sc.cave ? { cave: [0.1, 0.09, 0.14] as const } : {}),
       ...(sc.clearBg ? { background: 'transparent' as const } : {}),
       ...(sc.fog ? { fog: { focusZ: maia.z + 8, start: 2, full: 10, color: [40, 44, 70] as const, strength: 0.75 } } : {}) };
+    // (?sinclima=1: las mismas escenas sin el clima, para saber qué diferencias son de antes)
+    const noClima = new URLSearchParams(location.search).has('sinclima');
+    if (sc.clima && !noClima) o = { ...o, weather: { weather: new Weather({ seed: 11, levels: sc.clima.levels }), tick: sc.ticks, camera: view.camera, ...sc.clima.frame } };
     if (sc.prepared && !prep) prep = gpu.prepareJob(b);
     if (prep) { let n = 0; while (!prep.run(-Infinity)) if (++n > 100000) throw new Error('la subida por partes no acaba'); }
     if (sc.warm) gpu.prewarm(b, o, sc.warm(state));
@@ -767,6 +798,17 @@ async function run(): Promise<void> {
     for (let e = gl.getError(); e !== gl.NO_ERROR && glErrors.length < 8; e = gl.getError()) glErrors.push(e);
     const r = compare(sc.name, { color: parts.view, mul: layers?.multiply ?? empty, add: layers?.add ?? empty, final: cpuFinal },
       { color: gColor, mul: gMul, add: gAdd, final: gFinal }, ambient, o.lights, [c1 - c0, c2 - c1], parts.total);
+    if (sc.clima && !noClima) {
+      // El control: la misma escena sin clima. La luz de la escena ya tiene empates sueltos a más de un nivel entre la CPU y la
+      // GPU (sombras) que no son del clima: con él puede haber los del control y uno más por cada 20000 píxeles; el color,
+      // ninguno
+      const o0: Frame2DOptions = { ...o, weather: null }, p0 = frame2DParts(rs, b, o0), l0 = p0.total ? shadeLayers(p0.total, o0, b) : null;
+      const c0f = l0 ? applyLayers(p0.view, l0) : p0.view;
+      const r0 = compare(sc.name, { color: p0.view, mul: l0?.multiply ?? empty, add: l0?.add ?? empty, final: c0f }, { color: gpu.read(rs, b, o0, 'color'), mul: gpu.read(rs, b, o0, 'multiply'), add: gpu.read(rs, b, o0, 'add'), final: gpu.read(rs, b, o0, 'frame') }, ambient, o.lights, [0, 0], p0.total);
+      r.control = { differ: r0.differ, mulOff2: r0.mulOff2, addOff2: r0.addOff2, colorOff: r0.colorOff };
+      const room = Math.ceil((VW * VH) / 20000);
+      if (!r.pass && r.share <= TOL_SHARE && !r.colorOff && !r.alphaOff && r.mulOff2 <= r0.mulOff2 + room && r.addOff2 <= r0.addOff2 + room) r.pass = true;
+    }
     if (glErrors.length) { r.glErrors = glErrors; r.pass = false; }
     if (sc.shift) r.gpuShifts = (window as unknown as { __gpuShifts: () => number }).__gpuShifts();
     if (before) {
@@ -849,6 +891,17 @@ async function run(): Promise<void> {
         if (off || !n) r.pass = false;
       }
       r.secInfo = { cut: o.section ?? L?.box ?? null, rect: L ? [L.x, L.y, L.w, L.h, L.count] : null, view: [vx, vy], feet: [rt.player.x, rt.player.y, rt.player.z], ghost: L?.ghost ? [L.ghost.z, L.ghost.count] : null };
+    }
+    if (sc.clima && sc.veg && !noClima) {
+      const L = sectionFor(b, o), from = swaySources(b, sceneLayer(L), L?.ghost?.on ?? null, climateTable(b, o)!, o.vx, o.vy, VW, VH);
+      r.swayPx = 0; r.swayDiffer = 0;
+      if (from) for (let t = 0; t < VW * VH; t++) {
+        if (from[t] === o.vx + (t % VW)) continue;
+        r.swayPx++;
+        if ([0, 1, 2, 3].some((ch) => cpuFinal[t * 4 + ch] !== gFinal[t * 4 + ch])) r.swayDiffer++;
+      }
+      // (una escena en la que no se mece nada no prueba nada)
+      if (!r.swayPx || r.swayDiffer > Math.max(4, r.swayPx * 0.005)) r.pass = false;
     }
     if (ghostSeq) ghostSeq(r, rs);
     results.push(r);
