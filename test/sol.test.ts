@@ -24,7 +24,7 @@ const opts = (b: { width: number; height: number }, weather: WeatherFrame | null
 describe('el sol', () => {
   it('sin pedirlo, sin cielo horneado, sin fuerza, de noche o bajo el horizonte, el cuadro de siempre', () => {
     const { b, state } = setup(), ref = frame2D(state, b, opts(b, null));
-    for (const f of [{ weather: W(), tick: 0 }, { weather: W(), tick: 0, sunlight: null }, { weather: W(), tick: 0, sunlight: { ...SUN, intensity: 0 } }, { weather: W({ sun: 0 }), tick: 0, sunlight: SUN }, { weather: W(), tick: 0, sunlight: { ...SUN, dir: [0, 1, -0.1] as const } }, { weather: W(), tick: 0, sunlight: daySun(0.9) }])
+    for (const f of [{ weather: W(), tick: 0 }, { weather: W(), tick: 0, sunlight: null }, { weather: W(), tick: 0, sunlight: { ...SUN, intensity: 0 } }, { weather: W({ sun: 0 }), tick: 0, sunlight: SUN }, { weather: W(), tick: 0, sunlight: { ...SUN, dir: [0, -1, -0.1] as const } }, { weather: W(), tick: 0, sunlight: { ...SUN, dir: [1, 0, -0.1] as const } }, { weather: W(), tick: 0, sunlight: daySun(0.9) }])
       expect(frame2D(state, b, opts(b, f))).toEqual(ref);
     const dry = setup(0, false);
     expect(sunLook(dry.b, { weather: W(), tick: 0, sunlight: SUN })).toBeNull();
@@ -62,6 +62,11 @@ describe('el sol', () => {
     for (let k = 0; k < 30; k++) expect(moved[k]).toBeCloseTo(later[k + 4]!, 6);
     const all = [0, 60, 120, 180, 240, 400, 600, 900].flatMap((t) => at({ clouds: 0.5, wind: [1, 0] }, t));
     expect(Math.max(...all) - Math.min(...all)).toBeGreaterThan(0.4);
+  });
+  it('la sombra de una nube está donde está la nube', () => {
+    const { b } = setup(), w = W({ clouds: 0.5 }), c = climateTable(b, opts(b, { weather: w, tick: 0 }))!;
+    // (en el centro de una casilla de 16 x 32, lo que dice el clima)
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 4; j++) expect(cloudShade(c, i * 16 + 8, j * 32 + 16)).toBeCloseTo(1 - CLOUD_DARK * w.cloudAt(i * 16 + 8, j * 32 + 16, 0), 2);
   });
   it('a una entidad le llega con el cielo de sus pies', () => {
     const run = (x: number, y: number, weather: WeatherFrame | null) => {

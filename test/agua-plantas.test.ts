@@ -1,6 +1,6 @@
 // Plantas que conviven con el agua: el agua no las borra ni las toma por fondo, ellas no borran el agua, y se ven a través
 import { describe, expect, it } from 'vitest';
-import { material, type Palette } from '../src/core';
+import { box, material, Model, type Palette } from '../src/core';
 import { bakeWorld } from '../src/world/bake';
 import { BlockGrid, BlockSet, type VoxsetFile } from '../src/world/blocks';
 import { frame2DParts, type Frame2DOptions } from '../src/world/frame2d';
@@ -9,6 +9,7 @@ import { StaticVoxels, WorldState } from '../src/world/state';
 import { WaterLayer, regionWater, takeWaterVoxels } from '../src/world/water';
 import { WorldView, type Quarter } from '../src/world/view';
 import { seenThrough, CLEAR_BASE, CLEAR_MAX } from '../src/world/waterlook';
+import { Weather } from '../src/world/weather';
 import type { World } from '../src/world/build';
 
 const PAL: Palette = { ramps: [
@@ -68,6 +69,30 @@ describe('plantas en el agua', () => {
       expect(aq.depth).toEqual(none.depth);        // la superficie sigue siendo la del agua
     }
   });
+  it('solo se ve la planta: el fondo de al lado sigue tapado, y una entidad delante no se vuelve transparente', () => {
+    // (la planta solo cambia sus píxeles: el resto del agua, igual que sin ella)
+    const none = frame(0, 2, 0), aq = frame(0, 2, 5);
+    let diff = 0;
+    for (let t = 0; t < none.view.length / 4; t++) if ([0, 1, 2].some((c) => none.view[t * 4 + c] !== aq.view[t * 4 + c])) diff++;
+    expect(diff).toBeLessThan(80);
+    // Una entidad hundida en el agua, justo delante de la planta: con planta o sin ella, su parte sumergida sale igual
+    const run = (h: number) => {
+      const { state } = pool(2, h), m = new Model({ ramps: [{ name: 'a', colors: ['#30f030'] }] }, 'caja');
+      box(m, -4, -2, 0, 4, 2, 4, material(0, 0));
+      state.entities.add({ model: m, x: 16, y: 13, z: 2, facing: 0, castsShadow: false });
+      const view = new WorldView(state, 0), b = bakeWorld(view.bakeable(), { topZ: 32, incline: 0.5 });
+      return { v: frame2DParts(view.frame(), b, { vx: 0, vy: 0, vw: b.width, vh: b.height, time: 0, lights: true, ambient: [0.8, 0.8, 0.8] }).view, b };
+    };
+    const a = run(0), p = run(4), [cx, cy] = a.b.cam.project(16, 11, 4);
+    for (let y = Math.floor(cy) - 2; y <= cy + 1; y++) for (let x = cx - 3; x <= cx + 3; x++) { const t = (y * a.b.width + Math.floor(x)) * 4; expect([p.v[t], p.v[t + 1], p.v[t + 2]]).toEqual([a.v[t], a.v[t + 1], a.v[t + 2]]); }
+  });
+  it('el sol alumbra la superficie del agua', () => {
+    const { state } = pool(2, 0), view = new WorldView(state, 0), b = bakeWorld(view.bakeable(), { topZ: 32, incline: 0.5, sky: true });
+    const o: Frame2DOptions = { vx: 0, vy: 0, vw: b.width, vh: b.height, time: 0, lights: true, ambient: [0.4, 0.4, 0.4] }, [x, y] = b.cam.project(30, 30, 8);
+    const i = (Math.floor(y) * b.width + Math.floor(x)) * 3, dry = frame2DParts(state, b, o).total![i]!;
+    const lit = frame2DParts(state, b, { ...o, weather: { weather: new Weather({ seed: 1 }), tick: 0, sunlight: { color: [1, 1, 1], intensity: 0.5, dir: [0, 0, 1] } } }).total![i]!;
+    expect(lit - dry).toBeCloseTo(0.5, 2);
+  });
   it('cuanto más hondas, más teñidas, hasta un tope', () => {
     const k = [0, 2, 6, 40].map((g) => seenThrough(g, 0.5, 0.8, -0.6));
     expect(k[0]).toBeCloseTo(CLEAR_BASE, 1);
@@ -95,6 +120,11 @@ describe('plantas en el agua', () => {
     for (const [x, y] of [[0, 0], [5, 5], [9, 9], [15, 15]] as const) expect(top(x, y)).toBe(8);
     expect(s.get(5, 5, 4)).toBe(material(2, 1));
     expect(s.get(4, 5, 4)).toBe(0);
+    // (y lo de agua que hay debajo de una planta también se quita)
+    const s2 = new StaticVoxels(PAL, 16, 16, 0, 15);
+    for (let z = 0; z < 8; z++) s2.set(3, 3, z, material(z < 2 ? 0 : z > 5 ? 2 : 1, 1));
+    takeWaterVoxels(s2, 0, 0, 15, 15, isWater, plant);
+    expect([s2.get(3, 3, 3), s2.get(3, 3, 6)]).toEqual([0, material(2, 1)]);
   });
   it('se siembran en el fondo del agua, con celdas de agua, y solo ahí', () => {
     const spec: RegionSpec = { seed: 3, width: 48, depth: 48, height: 12, surface: { base: 5, amplitude: 3, scale: 9 }, strata: [{ material: 1 }], seaLevel: 6, water: 2,

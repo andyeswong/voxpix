@@ -116,6 +116,12 @@ describe('lo que dejan', () => {
     }
     expect(s.exportChunks()).toEqual(v0);
   });
+  it('con menos cielo cuaja menos: junto al techo, después que a campo abierto', () => {
+    const { b, state } = setup(), ref = frame2DParts(state, b, opts(b, null)).view, p = frame2DParts(state, b, opts(b, { weather: covered(0.6, 0), tick: 0, cover: true })).view;
+    const part = (sky: number) => { let n = 0, m = 0; for (let t = 0; t < b.width * b.height; t++) if (b.face[t] === 4 && b.sky![t] === sky) { m++; if (p[t * 4] !== ref[t * 4]) n++; } return n / m; };
+    expect(part(5)).toBeGreaterThan(0.5);
+    expect(part(4)).toBeLessThan(part(5) - 0.15);
+  });
   it('lo mojado: oscurece lo que ve el cielo, más arriba que a los lados; lo de bajo techo, no', () => {
     const { b, state } = setup(), ref = frame2DParts(state, b, opts(b, null)).view, p = frame2DParts(state, b, opts(b, { weather: covered(0, 1), tick: 0, cover: true })).view;
     let dark = 0, under = 0;
