@@ -523,6 +523,16 @@ SCENARIOS.push({ name: 'agua rizada que brilla sola', theme: 'medieval', look: t
 SCENARIOS.push({ name: 'agua rizada con corte', theme: 'medieval', pos: [172, 170], ticks: 60, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } }, section: { width: 96, painter: true, z: 1, cross: 16 } });
 SCENARIOS.push({ name: 'agua rizada, sin luces', theme: 'medieval', pos: [172, 170], ticks: 60, lights: false, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
 SCENARIOS.push({ name: 'agua rizada, la ventana corrida', theme: 'medieval', pos: [172, 170], ticks: 60, shift: 'ida', clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
+// El sol con nubes que pasan: bajo el tejado en los 4 giros, con entidades, agua y vegetación, con corte (y velo), con todo el
+// clima a la vez, sin luz de cueva y corrida la ventana
+const solar = { color: [1, 0.86, 0.66] as const, intensity: 0.5, dir: [0.45, -0.5, 0.7] as const };
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `sol con nubes bajo tejado, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, clima: { levels: { clouds: 0.5, wind: [0.6, 0.2] }, frame: { sunlight: solar } } });
+  SCENARIOS.push({ name: `todo el clima, giro ${q}`, theme: 'medieval', veg: true, algas: true, cave: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { clouds: 0.6, wind: [0.8, 0.4], gust: 0.7, rain: 0.6, snow: 0.3 }, frame: { sunlight: solar, fall: {}, cover: true, waves: 1 }, snow: 0.4, wet: 0.6 } });
+  SCENARIOS.push({ name: `sol con corte y velo, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 60, clima: { levels: { clouds: 0.5 }, frame: { sunlight: solar } }, section: { width: 64, painter: true, z: 1, ghost: { alpha: 0.5 } } });
+}
+SCENARIOS.push({ name: 'sol con multitud', theme: 'medieval', cave: true, ticks: 40, setup: crowd(60), clima: { levels: { clouds: 0.4 }, frame: { sunlight: solar } } });
+SCENARIOS.push({ name: 'sol con la ventana corrida', theme: 'medieval', cave: true, pos: [172, 170], ticks: 60, shift: 'ida', clima: { levels: { clouds: 0.5 }, frame: { sunlight: solar } } });
 SCENARIOS.push({ ...SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!, name: 'clima sin nada que se meza', clima: wind });
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
@@ -852,7 +862,7 @@ async function run(): Promise<void> {
       const r0 = compare(sc.name, { color: p0.view, mul: l0?.multiply ?? empty, add: l0?.add ?? empty, final: c0f }, { color: gpu.read(rs, b, o0, 'color'), mul: gpu.read(rs, b, o0, 'multiply'), add: gpu.read(rs, b, o0, 'add'), final: gpu.read(rs, b, o0, 'frame') }, ambient, o.lights, [0, 0], p0.total);
       r.control = { differ: r0.differ, mulOff2: r0.mulOff2, addOff2: r0.addOff2, colorOff: r0.colorOff };
       // (un clima que no cambia nada no prueba nada)
-      if (!sc.name.startsWith('clima sin')) { r.climaPx = 0; for (let i = 0; i < VW * VH; i++) if ([0, 1, 2].some((ch) => parts.view[i * 4 + ch] !== p0.view[i * 4 + ch])) r.climaPx++; if (r.climaPx < 100) r.pass = false; }
+      if (!sc.name.startsWith('clima sin')) { r.climaPx = 0; for (let i = 0; i < VW * VH; i++) if ([0, 1, 2].some((ch) => parts.view[i * 4 + ch] !== p0.view[i * 4 + ch] || (parts.total && parts.total[i * 3 + ch] !== p0.total![i * 3 + ch]))) r.climaPx++; if (r.climaPx < 100) r.pass = false; }
       const room = Math.ceil((VW * VH) / 20000);
       if (!r.pass && (r.climaPx ?? 100) >= 100 && r.share <= TOL_SHARE && !r.colorOff && !r.alphaOff && r.mulOff2 <= r0.mulOff2 + room && r.addOff2 <= r0.addOff2 + room) r.pass = true;
     }

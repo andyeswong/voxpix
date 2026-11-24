@@ -19,6 +19,8 @@ import { FrameBudget, wrapJob } from '../../../src/view/budget';
 import { BakeWorker, type BakeWorkerPort } from '../../../src/world/horno';
 import { LiveWindow, type PreparedTrozo, type TrozoCtx } from '../../../src/world/live';
 import { WaterLayer, regionWater, type WaterChunk } from '../../../src/world/water';
+import { Weather } from '../../../src/world/weather';
+import { daySun } from '../../../src/lighting/daycycle';
 import { LevelPathField } from '../../../src/world/levelpaths';
 import { walkFrames, WALK_FRAME_MS } from '../../../src/anim/walk';
 import { set as SET, SPEC } from '../../../scripts/ventana-mundo';
@@ -66,7 +68,13 @@ void (async () => {
   const MUNDO = q.get('mundo');
   const ext: World | null = MUNDO ? await (await fetch(MUNDO)).json() as World : null;
   boot.mundo = Math.round(performance.now());
-  const set = ext ? BlockSet.fromJSON(ext.voxset) : SET;
+  // ?clima=viento,agua,cae,suelo,sol (o todo): esas piezas del clima en cada cuadro; con cualquiera, las hojas, la flor y la
+  // hierba del set se mecen si está viento. ?mece=1: las rampas se mecen aunque el clima esté apagado (lo que cuesta declararlo)
+  const CLIMA = new Set((q.get('clima') ?? '').replace('todo', 'viento,agua,cae,suelo,sol').split(',').filter(Boolean)), MECE = q.get('mece') === '1' || CLIMA.has('viento');
+  const meteo = new Weather({ seed: 5, levels: { wind: [0.8, 0.3], gust: 0.7, rain: CLIMA.has('cae') ? 0.9 : 0, snow: CLIMA.has('cae') ? 0.3 : 0, clouds: 0.5 } });
+  if (CLIMA.has('suelo')) meteo.importState({ ...meteo.exportState(), snow: 0.5, wet: 0.7 });
+  const baseSet = ext ? BlockSet.fromJSON(ext.voxset) : SET;
+  const set = !MECE ? baseSet : BlockSet.fromJSON((() => { const j = structuredClone(baseSet.toJSON()); for (const r of j.palette.ramps) { if (r.name === 'hojas') r.props = { ...r.props, sway: 2, anchor: 'self' }; if (r.name === 'flor' || r.name === 'hierba') r.props = { ...r.props, sway: 2, anchor: 'root', reach: 0 }; } return j; })());
   boot.bloques = Math.round(performance.now());
   const spec0 = { ...SPEC, height: 12, surface: { base: 6, amplitude: 2, scale: 9 }, seaLevel: 5, veins: (SPEC.veins ?? []).map((v) => ({ ...v, z: [1, 4] as [number, number] })), caves: { ...SPEC.caves!, z: [1, 4] as [number, number] } };
   const t0 = performance.now();
@@ -401,6 +409,10 @@ void (async () => {
     // ?prewarm=1: los 8 cuadros de andar de MAIA, a este y oeste, precalentados la primera vez (como el juego)
     if (!boot.primerCuadro) boot.primerPaso = Math.round(performance.now());
     if (PREWARM && !warmed) { compositor.prewarm(win.baked, o, walk.map((m) => ({ model: m, yaws: [90, 270], casts: true }))); warmed = true; boot.prewarm = Math.round(performance.now()); }
+    if (CLIMA.size) {
+      const tick = Math.round((now - start) * 0.06);
+      o.weather = { weather: meteo, tick, origin: [win.tx0 * T, win.ty0 * T], camera: win.view.camera, sway: CLIMA.has('viento') ? 1 : 0, waves: CLIMA.has('agua') ? 1 : 0, fall: CLIMA.has('cae') ? {} : null, solid: win.store, cover: CLIMA.has('suelo'), sunlight: CLIMA.has('sol') ? daySun(0.4) : null };
+    }
     compositor.frame(win.view.frame(), win.baked, o);
     if (water && frames.length > 60) {
       agua.copia.push((win.view.water as unknown as { visited?: number } | null)?.visited ?? 0);

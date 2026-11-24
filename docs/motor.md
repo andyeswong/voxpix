@@ -2042,3 +2042,25 @@ weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid
 `weather: { ..., waves: 1 }` riza el agua al pintarla: ondas que van con el viento y crecen con la ráfaga que pasa, y los
 anillos de la lluvia. Inclina la superficie (tono, brillo, reflejo y refracción); el simulador no cambia. Es un dibujo de 128
 vóxeles que se repite, fijo en el mundo. Al girar el viento, las ondas cambian de dirección a saltos pequeños.
+
+### El sol
+
+```ts
+weather: { weather, tick, origin, camera, sunlight: daySun(day.phase(tick)) }    // o { color, intensity, dir }
+```
+
+Con un horneado con `{ sky: true }`, suma una luz direccional a lo que ve el cielo, según la cara (y el agua, y las entidades
+por el cielo de sus pies), por la fuerza `sun` del clima y con las sombras de las nubes, que van con el viento. Sin rehornear.
+No proyecta sombras de los vóxeles: lo tapado lo dice el cielo horneado. Se suma a `ambient`, así que con sol conviene un
+ambiente más bajo (por encima de 1 sale brillo). `daySun` (`lighting/daycycle.ts`) da dirección, fuerza y color de una hora.
+
+### Detalles del clima
+
+- `reach: 0` con `anchor: 'root'` (o `'top'`): el alcance es lo que mide cada planta, para que una baja y una alta de la misma
+  rampa se mezan del todo en su punta.
+- Dos bloques que comparten rampa comparten su `sway`: si la tierra usa los tonos de las hojas, se mece también. Rampas
+  distintas para lo que se mece y lo que no.
+- Si se quita el suelo de debajo de una mata sin tocar la mata, en la GPU su altura de anclaje se rehace al rehornear ese
+  trozo de imagen.
+- Una planta flotante de vóxeles no sigue la superficie si baja el agua: para eso están los flotantes (`Floaters`).
+- El velo del corte (`ghost`) lleva el sol, pero no la nieve ni lo mojado.

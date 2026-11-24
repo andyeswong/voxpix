@@ -13,7 +13,7 @@
 import { DIR_VECTORS, unkey, FX_STRIDE, rgbOf } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
-import { sectionFor, ghostMix } from '../../world/frame2d';
+import { sectionFor, ghostMix, entitySun } from '../../world/frame2d';
 import { secIdx, windowBorderSpans, type SectionLayer } from '../../world/section';
 import { backlitAt, highlightMask, entitySprite, entitySky, warmEntity, HEADINGS, entityDepthRange, entityLightPick, emissiveMask, onView, shadowCasters, occupancy, screenBox, dropLook, SHADOW_REACH, EW, EH, BACKGROUND, fogParams, type Frame2DOptions, type EntitySprite } from '../../world/frame2d';
 import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type BakedLight } from '../../world/bake';
@@ -21,6 +21,7 @@ import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/
 import { materialsOf } from '../../core';
 import { fallSource, coverLook, coverInCut } from '../../world/precipitation';
 import { waveTile, WAVE_T, type WaveTile } from '../../world/waves';
+import { sunLook, type SunLook } from '../../world/sunlight';
 import { swayTable, swayCode, SWAY_FILL } from '../../world/sway';
 import { climateTable, CLIMATE_W, type ClimateTable } from '../../world/climate';
 import type { RenderState, LightId } from '../../world/state';
@@ -209,7 +210,7 @@ export class GpuCompositor {
       gl.bindVertexArray(null);
       return [vao, buf];
     };
-    [this.entVao, this.entBuf] = instanced(this.ent.prog, [['aPlace', 4], ['aPos', 4], ['aOcc', 4], ['aOccSize', 4], ['aMask', 2], ['aTint', 4], ['aSky', 1]]);
+    [this.entVao, this.entBuf] = instanced(this.ent.prog, [['aPlace', 4], ['aPos', 4], ['aOcc', 4], ['aOccSize', 4], ['aMask', 2], ['aTint', 4], ['aSky', 1], ['aSun', 1]]);
     [this.contactVao, this.contactBuf] = instanced(this.contact.prog, [['aFeet', 3]]);
     this.vao = gl.createVertexArray()!;
     this.dropsVao = gl.createVertexArray()!;
@@ -348,7 +349,9 @@ export class GpuCompositor {
     up = performance.now();
     const E = this.ensureEntTarget(o.vw, o.vh);
     const sprites = state.entities.map((e) => entitySprite(b, e, o)).filter((d) => onView(d, o));
-    this.drawEntities(state, b, sprites, E, o, lights.length);
+    const sun = clim && o.lights && this.tSky ? sunLook(b, o.weather) : null;
+    this.drawEntities(state, b, sprites, E, o, lights.length, sun ? { look: sun, table: clim! } : null);
+    this.veilSun = sun ? { look: sun, table: clim! } : null;
     this.veilEnt = E; this.veilLights = lights.length;
     this.parts.entities = performance.now() - up;
     upMs += this.parts.entities;
@@ -373,7 +376,7 @@ export class GpuCompositor {
     const useSky = !!(o.lights && o.cave && b.sky && this.tSky);
     gl.uniform1i(s.u.uUseSky, useSky ? 1 : 0);
     const cover = clim && this.tSky ? coverLook(b, o.weather) : null;
-    bindTex(gl, 13, gl.TEXTURE_2D, useSky || cover ? this.tSky : null, s.u.uSky);
+    bindTex(gl, 13, gl.TEXTURE_2D, useSky || cover || sun ? this.tSky : null, s.u.uSky);
     if (useSky) gl.uniform3fv(s.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform1i(s.u.uCover, cover ? 1 : 0);
     if (cover) gl.uniform4f(s.u.uCoverP, cover.snow, cover.wetTop, cover.wetSide, coverInCut(sec) ? 1 : 0);
@@ -403,6 +406,7 @@ export class GpuCompositor {
     gl.uniform3f(s.u.uBg, bg[0] / 255, bg[1] / 255, bg[2] / 255);
     gl.uniform1i(s.u.uBgClear, clearBg ? 1 : 0);
     gl.uniform3f(s.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
+    this.setSun(s, sun, clim);
     gl.uniform1i(s.u.uSway, sway ? 1 : 0);
     gl.uniform1i(s.u.uAquatic, swayTable(b.source.palette)?.water ? 1 : 0);
     if (clim) this.setClimate(s, clim);
@@ -456,6 +460,7 @@ export class GpuCompositor {
     // (con ventana, el agua de la caja solo se quita en los píxeles de dentro: lo dice la máscara de la capa)
     gl.uniform1i(w.u.uCutWin, this.secLayer?.window ? 1 : 0);
     this.bindSection(w, false);
+    this.setSun(w, sun, clim);
     gl.uniform1i(w.u.uWaves, waves ? 1 : 0);
     if (waves) { this.setClimate(w, waves.climate); gl.uniform2i(w.u.uWaveK, waves.kx, waves.ky); }
     gl.uniform1i(w.u.uLights, o.lights ? 1 : 0);
@@ -531,6 +536,11 @@ export class GpuCompositor {
     }
   }
 
+  private veilSun: { look: SunLook; table: ClimateTable } | null = null;
+  private setSun(p: Program, sun: SunLook | null, c: ClimateTable | null): void {
+    this.gl.uniform1i(p.u.uSun, sun ? 1 : 0);
+    if (sun && c) { this.setClimate(p, c); this.gl.uniform3fv(p.u.uSunFace, sun.faces); }
+  }
   private setClimate(p: Program, c: ClimateTable): void {
     const gl = this.gl;
     gl.uniform4i(p.u.uClim, c.x0, c.y0, c.w, c.h);
@@ -578,6 +588,7 @@ export class GpuCompositor {
       gl.uniform1fv(p.u.uBack, this.backVals);
       gl.uniform1i(p.u.uNLights, o.lights ? this.veilLights : 0);
       this.applyCasters(p.u);
+      this.setSun(p, this.veilSun?.look ?? null, this.veilSun?.table ?? null);
     }
     gl.uniform1i(p.u.uMode, mode);
     gl.uniform1i(p.u.uFlip, flip ? 1 : 0);
@@ -1046,7 +1057,7 @@ export class GpuCompositor {
   }
 
   // Las entidades a la capa de entidades (color, su luz, profundidad, con z-buffer) y sus sombras de contacto
-  private drawEntities(state: RenderState, b: Baked, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number): void {
+  private drawEntities(state: RenderState, b: Baked, sprites: EntitySprite[], E: EntTarget, o: Frame2DOptions, nLights: number, sun: { look: SunLook; table: ClimateTable } | null): void {
     const gl = this.gl;
     gl.bindFramebuffer(gl.FRAMEBUFFER, E.fbo);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
@@ -1086,6 +1097,7 @@ export class GpuCompositor {
       const tint = d.e.tint;
       if (tint) { ed[q + 18] = tint[0]; ed[q + 19] = tint[1]; ed[q + 20] = tint[2]; ed[q + 21] = 1; } else ed[q + 21] = 0;
       ed[q + 22] = entitySky(b, d, o);
+      ed[q + 23] = sun ? entitySun(b, d, sun.table) : 0;
       cd[k * 3] = d.fx - o.vx; cd[k * 3 + 1] = d.fy - o.vy; cd[k * 3 + 2] = d.sry;
     }
     this.syncBodies();
@@ -1119,6 +1131,7 @@ export class GpuCompositor {
     gl.uniform1i(p.u.uLights, o.lights ? 1 : 0);
     gl.uniform3f(p.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
     const entSky = !!(o.lights && o.cave && b.sky);
+    gl.uniform3f(p.u.uSunEnt, sun?.look.entity[0] ?? 0, sun?.look.entity[1] ?? 0, sun?.look.entity[2] ?? 0);
     gl.uniform1i(p.u.uUseSky, entSky ? 1 : 0);
     if (entSky) gl.uniform3fv(p.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform3fv(p.u.uDirs, DIR_VECTORS.flat());
@@ -1538,8 +1551,8 @@ function fillFace(b: Baked, out: FaceUp, vals: Float32Array, x0: number, y0: num
   }
 }
 
-// Floats por entidad en el búfer de instancias (aPlace, aPos, aOcc, aOccSize, aMask, aTint, aSky)
-const REC = 23;
+// Floats por entidad en el búfer de instancias (aPlace, aPos, aOcc, aOccSize, aMask, aTint, aSky, aSun)
+const REC = 24;
 
 // ---- utilidades de WebGL
 

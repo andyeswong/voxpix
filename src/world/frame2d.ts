@@ -11,6 +11,7 @@ import { withEffectLights, drawEffectsLayer, drawEffects } from './effects';
 import { climateTable, type ClimateTable, type WeatherFrame } from './climate';
 import { fallSource, coverLook, applyCover, coverInCut, type CoverLook } from './precipitation';
 import { waveTile } from './waves';
+import { sunLook, sunAmount, type SunLook } from './sunlight';
 import { swaySources, aquaticMask, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
@@ -222,7 +223,7 @@ export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: Re
   const total = o.lights ? new Float32Array(vw * vh * 3) : null;
   const sk = total && o.cave && b.sky && sec.sky ? skyAmbient(o.ambient, o.cave) : null;
   const base = sk ? new Float32Array(vw * vh * 3) : null;
-  const at: number[] = [];
+  const at: number[] = [], clim = total ? climateTable(b, o) : null, sun = clim ? sunLook(b, o.weather) : null, un = unprojector(b);
   for (let j = 0; j < sec.h; j++) for (let i = 0; i < sec.w; i++) {
     const q = secIdx(sec, sec.x + i, j);
     if (sec.mask[q] !== 1 || !g.on[q]) continue;
@@ -237,6 +238,7 @@ export function applyGhost(px: Uint8ClampedArray, depth: Float32Array, state: Re
       total[t * 3 + c] = v;
       if (base) base[t * 3 + c] = v;
     }
+    if (total && sun && sec.sky) addSun(total, t * 3, sun, clim!, sec.face[q]!, sec.sky[q]!, sec.x + i, worldYAt(un, rowP(un, sec.y + j), sec.depth[q]!));
     at.push(t);
   }
   if (!at.length) return;
@@ -341,9 +343,14 @@ function skyBase(b: Baked, o: Frame2DOptions, t: Float32Array, depth?: Float32Ar
   return out;
 }
 
+function addSun(total: Float32Array, i: number, s: SunLook, t: ClimateTable, face: number, sky: number, x: number, wy: number): void {
+  if (face < 0 || sky <= 0) return;
+  const k = sunAmount(t, x, wy, sky);
+  for (let c = 0; c < 3; c++) total[i + c] = total[i + c]! + s.faces[face * 3 + c]! * k;
+}
 // Lo quieto de un cuadro antes de las entidades: la imagen horneada con el corte, y la luz que le llega
 interface StaticParts { view: Uint8ClampedArray; total: Float32Array | null; depth: Float32Array }
-function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null, cover: { look: CoverLook; table: ClimateTable } | null): StaticParts {
+function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: SectionLayer | null, meteo: { cover: CoverLook | null; sun: SunLook | null; table: ClimateTable } | null): StaticParts {
   const { vx, vy, vw, vh, ambient } = o;
   const view = new Uint8ClampedArray(vw * vh * 4);
   const depthBuf = new Float32Array(vw * vh).fill(Infinity);
@@ -376,14 +383,14 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
     }
   }
   // La nieve y lo mojado, sobre el color
-  if (cover) {
+  if (meteo?.cover) {
     const u = unprojector(b), inCut = coverInCut(sec);
     for (let y = 0; y < vh; y++) for (let x = 0, P = rowP(u, vy + y); x < vw; x++) {
       const t = y * vw + x, gx = vx + x, gy = vy + y;
       if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
       const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
       if (si >= 0 && sec!.mask[si] === 1 && !inCut) continue;
-      applyCover(view, t * 4, cover.look, cover.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
+      applyCover(view, t * 4, meteo.cover, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
     }
   }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
@@ -405,6 +412,15 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
       else { total[t] = ambient[0]; total[t + 1] = ambient[1]; total[t + 2] = ambient[2]; }
     }
     for (const bl of b.lights) addDynamicLight(b, bl.light, total, o, sec, true);
+  }
+  if (total && meteo?.sun) {
+    const u = unprojector(b);
+    for (let y = 0; y < vh; y++) for (let x = 0, P = rowP(u, vy + y); x < vw; x++) {
+      const t = y * vw + x, gx = vx + x, gy = vy + y;
+      if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
+      const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
+      addSun(total, t * 3, meteo.sun, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!));
+    }
   }
   if (total) {
     // Luces dinámicas (las añadidas en partida): por cuadro, en su radio
@@ -435,9 +451,10 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   // El viento: de qué columna de la imagen sale cada píxel. Lo quieto se compone con un margen a los lados y se recoge
   const clim = climateTable(b, o), from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh) : null;
+  const sun = clim && o.lights ? sunLook(b, o.weather) : null;
   const waves = clim && state.water ? waveTile(b, o.weather, clim) : null;
   const cover = clim ? coverLook(b, o.weather) : null;
-  let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover ? { look: cover, table: clim! } : null);
+  let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover || sun ? { cover, sun, table: clim! } : null);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
   const { view, depth: depthBuf, total } = fixed;
   // Las plantas de agua, que se ven a través de ella (donde no las tape una entidad)
@@ -515,7 +532,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
 
   // El agua (tapa lo sumergido), los efectos y las gotas
-  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear || waves ? { clear, waves } : null);
+  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear || waves || sun ? { clear, waves, sun: sun ? { look: sun, table: clim! } : null } : null);
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const falling = fallSource(b, o);
   if (falling) drawEffects(falling, b, view, depthBuf, total, vx, vy, vw, vh);
@@ -669,13 +686,22 @@ function entityAmbient(b: Baked | undefined, d: EntitySprite, o: Frame2DOptions)
   return [t[k * 3]!, t[k * 3 + 1]!, t[k * 3 + 2]!];
 }
 
+// Cuánto sol le llega a una entidad (0 sin sol): el cielo del píxel de sus pies y las nubes
+export function entitySun(b: Baked, d: EntitySprite, t: ClimateTable): number {
+  const inside = d.fx >= 0 && d.fy >= 0 && d.fx < b.width && d.fy < b.height;
+  return Math.fround(sunAmount(t, d.X, d.Y, inside && b.sky ? b.sky[d.fy * b.width + d.fx]! : SKY_RAYS));
+}
+
 export function entityLight(state: RenderState, d: EntitySprite, o: Frame2DOptions, b?: Baked): Float32Array {
   const pick = entityLightPick(state, d, o);
   const lights: PointLight3D[] = entityLocalLights(state, d, o)
     .filter((l) => Math.hypot(l.x, l.y) < l.radius + 20 && (!pick || pick.includes(l.index)));
   const { e } = d;
   // Las entidades se iluminan como sólidas, en la CPU y en la GPU: los materiales (follaje, vidrio) son del escenario
-  const total = lightField3D(e.model, d.img, camera(d.ro), lights, entityAmbient(b, d, o), { floor: false, materials: false });
+  const clim = b && o.weather?.sunlight ? climateTable(b, o) : null, sun = clim ? sunLook(b!, o.weather) : null;
+  let amb = entityAmbient(b, d, o);
+  if (sun) { const k = entitySun(b!, d, clim!); amb = [amb[0] + sun.entity[0] * k, amb[1] + sun.entity[1] * k, amb[2] + sun.entity[2] * k]; }
+  const total = lightField3D(e.model, d.img, camera(d.ro), lights, amb, { floor: false, materials: false });
   // Lo emisivo lleva su propia luz: se ve con su color, sin que la luz del mundo lo oscurezca
   const em = emissiveMask(d);
   if (em) for (let i = 0; i < em.length; i++) if (em[i]) total.fill(EMISSIVE_LIGHT, i * 3, i * 3 + 3);

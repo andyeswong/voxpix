@@ -5,6 +5,7 @@
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
 import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
+import { CLOUD_DARK } from '../../world/sunlight';
 import { SNOW_COLOR, SNOW_MIX } from '../../world/precipitation';
 import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
 
@@ -46,7 +47,18 @@ vec4 climateAt(float vx, float vy) {
   ivec2 c = ivec2(int(floor((vx + uClimK.x) / 16.0)), int(floor((vy + uClimK.y + 1.0 / 1024.0) / 32.0))) - uClim.xy;
   c = clamp(c, ivec2(0), uClim.zw - 1);
   return texelFetch(uLightTab, ivec2(c.x, c.y + ${MAX_LIGHTS}), 0);
-}`;
+}
+// El sol (src/world/sunlight.ts): lo que suma a cada cara, y la sombra de las nubes
+uniform bool uSun;
+uniform vec3 uSunFace[6];
+float cloudAt(ivec2 c) { c = clamp(c - uClim.xy, ivec2(0), uClim.zw - 1); return texelFetch(uLightTab, ivec2(c.x, c.y + ${MAX_LIGHTS}), 0).a; }
+float cloudShade(float vx, float vy) {
+  vec2 u = vec2((vx + uClimK.x) / 16.0, (vy + uClimK.y + 1.0 / 1024.0) / 32.0) - 0.5, f = fract(u);
+  ivec2 i = ivec2(floor(u));
+  float a = cloudAt(i) * (1.0 - f.x) + cloudAt(i + ivec2(1, 0)) * f.x, b = cloudAt(i + ivec2(0, 1)) * (1.0 - f.x) + cloudAt(i + ivec2(1, 1)) * f.x;
+  return 1.0 - ${CLOUD_DARK} * (a * (1.0 - f.y) + b * f.y);
+}
+vec3 sunOn(int face, float sky, float vx, float vy) { return uSunFace[face] * (sky / 5.0 * cloudShade(vx, vy)); }`;
 
 // El corte al componer (frame2d.ts, Frame2DOptions.section / sectionLayer): la capa en su recuadro de la imagen
 // horneada, en dos texturas (con 16 unidades de textura y la 15 para subir, no caben más): el color; y profundidad, y
@@ -309,6 +321,7 @@ void main() {
       float wy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
       vec3 P = vec3(float(s.x), wy, Pp - uA * wy);
       vec3 n = uDirs[f];
+      if (uSun) total += sunOn(f, float(sm > 0 ? secSky(s) : int(texelFetch(uSky, s, 0).r)), float(s.x), wy);
       for (int i = 0; i < uNLights; i++) {
         if (lightMeta(i).z == 0.0 && !(sm == 1 && lightMeta(i).x >= 0.0)) continue;
         float w = contribution(i, P, n, back);
@@ -482,6 +495,7 @@ void main() {
   vec3 tc = uTones[tone];
   float alpha = !basin ? min(0.6, d) : d >= 1.5 ? 1.0 : min(1.0, 0.45 + d * 0.35 + (tone == 4 ? 0.4 : 0.0));
   vec3 lt = max(vec3(uGlow), uAmbient * vec3(1.25, 1.25, 1.3));
+  if (uSun && uLights) lt += uSunFace[4] * cloudShade(float(gx * CELL + 1), float(gy * CELL + 1));
   vec3 sp3 = vec3(0.0);
   float spec = 0.0;
   float caustic = 1.0 + clamp(-lap * 6.0, -0.6, 2.5);
@@ -652,6 +666,7 @@ uniform sampler3D uOcc;
 uniform sampler2D uContact;
 out vec4 oColor;
 
+${CLIMATE}
 ${LIGHT_FNS}
 
 const int BAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
@@ -703,6 +718,7 @@ vec3 veilLight(ivec2 t, ivec2 s, vec4 gg) {
     float Pp = uOriginY - (float(s.y) + 0.5);
     vec3 P = vec3(float(s.x), gg.g, Pp - uA * gg.g);
     vec3 n = uDirs[f];
+    if (uSun) total += sunOn(f, gg.a, float(s.x), gg.g);
     for (int i = 0; i < uNLights; i++) {
       if (lightMeta(i).z == 0.0 && !(lightMeta(i).x >= 0.0)) continue;
       float w = contribution(i, P, n, back);
@@ -791,6 +807,8 @@ in vec4 aOccSize;                    // tamaño del cuerpo, w = 1 si lleva luz
 in vec2 aMask;                       // qué luces la alumbran (bits 0-15 y 16-31), con tope de luces por entidad
 in vec4 aTint;                       // tinte plano (r, g, b) y w = 1 si lo lleva (Entity.tint)
 in float aSky;                       // el cielo de sus pies (0..5; frame2d.ts, entitySky)
+in float aSun;                       // cuánto sol le llega (frame2d.ts, entitySun)
+flat out float vSun;
 uniform vec2 uViewSize;
 uniform vec2 uCell;
 flat out float vSky;
@@ -801,7 +819,7 @@ flat out vec4 vOccSize;
 flat out uint vMask;
 flat out vec4 vTint;
 void main() {
-  vPlace = aPlace; vPos = aPos; vOcc = aOcc; vOccSize = aOccSize; vTint = aTint; vSky = aSky;
+  vPlace = aPlace; vPos = aPos; vOcc = aOcc; vOccSize = aOccSize; vTint = aTint; vSky = aSky; vSun = aSun;
   vMask = uint(aMask.x) | (uint(aMask.y) << 16u);
   vec2 p = aPlace.xy + aCorner * uCell;
   gl_Position = vec4(p / uViewSize * 2.0 - 1.0, 0.0, 1.0);
@@ -829,6 +847,8 @@ flat in vec4 vOccSize;
 flat in uint vMask;
 flat in vec4 vTint;
 flat in float vSky;
+flat in float vSun;
+uniform vec3 uSunEnt;
 layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oLight;
 layout(location = 2) out vec4 oDepth;
@@ -881,6 +901,7 @@ void main() {
   float depth = texelFetch(uSprDepth, ivec3(ij, layer), 0).r + vPlace.w;
   gl_FragDepth = clamp((depth - uDepthRange.x) * uDepthRange.y, 0.0, 1.0);
   vec3 total = uUseSky ? uSkyAmb[int(vSky + 0.5)] : uAmbient;
+  if (uLights) total += uSunEnt * vSun;
   uvec4 vx = texelFetch(uSprVox, ivec3(ij, layer), 0);
   if (vTint.w > 0.5 && vx.a != 255u) { c.rgb = vTint.rgb; total = vec3(${EMISSIVE}); }   // tinte plano (Entity.tint)
   else if (vx.a != 255u && (vx.a & 128u) != 0u) total = vec3(${EMISSIVE});    // emisivo: su propia luz (frame2d.ts)

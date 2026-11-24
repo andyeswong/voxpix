@@ -1,9 +1,12 @@
+import type { SunLook } from './sunlight';
+import type { ClimateTable } from './climate';
 import type { WaveTile } from './waves';
 
 // Lo que el cuadro le pide al agua al pintarla (drawWater y FRAG_WATER): además de lo de siempre
 export interface WaterLook {
   // Por píxel de la vista: 1 donde lo que quedó es una planta de agua (MaterialProps.aquatic), que se ve a través del agua
   clear?: Uint8Array | null;
+  sun?: { look: SunLook; table: ClimateTable } | null;   // el sol sobre la superficie (sunlight.ts)
   waves?: WaveTile | null;      // el rizado del viento y la lluvia (waves.ts)
 }
 

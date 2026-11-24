@@ -20,6 +20,9 @@ export interface WeatherFrame {
   solid?: StaticVoxels;
   // Lo que dejan, con un horneado con cielo: nieve sobre las caras de arriba y lo mojado (Weather.cover)
   cover?: boolean;
+  // El sol (sunlight.ts), con un horneado con cielo: su color, su fuerza y hacia dónde está (ejes del mundo, hacia el sol).
+  // daySun (lighting/daycycle.ts) da los tres de una hora del día. null: sin sol, lo de siempre
+  sunlight?: { color: readonly [number, number, number]; intensity: number; dir?: readonly [number, number, number] } | null;
   waves?: number;                            // 0..1: cuánto rizan el agua el viento y la lluvia (0)
 }
 

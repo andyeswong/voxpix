@@ -16,6 +16,7 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
+import { cloudShade } from './sunlight';
 import { waveSlope } from './waves';
 import { climateCell } from './climate';
 import { seenThrough, type WaterLook } from './waterlook';
@@ -833,6 +834,10 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     // Luz difusa en la superficie, su brillo especular, y la que atraviesa hasta el fondo (cáusticas)
     const glow = w.glow ?? 0;
     let lr = Math.max(glow, ambient[0] * 1.25), lg = Math.max(glow, ambient[1] * 1.25), lb = Math.max(glow, ambient[2] * 1.3), spec = 0, sr = 0, sg = 0, sb = 0;
+    if (total && look?.sun) {
+      const { look: s, table } = look.sun, k = cloudShade(table, gx * CELL + 1, gy * CELL + 1);
+      lr += s.faces[12]! * k; lg += s.faces[13]! * k; lb += s.faces[14]! * k;
+    }
     const caustic = 1 + Math.max(-0.6, Math.min(2.5, -lap * 6));
     if (total) for (const l of lights) {
       const cx = gx * CELL + 1, cy = gy * CELL + 1;

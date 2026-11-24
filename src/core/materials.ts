@@ -30,7 +30,7 @@ export interface MaterialProps {
   ladder: boolean;    // se trepa: mientras un cuerpo de moveBodyLevels lo toca, sube y baja con la entrada vertical y no
                       // cae (runtime/levels.ts). El motor no sabe qué es: quien lo usa marca el material
   // El viento (world/sway.ts), solo al componer con Frame2DOptions.weather: cuántos píxeles se mece como mucho (0: nada) y
-  // desde dónde: 'self', entero (una copa); 'root', anclado abajo, nada en la raíz y todo a `reach` vóxeles (una mata);
+  // desde dónde: 'self', entero (una copa); 'root', anclado abajo, nada en la raíz y todo a `reach` vóxeles (una mata; 0: lo que mida la planta);
   // 'top', anclado arriba (lo que cuelga). aquatic: además se mece con la corriente y se ve a través del agua
   sway: number;
   anchor: 'self' | 'root' | 'top';

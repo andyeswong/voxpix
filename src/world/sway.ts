@@ -29,7 +29,7 @@ export function swayTable(p: Palette): SwayTable | null {
     const a = i * MAX_TONES + 1, b = a + MAX_TONES;
     t!.amount.fill(Math.max(0, Math.min(SWAY_MAX, m.sway)), a, b);
     t!.anchor.fill(m.anchor === 'root' ? 1 : m.anchor === 'top' ? 2 : 0, a, b);
-    t!.reach.fill(Math.max(1, m.reach), a, b);
+    t!.reach.fill(Math.max(0, m.reach), a, b);
     t!.aquatic.fill(m.aquatic ? SWAY_AQUATIC : 0, a, b);
   });
   cache.set(p, t);
@@ -46,9 +46,11 @@ export function swayCode(t: SwayTable, s: Pick<StaticVoxels, 'get'>, k: number):
   const anchor = t.anchor[v]!;
   let f = 1;
   if (anchor) {
-    const dir = anchor === 1 ? -1 : 1, reach = t.reach[v]!;
-    let h = 1;
+    const dir = anchor === 1 ? -1 : 1, own = t.reach[v] === 0;
+    let h = 1, reach = own ? WALK : t.reach[v]!;
     for (; h <= WALK && h <= reach; h++) { const u = s.get(x, y, z + dir * h); if (u && !(t.amount[u]! > 0)) break; }
+    // (reach 0: lo que mide la planta, hasta su punta)
+    if (own) { let up = 0; while (up < WALK && t.amount[s.get(x, y, z - dir * (up + 1))]! > 0) up++; reach = h + up; }
     f = Math.min(1, h / reach);
   }
   return t.aquatic[v]! | Math.floor(a * f * SWAY_UNIT + 0.5);

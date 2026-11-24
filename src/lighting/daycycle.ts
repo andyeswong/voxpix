@@ -66,3 +66,11 @@ export class DayCycle {
     return (a[0] + a[1] + a[2]) / 3 < below;
   }
 }
+
+// El sol a una hora del día (0..1; 0,25 sale, 0,5 mediodía, 0,75 se pone): hacia dónde está (ejes del mundo: sale por el este y
+// pasa por el sur), su fuerza y su color, cálido junto al horizonte. Para WeatherFrame.sunlight; de noche, intensity 0
+export function daySun(phase: number, noon = 0.55): { dir: [number, number, number]; intensity: number; color: [number, number, number] } {
+  const p = ((phase % 1) + 1) % 1, a = (p - 0.25) * 2 * Math.PI, up = Math.sin(a), low = Math.max(0, Math.min(1, up / 0.5));
+  const d: [number, number, number] = [Math.cos(a), -0.45 * Math.max(0, up), Math.max(0, up)], len = Math.hypot(d[0], d[1], d[2]) || 1;
+  return { dir: [d[0] / len, d[1] / len, d[2] / len], intensity: up <= 0 ? 0 : noon * Math.min(1, up / 0.25), color: [1, 0.62 + 0.34 * low, 0.36 + 0.5 * low] };
+}
