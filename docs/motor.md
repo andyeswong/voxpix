@@ -2008,3 +2008,17 @@ frame2D(state, baked, { ...o, weather: { weather, tick, origin, camera: view.cam
   que ve un agente no cambian. El corrimiento es en horizontal de pantalla y a saltos de 1/12 s.
 - Los píxeles con velo (`ghost`) no se mecen, y lo del corte no se sale de su recuadro.
 - Una paleta con rampas que se mecen sube la cara de cada píxel en 16 bits en vez de 8; las demás, como siempre.
+
+### Plantas en el agua
+
+El agua fluida (`WaterLayer`) va por columnas, encima de lo que es fondo: una planta de una rampa sin `bed` (`follaje`) no la
+tapa, ni la para, ni se borra al correr el agua. Lo que hace falta para que convivan:
+
+- `props: { aquatic: true }` en su rampa: se ve a través del agua (más teñida cuanto más honda, también en agua que de otro
+  modo es opaca) y se mece con una corriente suave aunque no haya viento (con `weather` y `sway`).
+- `props: { waterlogged: true }` en su bloque: su celda cuenta como agua. Al cargar un trozo,
+  `regionWater(r, set.waterTypes(agua), N, at)`; con agua en vóxeles, `takeWaterVoxels(..., isWater, through)` las deja.
+- `scatter` con `inWater: true` siembra en el fondo del agua y puede ocupar celdas de agua (en `mapgen` y `regiongen`).
+
+Ponerlas o quitarlas con `follow` no cambia el agua. Lo guardado no cambia: las celdas del bloque y el agua del trozo
+(`WaterLayer.save`) van cada una por su lado. La corriente es del aspecto: no sale del flujo del simulador.

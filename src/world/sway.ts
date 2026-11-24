@@ -15,7 +15,7 @@ export const SWAY_AQUATIC = 128;            // y este bit si es de los de agua
 export const SWAY_FILL = SWAY_MAX + 2;      // hasta dónde se busca con qué llenar el hueco que deja algo al correrse
 const WALK = 48;                            // vóxeles que se bajan (o suben) como mucho buscando la raíz
 
-interface SwayTable { amount: Float32Array; anchor: Uint8Array; reach: Float32Array; aquatic: Uint8Array }
+interface SwayTable { amount: Float32Array; anchor: Uint8Array; reach: Float32Array; aquatic: Uint8Array; water: boolean }
 const cache = new WeakMap<Palette, SwayTable | null>();
 // Lo que se mece de una paleta, por valor de vóxel; null si nada
 export function swayTable(p: Palette): SwayTable | null {
@@ -24,7 +24,7 @@ export function swayTable(p: Palette): SwayTable | null {
   const ms = p.ramps.map(rampMaterial);
   if (!ms.some((m) => m.sway > 0 || m.aquatic)) { cache.set(p, null); return null; }
   const n = MAX_RAMPS * MAX_TONES + 1;
-  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n) };
+  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n), water: ms.some((m) => m.aquatic) };
   ms.forEach((m, i) => {
     const a = i * MAX_TONES + 1, b = a + MAX_TONES;
     t!.amount.fill(Math.max(0, Math.min(SWAY_MAX, m.sway)), a, b);
@@ -109,3 +109,22 @@ export function swaySources(b: Baked, sec: SectionLayer | null, veil: Uint8Array
 }
 const secAt = (sec: SectionLayer | null, gx: number, gy: number): number =>
   sec && gx >= sec.x && gy >= sec.y && gx < sec.x + sec.w && gy < sec.y + sec.h ? secIdx(sec, gx, gy - sec.y) : -1;
+
+// Qué píxeles de la vista son de una planta de agua (null si no hay ninguna): con from (swaySources), de donde salen
+export function aquaticMask(b: Baked, sec: SectionLayer | null, veil: Uint8Array | null, from: Int32Array | null, vx: number, vy: number, vw: number, vh: number): Uint8Array | null {
+  const tab = swayTable(b.source.palette);
+  if (!tab?.water) return null;
+  const out = new Uint8Array(vw * vh);
+  let any = false;
+  for (let t = 0; t < out.length; t++) {
+    const x = t % vw, gy = vy + (t - x) / vw, gx = from ? from[t]! : vx + x;
+    if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height) continue;
+    const q = secAt(sec, gx, gy), m = q >= 0 ? sec!.mask[q]! : 0;
+    if (m === 1 && veil?.[q]) continue;
+    const k = m ? sec!.pick[q]! : b.pick[gy * b.width + gx]!;
+    if (Number.isNaN(k)) continue;
+    const z = (k % KEY_SPAN) - KEY_OFF, r = Math.floor(k / KEY_SPAN);
+    if (tab.aquatic[b.source.get(Math.floor(r / KEY_SPAN) - KEY_OFF, (r % KEY_SPAN) - KEY_OFF, z)]!) { out[t] = 1; any = true; }
+  }
+  return any ? out : null;
+}

@@ -202,11 +202,11 @@ export function generateRegion(spec: RegionSpec, region: Region): GeneratedRegio
     const cand = new Map<number, { x: number; y: number; z: number; p: number }>();
     for (let y = cy0; y <= cy1; y++) for (let x = cx0; x <= cx1; x++) {
       const h = hAt(x, y);
-      if (h === NONE || wetAt(x, y) || h < box.zlo || !on.has(cells[ci(x, y, h)]!)) continue;
+      if (h === NONE || wetAt(x, y) !== !!sc.inWater || h < box.zlo || !on.has(cells[ci(x, y, h)]!)) continue;
       if (lattice(x, y, dsOld) >= sc.density) continue;
       const fits = sc.structure.every(([dx, dy, dz]) => {
         const qx = x + dx, qy = y + dy, qz = h + dz;
-        return qz >= floor && qz <= top && inBox(qx, qy, qz) && cells[ci(qx, qy, qz)] === 0 && !occupied.has(`${qx},${qy},${qz}`);
+        return qz >= floor && qz <= top && inBox(qx, qy, qz) && (cells[ci(qx, qy, qz)] === 0 || (!!sc.inWater && cells[ci(qx, qy, qz)] === water)) && !occupied.has(`${qx},${qy},${qz}`);
       });
       if (!fits) continue;
       cand.set((y - box.y0) * bw + (x - box.x0), { x, y, z: h, p: lattice(x, y, ps) });

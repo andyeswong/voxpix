@@ -9,7 +9,7 @@ import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer } from './effects';
 import { climateTable, type WeatherFrame } from './climate';
-import { swaySources, SWAY_FILL } from './sway';
+import { swaySources, aquaticMask, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
 export interface Frame2DOptions {
@@ -425,6 +425,8 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
   const { view, depth: depthBuf, total } = fixed;
+  // Las plantas de agua, que se ven a través de ella (donde no las tape una entidad)
+  const clear = state.water ? aquaticMask(b, sec, front?.ghost?.on ?? null, from, vx, vy, vw, vh) : null;
   // Las entidades: primero todas las sombras de contacto (en el suelo), después, en cada píxel, la entidad más
   // cercana a la cámara, y esa tapa el escenario si está delante. Es lo mismo que hace la GPU con su z-buffer.
   const sprites = state.entities.map((e) => entitySprite(b, e, o)).filter((d) => onView(d, o));
@@ -447,6 +449,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
       const t = y * vw + x;
       view[t * 4] = c[0]; view[t * 4 + 1] = c[1]; view[t * 4 + 2] = c[2]; view[t * 4 + 3] = 255;
       if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
+      if (clear) clear[t] = 0;
     }
   }
   // La profundidad de cada píxel de entidad se calcula en float32 y se compara por la misma clave que el z-buffer de
@@ -473,12 +476,14 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
     if (entDepth[t]! >= depthBuf[t]! - 0.5) {                         // lo que hay delante la tapa
       // Silueta solo si lo de delante está claramente delante (XRAY_MARGIN): el suelo en el que se hunde un pie no cuenta
       if (xr && entDepth[t]! > depthBuf[t]! + XRAY_MARGIN && (((t % vw) + vx + Math.floor(t / vw) + vy) & 1) === 0) {
+        if (clear) clear[t] = 0;
         view[t * 4] = xr[0]; view[t * 4 + 1] = xr[1]; view[t * 4 + 2] = xr[2]; view[t * 4 + 3] = 255;
         if (total) total.fill(EMISSIVE_LIGHT, t * 3, t * 3 + 3);
       }
       continue;
     }
     const d = sprites[k]!, s = entPx[t]!;
+    if (clear) clear[t] = 0;
     depthBuf[t] = entDepth[t]!;
     view[t * 4] = d.img.rgba[s * 4]!; view[t * 4 + 1] = d.img.rgba[s * 4 + 1]!; view[t * 4 + 2] = d.img.rgba[s * 4 + 2]!; view[t * 4 + 3] = 255;
     const et = etotals[k], fl = feetLight[k];
@@ -495,7 +500,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
 
   // El agua (tapa lo sumergido), los efectos y las gotas
-  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null);
+  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear ? { clear } : null);
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const drop = dropLook(state, ambient);
   // La niebla toma la profundidad de antes de las gotas (en la GPU, las gotas no la escriben): una gota se funde con

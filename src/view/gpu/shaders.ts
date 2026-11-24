@@ -5,6 +5,7 @@
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
 import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
+import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -206,6 +207,7 @@ ${LIGHT_FNS}
 
 // EL VAIVÉN (src/world/sway.ts, swaySources): de qué píxel de la imagen sale lo quieto de cada píxel de la vista
 uniform bool uSway;
+uniform bool uAquatic;                 // alguna rampa es de planta de agua: su luz lleva un 1 en el alfa (lo lee el agua)
 ${CLIMATE}
 #define SWAY_MAX 3
 #define SWAY_FILL 5
@@ -258,6 +260,8 @@ void main() {
   float depth = sm > 0 ? sg.r : texelFetch(uDepth, s, 0).r;
   vec3 col = c.a == 0.0 ? uBg : c.rgb;
   float cov = c.a == 0.0 ? 0.0 : 1.0;     // si hay algo pintado (con fondo transparente, el alfa del cuadro)
+  float aqua = 0.0;
+  if (uAquatic) { int cd = sm > 0 ? (secGhost(s) ? 0 : secSway(s)) : texelFetch(uFace, s, 0).r >> 7; if (cd >= 128) aqua = 1.0; }
   vec3 total = uAmbient;
   if (uUseSky) {
     ivec2 ssz = textureSize(uSky, 0);
@@ -315,22 +319,24 @@ void main() {
   if (uLights) total *= texelFetch(uContact, t, 0).rgb;
   if (uHl) {
     ivec2 h = home - uHlRect.xy;
-    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; }
+    if (h.x >= 0 && h.y >= 0 && h.x < uHlRect.z && h.y < uHlRect.w && texelFetch(uHlMask, h, 0).r > 0.5) { col = uHlColor; total = vec3(${EMISSIVE}); cov = 1.0; aqua = 0.0; }
   }
   float ed = texelFetch(uEntDepth, t, 0).r;
   if (ed < depth - 0.5) {
     depth = ed;
+    aqua = 0.0;
     col = texelFetch(uEntColor, t, 0).rgb;
     cov = 1.0;
     if (uLights) total = texelFetch(uEntLight, t, 0).rgb;
   } else if (uXray && !isinf(ed) && ed > depth + ${XRAY_MARGIN} && ((home.x + home.y) & 1) == 0) {
     // Tapada por el escenario: su silueta, en damero y con luz propia
     col = uXrayColor;
+    aqua = 0.0;
     total = vec3(${EMISSIVE});
     cov = 1.0;
   }
   oColor = vec4(col, uBgClear ? cov : 1.0);
-  oLight = vec4(total, 0.0);
+  oLight = vec4(total, aqua);
   oDepth = vec4(depth, 0.0, 0.0, 0.0);
 }`;
 
@@ -492,6 +498,14 @@ void main() {
     cc += (texelFetch(uSrcColor, rt, 0).rgb * 255.0 - cc) * m;
     if (uLights) ltt += (texelFetch(uSrcLight, rt, 0).rgb - ltt) * m;
     break;
+  }
+  // Lo sumergido que se ve a través del agua (waterlook.ts, seenThrough)
+  if (sl.a > 0.5) {
+    float down = abs(uA * (sd - depthHere) / (uF1 - uA * uF2));
+    float k = floor(min(${CLEAR_MAX}, ${CLEAR_BASE} + ${CLEAR_STEP} * down) * 64.0 + 0.5) / 64.0;
+    vec3 under = floor(sc.rgb * 255.0 + 0.5);
+    cc = floor(under + (cc - under) * k + 0.5);        // (redondeado aquí, como la CPU: un empate no depende de cómo guarda el byte)
+    if (uLights) ltt = mix(sl.rgb, ltt, k);
   }
   if (spec > 0.35) cc = uTones[4];
   oColor = vec4(clamp(cc / 255.0, 0.0, 1.0), 1.0);

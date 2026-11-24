@@ -392,6 +392,7 @@ export class GpuCompositor {
     gl.uniform1i(s.u.uBgClear, clearBg ? 1 : 0);
     gl.uniform3f(s.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
     gl.uniform1i(s.u.uSway, sway ? 1 : 0);
+    gl.uniform1i(s.u.uAquatic, swayTable(b.source.palette)?.water ? 1 : 0);
     if (clim) this.setClimate(s, clim);
     gl.uniform1i(s.u.uLights, o.lights ? 1 : 0);
     gl.uniform1f(s.u.uA, a);

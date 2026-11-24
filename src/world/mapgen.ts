@@ -32,7 +32,8 @@ export interface MapSpec {
   // Lo que se siembra: sobre las columnas cuyo material de arriba es uno de `on` (y fuera del agua), con probabilidad
   // `density`, a `spacing` columnas o más de lo anterior de la misma regla, la estructura [dx, dy, dz, material]
   // relativa a la celda de arriba (dz = 1, la de encima). Solo si cabe entera en el mapa y va sobre aire
-  scatter?: Array<{ on: number[]; density: number; spacing?: number; structure: Array<[number, number, number, number]> }>;
+  // inWater: al revés, solo sobre el fondo del agua, y puede ocupar celdas de agua (plantas de agua)
+  scatter?: Array<{ on: number[]; density: number; spacing?: number; inWater?: boolean; structure: Array<[number, number, number, number]> }>;
 }
 
 export interface MapSown { rule: number; x: number; y: number; z: number }   // la celda de arriba sobre la que se siembra
@@ -140,12 +141,12 @@ export function generateMap(spec: MapSpec): GeneratedMap {
     const on = new Set(sc.on), spacing = sc.spacing ?? 0, placed: Array<[number, number]> = [];
     for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) {
       const i = y * W + x, h = heights[i]!;
-      if (h < 0 || wet[i] || !on.has(cells[at(m, x, y, h)]!)) continue;
+      if (h < 0 || !!wet[i] !== !!sc.inWater || !on.has(cells[at(m, x, y, h)]!)) continue;
       if (lattice(x, y, (seed ^ Math.imul(si + 1, 0x85ebca6b)) | 0) >= sc.density) continue;
       if (placed.some(([px, py]) => Math.abs(px - x) < spacing && Math.abs(py - y) < spacing)) continue;
       const fits = sc.structure.every(([dx, dy, dz]) => {
         const cx = x + dx, cy = y + dy, cz = h + dz;
-        return cx >= 0 && cy >= 0 && cz >= 0 && cx < W && cy < D && cz < H && cells[at(m, cx, cy, cz)] === 0 && !taken[at(m, cx, cy, cz)];
+        return cx >= 0 && cy >= 0 && cz >= 0 && cx < W && cy < D && cz < H && (cells[at(m, cx, cy, cz)] === 0 || (!!sc.inWater && cells[at(m, cx, cy, cz)] === spec.water)) && !taken[at(m, cx, cy, cz)];
       });
       if (!fits) continue;
       for (const [dx, dy, dz] of sc.structure) taken[at(m, x + dx, y + dy, h + dz)] = 1;

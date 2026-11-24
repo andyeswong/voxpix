@@ -28,6 +28,9 @@ export interface BlockProps {
   // La luz que pone al colocarse (una fija, addFixed) y dónde, en vóxeles del bloque sin girar (por defecto, el centro de
   // arriba): puesto girado, el punto gira con él
   emits?: { kind: SourceKind; radius?: number; intensity?: number; color?: readonly [number, number, number]; at?: readonly [number, number, number] };
+  // Convive con el agua en su celda (una planta): su celda cuenta como agua (BlockSet.waterTypes, para regionWater). Sus
+  // rampas no pueden ser fondo del agua (bed)
+  waterlogged?: boolean;
   covered?: string;                   // el bloque en que se convierte cuando tiene uno sólido encima (hierba -> tierra)
 }
 
@@ -87,7 +90,8 @@ export class BlockSet {
     for (const k of ['solid', 'light', 'emissive'] as const) {
       if (props[k] !== undefined && props[k] !== own[k]) throw new Error(`el bloque "${id}" dice ${k}: ${props[k]}, pero sus rampas dan ${own[k]}: se cambia con el material de sus rampas`);
     }
-    const full: BlockProps = { ...own, ...(props.density !== undefined ? { density: props.density } : {}), ...(props.emits ? { emits: props.emits } : {}), ...(props.covered !== undefined ? { covered: props.covered } : {}) };
+    const full: BlockProps = { ...own, ...(props.density !== undefined ? { density: props.density } : {}), ...(props.emits ? { emits: props.emits } : {}), ...(props.covered !== undefined ? { covered: props.covered } : {}), ...(props.waterlogged ? { waterlogged: true } : {}) };
+    if (full.waterlogged && mats.some((p) => p.bed)) throw new Error(`el bloque "${id}" convive con el agua (waterlogged) y tiene una rampa que es fondo del agua (bed): la taparía`);
     this.defs.push({ id, model: m, props: full });
     this.byId.set(id, this.defs.length);
     return this.defs.length;
@@ -105,6 +109,8 @@ export class BlockSet {
     if (!d) throw new Error(`no hay bloque ${index} (hay ${this.defs.length}; 0 es el aire)`);
     return d;
   }
+  // Los tipos que cuentan como agua: el del agua y los que conviven con ella
+  waterTypes(water: number): number[] { return [water, ...this.defs.flatMap((d, i) => (d.props.waterlogged && i + 1 !== water ? [i + 1] : []))]; }
   ids(): string[] { return this.defs.map((d) => d.id); }
 }
 

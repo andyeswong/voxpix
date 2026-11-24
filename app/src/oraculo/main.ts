@@ -20,7 +20,7 @@ import { StaticVoxels, WorldState, type RenderState } from '../../../src/world/s
 import type { World } from '../../../src/world/build';
 import { Weather, type WeatherLevels } from '../../../src/world/weather';
 import { climateTable, type WeatherFrame } from '../../../src/world/climate';
-import { swaySources } from '../../../src/world/sway';
+import { swaySources, aquaticMask } from '../../../src/world/sway';
 import { WaterLayer } from '../../../src/world/water';
 import { generateMap, applyMap, mapWater } from '../../../src/world/mapgen';
 import { BlockSet, BlockGrid } from '../../../src/world/blocks';
@@ -98,6 +98,7 @@ interface Scenario {
   shift?: 'ida' | 'vuelta';
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   // El clima del cuadro (Frame2DOptions.weather): sus niveles y las opciones; con veg, sus rampas se mecen
+  algas?: boolean;        // con veg y clima: plantas en el agua del lago (MaterialProps.aquatic)
   clima?: { levels: Partial<WeatherLevels>; frame?: Partial<WeatherFrame> };
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
@@ -121,7 +122,7 @@ function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { retu
 
 // Vegetación en un mundo generado: hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
-function vegetate(w: World, at: [number, number], wind = false): void {
+function vegetate(w: World, at: [number, number], wind = false, algae = false): void {
   const m = w.model;
   const names = ['hierba-alta', 'flor-roja', 'flor-amarilla', 'arbusto'];
   m.palette = { ...m.palette, ramps: [...m.palette.ramps, ...names.map((n) => structuredClone(FOLIAGE_RAMPS[n]!)), { name: 'hojas', colors: ['#14301f', '#1f4a2a', '#2f6b32', '#4f8f3c', '#86b84e'], kind: 'foliage' }] };
@@ -137,6 +138,16 @@ function vegetate(w: World, at: [number, number], wind = false): void {
   put(planFoliage(m, ...all, m.zMax, { type: 'flowers', ramp: ri('hierba-alta'), heads: [ri('flor-roja'), ri('flor-amarilla')], seed: 5, zMin: m.zMin }));
   // Sumergida: hierba en el fondo de las columnas que empiezan con agua
   put(planFoliage(m, ...all, m.zMax, { type: 'grass', ramp: ri('hierba-alta'), seed: 6, zMin: m.zMin, density: 0.5, on: m.palette.ramps.map((_, i) => i) }), (x, y) => w.wet[y * m.width + x] === 1);
+  // Plantas de agua: columnas desde el fondo hasta debajo de la superficie (y algunas, por encima)
+  if (algae) {
+    m.palette = { ...m.palette, ramps: [...m.palette.ramps, { name: 'alga', colors: ['#143c1e', '#2c6e2a', '#58a03a'], material: 'follaje', props: { sway: 3, anchor: 'root', reach: 5, aquatic: true } }] };
+    const al = m.palette.ramps.length - 1;
+    for (let y = 0; y < m.depth; y++) for (let x = 0; x < m.width; x++) {
+      if (!w.wet[y * m.width + x] || (x * 7 + y * 13) % 9) continue;
+      const f = m.floorAt(x, y), top = w.waterTop[y * m.width + x]! + ((x + y) % 4 === 0 ? 3 : -1);
+      for (let z = f; z < top; z++) m.set(x, y, z, material(al, (x + z) % 3));
+    }
+  }
   // Nenúfares que flotan en el lago (los pisotones del escenario los mueven)
   const pads = lilyPadModels(structuredClone(FOLIAGE_RAMPS.nenufar!));
   const lilies = planFoliage(m, ...all, m.zMax, { type: 'lilies', ramp: ri('hierba-alta'), seed: 7, zMin: m.zMin, waterDepth: worldWaterDepth(w), density: 0.02 });
@@ -483,6 +494,14 @@ for (const q of [0, 1] as Quarter[]) {
 SCENARIOS.push({ name: 'viento en la vegetación, sin luces', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, lights: false, clima: wind });
 SCENARIOS.push({ name: 'viento en la vegetación bajo el cielo, con niebla', theme: 'medieval', veg: true, pos: [196, 172], ticks: 45, cave: true, fog: true, clima: wind });
 SCENARIOS.push({ name: 'viento en la vegetación, subido por partes', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, prepared: true, clima: wind });
+// Las plantas de agua: se mecen y se ven a través del agua, en los 4 giros, con pisotones, con corte, sin luces y en la cueva
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `plantas en el agua, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, clima: wind });
+  SCENARIOS.push({ name: `plantas en el agua con corte, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 60, clima: wind, section: { width: 96, painter: true, z: 1, cross: 16 } });
+}
+SCENARIOS.push({ name: 'plantas en el agua, sin luces', theme: 'medieval', veg: true, algas: true, pos: [172, 170], ticks: 60, lights: false, clima: wind });
+SCENARIOS.push({ name: 'plantas en el agua, sin viento', theme: 'medieval', veg: true, algas: true, pos: [172, 170], ticks: 61, clima: { levels: {} } });
+SCENARIOS.push({ name: 'plantas en el agua con niebla, la ventana corrida', theme: 'medieval', veg: true, algas: true, pos: [172, 170], ticks: 60, fog: true, shift: 'ida', clima: wind });
 SCENARIOS.push({ ...SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!, name: 'clima sin nada que se meza', clima: wind });
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });
@@ -499,6 +518,8 @@ interface Result {
   control?: { differ: number; mulOff2: number; addOff2: number; colorOff: number };   // con clima: la escena sin él
   swayPx?: number;         // con clima: píxeles de la vista que salen de otra columna, y de ellos los que difieren
   swayDiffer?: number;
+  aquaPx?: number;         // con algas: píxeles de planta de agua en la vista, y de ellos los que difieren
+  aquaDiffer?: number;
   waterPx?: number;        // con agua en un mundo alto: píxeles con un tono del agua en la CPU
   secPx?: number;          // con corte al componer: píxeles de la vista sustituidos (máscara 1) y de borde (2)
   secBorder?: number;
@@ -603,7 +624,7 @@ async function run(): Promise<void> {
     if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld(!!sc.highWater.dig));
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
-      if (sc.veg) vegetate(world, [204, 184], !!sc.clima);
+      if (sc.veg) vegetate(world, [204, 184], !!sc.clima, !!sc.algas);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
       addWorldFloaters(state, world);
@@ -898,7 +919,14 @@ async function run(): Promise<void> {
       if (from) for (let t = 0; t < VW * VH; t++) {
         if (from[t] === o.vx + (t % VW)) continue;
         r.swayPx++;
-        if ([0, 1, 2, 3].some((ch) => cpuFinal[t * 4 + ch] !== gFinal[t * 4 + ch])) r.swayDiffer++;
+        // (un ±1 es redondeo, p. ej. del agua que se ve a través; lo que se busca es que salga de otra columna)
+        if ([0, 1, 2, 3].some((ch) => Math.abs(cpuFinal[t * 4 + ch]! - gFinal[t * 4 + ch]!) > 1)) r.swayDiffer++;
+      }
+      if (sc.algas) {
+        const mask = aquaticMask(b, sceneLayer(L), L?.ghost?.on ?? null, from, o.vx, o.vy, VW, VH);
+        r.aquaPx = 0; r.aquaDiffer = 0;
+        if (mask) for (let t = 0; t < VW * VH; t++) if (mask[t]) { r.aquaPx++; if ([0, 1, 2].some((ch) => Math.abs(cpuFinal[t * 4 + ch]! - gFinal[t * 4 + ch]!) > 1)) r.aquaDiffer++; }
+        if (r.aquaPx < 200 || r.aquaDiffer > Math.max(8, r.aquaPx * 0.01)) r.pass = false;
       }
       // (una escena en la que no se mece nada no prueba nada)
       if (!r.swayPx || r.swayDiffer > Math.max(4, r.swayPx * 0.005)) r.pass = false;

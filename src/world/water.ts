@@ -16,6 +16,7 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
+import { seenThrough, type WaterLook } from './waterlook';
 import { windowContains, type SectionWindow } from './section';
 
 const CELL = 2;                                   // vóxeles por celda del simulador
@@ -51,10 +52,11 @@ export interface WaterOptions {
 // stampRegion con skip): la superficie de cada columna de vóxeles (la cara de arriba de la celda de agua más alta de su
 // columna de bloques), para WaterLayer.load. at: la celda de la rejilla donde se puso la región (TrozoCtx.at); N: el
 // lado del bloque; origin: el de la rejilla (vóxeles). Las coordenadas que recibe son vóxeles locales del mundo
-export function regionWater(r: GeneratedRegion, water: number, N: number, at: readonly [number, number, number], origin: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 }): (x: number, y: number) => number | null {
-  const { width: W, depth: D, height: H } = r.region, top = new Int16Array(W * D).fill(-32768);
+// (water: un tipo, o varios: el agua y lo que convive con ella, BlockSet.waterTypes)
+export function regionWater(r: GeneratedRegion, water: number | readonly number[], N: number, at: readonly [number, number, number], origin: { x: number; y: number; z: number } = { x: 0, y: 0, z: 0 }): (x: number, y: number) => number | null {
+  const { width: W, depth: D, height: H } = r.region, top = new Int16Array(W * D).fill(-32768), isWater = new Set(typeof water === 'number' ? [water] : water);
   for (let y = 0; y < D; y++) for (let x = 0; x < W; x++) {
-    for (let z = H - 1; z >= 0; z--) if (r.cells[(z * D + y) * W + x] === water) { top[y * W + x] = origin.z + (at[2] + z + 1) * N; break; }
+    for (let z = H - 1; z >= 0; z--) if (isWater.has(r.cells[(z * D + y) * W + x]!)) { top[y * W + x] = origin.z + (at[2] + z + 1) * N; break; }
   }
   return (x, y) => {
     const bx = Math.floor((x - origin.x) / N) - at[0], by = Math.floor((y - origin.y) / N) - at[1];
@@ -71,13 +73,25 @@ export interface WaterChunk { w: number; h: number; depth: Float32Array; basin: 
 // quita de los vóxeles y da la superficie de cada columna (la cara de arriba del vóxel de agua más alto) para
 // WaterLayer.load. isWater dice qué vóxeles son agua. Mira cada columna desde arriba y para en el primer vóxel que no es
 // agua: el agua que se ve desde el cielo (la de una cueva bajo tierra se queda como vóxeles). Va antes de hornear el
-// trozo (onLoad / fill)
-export function takeWaterVoxels(s: StaticVoxels, x0: number, y0: number, x1: number, y1: number, isWater: (v: number) => boolean): (x: number, y: number) => number | null {
+// trozo (onLoad / fill). through (opcional): vóxeles que conviven con el agua (una planta): no se quitan ni paran la cuenta,
+// y los que tienen agua al lado cuentan como agua
+export function takeWaterVoxels(s: StaticVoxels, x0: number, y0: number, x1: number, y1: number, isWater: (v: number) => boolean, through?: (v: number) => boolean): (x: number, y: number) => number | null {
   const w = x1 - x0 + 1, h = y1 - y0 + 1, top = new Int16Array(w * h).fill(-32768);
+  // (la superficie de los que conviven con el agua, antes de quitar nada)
+  const by = through ? (x: number, y: number, z: number) => [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([dx, dy]) => isWater(s.get(x + dx!, y + dy!, z))) : null;
+  if (through && by) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    for (let z = s.height[y * s.width + x]! - 1; z >= s.zMin; z--) {
+      const v = s.get(x, y, z);
+      if (!v) continue;
+      if (!through(v)) break;
+      if (by(x, y, z)) { top[(y - y0) * w + x - x0] = z + 1; break; }
+    }
+  }
   for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
     for (let z = s.height[y * s.width + x]! - 1; z >= s.zMin; z--) {
       const v = s.get(x, y, z);
       if (!v) continue;
+      if (through?.(v)) continue;
       if (!isWater(v)) break;
       s.set(x, y, z, 0);
       const k = (y - y0) * w + x - x0;
@@ -692,10 +706,10 @@ export class WaterLayer {
   }
 
   draw(b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
-    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null, look: WaterLook | null = null): void {
     // (drawWater lee la rejilla en el orden y * gw + x: corrida, se dibuja por una vista, WaterView)
     if (this.sim.origin[0] || this.sim.origin[1]) throw new Error('WaterLayer.draw: la capa está corrida (anillo); se dibuja con una WorldView (WaterView)');
-    drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect, cut);
+    drawWater(this, b, view, depthBuf, total, vx, vy, vw, vh, ambient, time, worldLights, reflect, cut, look);
   }
 }
 
@@ -761,7 +775,7 @@ export interface WaterGrid {
 export interface CutBox { x0: number; x1: number; y0: number; y1: number; zMin: number; window?: SectionWindow | null }
 
 export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depthBuf: Float32Array, total: Float32Array | null, vx: number, vy: number, vw: number, vh: number,
-    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null): void {
+    ambient: readonly [number, number, number], time: number, worldLights: readonly WorldLight[], reflect = true, cut: CutBox | null = null, look: WaterLook | null = null): void {
   const { sim, gw, gh } = w;
   const a = b.options.oblique?.y ?? 1;
   const originY = b.options.originY;
@@ -868,6 +882,13 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
             if (srcTotal) { ltr += (srcTotal[rt * 3]! - ltr) * m; ltg += (srcTotal[rt * 3 + 1]! - ltg) * m; ltb += (srcTotal[rt * 3 + 2]! - ltb) * m; }
             break;
           }
+        }
+        // Lo sumergido que se ve a través del agua (MaterialProps.aquatic): más teñido cuanto más hondo
+        if (look?.clear?.[t]) {
+          const k = seenThrough(srcDepth[t]! - depthHere, a, f1, f2);
+          const mix = (u: number, c: number) => Math.floor(u + (c - u) * k + 0.5);
+          cr = mix(srcView[o]!, cr); cg = mix(srcView[o + 1]!, cg); cb = mix(srcView[o + 2]!, cb);
+          if (srcTotal) { ltr = srcTotal[q]! + (ltr - srcTotal[q]!) * k; ltg = srcTotal[q + 1]! + (ltg - srcTotal[q + 1]!) * k; ltb = srcTotal[q + 2]! + (ltb - srcTotal[q + 2]!) * k; }
         }
         if (spec > 0.35) { cr = white[0]; cg = white[1]; cb = white[2]; }
         view[o] = cr; view[o + 1] = cg; view[o + 2] = cb; view[o + 3] = 255;
