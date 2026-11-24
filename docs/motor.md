@@ -2005,7 +2005,8 @@ frame2D(state, baked, { ...o, weather: { weather, tick, origin, camera: view.cam
   día con el corrimiento. `camera` hace falta en una vista girada.
 - Se corre la imagen al componer (CPU y GPU igual), sin rehornear: cada píxel lleva el color, la luz y la profundidad del
   vóxel quieto. El hueco se llena con lo quieto de al lado, del lado de donde viene. El pick, la máscara, la colisión y lo
-  que ve un agente no cambian. El corrimiento es en horizontal de pantalla y a saltos de 1/12 s.
+  que ve un agente no cambian. El corrimiento es en horizontal de pantalla y a saltos de 1/12 s
+  (`rate`): con el viento hacia la cámara queda el temblor, no la inclinación.
 - Los píxeles con velo (`ghost`) no se mecen, y lo del corte no se sale de su recuadro.
 - Una paleta con rampas que se mecen sube la cara de cada píxel en 16 bits en vez de 8; las demás, como siempre.
 
@@ -2063,11 +2064,9 @@ es de las luces), así que con sol conviene un ambiente más bajo. `daySun` (`li
   igual de noche). Sin decir nada, los de siempre.
 - `props: { snow: false }` en una rampa: la nieve no cuaja en ella (una flor, una hoja que flota); sí se moja. Con alguna, la
   cara de cada píxel sube en 32 bits.
-
 - El alfa de la luz en la GPU (`oLight.a`, destinos RGBA32F): 2 × el sol del píxel en 1/512 (entero) + 1 si es una planta de
   agua. Es exacto hasta 2^24, o sea hasta un sol de 16384. Lo leen el agua (la planta y el sol del fondo) y el último paso (el
   sol); las partículas con luz propia y las gotas lo dejan a 0, y ninguna pasada mezcla (`blend`) sobre él.
-
 - `reach: 0` con `anchor: 'root'` (o `'top'`): el alcance es lo que mide cada planta, para que una baja y una alta de la misma
   rampa se mezan del todo en su punta.
 - Dos bloques que comparten rampa comparten su `sway`: si la tierra usa los tonos de las hojas, se mece también. Rampas
@@ -2076,3 +2075,20 @@ es de las luces), así que con sol conviene un ambiente más bajo. `daySun` (`li
   trozo de imagen.
 - Una planta flotante de vóxeles no sigue la superficie si baja el agua: para eso están los flotantes (`Floaters`).
 - El velo del corte (`ghost`) lleva el sol, pero no la nieve ni lo mojado.
+- El contorno interior es del píxel de detrás: no viaja con lo que se mece. En un píxel de borde, el tono de fondo del ambiente
+  es el del sitio, no el de donde viene lo mecido.
+- Lo que cae nota un vóxel que cambia en su paso siguiente (1/30 s), no en el mismo.
+- La pasada de la escena usa las 16 unidades de textura que garantiza WebGL2 (la última, la de las subidas, para la tabla del
+  clima): no cabe otra.
+- Apagado (`weather` sin dar), el cuadro es el de siempre, byte a byte.
+
+### Lo que cuesta
+
+En el banco de la ventana viva (CPU a 6x, 384 x 216, agua, sección en cruz, `fall.max` 600, una máquina), todo encendido
+contra apagado, mediana de 3 pasadas alternadas: p95 del cuadro 26,9 contra 23,7 ms en una serie y 27,5 contra 25,4 en otra;
+p50, +0,1 a +0,2; lo de componer en el hilo principal, de 1,6 a 3,2 ms de media (lo más caro, preparar las gotas). `rate` 8 y
+20 lo baja unas décimas, dentro del ruido. Sin medir: cuánto cuesta subir la cara en 16 o 32 bits, y la GPU sola.
+
+Probado y descartado: que la cola de la vista (`FrameBudget`) cediera lo que cuesta componer. Con clima subía el p95 de 27,5 a
+32,4 y el terreno llegaba tarde (huecos en pantalla, 14 corrimientos por minuto en vez de 23): los trabajos no caben en plazos
+más cortos y se amontonan.

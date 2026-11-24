@@ -42,35 +42,7 @@ const COST_SAMPLES = 32;
 const MIN_SAMPLE_MS = 0.01;
 const FIRST = '|primera';
 
-// Ceder lo que cuesta componer (FrameBudget.cede, apagado por defecto): de la media de lo que costó componer los últimos
-// `frames` cuadros (FrameBudget.composed), lo que pasa de `base`, hasta `max`, se quita de los plazos de la cola; nunca por
-// debajo de `floor` ms cada uno. La primera llamada de cada fase va siempre, así que la cola no se para
-export interface CedeOptions { base: number; max: number; floor?: number; frames?: number }
-const CEDE_FRAMES = 30;
-
 export class FrameBudget {
-  // Opcional: null, como si no existiera
-  cede: CedeOptions | null = null;
-  private composeMs: number[] = [];
-  private composeAt = 0;
-  // Lo que costó componer este cuadro (CompositorStats.frameMs): una vez por cuadro, si se usa cede
-  composed(ms: number): void {
-    const n = Math.max(1, Math.floor(this.cede?.frames ?? CEDE_FRAMES));
-    if (this.composeMs.length > n) { this.composeMs.length = n; this.composeAt = 0; }
-    if (this.composeMs.length < n) this.composeMs.push(ms);
-    else { this.composeMs[this.composeAt % n] = ms; this.composeAt = (this.composeAt + 1) % n; }
-  }
-  // Los ms que se ceden en el cuadro que viene (0 apagado, sin datos o por debajo de la base)
-  get ceded(): number {
-    const c = this.cede, a = this.composeMs;
-    if (!c || !a.length) return 0;
-    let s = 0;
-    for (const v of a) s += v;
-    return Math.max(0, Math.min(c.max, s / a.length - c.base));
-  }
-  // El plazo que queda de uno de `ms` (nunca más de lo que era, ni menos que el suelo)
-  private static left(ms: number, ceded: number, floor: number): number { return ceded > 0 ? Math.min(ms, Math.max(floor, ms - ceded)) : ms; }
-
   private queue: ViewJob[] = [];
   private starved = 0;
 
@@ -296,9 +268,8 @@ export class FrameBudget {
     if (!this.queue.length) { this.sorted = true; return 0; }
     this.frameNo++;
     const start = this.now();
-    const ceded = this.ceded, floor = this.cede?.floor ?? 1, ms = FrameBudget.left(this.ms, ceded, floor);
     // 1) lo cercano, con su presupuesto (va delante en la cola: está ordenada por prioridad)
-    const nr = this.near && ceded > 0 ? { ms: FrameBudget.left(this.near.ms, ceded, floor), below: this.near.below } : this.near;
+    const nr = this.near;
     const isNear = (j: ViewJob) => !!nr && j.priority !== undefined && j.priority < nr.below;
     if (nr) {
       this.phase(start + nr.ms, isNear);
@@ -313,8 +284,8 @@ export class FrameBudget {
     // Lo que sobra del cercano, si no queda nada cercano en la cola (se acabó, o no había): lo demás se lleva como mucho
     // `spare` (por defecto, ms). Así lo de detrás (el cielo, las luces lejanas, preparar lo expuesto) avanza cuando no
     // hay nada urgente, sin comerse el margen del juego. Si queda algo cercano (no cupo), no: es suyo
-    const spare = nr && from === 0 ? Math.min(this.spare ?? ms, Math.max(0, start + nr.ms - start2)) : 0;
-    let deadline = start2 + ms - spentMs + spare;
+    const spare = nr && from === 0 ? Math.min(this.spare ?? this.ms, Math.max(0, start + nr.ms - start2)) : 0;
+    let deadline = start2 + this.ms - spentMs + spare;
     if (deadline <= start2) {
       if (++this.starved < STARVE_FRAMES) return this.now() - start;
       deadline = start2;         // una porción mínima: el primer trabajo hace una unidad y para
