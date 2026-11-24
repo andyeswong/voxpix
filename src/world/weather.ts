@@ -55,6 +55,16 @@ function noiseReader(seed: number): (x: number, y: number) => number {
     return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
   };
 }
+// Suma a out el ruido (valueNoise) de n sitios en línea, por k
+function addNoise(out: Float64Array, n: number, x: number, y: number, sx: number, sy: number, seed: number, k: number): void {
+  let px = 0x7fffffff, py = 0x7fffffff, a = 0, b = 0, c = 0, d = 0;
+  for (let i = 0; i < n; i++) {
+    const ux = x + i * sx, uy = y + i * sy, x0 = Math.floor(ux), y0 = Math.floor(uy);
+    if (x0 !== px || y0 !== py) { px = x0; py = y0; a = lattice(x0, y0, seed); b = lattice(x0 + 1, y0, seed); c = lattice(x0, y0 + 1, seed); d = lattice(x0 + 1, y0 + 1, seed); }
+    const fx = ux - x0, fy = uy - y0, ex = fx * fx * (3 - 2 * fx), ey = fy * fy * (3 - 2 * fy);
+    out[i] = out[i]! + k * ((a * (1 - ex) + b * ex) * (1 - ey) + (c * (1 - ex) + d * ex) * ey);
+  }
+}
 function fill(base: WeatherLevels, p: Partial<WeatherLevels>): WeatherLevels {
   const w = p.wind ?? base.wind, l = Math.hypot(w[0], w[1]), k = l > 1 ? 1 / l : 1;
   const n = (v: number | undefined, d: number) => clamp01(v ?? d);
@@ -173,6 +183,18 @@ export class Weather implements StatePart {
     if (base <= 0) return () => 0;
     const n1 = noiseReader(s), n2 = noiseReader(s + 1);
     return (x, y) => clamp01(base * (1 + l.gust * 1.6 * (n1((x - dx) / GUST_SIZE, (y - dy) / GUST_SIZE) * 0.75 + n2((x - dx) / (GUST_SIZE / 4), (y - dy) / (GUST_SIZE / 4)) * 0.25 - 0.5)));
+  }
+  // Las dos cosas en n sitios en línea desde (x, y) de (sx, sy) en (sx, sy), sin crear nada por sitio: lo mismo, valor a valor
+  fieldRow(tick: number, x: number, y: number, sx: number, sy: number, n: number, gustOut: Float64Array, cloudOut: Float64Array): void {
+    const l = this.levels(tick), [dx, dy] = this.drift(tick), base = Math.hypot(l.wind[0], l.wind[1]), g = l.gust, c = l.clouds, cut = 1 - c, s1 = this.seed ^ 0x57a9, s2 = this.seed ^ 0x2c1d;
+    if (base > 0) { gustOut.fill(0, 0, n); addNoise(gustOut, n, (x - dx) / GUST_SIZE, (y - dy) / GUST_SIZE, sx / GUST_SIZE, sy / GUST_SIZE, s1, 0.75); addNoise(gustOut, n, (x - dx) / (GUST_SIZE / 4), (y - dy) / (GUST_SIZE / 4), sx / (GUST_SIZE / 4), sy / (GUST_SIZE / 4), s1 + 1, 0.25); }
+    for (let i = 0; i < n; i++) { const v = base > 0 ? base * (1 + g * 1.6 * (gustOut[i]! - 0.5)) : 0; gustOut[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
+    if (c <= 0 || c >= 1) { cloudOut.fill(c <= 0 ? 0 : 1, 0, n); return; }
+    const ox = dx * CLOUD_SPEED, oy = dy * CLOUD_SPEED;
+    cloudOut.fill(0, 0, n);
+    addNoise(cloudOut, n, (x - ox) / CLOUD_SIZE, (y - oy) / CLOUD_SIZE, sx / CLOUD_SIZE, sy / CLOUD_SIZE, s2, 0.7);
+    addNoise(cloudOut, n, (x - ox) / (CLOUD_SIZE / 3), (y - oy) / (CLOUD_SIZE / 3), sx / (CLOUD_SIZE / 3), sy / (CLOUD_SIZE / 3), s2 + 1, 0.3);
+    for (let i = 0; i < n; i++) { const v = (cloudOut[i]! - cut) / 0.12 + 0.5; cloudOut[i] = v < 0 ? 0 : v > 1 ? 1 : v; }
   }
   // Cuánto tapan las nubes el sol en un sitio (0 nada, 1 del todo): manchas que viajan con el viento
   cloudField(tick: number): (x: number, y: number) => number {

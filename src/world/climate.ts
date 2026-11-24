@@ -4,7 +4,7 @@
 import type { Baked } from './bake';
 import type { StaticVoxels } from './state';
 import type { Weather } from './weather';
-import { lattice } from '../worldgen/noise';
+import { hash30, HASH_ONE } from '../worldgen/noise';
 
 // El clima de un cuadro. tick: el de la simulación. origin: el vóxel del mundo que es el (0, 0) del horneado sin girar (la
 // ventana que se corre). camera: la de la vista girada (WorldView.camera)
@@ -45,37 +45,39 @@ export const climateTie = 1 / 1024;
 // Los datos de los que sale una tabla (con los mismos, la misma)
 interface Want { tick: number; rev: number; weather: Weather; x0: number; y0: number; w: number; h: number; Kx: number; Ky: number; amount: number; cam: WeatherFrame['camera'] }
 const same = (a: Want, b: Want): boolean => a.tick === b.tick && a.rev === b.rev && a.weather === b.weather && a.x0 === b.x0 && a.y0 === b.y0 && a.w === b.w && a.h === b.h && a.Kx === b.Kx && a.Ky === b.Ky && a.amount === b.amount && a.cam === b.cam;
+const GUST = new Float64Array(CLIMATE_W), CLOUD = new Float64Array(CLIMATE_W);
 // Una tabla a medias: se hace por filas (run), de una vez o por adelantado
 class Building {
   readonly data: Float32Array;
   private row = 0;
-  private readonly gust: (x: number, y: number) => number;
-  private readonly cloud: (x: number, y: number) => number;
   private readonly ux: number;
   private readonly uy: number;
   private readonly lean: number;
   constructor(readonly want: Want, readonly kx: number, readonly ky: number) {
     const { weather, tick, cam } = want, l = weather.levels(tick), len = Math.hypot(l.wind[0], l.wind[1]);
     this.data = new Float32Array(want.w * want.h * 4);
-    this.gust = weather.gustField(tick); this.cloud = weather.cloudField(tick);
     this.ux = len > 0 ? l.wind[0] / len : 0; this.uy = len > 0 ? l.wind[1] / len : 0;
     this.lean = cam ? cam.dirToView(this.ux, this.uy)[0] : this.ux;
   }
   run(rows: number): void {
-    const { want, data, gust, cloud, ux, uy, lean, kx, ky } = this, { x0, y0, w, h, Kx, Ky, amount, cam, weather } = want;
+    const { want, data, ux, uy, lean, kx, ky } = this, { x0, y0, w, h, Kx, Ky, amount, cam, weather } = want;
     const wholeX = (Kx - kx) / CLIMATE_CX, wholeY = (Ky - ky) / CLIMATE_CY, sec = want.tick / 60, turn = 2 * Math.PI;
     // (el giro de la vista al mundo, sin crear nada por casilla)
     const [ax, ay] = cam ? cam.dirToWorld(1, 0) : [1, 0], [bx, by] = cam ? cam.dirToWorld(0, 1) : [0, 1];
-    for (const end = Math.min(h, this.row + rows); this.row < end; this.row++) for (let i = 0, j = this.row; i < w; i++) {
+    for (const end = Math.min(h, this.row + rows); this.row < end; this.row++) {
+     const j = this.row, fx = (x0 + wholeX + 0.5) * CLIMATE_CX, fy = (y0 + j + wholeY + 0.5) * CLIMATE_CY;
+     weather.fieldRow(want.tick, fx * ax! + fy * bx!, fx * ay! + fy * by!, CLIMATE_CX * ax!, CLIMATE_CX * ay!, w, GUST, CLOUD);
+     for (let i = 0; i < w; i++) {
       const rx = (x0 + i + wholeX + 0.5) * CLIMATE_CX, ry = (y0 + j + wholeY + 0.5) * CLIMATE_CY;         // el plano del mundo girado
-      const wx = rx * ax! + ry * bx!, wy = rx * ay! + ry * by!, g = gust(wx, wy), k = (j * w + i) * 4;
-      const jit = lattice(Math.floor(wx / CLIMATE_CX), Math.floor(wy / CLIMATE_CX), weather.seed) * 0.35, along = (wx * ux + wy * uy) / 130;
+      const wx = rx * ax! + ry * bx!, wy = rx * ay! + ry * by!, g = GUST[i]!, k = (j * w + i) * 4;
+      const jit = hash30(Math.floor(wx / CLIMATE_CX), Math.floor(wy / CLIMATE_CX), weather.seed) / HASH_ONE * 0.35, along = (wx * ux + wy * uy) / 130;
       const s1 = Math.sin(turn * (sec * SWAY_HZ - along + jit)), s2 = Math.sin(turn * (sec * CURRENT_HZ - (wx + wy) / 90 + jit));
       const air = g * (0.5 * lean + 0.5 * s1);
       data[k] = Math.round(air * amount * Q) / Q;
       data[k + 1] = Math.round((0.5 * s2 + 0.35 * air) * amount * Q) / Q;
       data[k + 2] = Math.round(g * Q) / Q;
-      data[k + 3] = Math.round(cloud(wx, wy) * Q) / Q;
+      data[k + 3] = Math.round(CLOUD[i]! * Q) / Q;
+     }
     }
   }
   finish(): ClimateTable {

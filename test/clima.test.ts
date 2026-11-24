@@ -48,6 +48,13 @@ describe('el clima', () => {
     expect(w.drift(200)[0]).toBeCloseTo((sum * WIND_SPEED) / 60, 0);
   });
 
+  it('por filas da lo mismo que sitio a sitio', () => {
+    for (const clouds of [0, 0.4, 1]) {
+      const w = new Weather({ seed: 9, levels: { wind: [0.5, -0.2], gust: 1, clouds } }), g = new Float64Array(40), c = new Float64Array(40);
+      w.fieldRow(700, -300, 90, 16, 0, 40, g, c);
+      for (let i = 0; i < 40; i++) { expect(g[i]).toBeCloseTo(w.windAt(-300 + i * 16, 90, 700), 9); expect(c[i]).toBeCloseTo(w.cloudAt(-300 + i * 16, 90, 700), 9); }
+    }
+  });
   it('la ráfaga cruza el mapa en la dirección del viento, y sin viento no hay', () => {
     const w = new Weather({ seed: 9, levels: { wind: [0.5, 0], gust: 1 } });
     const v = (0.5 * WIND_SPEED) / 60;

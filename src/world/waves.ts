@@ -1,7 +1,7 @@
 // El rizado del agua con el clima: las ondas del viento (van con él y crecen con la ráfaga que pasa) y los anillos de la lluvia.
 // Solo inclinan la superficie al pintarla (drawWater y FRAG_WATER): el simulador no se entera. Es una baldosa de WAVE_T x WAVE_T
 // celdas de agua que se repite, fija en el mundo, calculada en la CPU 12 veces por segundo y leída igual por la CPU y la GPU.
-import { lattice } from '../worldgen/noise';
+import { hash30, HASH_ONE } from '../worldgen/noise';
 import type { Baked } from './bake';
 import type { Weather } from './weather';
 import { climateStep, climateStepTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
@@ -79,8 +79,8 @@ function windWave(out: Float32Array, [turn, n, amp, hz]: (typeof WAVES)[number],
 function rainRings(out: Float32Array, seed: number, tick: number, rain: number, amount: number): void {
   const T = WAVE_T, sec = tick / 60, n = Math.round(RINGS * rain);
   for (let k = 0; k < n; k++) {
-    const ph = sec / RING_S + lattice(k, 1, seed ^ 0x71a), turn = Math.floor(ph), age = ph - turn;
-    const cx = lattice(k, turn, seed ^ 0x3c5) * T, cy = lattice(k, turn, seed ^ 0x9b1) * T, r = 0.5 + age * RING_R, a = RING * amount * (1 - age);
+    const ph = sec / RING_S + hash30(k, 1, seed ^ 0x71a) / HASH_ONE, turn = Math.floor(ph), age = ph - turn;
+    const cx = hash30(k, turn, seed ^ 0x3c5) / HASH_ONE * T, cy = hash30(k, turn, seed ^ 0x9b1) / HASH_ONE * T, r = 0.5 + age * RING_R, a = RING * amount * (1 - age);
     for (let y = Math.floor(cy - r - 2); y <= cy + r + 2; y++) for (let x = Math.floor(cx - r - 2); x <= cx + r + 2; x++) {
       const ex = x + 0.5 - cx, ey = y + 0.5 - cy, d = Math.sqrt(ex * ex + ey * ey), q = 1 - Math.abs(d - r);
       if (q <= 0 || d < 1e-6) continue;

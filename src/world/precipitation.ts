@@ -5,7 +5,7 @@
 import { FX_STRIDE, type FxSource } from '../core';
 import type { Baked } from './bake';
 import { secIdx, sectionBorderAt, type SectionLayer } from './section';
-import { lattice } from '../worldgen/noise';
+import { hash30, HASH_ONE } from '../worldgen/noise';
 import { climateTie, type ClimateTable, type WeatherFrame } from './climate';
 
 export const FALL_MAX = 350;                         // gotas o copos como mucho (WeatherFrame.fall.max)
@@ -16,12 +16,23 @@ interface View { vx: number; vy: number; vw: number; vh: number; weather?: Weath
 // El búfer de puntos de cada horneado, que se reutiliza de un cuadro al siguiente
 class Points implements FxSource {
   count = 0;
-  packed = new Float32Array(256 * FX_STRIDE);
-  add(x: number, y: number, z: number, c: readonly [number, number, number]): void {
-    const q = this.count++ * FX_STRIDE;
-    if (q + FX_STRIDE > this.packed.length) { const grown = new Float32Array(this.packed.length * 2); grown.set(this.packed); this.packed = grown; }
-    const p = this.packed;
-    p[q] = x; p[q + 1] = y; p[q + 2] = z; p[q + 3] = c[0]; p[q + 4] = c[1]; p[q + 5] = c[2]; p[q + 6] = 1; p[q + 7] = 0; p[q + 8] = 1;
+  packed = new Float32Array(1024 * FX_STRIDE);
+  at = new Float64Array(0);
+  room(n: number): void { if (n * FX_STRIDE > this.packed.length) { const grown = new Float32Array(n * 2 * FX_STRIDE); grown.set(this.packed); this.packed = grown; } }
+  // Quita los puntos cuyo píxel es de lo que sustituye el corte o de su borde dibujado
+  cut(b: Baked, sec: SectionLayer): void {
+    const d = this.packed, n = this.count;
+    if (this.at.length < n * 3) this.at = new Float64Array(n * 6);
+    const at = this.at;
+    b.cam.projectMany(d, n, FX_STRIDE, at);
+    let m = 0;
+    for (let k = 0; k < n; k++) {
+      const sx = Math.floor(at[k * 3]!), sy = Math.floor(at[k * 3 + 1]!), j = sy - sec.y;
+      if (sx >= sec.x && j >= 0 && sx < sec.x + sec.w && j < sec.h && (sec.mask[secIdx(sec, sx, j)] === 1 || sectionBorderAt(sec, sx, sy))) continue;
+      if (m !== k) d.copyWithin(m * FX_STRIDE, k * FX_STRIDE, (k + 1) * FX_STRIDE);
+      m++;
+    }
+    this.count = m;
   }
 }
 const buffers = new WeakMap<Baked, Points>();
@@ -40,22 +51,20 @@ export function fallSource(b: Baked, o: View, sec: SectionLayer | null): FxSourc
   if (!max) return out;
   // (el tope es del conjunto: se reparte según lo que cae de cada cosa, así con las dos a la vez no se dobla)
   const sum = l.rain + l.snow, share = Math.min(1, 1 / sum);
-  if (l.rain > 0) fall(b, o, f, RAIN, l.rain * share, max, 1, out, sec);
-  if (l.snow > 0) fall(b, o, f, SNOW, l.snow * share, max, 2, out, sec);
+  if (l.rain > 0) fall(b, o, f, RAIN, l.rain * share, max, 1, out);
+  if (l.snow > 0) fall(b, o, f, SNOW, l.snow * share, max, 2, out);
+  if (sec) out.cut(b, sec);
   return out;
 }
 
-function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, level: number, max: number, kind: number, out: Points, sec: SectionLayer | null): void {
+// (sin crear nada por gota: lo que sale de los ruidos son enteros, y las alturas también)
+function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, level: number, max: number, kind: number, out: Points): void {
   const s = f.solid ?? b.source, cam = f.camera ?? null, a = b.options.oblique?.y ?? 1, O = b.options.originY;
   const [ox, oy] = f.origin ?? [0, 0], base = cam ? cam.pointToWorld(0, 0) : [0, 0];
   const [Kx, Ky] = cam ? cam.dirToView(base[0]! + ox, base[1]! + oy) : [base[0]! + ox, base[1]! + oy];
   // (el giro de la vista al mundo como cuentas, sin crear nada por gota)
   const turn = f.solid && cam ? cam : null, [tx, ty] = turn ? turn.pointToWorld(0, 0) : [0, 0], [ux, uy] = turn ? turn.dirToWorld(1, 0) : [1, 0], [wxx, wyy] = turn ? turn.dirToWorld(0, 1) : [0, 1];
-  const heightAt = (x: number, y: number): number => {              // en ejes de la vista: lo más alto de la columna, o null fuera
-    let cx = Math.floor(x), cy = Math.floor(y);
-    if (turn) { const px = cx + 0.5, py = cy + 0.5; cx = Math.floor(tx! + px * ux! + py * wxx!); cy = Math.floor(ty! + px * uy! + py * wyy!); }
-    return cx < 0 || cy < 0 || cx >= s.width || cy >= s.depth ? -Infinity : s.height[cy * s.width + cx]!;
-  };
+  const ax = tx!, ay = ty!, bx = ux!, by = uy!, cx_ = wxx!, cy_ = wyy!, sw = s.width, sd = s.depth, heights = s.height, turned = !!turn;
   // Lo que se ve: las columnas de la vista y las filas cuyo suelo o cuyo aire cae en ella
   const lo = (O - (o.vy + o.vh) - s.zMax - 1) / a, hi = (O - o.vy - s.zMin) / a;
   // El lado de la casilla: una gota por casilla, sin pasar del tope (y en pasos, para que no cambie al moverse la vista)
@@ -65,40 +74,36 @@ function fall(b: Baked, o: View, f: WeatherFrame, k: typeof RAIN | typeof SNOW, 
   const period = k.height / k.speed, secs = f.tick / 60, seed = (w.seed ^ (kind * 0x3d4d51cb)) | 0;
   const mx = Math.abs(sx) * k.height, cx0 = Math.floor((o.vx - 8 - mx + Kx) / cell), cx1 = Math.floor((o.vx + o.vw + 8 + mx + Kx) / cell);
   const cy0 = Math.floor((lo + Ky) / cell), cy1 = Math.floor((hi + Ky) / cell);
-  let n = 0;
+  const wantH = level * HASH_ONE;
+  out.room(out.count + max * k.points);
+  const d = out.packed;
+  let q = out.count * FX_STRIDE, n = 0;
   for (let cy = cy0; cy <= cy1 && n < max; cy++) for (let cx = cx0; cx <= cx1 && n < max; cx++) {
-    const phase = lattice(cx, cy, seed) + secs / period, turn = Math.floor(phase), t = phase - turn;
-    const h1 = lattice(cx + turn * 7919, cy, seed + 1);
-    if (h1 >= level) continue;
+    const phase = hash30(cx, cy, seed) / HASH_ONE + secs / period, lap = Math.floor(phase), t = phase - lap;
+    const h1 = hash30(cx + lap * 7919, cy, seed + 1);
+    if (h1 >= wantH) continue;
     // Donde acaba: un sitio de la casilla, otro en cada vuelta
-    const lx = (cx + lattice(cx, cy + turn * 7919, seed + 2)) * cell - Kx, ly = (cy + lattice(cx, cy + turn * 104729, seed + 3)) * cell - Ky;
-    const ground = heightAt(lx, ly);
-    if (ground === -Infinity) continue;
+    const lx = (cx + hash30(cx, cy + lap * 7919, seed + 2) / HASH_ONE) * cell - Kx, ly = (cy + hash30(cx, cy + lap * 104729, seed + 3) / HASH_ONE) * cell - Ky;
     const down = (1 - t) * k.height;                                // lo que le falta por bajar
-    const wob = kind === 2 ? Math.sin(secs * 1.7 + h1 * 40) * Math.min(3, down * 0.2) : 0;
-    const c = k.colors[h1 * 16 % 1 < 0.5 ? 0 : 1]!;
-    let drawn = false;
-    for (let p = 0; p < k.points; p++) {
-      const up = down + p * k.gap, x = lx - sx * up + wob, y = ly - sy * up, z = ground + up;
-      const px = x, py = O - a * y - z;
-      if (px < o.vx - 1 || py < o.vy - 2 || px >= o.vx + o.vw + 1 || py >= o.vy + o.vh + 2) continue;
-      // (bajo un techo, no: tiene que estar por encima de todo lo de su columna)
-      if (z < heightAt(x, y)) continue;
-      if (sec && cutAt(sec, b, x, y, z)) continue;
-      out.add(x, y, z, c);
+    const wob = kind === 2 ? Math.sin(secs * 1.7 + h1 / HASH_ONE * 40) * Math.min(3, down * 0.2) : 0;
+    const c = k.colors[(h1 >> 8) & 1]!;
+    let ground = 0, drawn = false;
+    // (p -1: la columna donde acaba; después, cada punto, que tiene que estar por encima de todo lo de la suya: bajo un techo, no)
+    for (let p = -1; p < k.points; p++) {
+      const up = p < 0 ? 0 : down + p * k.gap, x = p < 0 ? lx : lx - sx * up + wob, y = ly - sy * up, z = ground + up;
+      if (p >= 0) { const py = O - a * y - z; if (x < o.vx - 1 || py < o.vy - 2 || x >= o.vx + o.vw + 1 || py >= o.vy + o.vh + 2) continue; }
+      let gx = Math.floor(x), gy = Math.floor(y);
+      if (turned) { const px = gx + 0.5, py = gy + 0.5; gx = Math.floor(ax + px * bx + py * cx_); gy = Math.floor(ay + px * by + py * cy_); }
+      const inside = gx >= 0 && gy >= 0 && gx < sw && gy < sd;
+      if (p < 0) { if (!inside) break; ground = heights[gy * sw + gx]!; continue; }
+      if (inside && z < heights[gy * sw + gx]!) continue;
+      d[q] = x; d[q + 1] = y; d[q + 2] = z; d[q + 3] = c[0]; d[q + 4] = c[1]; d[q + 5] = c[2]; d[q + 6] = 1; d[q + 7] = 0; d[q + 8] = 1;
+      q += FX_STRIDE;
       drawn = true;
     }
     if (drawn) n++;
   }
-}
-
-// ¿El píxel en que se pinta un punto es de lo que sustituye el corte, o de su borde dibujado?
-const at3 = [0, 0, 0];
-function cutAt(sec: SectionLayer, b: Baked, x: number, y: number, z: number): boolean {
-  b.cam.projectTo(x, y, z, at3);
-  const sx = Math.floor(at3[0]!), sy = Math.floor(at3[1]!), j = sy - sec.y;
-  if (sx < sec.x || j < 0 || sx >= sec.x + sec.w || j >= sec.h) return false;
-  return sec.mask[secIdx(sec, sx, j)] === 1 || sectionBorderAt(sec, sx, sy);
+  out.count = q / FX_STRIDE;
 }
 
 // ---- lo que dejan

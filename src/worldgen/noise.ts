@@ -8,6 +8,15 @@ export function lattice(x: number, y: number, seed: number): number {
   return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 
+// Lo mismo en 30 bits enteros (0 .. 2^30 - 1): para bucles que lo piden cientos de veces por cuadro (un entero pequeño no crea
+// nada en memoria; un número con decimales devuelto por una función, sí)
+export const HASH_ONE = 1 << 30;
+export function hash30(x: number, y: number, seed: number): number {
+  let h = (Math.imul(x | 0, 374761393) + Math.imul(y | 0, 668265263) + Math.imul(seed | 0, 2147483647)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 2;
+}
+
 // Ruido de valor suave en 0..1: interpola los de los 4 enteros de alrededor
 export function valueNoise(x: number, y: number, seed: number): number {
   const x0 = Math.floor(x), y0 = Math.floor(y);

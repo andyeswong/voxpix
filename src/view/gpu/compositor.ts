@@ -1428,6 +1428,7 @@ export class GpuCompositor {
   }
 
   // Los puntos de los efectos, proyectados en la CPU (como las gotas: así la GPU pinta los mismos píxeles)
+  private fxAt = new Float64Array(0);
   private fxEmissive = false;
   private projectFx(sources: readonly FxSource[], last: FxSource | null, b: Baked, o: Frame2DOptions): number {
     const gl = this.gl;
@@ -1437,16 +1438,17 @@ export class GpuCompositor {
     this.fxEmissive = false;
     if (!total) return 0;
     if (this.fxData.length < total * 8) this.fxData = new Float32Array(Math.max(256, total * 2) * 8);
-    const at = [0, 0, 0];
+    if (this.fxAt.length < total * 3) this.fxAt = new Float64Array(Math.max(512, total * 2) * 3);
+    const at = this.fxAt;
     let out = this.fxData;
     let n = 0;
     for (let si = 0, sn = sources.length + (last ? 1 : 0); si < sn; si++) {
       const s = si < sources.length ? sources[si]! : last!;
       const d = s.packed;
+      b.cam.projectMany(d, s.count, FX_STRIDE, at);
       for (let k = 0; k < s.count; k++) {
         const q = k * FX_STRIDE;
-        b.cam.projectTo(d[q]!, d[q + 1]!, d[q + 2]!, at);
-        const sx = at[0]!, sy = at[1]!, depth = at[2]!;
+        const sx = at[k * 3]!, sy = at[k * 3 + 1]!, depth = at[k * 3 + 2]!;
         const tx = Math.floor(sx) - o.vx, ty0 = Math.floor(sy) - o.vy, px = d[q + 6]!, len = d[q + 8]!;
         for (let st = 0; st < len; st++) {
           const ty = ty0 - st;

@@ -56,6 +56,8 @@ export interface Camera {
   project(x: number, y: number, z: number): [number, number, number];
   // Lo mismo, escrito en `out` (las mismas cuentas en el mismo orden: los mismos números), sin crear nada
   projectTo(x: number, y: number, z: number, out: number[]): void;
+  // n puntos seguidos (x, y, z en los tres primeros de cada `stride`) a out (3 por punto), sin crear nada: como project
+  projectMany(src: Float32Array, n: number, stride: number, out: Float64Array): void;
   groundAt(sx: number, sy: number): [number, number] | null;
   groundPoint(sx: number, sy: number): [number, number] | null;   // punto exacto del suelo (z = 0) bajo un píxel
   yawCos: number;
@@ -96,6 +98,13 @@ export function camera(o: RenderOptions): Camera {
       const px = x - pvx, py = y - pvy, pz = (z - pvz) * zs;
       const wx = px * cos - py * sin, wy = px * sin + py * cos;
       out[0] = wx * ppu + o.originX + 0.5; out[1] = -(wy * up[1] + pz * up[2]) * ppu + o.originY; out[2] = wy * fwd[1] + pz * fwd[2];
+    },
+    projectMany(src, n, stride, out) {
+      for (let k = 0, q = 0, w = 0; k < n; k++, q += stride, w += 3) {
+        const px = src[q]! - pvx, py = src[q + 1]! - pvy, pz = (src[q + 2]! - pvz) * zs;
+        const wx = px * cos - py * sin, wy = px * sin + py * cos;
+        out[w] = wx * ppu + o.originX + 0.5; out[w + 1] = -(wy * up[1] + pz * up[2]) * ppu + o.originY; out[w + 2] = wy * fwd[1] + pz * fwd[2];
+      }
     },
     groundPoint(sx, sy) {
       if (se < 1e-3) return null;                       // de frente, el suelo no se ve
