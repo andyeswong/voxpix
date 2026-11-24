@@ -38,20 +38,21 @@ float spotOf(int i, vec3 v, vec3 dir) {
 }
 float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 
-// La tabla del clima (src/world/climate.ts), en la misma textura que las luces, debajo de ellas
-export const CLIMATE_ROW = MAX_LIGHTS;
-export const WAVE_ROW = MAX_LIGHTS + 64;     // y debajo, la baldosa del agua (climate.ts: CLIMATE_H)
-const CLIMATE = `uniform ivec4 uClim;                   // la primera casilla (x, y) y cuántas
+// La tabla del clima (src/world/climate.ts) y, debajo, la baldosa del agua (waves.ts), en su textura: la de las luces se sube en
+// cada cuadro, y con ellas dentro la GPU copiaba entera una textura grande cada vez
+export const WAVE_ROW = 64;                  // (climate.ts: CLIMATE_H)
+const CLIMATE = `uniform sampler2D uClimTab;
+uniform ivec4 uClim;                   // la primera casilla (x, y) y cuántas
 uniform vec2 uClimK;
 vec4 climateAt(float vx, float vy) {
   ivec2 c = ivec2(int(floor((vx + uClimK.x) / 16.0)), int(floor((vy + uClimK.y + 1.0 / 1024.0) / 32.0))) - uClim.xy;
   c = clamp(c, ivec2(0), uClim.zw - 1);
-  return texelFetch(uLightTab, ivec2(c.x, c.y + ${MAX_LIGHTS}), 0);
+  return texelFetch(uClimTab, c, 0);
 }
 // El sol (src/world/sunlight.ts): lo que suma a cada cara, y la sombra de las nubes
 uniform bool uSun;
 uniform vec3 uSunFace[6];
-float cloudAt(ivec2 c) { c = clamp(c - uClim.xy, ivec2(0), uClim.zw - 1); return texelFetch(uLightTab, ivec2(c.x, c.y + ${MAX_LIGHTS}), 0).a; }
+float cloudAt(ivec2 c) { c = clamp(c - uClim.xy, ivec2(0), uClim.zw - 1); return texelFetch(uClimTab, c, 0).a; }
 float cloudShade(float vx, float vy) {
   vec2 u = vec2((vx + uClimK.x) / 16.0, (vy + uClimK.y + 1.0 / 1024.0) / 32.0) - 0.5, f = fract(u);
   ivec2 i = ivec2(floor(u));
@@ -401,7 +402,7 @@ uniform ivec4 uCutBox;
 uniform float uCutZ;
 uniform bool uCutWin;               // con ventana: solo en los píxeles de dentro (secWindow)
 ${SECTION}
-// El rizado del viento y la lluvia (src/world/waves.ts): una baldosa en la textura de las luces, debajo del clima
+// El rizado del viento y la lluvia (src/world/waves.ts): una baldosa en la textura del clima
 uniform bool uWaves;
 uniform ivec2 uWaveK;
 uniform vec3 uAmbient;
@@ -468,7 +469,7 @@ void main() {
   float sx = (sE - sW) / float(2 * CELL), syl = (sN - sS) / float(2 * CELL);
   if (uWaves && (d >= 0.6 || basin)) {
     ivec2 wc = (c + uWaveK) & 63;
-    vec4 wv = texelFetch(uLightTab, ivec2(wc.x, wc.y + ${WAVE_ROW}), 0);
+    vec4 wv = texelFetch(uClimTab, ivec2(wc.x, wc.y + ${WAVE_ROW}), 0);
     float wind = climateAt(float(gx * CELL + 1), float(gy * CELL + 1)).b;
     sx += wv.x * wind + wv.z; syl += wv.y * wind + wv.w;
   }

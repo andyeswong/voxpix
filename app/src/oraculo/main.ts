@@ -491,6 +491,13 @@ for (const q of [0, 1] as Quarter[]) {
   SCENARIOS.push({ name: `viento con la ventana corrida, giro ${q}`, theme: 'medieval', veg: true, pos: [172, 170], quarter: q, ticks: 60, shift: 'ida', clima: wind });
   SCENARIOS.push({ name: `viento con la ventana corrida y vuelta, giro ${q}`, theme: 'medieval', veg: true, pos: [172, 170], quarter: q, ticks: 60, shift: 'vuelta', clima: wind });
 }
+// Con una multitud (sus sombras, también en el borde de la vista), y con matas puestas a mano y rehorneadas tras un cuadro
+SCENARIOS.push({ name: 'viento en la vegetación con multitud', theme: 'medieval', veg: true, pos: [196, 172], ticks: 40, setup: (s, rt) => { crowd(60)(s, rt); for (const dx of [-186, 186]) { const x = rt.player.x + dx, y = rt.player.y; if (x < 8 || x > s.solid.width - 8) continue; s.lights.add({ kind: 'brazier', x: x - Math.sign(dx) * 10, y: y + 2, z: 12 }); s.entities.add({ model: walk[0]!, x, y, z: s.groundAt(x, y), facing: 0, castsShadow: true }); } }, clima: wind });
+SCENARIOS.push({ name: 'viento en matas puestas a mano', theme: 'medieval', veg: true, pos: [196, 172], ticks: 40, clima: wind, after: (s, b, _f, view) => {
+  const r = s.solid.palette.ramps.findIndex((q) => q.name === 'hierba-alta');
+  for (let y = 150; y < 200; y += 6) for (let x = 170; x < 230; x += 7) { const g = s.solid.walkAt(x, y); if (g > 4) continue; for (let z = g; z < g + 9; z++) s.solid.set(x, y, z, material(r, 1)); }
+  rebakeChanged(b, view.frame().lights);
+} });
 SCENARIOS.push({ name: 'viento en la vegetación, sin luces', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, lights: false, clima: wind });
 SCENARIOS.push({ name: 'viento en la vegetación bajo el cielo, con niebla', theme: 'medieval', veg: true, pos: [196, 172], ticks: 45, cave: true, fog: true, clima: wind });
 SCENARIOS.push({ name: 'viento en la vegetación, subido por partes', theme: 'medieval', veg: true, pos: [204, 168], ticks: 45, prepared: true, clima: wind });
@@ -509,6 +516,11 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `nieve a medias, giro ${q}`, theme: 'medieval', veg: true, cave: true, pos: [196, 172], quarter: q, ticks: 64, clima: { levels: { snow: 0.8, wind: [-0.4, 0.5], gust: 0.5 }, frame: { fall: {}, cover: true }, snow: 0.55, wet: 0.2 } });
   SCENARIOS.push({ name: `nieve con corte, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 64, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 1 }, section: { width: 64, painter: true, z: 1 } });
   SCENARIOS.push({ name: `nieve con corte y velo, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 64, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 0.5, wet: 1 }, section: { width: 64, z: 1, ghost: { alpha: 0.35 } } });
+}
+// Lo que cae sobre un corte en cruz con borde (sobre el interior, nada), y el velo con agua y algas a la vez
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `lluvia sobre la cruz, giro ${q}`, theme: 'medieval', cave: true, quarter: q, ticks: 64, clima: { levels: { rain: 1, wind: [0.5, 0.2] }, frame: { fall: { max: 1500 } } }, section: { width: 64, painter: true, z: 1, cross: true, border: 2 } });
+  SCENARIOS.push({ name: `velo con agua y algas, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 97, stompEvery: 42, clima: { levels: { rain: 1, wind: [0.8, 0.3], gust: 0.6 }, frame: { fall: {}, waves: 1 } }, section: { width: 96, painter: true, z: 1, ghost: { alpha: 0.5 } } });
 }
 SCENARIOS.push({ name: 'nieve con niebla sin luces', theme: 'medieval', cave: true, ticks: 64, lights: false, fog: true, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 0.7 } });
 SCENARIOS.push({ name: 'lluvia con fondo transparente', theme: 'medieval', cave: true, clearBg: true, ticks: 64, clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: { max: 1000 }, cover: true }, wet: 1 } });

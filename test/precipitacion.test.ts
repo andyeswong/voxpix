@@ -8,7 +8,7 @@ import { WorldView, type Quarter } from '../src/world/view';
 import { Weather, type WeatherLevels } from '../src/world/weather';
 import type { WeatherFrame } from '../src/world/climate';
 import { coverLook, fallSource } from '../src/world/precipitation';
-import { sectionLayer, sectionAt } from '../src/world/section';
+import { sectionLayer, sectionAt, sectionBorderAt, crossWindow } from '../src/world/section';
 
 const PAL: Palette = { ramps: [{ name: 'suelo', colors: ['#202020', '#606060', '#808080'] }, { name: 'techo', colors: ['#402010', '#704020'] }] };
 // Un suelo y, sobre x 40..79, y 30..89, un techo a z 24
@@ -20,7 +20,7 @@ function setup(q: Quarter = 0, sky = true) {
 }
 const W = (levels: Partial<WeatherLevels>) => new Weather({ seed: 3, levels });
 const opts = (b: Baked, weather: WeatherFrame | null): Frame2DOptions => ({ vx: 0, vy: 0, vw: b.width, vh: b.height, time: 0, lights: true, ambient: [0.8, 0.8, 0.8], weather });
-const points = (b: Baked, f: WeatherFrame) => { const s = fallSource(b, opts(b, f)); const o: Array<[number, number, number]> = []; if (s) for (let k = 0; k < s.count; k++) o.push([s.packed[k * FX_STRIDE]!, s.packed[k * FX_STRIDE + 1]!, s.packed[k * FX_STRIDE + 2]!]); return o; };
+const points = (b: Baked, f: WeatherFrame) => { const s = fallSource(b, opts(b, f), null); const o: Array<[number, number, number]> = []; if (s) for (let k = 0; k < s.count; k++) o.push([s.packed[k * FX_STRIDE]!, s.packed[k * FX_STRIDE + 1]!, s.packed[k * FX_STRIDE + 2]!]); return o; };
 
 describe('lo que cae', () => {
   it('nada sin pedirlo, sin lluvia o con tope 0; y el cuadro, el de siempre', () => {
@@ -44,7 +44,7 @@ describe('lo que cae', () => {
   it('con tope, también con lluvia y nieve a la vez', () => {
     const { b } = setup();
     for (const max of [10, 60]) for (let tick = 0; tick < 60; tick += 5) {
-      expect(points(b, { weather: W({ rain: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max * 3);
+      expect(points(b, { weather: W({ rain: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max * 2);
       expect(points(b, { weather: W({ snow: 1 }), tick, fall: { max } }).length).toBeLessThanOrEqual(max);
     }
     const both = points(b, { weather: W({ rain: 1, snow: 1 }), tick: 20, fall: { max: 60 } }).length, one = points(b, { weather: W({ rain: 1 }), tick: 20, fall: { max: 60 } }).length;
@@ -54,7 +54,7 @@ describe('lo que cae', () => {
     const { b } = setup();
     const count = (rain: number) => { let n = 0; for (let t = 0; t < 60; t += 4) n += points(b, { weather: W({ rain }), tick: t, fall: {} }).length; return n; };
     expect(count(0.9)).toBeGreaterThan(count(0.4) * 1.5);
-    const lean = (wind: [number, number]) => { const p = points(b, { weather: W({ rain: 1, wind }), tick: 20, fall: {} }); let s = 0, m = 0; for (let k = 0; k + 1 < p.length; k++) if (Math.abs(p[k + 1]![2] - p[k]![2] - 1.6) < 1e-3) { s += p[k + 1]![0] - p[k]![0]; m++; } return s / m; };
+    const lean = (wind: [number, number]) => { const p = points(b, { weather: W({ rain: 1, wind }), tick: 20, fall: {} }); let s = 0, m = 0; for (let k = 0; k + 1 < p.length; k++) if (Math.abs(p[k + 1]![2] - p[k]![2] - 2) < 1e-3) { s += p[k + 1]![0] - p[k]![0]; m++; } return s / m; };
     expect(lean([1, 0])).toBeLessThan(-0.2);            // la de más arriba, más atrás
     expect(lean([-1, 0])).toBeGreaterThan(0.2);
     expect(Math.abs(lean([0, 0]))).toBeLessThan(1e-6);
@@ -71,6 +71,25 @@ describe('lo que cae', () => {
     const b2 = bakeWorld({ model: s2, lights: [], width: 128, depth: 128 }, { topZ: 52, incline: 0.5 });
     expect(inner(points(b2, { weather, tick: 33, fall: {}, origin: [16, 0] }), 16).length).toBeGreaterThan(3);
     for (const k of inner(points(b2, { weather, tick: 33, fall: {}, origin: [16, 0] }), 16)) expect(a).toContain(k);
+  });
+  it('con un corte, ninguna encima de lo que sustituye ni de su borde, también lo que cae por delante del tejado quitado', () => {
+    const { b, state } = setup(), cut = { x0: 30, x1: 90, y0: 0, y1: 60, zMin: 3, depth: 40 };
+    const [wx, wy] = b.cam.project(60, 60, 12), window = crossWindow(wx, wy, { arm: 24, r: 24, border: { color: '#ffd666', width: 2 } });
+    for (const section of [cut, { ...cut, window }]) for (const levels of [{ rain: 1 }, { snow: 1 }]) {
+      const L = sectionLayer(b, section)!;
+      let without = 0, sub = 0;
+      for (let q = 0; q < L.mask.length; q++) if (L.mask[q] === 1) sub++;
+      expect(sub).toBeGreaterThan(100);
+      for (let tick = 0; tick < 60; tick += 6) {
+        const f: WeatherFrame = { weather: W(levels), tick, fall: { max: 1500 } }, o = { ...opts(b, f), section };
+        const hits = (sec: typeof L | null) => { const s = fallSource(b, o, sec)!; let n = 0; for (let k = 0; k < s.count; k++) { const [sx, sy] = b.cam.project(s.packed[k * FX_STRIDE]!, s.packed[k * FX_STRIDE + 1]!, s.packed[k * FX_STRIDE + 2]!); const x = Math.floor(sx), y = Math.floor(sy), q = sectionAt(L, x, y); if ((q >= 0 && L.mask[q] === 1) || sectionBorderAt(L, x, y)) n++; } return n; };
+        without += hits(null);
+        expect(hits(L)).toBe(0);
+        const dry = frame2DParts(state, b, { ...opts(b, null), section }).view, wet = frame2DParts(state, b, o).view;
+        for (let y = 0; y < b.height; y++) for (let x = 0; x < b.width; x++) { const q = sectionAt(L, x, y); if (q >= 0 && L.mask[q] === 1) expect(wet[(y * b.width + x) * 4]).toBe(dry[(y * b.width + x) * 4]); }
+      }
+      expect(without).toBeGreaterThan(5);      // (sin la regla, caían encima)
+    }
   });
   it('en los 4 giros, ninguna bajo el techo del mundo; con solid, aunque la vista esté cortada', () => {
     for (const q of [0, 1, 2, 3] as Quarter[]) {

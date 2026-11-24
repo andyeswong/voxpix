@@ -9,7 +9,7 @@
 // lee (el viento empuja algo, la lluvia apaga algo), state.addPart('weather', clima) lo lleva a la instantánea y la huella.
 // docs/motor.md, "El clima".
 import type { StatePart, StateHasher } from './state';
-import { valueNoise } from '../worldgen/noise';
+import { lattice } from '../worldgen/noise';
 
 export interface WeatherLevels {
   wind: readonly [number, number];    // hacia dónde va, en el plano del mundo; su largo (0..1) es la fuerza
@@ -45,6 +45,16 @@ const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
 const ease = (u: number): number => u * u * (3 - 2 * u);
 const easeSum = (u: number): number => u * u * u - (u * u * u * u) / 2;     // la integral de ease de 0 a u
 
+// valueNoise (worldgen/noise.ts), con las cuatro esquinas de la última casilla guardadas: los mismos valores
+function noiseReader(seed: number): (x: number, y: number) => number {
+  let px = NaN, py = NaN, a = 0, b = 0, c = 0, d = 0;
+  return (x, y) => {
+    const x0 = Math.floor(x), y0 = Math.floor(y);
+    if (x0 !== px || y0 !== py) { px = x0; py = y0; a = lattice(x0, y0, seed); b = lattice(x0 + 1, y0, seed); c = lattice(x0, y0 + 1, seed); d = lattice(x0 + 1, y0 + 1, seed); }
+    const fx = x - x0, fy = y - y0, sx = fx * fx * (3 - 2 * fx), sy = fy * fy * (3 - 2 * fy);
+    return (a * (1 - sx) + b * sx) * (1 - sy) + (c * (1 - sx) + d * sx) * sy;
+  };
+}
 function fill(base: WeatherLevels, p: Partial<WeatherLevels>): WeatherLevels {
   const w = p.wind ?? base.wind, l = Math.hypot(w[0], w[1]), k = l > 1 ? 1 / l : 1;
   const n = (v: number | undefined, d: number) => clamp01(v ?? d);
@@ -155,10 +165,12 @@ export class Weather implements StatePart {
     return this.gustField(tick)(x, y);
   }
   // Lo mismo para muchos sitios del mismo tick
+  // (los dos valores de ruido llevan su memoria de la última casilla: leídos seguidos por filas salen casi gratis)
   gustField(tick: number): (x: number, y: number) => number {
     const l = this.levels(tick), [dx, dy] = this.drift(tick), base = Math.hypot(l.wind[0], l.wind[1]), s = this.seed ^ 0x57a9;
     if (base <= 0) return () => 0;
-    return (x, y) => clamp01(base * (1 + l.gust * 1.6 * (valueNoise((x - dx) / GUST_SIZE, (y - dy) / GUST_SIZE, s) * 0.75 + valueNoise((x - dx) / (GUST_SIZE / 4), (y - dy) / (GUST_SIZE / 4), s + 1) * 0.25 - 0.5)));
+    const n1 = noiseReader(s), n2 = noiseReader(s + 1);
+    return (x, y) => clamp01(base * (1 + l.gust * 1.6 * (n1((x - dx) / GUST_SIZE, (y - dy) / GUST_SIZE) * 0.75 + n2((x - dx) / (GUST_SIZE / 4), (y - dy) / (GUST_SIZE / 4)) * 0.25 - 0.5)));
   }
   // Cuánto tapan las nubes el sol en un sitio (0 nada, 1 del todo): manchas que viajan con el viento
   cloudField(tick: number): (x: number, y: number) => number {
@@ -167,8 +179,9 @@ export class Weather implements StatePart {
     if (c >= 1) return () => 1;
     // (el umbral baja al nublarse: a 0 no pasa ninguna y a 1, todo)
     const cut = 1 - c;
+    const n1 = noiseReader(s), n2 = noiseReader(s + 1);
     return (x, y) => {
-      const n = valueNoise((x - ox) / CLOUD_SIZE, (y - oy) / CLOUD_SIZE, s) * 0.7 + valueNoise((x - ox) / (CLOUD_SIZE / 3), (y - oy) / (CLOUD_SIZE / 3), s + 1) * 0.3;
+      const n = n1((x - ox) / CLOUD_SIZE, (y - oy) / CLOUD_SIZE) * 0.7 + n2((x - ox) / (CLOUD_SIZE / 3), (y - oy) / (CLOUD_SIZE / 3)) * 0.3;
       return clamp01((n - cut) / 0.12 + 0.5);
     };
   }

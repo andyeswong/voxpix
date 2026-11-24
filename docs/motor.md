@@ -2026,12 +2026,12 @@ Ponerlas o quitarlas con `follow` no cambia el agua. Lo guardado no cambia: las 
 ### Lluvia y nieve
 
 ```ts
-weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid: state.solid }
+weather: { weather, tick, origin, camera, fall: { max: 240 }, cover: true, solid: state.solid }
 ```
 
 - `fall`: gotas y copos que caen inclinados por el viento hasta lo más alto de su columna, nunca por debajo de ello (ni bajo
   un techo, ni en una cueva, ni dentro de un corte al componer). Son puntos calculados del tick: no hay partículas guardadas.
-  `max` es cuántas a la vez (350; con lluvia y nieve juntas se reparte). Con `WorldView.setCut` hay que dar `solid` (los
+  `max` es cuántas a la vez (240; con lluvia y nieve juntas se reparte). Con `WorldView.setCut` hay que dar `solid` (los
   vóxeles del mundo sin cortar): si no, lo cortado cuenta como cielo.
 - `cover`, con un horneado con `{ sky: true }`: nieve sobre las caras de arriba que ven el cielo (en trama mientras cuaja) y lo
   mojado más oscuro, según `weather.cover`. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,

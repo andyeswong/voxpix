@@ -10,7 +10,7 @@
 //   - una vez por modelo y giro: el sprite de la entidad (color, profundidad, vóxel y cara de cada píxel) y su cuerpo;
 //   - cada cuadro: la profundidad del agua de las columnas visibles, las gotas proyectadas, un registro por entidad
 //     (dónde va, qué sprite) y la tabla de luces.
-import { DIR_VECTORS, unkey, FX_STRIDE, rgbOf } from '../../core';
+import { DIR_VECTORS, KEY_OFF, KEY_SPAN, unkey, FX_STRIDE, rgbOf } from '../../core';
 import { withEffectLights } from '../../world/effects';
 import { resolveLight } from '../../world/lightutil';
 import { sectionFor, ghostMix, entitySun } from '../../world/frame2d';
@@ -27,7 +27,7 @@ import { climateTable, CLIMATE_W, type ClimateTable } from '../../world/climate'
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource, FxSource } from '../../core';
-import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, CLIMATE_ROW, WAVE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
+import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, WAVE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 // Un modelo para precalentar: en qué giros (por defecto los 8 rumbos) y si da sombra de verdad
@@ -131,9 +131,9 @@ export class GpuCompositor {
   private tOcc: WebGLTexture;
   private tLights: WebGLTexture;
   private lightTab = new Float32Array(4 * MAX_LIGHTS * 4);
-  private climUp: ClimateTable | null = null;        // la tabla del clima que está subida (debajo de las luces)
+  private tClim: WebGLTexture | null = null;         // la tabla del clima y la baldosa del agua
+  private climUp: ClimateTable | null = null;        // la tabla que está subida
   private waveUp: Float32Array | null = null;        // y los datos de la baldosa del agua
-  private climRoom = false;
   private occPlace: Array<{ min: [number, number, number]; size: [number, number, number]; ax: number }> = [];
   // Agua
   private tWDepth: WebGLTexture | null = null;
@@ -323,23 +323,19 @@ export class GpuCompositor {
       tab.set([baked ? layer : -1, baked ? p.intensity / zones[layer]!.intensity : 0, l.baked === false ? 1 : 0, p.spot?.cosInner ?? 1], (i * 4 + 2) * 4);
       tab.set(p.spot ? [...p.spot.dir, p.spot.cosOuter] : [0, 0, 0, -2], (i * 4 + 3) * 4);
     });
-    // El clima: su tabla, en la misma textura (se agranda la primera vez que hace falta)
+    // El clima: su tabla, en su textura (se crea la primera vez que hace falta)
     const clim = climateTable(b, o);
-    if (clim && !this.climRoom) {
-      gl.deleteTexture(this.tLights);
-      this.tLights = tex2D(gl, gl.RGBA32F, CLIMATE_W, WAVE_ROW + WAVE_T, gl.RGBA, gl.FLOAT, null);
-      this.climRoom = true;
-    }
+    if (clim && !this.tClim) this.tClim = tex2D(gl, gl.RGBA32F, CLIMATE_W, WAVE_ROW + WAVE_T, gl.RGBA, gl.FLOAT, null);
     const waves: WaveTile | null = state.water ? waveTile(b, o.weather, clim) : null;
     if (waves && waves.data !== this.waveUp) {
-      uploadTo(gl, gl.TEXTURE_2D, this.tLights);
+      uploadTo(gl, gl.TEXTURE_2D, this.tClim!);
       gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, WAVE_ROW, WAVE_T, WAVE_T, gl.RGBA, gl.FLOAT, waves.data);
       this.waveUp = waves.data;
     }
     const sway = !!clim?.sway && !!swayTable(b.source.palette);
     if (clim && clim !== this.climUp) {
-      uploadTo(gl, gl.TEXTURE_2D, this.tLights);
-      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, CLIMATE_ROW, clim.w, clim.h, gl.RGBA, gl.FLOAT, clim.data);
+      uploadTo(gl, gl.TEXTURE_2D, this.tClim!);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, clim.w, clim.h, gl.RGBA, gl.FLOAT, clim.data);
       this.climUp = clim;
     }
     uploadTo(gl, gl.TEXTURE_2D, this.tLights);
@@ -436,6 +432,9 @@ export class GpuCompositor {
     this.setCasters(state, b, sway ? { ...o, vx: o.vx - SWAY_FILL, vw: o.vw + 2 * SWAY_FILL } : o, lights.map((x) => x.l));
     this.parts.casters = performance.now() - up;
     upMs += this.parts.casters;
+    // (la textura del clima va en la unidad de las subidas, la única que le queda a la escena: se enlaza lo último, sin más
+    // subidas hasta pintar; cada subida enlaza la suya)
+    if (clim) bindTex(gl, UPLOAD_UNIT, gl.TEXTURE_2D, this.tClim, s.u.uClimTab);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
 
     // 2) el agua
@@ -460,6 +459,7 @@ export class GpuCompositor {
     // (con ventana, el agua de la caja solo se quita en los píxeles de dentro: lo dice la máscara de la capa)
     gl.uniform1i(w.u.uCutWin, this.secLayer?.window ? 1 : 0);
     this.bindSection(w, false);
+    if (clim) bindTex(gl, 6, gl.TEXTURE_2D, this.tClim, w.u.uClimTab);
     this.setSun(w, sun, clim);
     gl.uniform1i(w.u.uWaves, waves ? 1 : 0);
     if (waves) { this.setClimate(w, waves.climate); gl.uniform2i(w.u.uWaveK, waves.kx, waves.ky); }
@@ -496,8 +496,8 @@ export class GpuCompositor {
 
     // 3) los efectos y las gotas, sobre lo que dejó el agua
     up = performance.now();
-    const falling = fallSource(b, o);
-    const nfx = state.effects || falling ? this.projectFx([...(state.effects?.sources ?? []), ...(falling ? [falling] : [])], b, o) : 0;
+    const falling = fallSource(b, o, sec);
+    const nfx = state.effects || falling ? this.projectFx(state.effects?.sources ?? [], falling, b, o) : 0;
     this.parts.fx = performance.now() - up;
     if (nfx) {
       const p = this.fx;
@@ -509,7 +509,8 @@ export class GpuCompositor {
       gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.NONE]);
       gl.uniform1i(p.u.uPass, 0);
       gl.drawArrays(gl.POINTS, 0, nfx);
-      if (o.lights) {
+      // (la segunda pasada es la de la luz propia: sin ningún punto que la lleve, no pinta nada)
+      if (o.lights && this.fxEmissive) {
         gl.drawBuffers([gl.NONE, gl.COLOR_ATTACHMENT1]);
         gl.uniform1i(p.u.uPass, 1);
         gl.drawArrays(gl.POINTS, 0, nfx);
@@ -588,6 +589,7 @@ export class GpuCompositor {
       gl.uniform1fv(p.u.uBack, this.backVals);
       gl.uniform1i(p.u.uNLights, o.lights ? this.veilLights : 0);
       this.applyCasters(p.u);
+      if (this.veilSun) bindTex(gl, 5, gl.TEXTURE_2D, this.tClim, p.u.uClimTab);
       this.setSun(p, this.veilSun?.look ?? null, this.veilSun?.table ?? null);
     }
     gl.uniform1i(p.u.uMode, mode);
@@ -1425,19 +1427,25 @@ export class GpuCompositor {
   }
 
   // Los puntos de los efectos, proyectados en la CPU (como las gotas: así la GPU pinta los mismos píxeles)
-  private projectFx(sources: readonly FxSource[], b: Baked, o: Frame2DOptions): number {
+  private fxEmissive = false;
+  private projectFx(sources: readonly FxSource[], last: FxSource | null, b: Baked, o: Frame2DOptions): number {
     const gl = this.gl;
     let total = 0;
     for (const s of sources) total += s.count;
+    if (last) total += last.count;
+    this.fxEmissive = false;
     if (!total) return 0;
     if (this.fxData.length < total * 8) this.fxData = new Float32Array(Math.max(256, total * 2) * 8);
+    const at = [0, 0, 0];
     let out = this.fxData;
     let n = 0;
-    for (const s of sources) {
+    for (let si = 0, sn = sources.length + (last ? 1 : 0); si < sn; si++) {
+      const s = si < sources.length ? sources[si]! : last!;
       const d = s.packed;
       for (let k = 0; k < s.count; k++) {
         const q = k * FX_STRIDE;
-        const [sx, sy, depth] = b.cam.project(d[q]!, d[q + 1]!, d[q + 2]!);
+        b.cam.projectTo(d[q]!, d[q + 1]!, d[q + 2]!, at);
+        const sx = at[0]!, sy = at[1]!, depth = at[2]!;
         const tx = Math.floor(sx) - o.vx, ty0 = Math.floor(sy) - o.vy, px = d[q + 6]!, len = d[q + 8]!;
         for (let st = 0; st < len; st++) {
           const ty = ty0 - st;
@@ -1445,6 +1453,7 @@ export class GpuCompositor {
           if (out.length < (n + 1) * 8) { const grown = new Float32Array(out.length * 2); grown.set(out); out = this.fxData = grown; }
           const w = n * 8;
           out[w] = tx; out[w + 1] = ty; out[w + 2] = depth;
+          if (d[q + 7]! > 0) this.fxEmissive = true;
           out[w + 3] = d[q + 3]!; out[w + 4] = d[q + 4]!; out[w + 5] = d[q + 5]!; out[w + 6] = px; out[w + 7] = d[q + 7]!;
           n++;
         }
@@ -1536,6 +1545,7 @@ interface BakedGpu {
 
 // La cara con el código de su luz por detrás (+8 * código)
 // (Int8Array, o Int16Array si alguna rampa se mece: entonces, además, + 128 * su código)
+const voxelOf = (s: Baked['source'], k: number): number => { const r = Math.floor(k / KEY_SPAN); return s.get(Math.floor(r / KEY_SPAN) - KEY_OFF, (r % KEY_SPAN) - KEY_OFF, (k % KEY_SPAN) - KEY_OFF); };
 type FaceUp = Int8Array<ArrayBuffer> | Int16Array<ArrayBuffer>;
 const makeFaceUp = (b: Baked, vals: Float32Array): FaceUp | null =>
   swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
@@ -1546,8 +1556,15 @@ function fillFace(b: Baked, out: FaceUp, vals: Float32Array, x0: number, y0: num
   const mt = materialsOf(b.source.palette), sw = out instanceof Int16Array ? swayTable(b.source.palette) : null;
   for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
     const i = sy * b.width + sx, f = b.face[i]!;
-    const back = f >= 0 ? backlitAt(b, mt, i) : 0;
-    out[i] = (back > 0 ? f + 8 * vals.indexOf(back, 1) : f) + (sw && f >= 0 ? 128 * swayCode(sw, b.source, b.pick[i]!) : 0);
+    if (f < 0) { out[i] = f; continue; }
+    if (sw) {
+      // (el vóxel se lee una vez: la mayoría ni se mece ni recibe luz por detrás)
+      const k = b.pick[i]!, v = Number.isNaN(k) ? 0 : voxelOf(b.source, k), back = mt ? mt.backlit[v]! : 0;
+      out[i] = (back > 0 ? f + 8 * vals.indexOf(back, 1) : f) + (sw.amount[v]! > 0 || sw.aquatic[v] ? 128 * swayCode(sw, b.source, k) : 0);
+      continue;
+    }
+    const back = backlitAt(b, mt, i);
+    out[i] = back > 0 ? f + 8 * vals.indexOf(back, 1) : f;
   }
 }
 
