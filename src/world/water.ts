@@ -16,6 +16,8 @@ import type { Baked } from './bake';
 import { DEFAULT_WORLD_RAMPS } from './build';
 import { shiftGrid, CHUNK, type StaticVoxels } from './state';
 import type { GeneratedRegion } from './regiongen';
+import { waveSlope } from './waves';
+import { climateCell } from './climate';
 import { seenThrough, type WaterLook } from './waterlook';
 import { windowContains, type SectionWindow } from './section';
 
@@ -810,7 +812,11 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
     // Normal y curvatura de la superficie
     const sE = gx < gw - 1 ? sAt(i + 1, zs) : zs, sW = gx > 0 ? sAt(i - 1, zs) : zs;
     const sN = gy < gh - 1 ? sAt(i + gw, zs) : zs, sS = gy > 0 ? sAt(i - gw, zs) : zs;
-    const sx = (sE - sW) / (2 * CELL), sy = (sN - sS) / (2 * CELL);
+    let sx = (sE - sW) / (2 * CELL), sy = (sN - sS) / (2 * CELL);
+    if (look?.waves && (d >= 0.6 || w.basin[i])) {
+      const wv = look.waves, wind = wv.climate.data[climateCell(wv.climate, gx * CELL + 1, gy * CELL + 1) + 2]!;
+      sx += waveSlope(wv, gx, gy, wind, 0); sy += waveSlope(wv, gx, gy, wind, 1);
+    }
     const lap = (sE + sW + sS + sN - 4 * zs) / (CELL * CELL);
     const nx = -sx, ny = -sy, nz = 1, nl = Math.hypot(nx, ny, nz);
     const key = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;

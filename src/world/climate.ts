@@ -3,7 +3,7 @@
 // sombra de las nubes. Las casillas están fijas en el mundo: correr la ventana o girar la vista no las mueve.
 import type { Baked } from './bake';
 import type { StaticVoxels } from './state';
-import type { Weather, WeatherLevels } from './weather';
+import type { Weather } from './weather';
 import { lattice } from '../worldgen/noise';
 
 // El clima de un cuadro. tick: el de la simulación. origin: el vóxel del mundo que es el (0, 0) del horneado sin girar (la
@@ -20,6 +20,7 @@ export interface WeatherFrame {
   solid?: StaticVoxels;
   // Lo que dejan, con un horneado con cielo: nieve sobre las caras de arriba y lo mojado (Weather.cover)
   cover?: boolean;
+  waves?: number;                            // 0..1: cuánto rizan el agua el viento y la lluvia (0)
 }
 
 export const CLIMATE_W = 128, CLIMATE_H = 64;       // las casillas que caben en la tabla
@@ -33,9 +34,9 @@ export interface ClimateTable {
   kx: number; ky: number;                           // lo que se suma a la x y la y de la vista antes de dividir
   data: Float32Array;                               // w * h * 4: inclinación, inclinación de lo de agua, viento, nubes
   sway: boolean;
-  levels: WeatherLevels;
   key: string;
 }
+export const climateStep = (tick: number): number => Math.floor(tick / STEP) * STEP;
 export const climateTie = 1 / 1024;
 
 const cache = new WeakMap<Baked, ClimateTable>();
@@ -43,7 +44,7 @@ const cache = new WeakMap<Baked, ClimateTable>();
 export function climateTable(b: Baked, o: { vx: number; vy: number; vw: number; vh: number; weather?: WeatherFrame | null }): ClimateTable | null {
   const f = o.weather;
   if (!f) return null;
-  const tick = Math.floor(f.tick / STEP) * STEP, w = f.weather, cam = f.camera ?? null, [ox, oy] = f.origin ?? [0, 0];
+  const tick = climateStep(f.tick), w = f.weather, cam = f.camera ?? null, [ox, oy] = f.origin ?? [0, 0];
   const l = w.levels(tick);
   // El punto v de la vista es, en el plano del mundo girado como ella, v + K
   const base = cam ? cam.pointToWorld(0, 0) : [0, 0] as const;
@@ -77,7 +78,7 @@ export function climateTable(b: Baked, o: { vx: number; vy: number; vw: number; 
     data[k + 2] = Math.round(g * Q) / Q;
     data[k + 3] = Math.round(cloud(wx, wy) * Q) / Q;
   }
-  const t: ClimateTable = { x0, y0, w: nw, h: nh, kx, ky, data, sway: amount > 0, levels: l, key };
+  const t: ClimateTable = { x0, y0, w: nw, h: nh, kx, ky, data, sway: amount > 0, key };
   cache.set(b, t);
   return t;
 }

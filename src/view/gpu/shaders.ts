@@ -39,6 +39,7 @@ float spot(int i, vec3 v) { return spotOf(i, v, lightSpot(i).xyz); }`;
 
 // La tabla del clima (src/world/climate.ts), en la misma textura que las luces, debajo de ellas
 export const CLIMATE_ROW = MAX_LIGHTS;
+export const WAVE_ROW = MAX_LIGHTS + 64;     // y debajo, la baldosa del agua (climate.ts: CLIMATE_H)
 const CLIMATE = `uniform ivec4 uClim;                   // la primera casilla (x, y) y cuántas
 uniform vec2 uClimK;
 vec4 climateAt(float vx, float vy) {
@@ -387,11 +388,15 @@ uniform ivec4 uCutBox;
 uniform float uCutZ;
 uniform bool uCutWin;               // con ventana: solo en los píxeles de dentro (secWindow)
 ${SECTION}
+// El rizado del viento y la lluvia (src/world/waves.ts): una baldosa en la textura de las luces, debajo del clima
+uniform bool uWaves;
+uniform ivec2 uWaveK;
 uniform vec3 uAmbient;
 uniform vec3 uTones[5];             // 0..255
 uniform float uGlow;                // luz mínima de la superficie (agua emisiva)
 uniform int uNLights;
 ${LIGHT_TABLE}
+${CLIMATE}
 
 layout(location = 0) out vec4 oColor;
 layout(location = 1) out vec4 oLight;
@@ -448,6 +453,12 @@ void main() {
   float sN = gy < uGrid.y - 1 ? sAt(c + ivec2(0, 1), zs) : zs;
   float sS = gy > 0 ? sAt(c - ivec2(0, 1), zs) : zs;
   float sx = (sE - sW) / float(2 * CELL), syl = (sN - sS) / float(2 * CELL);
+  if (uWaves && (d >= 0.6 || basin)) {
+    ivec2 wc = (c + uWaveK) & 63;
+    vec4 wv = texelFetch(uLightTab, ivec2(wc.x, wc.y + ${WAVE_ROW}), 0);
+    float wind = climateAt(float(gx * CELL + 1), float(gy * CELL + 1)).b;
+    sx += wv.x * wind + wv.z; syl += wv.y * wind + wv.w;
+  }
   float lap = (sE + sW + sS + sN - 4.0 * zs) / float(CELL * CELL);
   float nx = -sx, ny = -syl, nz = 1.0, nl = length(vec3(nx, ny, nz));
   float keyL = (nx * -0.5 + ny * 0.5 + nz * 0.7) / nl - 0.7;

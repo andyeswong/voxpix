@@ -1,7 +1,10 @@
+import type { WaveTile } from './waves';
+
 // Lo que el cuadro le pide al agua al pintarla (drawWater y FRAG_WATER): además de lo de siempre
 export interface WaterLook {
   // Por píxel de la vista: 1 donde lo que quedó es una planta de agua (MaterialProps.aquatic), que se ve a través del agua
   clear?: Uint8Array | null;
+  waves?: WaveTile | null;      // el rizado del viento y la lluvia (waves.ts)
 }
 
 // Cuánto tapa el agua lo que está `gap` más lejos que su superficie en el mismo píxel (0 nada, 1 todo): por la altura de

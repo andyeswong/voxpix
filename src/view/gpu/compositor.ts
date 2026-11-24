@@ -20,12 +20,13 @@ import { worldPointAt, skyAmbient, unprojector, SKY_RAYS, type Baked, type Baked
 import { waterRows, waterDepthRects, WATER_ZMIN, WATER_ZMAX } from '../../world/water';
 import { materialsOf } from '../../core';
 import { fallSource, coverLook, coverInCut } from '../../world/precipitation';
+import { waveTile, WAVE_T, type WaveTile } from '../../world/waves';
 import { swayTable, swayCode, SWAY_FILL } from '../../world/sway';
-import { climateTable, CLIMATE_W, CLIMATE_H, type ClimateTable } from '../../world/climate';
+import { climateTable, CLIMATE_W, type ClimateTable } from '../../world/climate';
 import type { RenderState, LightId } from '../../world/state';
 import type { WorldLight } from '../../world/build';
 import type { Rendered, VoxelSource, FxSource } from '../../core';
-import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, CLIMATE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
+import { FRAG_SHIFT, FRAG_CONTACT, FRAG_DROPS, FRAG_FX, VERT_FX, FRAG_ENTITY, FRAG_SCENE, FRAG_SHADE, FRAG_WATER, MAX_BAKED, MAX_CASTERS, MAX_LIGHTS, CLIMATE_ROW, WAVE_ROW, VERT_CONTACT, VERT_DROPS, VERT_ENTITY, VERT_FULLSCREEN } from './shaders';
 
 export type GpuOutput = 'frame' | 'color' | 'multiply' | 'add';
 // Un modelo para precalentar: en qué giros (por defecto los 8 rumbos) y si da sombra de verdad
@@ -130,6 +131,7 @@ export class GpuCompositor {
   private tLights: WebGLTexture;
   private lightTab = new Float32Array(4 * MAX_LIGHTS * 4);
   private climUp: ClimateTable | null = null;        // la tabla del clima que está subida (debajo de las luces)
+  private waveUp: Float32Array | null = null;        // y los datos de la baldosa del agua
   private climRoom = false;
   private occPlace: Array<{ min: [number, number, number]; size: [number, number, number]; ax: number }> = [];
   // Agua
@@ -324,8 +326,14 @@ export class GpuCompositor {
     const clim = climateTable(b, o);
     if (clim && !this.climRoom) {
       gl.deleteTexture(this.tLights);
-      this.tLights = tex2D(gl, gl.RGBA32F, CLIMATE_W, CLIMATE_ROW + CLIMATE_H, gl.RGBA, gl.FLOAT, null);
+      this.tLights = tex2D(gl, gl.RGBA32F, CLIMATE_W, WAVE_ROW + WAVE_T, gl.RGBA, gl.FLOAT, null);
       this.climRoom = true;
+    }
+    const waves: WaveTile | null = state.water ? waveTile(b, o.weather, clim) : null;
+    if (waves && waves.data !== this.waveUp) {
+      uploadTo(gl, gl.TEXTURE_2D, this.tLights);
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, WAVE_ROW, WAVE_T, WAVE_T, gl.RGBA, gl.FLOAT, waves.data);
+      this.waveUp = waves.data;
     }
     const sway = !!clim?.sway && !!swayTable(b.source.palette);
     if (clim && clim !== this.climUp) {
@@ -448,6 +456,8 @@ export class GpuCompositor {
     // (con ventana, el agua de la caja solo se quita en los píxeles de dentro: lo dice la máscara de la capa)
     gl.uniform1i(w.u.uCutWin, this.secLayer?.window ? 1 : 0);
     this.bindSection(w, false);
+    gl.uniform1i(w.u.uWaves, waves ? 1 : 0);
+    if (waves) { this.setClimate(w, waves.climate); gl.uniform2i(w.u.uWaveK, waves.kx, waves.ky); }
     gl.uniform1i(w.u.uLights, o.lights ? 1 : 0);
     gl.uniform2i(w.u.uView, o.vx, o.vy);
     gl.uniform2i(w.u.uViewSize, o.vw, o.vh);

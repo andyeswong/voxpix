@@ -513,6 +513,16 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
 SCENARIOS.push({ name: 'nieve con niebla sin luces', theme: 'medieval', cave: true, ticks: 64, lights: false, fog: true, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 0.7 } });
 SCENARIOS.push({ name: 'lluvia con fondo transparente', theme: 'medieval', cave: true, clearBg: true, ticks: 64, clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: { max: 1000 }, cover: true }, wet: 1 } });
 SCENARIOS.push({ name: 'lluvia con la ventana corrida y vuelta', theme: 'medieval', veg: true, cave: true, pos: [172, 170], ticks: 60, shift: 'vuelta', clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: {}, cover: true }, wet: 1, snow: 0.4 } });
+// El rizado del agua: el viento y los anillos de la lluvia sobre el lago, en los 4 giros (con pisotones y con vegetación), el
+// mundo alto, el lago que brilla solo, con corte, sin luces y con la ventana corrida
+for (const q of [0, 1, 2, 3] as Quarter[]) {
+  SCENARIOS.push({ name: `agua rizada, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, clima: { levels: { wind: [0.9, 0.35], gust: 0.6, rain: 0.8 }, frame: { waves: 1, fall: {} } } });
+  SCENARIOS.push({ name: `agua rizada en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, highWater: {}, clima: { levels: { wind: [0.9, 0.35], gust: 1 }, frame: { waves: 1 } } });
+}
+SCENARIOS.push({ name: 'agua rizada que brilla sola', theme: 'medieval', look: toxic, pos: [172, 170], ticks: 120, stompEvery: 42, clima: { levels: { wind: [0.5, -0.8], rain: 1 }, frame: { waves: 1 } } });
+SCENARIOS.push({ name: 'agua rizada con corte', theme: 'medieval', pos: [172, 170], ticks: 60, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } }, section: { width: 96, painter: true, z: 1, cross: 16 } });
+SCENARIOS.push({ name: 'agua rizada, sin luces', theme: 'medieval', pos: [172, 170], ticks: 60, lights: false, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
+SCENARIOS.push({ name: 'agua rizada, la ventana corrida', theme: 'medieval', pos: [172, 170], ticks: 60, shift: 'ida', clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
 SCENARIOS.push({ ...SCENARIOS.find((s) => s.name === 'oficina entidades y luz dinámica')!, name: 'clima sin nada que se meza', clima: wind });
 // Lo mismo, con un cuadro de la GPU ANTES de picar: el fondo nuevo tiene que llegarle (WaterSurface.groundVersion)
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `agua en mundo alto picando tras un cuadro, giro ${q}`, theme: 'medieval', quarter: q, ticks: 240, highWater: { dig: true, gpuFirst: true } });

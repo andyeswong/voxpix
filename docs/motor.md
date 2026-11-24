@@ -2036,3 +2036,9 @@ weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid
 - `cover`, con un horneado con `{ sky: true }`: nieve sobre las caras de arriba que ven el cielo (en trama mientras cuaja) y lo
   mojado más oscuro, según `weather.cover`. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
   salvo con `worldSky`.
+
+### El agua con el clima
+
+`weather: { ..., waves: 1 }` riza el agua al pintarla: ondas que van con el viento y crecen con la ráfaga que pasa, y los
+anillos de la lluvia. Inclina la superficie (tono, brillo, reflejo y refracción); el simulador no cambia. Es un dibujo de 128
+vóxeles que se repite, fijo en el mundo. Al girar el viento, las ondas cambian de dirección a saltos pequeños.

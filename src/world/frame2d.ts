@@ -10,6 +10,7 @@ import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer, drawEffects } from './effects';
 import { climateTable, type ClimateTable, type WeatherFrame } from './climate';
 import { fallSource, coverLook, applyCover, coverInCut, type CoverLook } from './precipitation';
+import { waveTile } from './waves';
 import { swaySources, aquaticMask, SWAY_FILL } from './sway';
 import { sectionLayer, secIdx, sectionAt, windowBorderSpans, type SectionCut, type SectionLayer } from './section';
 
@@ -434,6 +435,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   // El viento: de qué columna de la imagen sale cada píxel. Lo quieto se compone con un margen a los lados y se recoge
   const clim = climateTable(b, o), from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh) : null;
+  const waves = clim && state.water ? waveTile(b, o.weather, clim) : null;
   const cover = clim ? coverLook(b, o.weather) : null;
   let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover ? { look: cover, table: clim! } : null);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);
@@ -513,7 +515,7 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   }
 
   // El agua (tapa lo sumergido), los efectos y las gotas
-  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear ? { clear } : null);
+  state.water?.draw(b, view, depthBuf, total, vx, vy, vw, vh, ambient, o.time, state.lights, o.detail !== 'bajo', sec?.box ?? null, clear || waves ? { clear, waves } : null);
   if (state.effects) drawEffectsLayer(state.effects, b, view, depthBuf, total, vx, vy, vw, vh);
   const falling = fallSource(b, o);
   if (falling) drawEffects(falling, b, view, depthBuf, total, vx, vy, vw, vh);
