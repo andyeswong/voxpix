@@ -41,6 +41,21 @@ describe('lo que cae', () => {
     expect(n).toBeGreaterThan(500);
     expect(over).toBeGreaterThan(50);
   });
+  it('fuera del mundo no se mira ninguna altura: una torre en el borde de un lado no quita gotas del otro', () => {
+    const at = (tower: boolean) => {
+      const s = new StaticVoxels(PAL, 64, 64, 0, 47);
+      for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) s.set(x, y, 0, material(0, 1));
+      if (tower) for (let y = 0; y < 64; y++) for (let z = 1; z < 47; z++) s.set(63, y, z, material(0, 1));
+      const b = bakeWorld({ model: s, lights: [], width: 64, depth: 64 }, { topZ: 52, incline: 0.5 });
+      const out: string[] = [];
+      // (viento al este: la gota que acaba cerca de x 0 viene de x negativas, que son la columna 63 de la fila de abajo si se leen mal)
+      for (let tick = 0; tick < 240; tick += 2) for (const [x, y, z] of points(b, { weather: W({ rain: 1, wind: [1, 0] }), tick, fall: { max: 1500 } })) if (x < 0) out.push([tick, x, y, z].map((v) => v.toFixed(2)).join());
+      return out.sort();
+    };
+    const flat = at(false);
+    expect(flat.length).toBeGreaterThan(10);
+    expect(at(true)).toEqual(flat);
+  });
   it('con tope, también con lluvia y nieve a la vez', () => {
     const { b } = setup();
     for (const max of [10, 60]) for (let tick = 0; tick < 60; tick += 5) {

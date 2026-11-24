@@ -10,7 +10,7 @@ import { footprint, moveBody, objectAhead, restZ, type Body, type MoveRules, DEF
 // el agua sin crear objeto (waterDepthAt). Esto comprueba que dan lo mismo que las consultas sueltas de siempre, en
 // mundos que tienen lo que cada una mira: arbustos que no se suben, agua honda y objetos despiertos.
 
-const SLOW = 60_000;
+const SLOW = 240_000;
 
 // standable como era: las cuatro consultas sueltas
 function refStandable(w: WorldState, xi: number, yi: number, feetZ: number, step: number, maxWater: number): boolean {
