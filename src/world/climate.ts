@@ -70,7 +70,8 @@ class Building {
   }
   run(rows: number): void {
     const { want, data, ux, uy, lean, kx, ky } = this, { x0, y0, w, h, Kx, Ky, amount, cam, weather } = want;
-    const rain = weather.levels(want.tick).rain, still = want.still;
+    // (la lluvia solo hace falta con still < 1: levels crea objetos en las transiciones)
+    const still = want.still, rain = still < 1 ? weather.levels(want.tick).rain : 0;
     const wholeX = (Kx - kx) / CLIMATE_CX, wholeY = (Ky - ky) / CLIMATE_CY, sec = want.tick / 60, turn = 2 * Math.PI;
     // (el giro de la vista al mundo, sin crear nada por casilla)
     const [ax, ay] = cam ? cam.dirToWorld(1, 0) : [1, 0], [bx, by] = cam ? cam.dirToWorld(0, 1) : [0, 1];
