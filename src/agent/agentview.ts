@@ -8,13 +8,14 @@
 //   paintAgentView(canvas.getContext('2d')!, v, { cell: 16 });
 //
 // El color de un bloque es el más repetido en las caras de arriba de su modelo (lo que se ve desde encima), o el que se
-// diga en colors. Lo que no se ve desde la cámara (minúscula en describe) va con su color apagado hacia el fondo; el aire,
-// un punto tenue; las marcas (@ el jugador, * las entidades, las del juego) con su propio color.
+// diga en colors. Lo que no se ve desde la cámara (minúscula en describe, o fuera de seen) va con su color apagado hacia
+// el fondo; el aire, un punto tenue; el agua (Description.water) con el suyo; las marcas (@ el jugador, * las entidades,
+// las del juego) con su propio color.
 import { decode, rgbOf } from '../core';
 import type { BlockDef, BlockSet } from '../world/blocks';
 import type { AgentHost, Description, Vec3 } from './agent';
 
-export type AgentCellKind = 'block' | 'air' | 'mark' | 'out';
+export type AgentCellKind = 'block' | 'air' | 'water' | 'mark' | 'out';
 export interface AgentViewCell { ch: string; color: string; dim: boolean; kind: AgentCellKind; id?: string }
 export interface AgentView {
   center: Vec3;
@@ -27,6 +28,10 @@ export interface AgentViewOptions {
   colors?: Record<string, string>;   // color fijo por id de bloque ('#rrggbb')
   marks?: Record<string, string>;    // color por carácter de marca (por defecto @ amarillo, * rojo, el resto naranja)
   air?: string;                      // el color del aire ('#3a4049')
+  water?: string;                    // el color del agua ('#2f6fd6')
+  // Lo que se ve, como "bx,by,bz" en las celdas de la Description: si se da, lo apagado sale de aquí y no de la minúscula
+  // (para quien calcula lo visible por su cuenta)
+  seen?: ReadonlySet<string>;
   background?: string;               // el fondo, hacia el que se apaga lo que no se ve ('#0b0d10')
   dim?: number;                      // 0..1: cuánto se apaga lo que no se ve (0,6)
 }
@@ -49,7 +54,7 @@ export interface AgentViewCtx {
 }
 
 const MARKS: Record<string, string> = { '@': '#ffd84a', '*': '#ff5a5a' };
-const MARK_OTHER = '#ff9f40', AIR = '#3a4049', BACKGROUND = '#0b0d10', DIM = 0.6, LABEL = '#8a929c', GREY = '#808080';
+const MARK_OTHER = '#ff9f40', AIR = '#3a4049', WATER = '#2f6fd6', BACKGROUND = '#0b0d10', DIM = 0.6, LABEL = '#8a929c', GREY = '#808080';
 
 const hex2 = (n: number) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0');
 // a mezclado hacia b en una parte t (0: a, 1: b), en '#rrggbb'
@@ -89,7 +94,7 @@ function colorOfId(set: BlockSet, id: string): string {
 // Lo que describe dio, en celdas con color. Las letras son las mismas, una a una (agentViewText lo devuelve igual)
 export function agentView(host: AgentHost, d: Description, o: AgentViewOptions = {}): AgentView {
   const set = host.opts.grid.blocks, bg = o.background ?? BACKGROUND, dim = Math.max(0, Math.min(1, o.dim ?? DIM));
-  const air = o.air ?? AIR, markColors = { ...MARKS, ...(o.marks ?? {}) };
+  const air = o.air ?? AIR, water = o.water !== undefined ? normal(o.water) : WATER, markColors = { ...MARKS, ...(o.marks ?? {}) };
   const idOf = new Map(Object.entries(d.legend));
   const color = (id: string) => (o.colors?.[id] !== undefined ? normal(o.colors[id]!) : colorOfId(set, id));
   const marked = new Set(d.marks.filter((m) => m.cell).map((m) => m.cell!.join(',')));
@@ -100,14 +105,16 @@ export function agentView(host: AgentHost, d: Description, o: AgentViewOptions =
       if (ch === ' ') return { ch, color: bg, dim: false, kind: 'out' };
       if (marked.has(`${bx},${by},${L.bz}`)) return { ch, color: markColors[ch] ?? MARK_OTHER, dim: false, kind: 'mark' };
       if (ch === '.') return { ch, color: air, dim: false, kind: 'air' };
+      if (d.water !== undefined && ch === d.water) return { ch, color: water, dim: false, kind: 'water' };
       const id = idOf.get(ch.toUpperCase());
       if (!id) return { ch, color: GREY, dim: false, kind: 'block' };       // ('?': un bloque sin letra libre)
-      const hidden = ch !== ch.toUpperCase();
+      const hidden = o.seen ? !o.seen.has(`${bx},${by},${L.bz}`) : ch !== ch.toUpperCase();
       const c = color(id);
       return { ch, color: hidden ? mixColor(c, bg, dim) : c, dim: hidden, kind: 'block', id };
     })),
   }));
   const legend = Object.entries(d.legend).map(([ch, id]) => ({ ch, id, color: color(id) }));
+  if (d.water !== undefined) legend.push({ ch: d.water, id: 'agua', color: water });
   return { center: d.center, x: d.x, y: d.y, layers, legend, background: bg };
 }
 

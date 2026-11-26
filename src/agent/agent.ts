@@ -16,6 +16,8 @@
 import type { WorldState } from '../world/state';
 import type { BlockGrid } from '../world/blocks';
 import { pickVoxel } from '../world/blocks';
+import { unkey } from '../core';
+import { WATER_CELL } from '../world/water';
 import type { WorldView } from '../world/view';
 import type { Baked } from '../world/bake';
 import type { SectionLayer } from '../world/section';
@@ -49,6 +51,9 @@ export interface AgentHostOptions {
   entities?: boolean;                      // marcar las entidades del mundo con '*' (por defecto sí, salvo la del jugador)
   playerEntity?: number | string | null;   // la entidad que dibuja al jugador (no se marca dos veces)
   paths?: LevelPathField;                  // los caminos para goTo (con su cuerpo: radio, alto, escalón)
+  // La letra del agua de la capa de agua del mundo (state.water) en una celda de aire: '~', o '≈' si '~' ya es la de un
+  // bloque; false: sin agua (las celdas con agua salen como aire)
+  water?: string | false;
 }
 
 // A dónde ir: una celda de la rejilla (encima si es sólida, en su suelo si es aire), lo que se ve en un píxel (encima del
@@ -71,6 +76,7 @@ export interface Description {
   legend: Record<string, string>;                 // letra -> id de bloque
   marks: Array<AgentMark & { cell: Vec3 | null }>;
   visible: boolean;                               // si las minúsculas dicen algo (hubo vista)
+  water?: string;                                 // la letra del agua, si sale alguna celda con agua
   text: string;
 }
 
@@ -83,6 +89,7 @@ export class AgentHost {
   private readonly actions = new Map<string, { fn: AgentAction; help: string }>();
   private letterOf: string[] = [];                 // por índice de bloque (0 = aire)
   private readonly idOf = new Map<string, string>();
+  private readonly waterCh: string | null;
 
   constructor(readonly opts: AgentHostOptions) {
     const set = opts.grid.blocks, fixed = opts.letters ?? {}, used = new Set<string>(RESERVED);
@@ -102,6 +109,13 @@ export class AgentHost {
       this.letterOf[i] = ch;
       if (ch !== '?') this.idOf.set(ch, id);
     }
+    // (después de repartir las letras de los bloques, para no mover ninguna)
+    const w = opts.water;
+    if (w === false) this.waterCh = null;
+    else if (w !== undefined) {
+      if (w.length !== 1 || used.has(w) || used.has(w.toLowerCase())) throw new Error(`letra del agua "${w}": tiene que ser un carácter y no estar usado`);
+      this.waterCh = w;
+    } else this.waterCh = used.has('~') ? '≈' : '~';
   }
 
   // ---- leer
@@ -129,6 +143,40 @@ export class AgentHost {
       if (f) f.px++; else c.faces.push({ face: p.face, px: 1 });
     }
     return out;
+  }
+
+  // Las celdas que se ven en un recuadro de la imagen (las mismas que visibleCells en él, sin contar caras ni píxeles): un
+  // vóxel se mira una vez aunque lo pinten muchos píxeles
+  private seenIn(look: AgentLook, rect: { x0: number; y0: number; x1: number; y1: number }): Set<string> {
+    const { view, baked, section } = look, grid = this.opts.grid, out = new Set<string>(), done = new Set<number>();
+    const W = baked.width, x0 = Math.max(0, rect.x0), y0 = Math.max(0, rect.y0), x1 = Math.min(W - 1, rect.x1), y1 = Math.min(baked.height - 1, rect.y1);
+    let last = NaN;
+    for (let sy = y0; sy <= y1; sy++) for (let sx = x0; sx <= x1; sx++) {
+      const q = section ? sectionAt(section, sx, sy) : -1;
+      const k = q >= 0 ? section!.pick[q]! : baked.pick[sy * W + sx]!, f = q >= 0 ? section!.face[q]! : baked.face[sy * W + sx]!;
+      if (Number.isNaN(k) || f < 0 || k === last) continue;
+      last = k;
+      if (done.has(k)) continue;
+      done.add(k);
+      const [vx, vy, z] = unkey(k), [x, y] = view.camera.cellToWorld(vx, vy);
+      const cell = grid.cellOf(x, y, z);
+      if (cell) out.add(`${cell[0]},${cell[1]},${cell[2]}`);
+    }
+    return out;
+  }
+
+  // El recuadro de la imagen por el que pasa una caja de celdas (lo que se ve de ellas no sale de ahí), con margen
+  private regionRect(look: AgentLook, bx0: number, by0: number, bz0: number, bx1: number, by1: number, bz1: number): { x0: number; y0: number; x1: number; y1: number } {
+    const g = this.opts.grid, N = g.N, o = g.origin, cam = look.view.camera, M = 3;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const wx of [o.x + bx0 * N, o.x + (bx1 + 1) * N - 1]) for (const wy of [o.y + by0 * N, o.y + (by1 + 1) * N - 1]) {
+      const [vx, vy] = cam.cellToView(wx, wy);
+      for (const z of [o.z + bz0 * N, o.z + (bz1 + 1) * N]) for (const [dx, dy] of [[0, 0], [1, 0], [0, 1], [1, 1]] as const) {
+        const [sx, sy] = look.baked.cam.project(vx + dx, vy + dy, z);
+        x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+      }
+    }
+    return { x0: Math.floor(x0) - M, y0: Math.floor(y0) - M, x1: Math.ceil(x1) + M, y1: Math.ceil(y1) + M };
   }
 
   // Lo que hay bajo el píxel (sx, sy) de la imagen horneada: el vóxel, la celda, la cara y el bloque (lo que se pinta)
@@ -245,9 +293,10 @@ export class AgentHost {
       return { ok: false, msg: `celda fuera de la rejilla (${cell.join(',')}; hay ${g.cols} x ${g.rows} x ${g.layers})` };
     if (opts.reach !== undefined) { const r = this.reach(cell, opts.reach); if (!r.ok) return r; }
     if (opts.visible) {
-      const v = this.visibleCells();
-      if (!v) return { ok: false, msg: 'no hay vista' };
-      if (!v.has(cell.join(','))) return { ok: false, msg: 'no visible' };
+      const look = this.opts.look?.();
+      if (!look) return { ok: false, msg: 'no hay vista' };
+      const [bx, by, bz] = cell;
+      if (!this.seenIn(look, this.regionRect(look, bx, by, bz, bx, by, bz)).has(cell.join(','))) return { ok: false, msg: 'no visible' };
     }
     return null;
   }
@@ -260,7 +309,10 @@ export class AgentHost {
     const c: Vec3 = [Math.floor((at.x - org.x) / N), Math.floor((at.y - org.y) / N), Math.floor((at.z - org.z) / N)];
     const R = o.radius ?? 4, X: [number, number] = [c[0] - R, c[0] + R], Y: [number, number] = [c[1] - R, c[1] + R];
     const zTop = Math.min(g.layers - 1, c[2] + (o.above ?? 1)), zBot = Math.max(0, c[2] - (o.below ?? 2));
-    const seen = (o.visible ?? !!this.opts.look) ? this.visibleCells() : null;
+    // (lo que se ve, solo en el recuadro de la imagen por el que pasa la zona pedida: lo mismo que visibleCells ahí)
+    const look = (o.visible ?? !!this.opts.look) ? this.opts.look?.() ?? null : null;
+    const seen = look ? this.seenIn(look, this.regionRect(look, X[0], Y[0], zBot, X[1], Y[1], zTop)) : null;
+    let wet = false;
     const marks = this.allMarks().map((m) => {
       const cell = g.cellOf(Math.floor(m.x), Math.floor(m.y), Math.floor(m.z));
       return { ...m, cell };
@@ -275,6 +327,7 @@ export class AgentHost {
           const m = marks.find((k) => k.cell && k.cell[0] === bx && k.cell[1] === by && k.cell[2] === bz);
           if (m) { row += m.ch; continue; }
           const t = g.get(bx, by, bz), ch = this.letter(t);
+          if (!t && this.waterAt(bx, by, bz)) { row += this.waterCh; wet = true; continue; }
           row += t && seen && !seen.has(`${bx},${by},${bz}`) ? ch.toLowerCase() : ch;
         }
         rows.push(row);
@@ -287,14 +340,30 @@ export class AgentHost {
     const head = ' '.repeat(6) + Array.from({ length: X[1] - X[0] + 1 }, (_, i) => String(((X[0] + i) % 10 + 10) % 10)).join('');
     const lines = [
       `celdas bx ${X[0]}..${X[1]}, by ${Y[0]}..${Y[1]}; centro ${c.join(',')}; filas de norte (arriba) a sur, columnas de oeste a este`,
-      `leyenda: . aire, ${Object.entries(legend).map(([k, v]) => `${k} ${v}`).join(', ')}${seen ? '; minúscula: no se ve desde la cámara' : ''}; @ jugador, * entidad`,
+      `leyenda: . aire, ${Object.entries(legend).map(([k, v]) => `${k} ${v}`).join(', ')}${wet ? `, ${this.waterCh} agua` : ''}${seen ? '; minúscula: no se ve desde la cámara' : ''}; @ jugador, * entidad`,
     ];
     for (const L of layers) {
       lines.push(`z ${L.bz}:`, head);
       L.rows.forEach((r, i) => lines.push(`${String(Y[1] - i).padStart(5)} ${r}`));
     }
     for (const m of marks) lines.push(`${m.ch} ${m.name ?? ''} (${fmt(m.x)}, ${fmt(m.y)}, ${fmt(m.z)}) celda ${m.cell ? m.cell.join(',') : 'fuera'}`);
-    return { center: c, x: X, y: Y, layers, legend, marks, visible: !!seen, text: lines.join('\n') };
+    return { center: c, x: X, y: Y, layers, legend, marks, visible: !!seen, ...(wet ? { water: this.waterCh! } : {}), text: lines.join('\n') };
+  }
+
+  // Si hay agua de la capa de agua del mundo (state.water) en la celda: alguna de sus columnas de agua tiene agua entre su
+  // fondo y su superficie que pasa por las alturas de la celda
+  private waterAt(bx: number, by: number, bz: number): boolean {
+    const w = this.opts.state.water;
+    if (!w || !this.waterCh) return false;
+    const g = this.opts.grid, N = g.N, o = g.origin, z0 = o.z + bz * N, z1 = z0 + N, C = WATER_CELL;
+    const xa = o.x + bx * N, ya = o.y + by * N;
+    for (let y = Math.floor(ya / C) * C; y < ya + N; y += C) for (let x = Math.floor(xa / C) * C; x < xa + N; x += C) {
+      const d = w.depthAt(Math.max(x, xa), Math.max(y, ya));
+      if (!(d > 0)) continue;
+      const s = w.surfaceAt(Math.max(x, xa), Math.max(y, ya));
+      if (s > z0 && s - d < z1) return true;
+    }
+    return false;
   }
 
   private allMarks(): AgentMark[] {

@@ -82,6 +82,16 @@ describe('la vista del agente en color', () => {
     expect(mixColor('#102030', '#102030', 0.3)).toBe('#102030');
   });
 
+  it('con seen, lo apagado sale del conjunto y no de la letra', () => {
+    const h = host(false), d = h.describe({ at: { x: PLAYER.x, y: PLAYER.y, z: N }, radius: 2, below: 0, above: 0 });
+    const bz = d.layers[0]!.bz, seen = new Set([`${d.x[0]},${d.y[1]},${bz}`, `${d.x[0] + 1},${d.y[1]},${bz}`]);
+    const v = agentView(h, d, { seen, background: '#000000', dim: 0.5 });
+    const blocks = v.layers[0]!.rows.flatMap((r, i) => r.map((c, j) => ({ c, key: `${d.x[0] + j},${d.y[1] - i},${bz}` }))).filter((e) => e.c.kind === 'block');
+    expect(blocks.length).toBeGreaterThan(4);
+    for (const { c, key } of blocks) expect([key, c.dim]).toEqual([key, !seen.has(key)]);
+    expect(blocks.filter((e) => !e.c.dim).length).toBe(2);
+  });
+
   it('se pinta una letra por celda con su color, en su sitio; el tamaño es el que dice agentViewSize', () => {
     const h = host(), d = h.describe({ radius: 2, below: 1, above: 0 }), v = agentView(h, d);
     const calls: Array<{ text: string; x: number; y: number; fill: string }> = [], rects: number[][] = [];

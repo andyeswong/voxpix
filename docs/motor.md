@@ -368,6 +368,15 @@ installAgent(window, agent);                                 // window.voxpixAge
   los ids del `BlockSet` (la primera libre del id, o `letters` fijas); `.` aire, espacio fuera de la rejilla, `@` el
   jugador, `*` las entidades, y las marcas del juego. Con vista, en minúscula lo que no se ve desde la cámara. Lleva la
   leyenda, las marcas con su posición exacta y un `text` listo para leer.
+- El agua de la capa de agua del mundo (`state.water`) sale en las celdas de aire por las que pasa (entre el fondo y la
+  superficie de alguna de sus columnas de agua) con su letra: `~`, o `≈` si `~` ya es la letra de un bloque (`water`
+  la fija; `water: false`, sin agua, como antes). Va en la leyenda ("~ agua") y en `Description.water`. El agua no se
+  pica, así que no tiene minúscula. Los bloques que conviven con el agua (`waterlogged`) salen con su letra.
+- Lo que se ve, `describe` y `check({ visible })` lo miran solo en el recuadro de la imagen por el que pasa la zona
+  pedida (la caja de sus celdas proyectada, con 3 píxeles de margen), y cada vóxel una vez: da lo mismo que
+  `visibleCells()` de la imagen entera (`test/agente-region.test.ts`, en los 4 giros, con y sin sección) y cuesta mucho
+  menos. En una imagen de 514 x 348 con radio 7 y dos capas, `describe` con vista pasa de 16-17 ms a 1,6-1,8 ms y
+  `check` de 16 ms a 0,04 ms (Node, p50). `visibleCells(rect)` sigue contando caras y píxeles y cuesta lo de antes.
 - `visibleCells(rect?)`: por celda, qué caras se ven y cuántos píxeles. Sale de `pickVoxel` en cada píxel, lo mismo que
   `pickBlock` (con la capa de sección): lo que el agente ve es lo que el jugador puede picar (`test/agente.test.ts` lo
   compara celda a celda, con y sin sección).
@@ -409,15 +418,17 @@ paintAgentView(canvas.getContext('2d')!, v, { cell: 16, across: 2 });
 
 - El color de un bloque es el más repetido en las caras de arriba de su modelo del `BlockSet` (el vóxel más alto de
   cada columna; a igualdad, el que va antes en la paleta), o el de `colors` por id.
-- Lo que no se ve desde la cámara (minúscula) va con su color mezclado hacia el fondo (`dim`, 0,6); el aire, un punto
-  tenue; las marcas, con el color de su carácter (`marks`; `@` amarillo, `*` rojo, las del juego naranja). Una celda es
+- Lo que no se ve desde la cámara (minúscula, o fuera de `seen` si se da) va con su color mezclado hacia el fondo
+  (`dim`, 0,6); el aire, un punto tenue; el agua (`Description.water`), con el suyo (`water`, azul) y sin apagar; las marcas, con el color de su carácter (`marks`; `@` amarillo, `*` rojo, las del juego naranja). Una celda es
   marca por su sitio, no por su letra: una marca en minúscula no se confunde con un bloque que no se ve.
 - `agentViewText(v)` devuelve las filas de letras: son las de `describe`, una a una (`test/agente-vista.test.ts`).
 - `paintAgentView(ctx, v, { cell, font, gap, across, labels })` pinta desde (0, 0) en cualquier contexto 2D (solo usa
   `fillRect` y `fillText`): el fondo y cada capa con su "z N" encima, `across` capas por fila. El aire se pinta como
   `·` para que pese menos. Cuánto ocupa lo dice `agentViewSize` con las mismas opciones.
-- Cada cuánto se repinta lo decide el juego: `describe` recorre la vista para saber qué se ve, así que no hace falta
-  hacerlo en cada cuadro (unas pocas veces por segundo basta para enseñarlo).
+- `seen` (un conjunto de "bx,by,bz" en las celdas de la `Description`): para quien calcula lo visible por su cuenta; el
+  apagado sale de ahí y no de la minúscula.
+- Cada cuánto se repinta lo decide el juego. `describe` con vista mira solo el recuadro de la zona (unos 2 ms con radio
+  7); `agentView` y `paintAgentView` son menos de 1 ms.
 
 ## Terreno por semilla
 
