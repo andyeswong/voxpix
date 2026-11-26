@@ -79,6 +79,7 @@ requestAnimationFrame(loop);
 | `world/edit` | `stampModel` / `clearBox`: poner un modelo o vaciar una caja en partida (y `turnCell`, `rampMap`). Ver "Editar el mundo en partida". |
 | `world/blocks` | `BlockSet`, `BlockGrid`, `pickBlock` y el `.voxset.json`: un mundo de bloques. Ver "Bloques". |
 | `agent/agent` | `AgentHost` e `installAgent`: leer el mundo de bloques como texto y dar órdenes con resultado, para agentes. Ver "Interfaz para agentes". |
+| `agent/agentview` | `agentView` y `paintAgentView`: lo que lee un agente con `describe`, en color y en un canvas, para enseñarlo al lado del juego. Ver "Interfaz para agentes". |
 | `world/terrain` | `generateTerrain`: el terreno de bloques por semilla. Ver "Terreno por semilla". |
 | `world/paths`, `world/levelpaths` | `PathField` y `LevelPathField`: caminos hacia una meta, por la superficie o por niveles. Ver "Caminos" y "Caminos por niveles". |
 | `runtime/levels` | `moveBodyLevels`: cuerpos con alto que andan bajo techos, caen y saltan. Ver "Moverse por niveles". |
@@ -390,6 +391,33 @@ installAgent(window, agent);                                 // window.voxpixAge
 - Los caminos llevan a donde se miró que cabe el cuerpo: `dir` y `path` apuntan, en cada celda, a la columna con la que
   cabe (la central o, si solo cabe corrido, la corrida), en medio de ella. Así un cuerpo del mismo radio que el de los
   caminos pasa con el runtime por un hueco donde justo cabe (`test/caminos-niveles.test.ts`).
+
+### La vista del agente, en color
+
+`src/agent/agentview.ts`: lo que lee un agente con `describe`, pintado para quien mira (un vídeo, una depuración): las
+mismas letras, cada una del color de su bloque. No le añade nada al agente; el color solo ayuda a leerlo.
+
+```ts
+import { agentView, agentViewSize, paintAgentView } from '@voxpix/agent/agentview';
+
+const d = agent.describe({ radius: 8, below: 1, above: 0 });
+const v = agentView(agent, d, { colors: { agua: '#2a6fd0' } });   // JSON: por capa, filas de { ch, color, dim, kind, id }
+const { width, height } = agentViewSize(v, { cell: 16, across: 2 });
+canvas.width = width; canvas.height = height;
+paintAgentView(canvas.getContext('2d')!, v, { cell: 16, across: 2 });
+```
+
+- El color de un bloque es el más repetido en las caras de arriba de su modelo del `BlockSet` (el vóxel más alto de
+  cada columna; a igualdad, el que va antes en la paleta), o el de `colors` por id.
+- Lo que no se ve desde la cámara (minúscula) va con su color mezclado hacia el fondo (`dim`, 0,6); el aire, un punto
+  tenue; las marcas, con el color de su carácter (`marks`; `@` amarillo, `*` rojo, las del juego naranja). Una celda es
+  marca por su sitio, no por su letra: una marca en minúscula no se confunde con un bloque que no se ve.
+- `agentViewText(v)` devuelve las filas de letras: son las de `describe`, una a una (`test/agente-vista.test.ts`).
+- `paintAgentView(ctx, v, { cell, font, gap, across, labels })` pinta desde (0, 0) en cualquier contexto 2D (solo usa
+  `fillRect` y `fillText`): el fondo y cada capa con su "z N" encima, `across` capas por fila. El aire se pinta como
+  `·` para que pese menos. Cuánto ocupa lo dice `agentViewSize` con las mismas opciones.
+- Cada cuánto se repinta lo decide el juego: `describe` recorre la vista para saber qué se ve, así que no hace falta
+  hacerlo en cada cuadro (unas pocas veces por segundo basta para enseñarlo).
 
 ## Terreno por semilla
 
