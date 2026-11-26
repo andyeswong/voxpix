@@ -1,5 +1,108 @@
 # Cambios
 
+## Notas de versión de trozos-z (de 7c5369d a 860a60a)
+
+Lo que llega a master con trozos-z desde el 16 de noviembre: un mundo que se genera al andar, el horneado en un
+worker, una interfaz para que un agente juegue y el clima. Son 210 commits; aquí van por tema, con los que cambian algo
+que se usa. Los de medida (la página `viva.html`) y los experimentos que se quedaron dentro o se revirtieron se cuentan
+juntos al final. El detalle de cada tema está en [motor.md](motor.md) y en [horno-worker.md](horno-worker.md).
+
+### La ventana viva: un mundo que se genera al andar
+- `d928257`: `LiveWindow` (`src/world/live.ts`), una ventana de nx x ny trozos de un mundo por regiones que sigue a un
+  objetivo: genera los trozos que entran (del centro hacia fuera), avisa de los que salen (`onUnload`) y se corre por la
+  cola. `b6df485`: el juego escribe sus trozos con `fill(t, ctx)`, la rejilla de bloques se corre con la ventana y el
+  cambio se hace en un solo cuadro.
+- `544e287`, `ade3923`, `00aa544`: los giros. Al principio se mantenían los cuatro horneados; ahora solo vive el giro
+  actual y `turnTo` gira con un fundido mientras hornea la vista nueva, lo visible primero. `27bfc19`, `81d176f` y
+  `bd6a83d`: el núcleo del giro se hace por pasos en la cola y se sube a la GPU por bandas. `e81d39c`:
+  `Compositor.release` suelta las texturas de un horneado que ya no se usa.
+- `9c8f177`, `d273c01`, `61b641c`: el corrimiento ya no espera a vaciar toda la cola de rehorneado y va con la prioridad
+  de la carga de trozos. `36ba3fc`: el rehorneado en marcha se corre con la imagen en vez de tirarse.
+- `fe9c1ab`: precarga por la cola (`preload: 'queue'`) y `ready(x, y, ring)`. `90952bd`: `bakeFirst: 'view'` hornea al
+  empezar solo lo que se ve. `5816b11`: un objetivo fuera de la ventana la recentra en un solo cambio.
+- `9324f3e`: los cortes de casa de muñecas funcionan en la ventana; `WorldView.shift` mueve el corte con ella.
+
+### Caminos en la ventana
+- `1b017a8`: `PathField.shift`, `LevelPathField.shift`, `ChangeWatch.shift` y `LiveWindow.attach`: los campos de caminos
+  se corren con la ventana.
+- `04c3511`, `d8c46af`: opción `reach`, la búsqueda se para a N pasos de la meta (40 por defecto en los campos;
+  `findPath` sigue sin límite).
+- `c828ac8`: con presupuesto, el relleno del suelo tras un cambio va por `advance()`, una celda por nodo.
+- `0293975`, `2fed59e`: `LevelPathField` guarda sus rejillas en anillo: correrse mueve el origen y limpia solo la banda
+  que entra. `7ad1c4b`, `9d4c688`, `e1df8d1`, `b18ceb4`: arreglos del borde, de los movimientos guardados y del cuerpo.
+
+### El horno en un worker
+- `3d03581`: `BakeWorker` (`src/world/horno.ts`, `src/world/horno-worker.ts`): los recuadros del rehorneado de la
+  ventana se pintan en un worker con un espejo de los trozos. Diseño en `66e1035`.
+- `f7e5a82`, `f9341d4`, `c2da362`: lo que llega se comprueba con la misma regla que lo pintado aquí; si llega viejo se
+  vuelve a pedir (`REMOTE_RETRIES`) y luego se pinta aquí.
+- `46a37b9`: el cielo del rehorneado también va al worker. Las luces siguen en el hilo principal.
+- `7f4125f`: lo urgente (el núcleo de un giro) pasa delante en el worker. `7cf1f50`: lo que se vuelve cercano se retira
+  del worker y se hace aquí. `f6d89bd`: lo pendiente en el worker se mueve con la ventana en vez de tirarse.
+- `c34d942`, `b657b0c`, `b609dda`: `StaticVoxels.dataVersions`, `packChunk` / `unpackChunk` y `packedSize`: los trozos
+  van en un búfer transferido del tamaño justo.
+
+### La cola y el rehorneado
+- `ffd6d07`: rehorneado por baldosas, un recuadro por tramo de trozos.
+- `a72d194`: `FrameBudget.push` busca el trabajo por clave en un mapa y coloca lo prioritario por bisección.
+- `83e38fa`, `4d72c06`, `29bc096`, `f9d67be`: `ViewJob.waiting`, `ViewJob.unit` (el coste del paso más pequeño, para ver
+  si cabe), `ViewJob.dead` (lo que dejó de valer se tira sin correrlo) y los trabajos reemplazados se dan por hechos.
+- `6e061c5`, `bae883f`: lo que solo pide al worker o publica lo que llegó tiene su clase de coste y va primero; la pasada
+  rápida corre una llamada solo si su mediana cabe en media fase. `24f3f19`: `wrapJob`.
+- `204f7a6`, `9633474`, `1aa2e0c`: cuándo cuenta como saltado un trabajo al que no llega la fase.
+- `1be7c4b`, `57ad404`: la carrera del cielo (un recuadro publicado mientras se calculaba); el arreglo real es
+  `57ad404`. `860a2bb`: un recuadro comprueba los trozos que lee antes de publicar.
+- `68712ff`, `0fdb876`: `publishRect` copia por filas y `render` pasa la paleta a RGB una vez por render.
+
+### Lo expuesto en la ventana
+- `558f4f5`, `e7d1586`, `6c9c67f`: `exposureJob` se para al correrse la ventana; un fallo de cuenta ya no para el juego
+  (se apunta y se rehace el trozo), y un trozo reescrito mientras se calientan sus máscaras se reinicia en silencio.
+- `bed40ab`, `d049083`, `2b1875e`: `StaticVoxels.shift` mueve las máscaras con su trozo y `finishShift` toca solo lo que
+  puede cambiar. `fa1228d`: por qué correr las máscaras de otra forma no gana nada medible.
+
+### El agua en la ventana
+- `6eb3b55`, `cf6bd46`: `ShallowWater` y `WaterLayer` guardan sus rejillas en anillo y siguen a la ventana.
+- `96ba392`, `4762a36`: el agua se carga y se guarda por trozo; `LiveWindow.setWater`.
+- `fd5b382`, `9e0e3c1`, `ea53a85`, `89bde88`, `b2c976a`: las vistas del agua y la GPU siguen el corrimiento sin copiar
+  ni subir todo: por baldosas de 8 x 8 y solo las filas que se pueden ver.
+- `ea5c84e`, `b6e61da`: el agua de un trozo se carga por pasos de 32 filas. `9be2ee9`, `fc76807`: el agua solo se
+  simula cerca del jugador; el resto se congela. `60fb123`: las escrituras de una carga llegan como `'load'`.
+- `b908a45`: gotas, flotantes y efectos también siguen el corrimiento.
+
+### La capa de sección (corte de frente)
+- `22e4d50`, `f382c78`: la forma del corte es una ventana en la imagen (`crossWindow`, en cruz), que leen igual el
+  pintado y el apuntado. `bd7b52e`: borde dibujado opcional. `2702270`: la capa avisa de las columnas recompuestas.
+- `107fca9`, `d1a990e`, `fc0308d`, `203ccae`: `ghost`, una segunda superficie semitransparente con velo, en CPU y GPU.
+- `53db5fb`: `worldSky` alumbra el interior con el cielo del mundo sin cortar. `8ad6c40`: se sigue viendo lo pintado
+  antes hasta que lo nuevo está listo.
+- `5bdee91`, `e7e6a1a`, `663a244`, `82b5a44`, `5427a1d`, `6607921`: menos franjas que se repintan sin necesidad al
+  correrse la ventana o al publicar recuadros. `fa267ba`: una caja fuera de la vista pinta vacío en vez de fallar.
+- `ab4d366`: `pickBlock` lee la capa de sección donde pinta el píxel.
+
+### Interfaz para agentes
+- `9ee5000`: `AgentHost` e `installAgent` (`src/agent/agent.ts`): un agente lee el mundo de bloques como texto, por
+  capas, y da órdenes que registra el juego y que contestan qué pasó, en JSON.
+- `c12436c`: `entityAt` (la entidad que se pinta en un píxel) y `goTo` (andar con los caminos del motor).
+
+### El clima
+- `008de41`: `Weather` (`src/world/weather.ts`): viento, lluvia, nieve, nubes y sol, deterministas por semilla y tick.
+- `822b03c`, `472da6b`: el viento mueve la vegetación al componer (rampas que se balancean).
+- `b48755f`: plantas en el agua: se ven a través del agua, bloques anegados, siembra bajo el agua.
+- `17a3e07`: lluvia y nieve que caen, nieve que se acumula y suelo mojado. `a6182df`: olas por el viento y anillos de
+  lluvia en el agua.
+- `3924cf4`, `26a7dbf`: el sol, una luz direccional con sombras de nubes que se mueven, también con la luz plana.
+- `9f85b90`, `541ac2a`, `538a523`: sin basura por cuadro, lo que cae a 30 Hz con caché, tasas configurables, el aspecto
+  de las gotas y rampas que no toman nieve. `a77cb24`: lluvia sobre la capa de sección.
+- `977cdaf`, `0930504`, `bb2e304`, `69189c9`, `2243792`: pruebas y escenas del oráculo con el clima.
+
+### Medir y lo que se probó
+- `app/viva.html` y `scripts/bench-viva.ts`: el banco de la ventana viva andando (corrimientos, anillo, giros,
+  agua, sección, worker), con sus parámetros en la URL. `2be8ef9`: las reglas para medir en el navegador están en
+  [runbooks/medir-antes-de-decidir.md](runbooks/medir-antes-de-decidir.md).
+- `153dae0` a `30b1df2`: nueve experimentos con un worker propio de la página; lo que sirvió acabó en `BakeWorker`.
+- Probado y revertido: un tope de trozos rehorneados por cuadro (`a675004` a `3aebb30`) y ceder a la cola el coste de
+  componer (`2a3add2`, revertido en `860a60a`).
+
 ## Notas de versión de trozos-z (de ae36cb1 a cc1dc6f)
 
 Lo que llega a master con trozos-z, por tema: una línea por commit, con sus números. Las medidas son sin freno salvo que
