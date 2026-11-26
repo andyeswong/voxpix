@@ -10,19 +10,20 @@ import { WorldView } from '../src/world/view';
 import { Weather, type WeatherLevels } from '../src/world/weather';
 import { climateTable, type ClimateTable } from '../src/world/climate';
 import { rideLean, waveTile, RIDE_GAIN, WAVE_T, type WaveTile } from '../src/world/waves';
-import { swayCode, swaySources, swayTable, SWAY_AFLOAT, SWAY_UNIT } from '../src/world/sway';
+import { swayCode, swaySources, swayTable, ridePatch, SWAY_AFLOAT, SWAY_PATCH, SWAY_UNIT } from '../src/world/sway';
 import type { World } from '../src/world/build';
 
 const PAL: Palette = { ramps: [
   { name: 'suelo', colors: ['#302010', '#604020'] },
   { name: 'agua', colors: ['#0e1a2e', '#16304a', '#1f4a66', '#2f6a86', '#5a9ab4'], material: 'follaje' },
-  { name: 'hoja', colors: ['#20a020', '#40e040'], material: 'follaje', props: { sway: 2, anchor: 'self', afloat: true } },
-  { name: 'quieta', colors: ['#a0a020', '#e0e040'], material: 'follaje', props: { afloat: true } },
+  { name: 'hoja', colors: ['#20a020', '#40e040'], material: 'follaje', props: { sway: 2, anchor: 'self', afloat: 1 } },
+  { name: 'quieta', colors: ['#a0a020', '#e0e040'], material: 'follaje', props: { afloat: 1 } },
+  { name: 'hoja-grande', colors: ['#208020', '#40c040'], material: 'follaje', props: { sway: 1, anchor: 'self', afloat: 8 } },
   { name: 'mata', colors: ['#801010', '#c02020'], material: 'follaje', props: { sway: 2, anchor: 'self' } },
 ] };
 // La misma paleta sin afloat: lo que flota va con el aire como antes
-const AIR: Palette = { ramps: PAL.ramps.map((r) => (r.name === 'hoja' ? { ...r, props: { sway: 2, anchor: 'self' } } : r)) };
-const [SUELO, HOJA, QUIETA, MATA] = [0, 2, 3, 4].map((r) => material(r, 1)) as [number, number, number, number];
+const AIR: Palette = { ramps: PAL.ramps.map((r) => { const { afloat, ...p } = (r.props ?? {}) as Record<string, unknown>; return afloat ? { ...r, props: p } : r; }) };
+const [SUELO, HOJA, QUIETA, GRANDE, MATA] = [0, 2, 3, 4, 5].map((r) => material(r, 1)) as [number, number, number, number, number];
 
 // Una tabla del clima de una casilla y una baldosa de rizado hechas a mano
 const flat = (air: number, wind = 1): ClimateTable => ({ x0: 0, y0: 0, w: 1, h: 1, kx: 0, ky: 0, data: Float32Array.of(air, air, wind, 0), sway: true });
@@ -35,8 +36,10 @@ function tile(c: ClimateTable, at: (gx: number, gy: number) => [number, number] 
 describe('lo que flota y el rizado', () => {
   it('el código lleva el bit de flotar solo si además se mece', () => {
     const t = swayTable(PAL)!, s = new StaticVoxels(PAL, 8, 8, 0, 15);
-    s.set(1, 1, 2, HOJA); s.set(2, 1, 2, QUIETA); s.set(3, 1, 2, MATA);
+    s.set(1, 1, 2, HOJA); s.set(2, 1, 2, QUIETA); s.set(3, 1, 2, MATA); s.set(4, 1, 2, GRANDE);
     expect(swayCode(t, s, key(1, 1, 2))).toBe(SWAY_AFLOAT | (2 * SWAY_UNIT));
+    expect(swayCode(t, s, key(4, 1, 2))).toBe(SWAY_AFLOAT | (3 * SWAY_PATCH) | SWAY_UNIT);
+    expect([1, 8].map((v) => ridePatch(swayCode(t, s, key(v === 1 ? 1 : 4, 1, 2))))).toEqual([1, 8]);
     expect(swayCode(t, s, key(2, 1, 2))).toBe(0);
     expect(swayCode(t, s, key(3, 1, 2))).toBe(2 * SWAY_UNIT);
     expect(t.anyAfloat).toBe(true);
@@ -54,6 +57,18 @@ describe('lo que flota y el rizado', () => {
     expect(rideLean(w, 10 + 2 * WAVE_T, 7)).toBe(rideLean(w, 10, 7));
     // y con el desfase de la vista (kx, ky)
     expect(rideLean({ ...w, kx: 1, ky: 0 }, 8, 7)).toBe(rideLean(w, 10, 7));
+  });
+
+  it('un trozo de lado n lee una sola celda, la de su esquina: lo que cabe en él no se parte', () => {
+    // cada celda con su propio rizado
+    const w = tile(flat(0, 1), (gx, gy) => [((gx * 7 + gy * 3) % 11) / 64, 0]);
+    for (const [x0, y0] of [[8, 16], [24, 40], [0, 0]] as const) {
+      const corner = rideLean(w, x0, y0);
+      for (let dy = 0; dy < 8; dy++) for (let dx = 0; dx < 8; dx++) expect(rideLean(w, x0 + dx, y0 + dy + 0.4, 8)).toBe(corner);
+      expect(rideLean(w, x0 + 8, y0, 8)).toBe(rideLean(w, x0 + 8, y0));
+    }
+    // con n 1, cada celda de agua (2 vóxeles) la suya
+    expect(new Set([0, 2, 4, 6].map((d) => rideLean(w, 8 + d, 16))).size).toBeGreaterThan(1);
   });
 
   // Un estanque: suelo a z 2 y agua hasta 8; hojas flotando a z 8 y una mata en la orilla

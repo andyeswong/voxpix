@@ -232,14 +232,15 @@ uniform bool uCover;
 uniform vec4 uCoverP;
 const int SBAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 uniform bool uAquatic;                 // alguna rampa es de planta de agua: su luz lleva un 1 en el alfa (lo lee el agua)
-// Lo que flota (código 512) se mece con el rizado del agua de debajo (src/waves.ts, rideLean): la baldosa en la textura del clima
+// Lo que flota (código 512, y en 1024 * 0..3 log2 del lado de su trozo) se mece con el rizado del agua de debajo (src/waves.ts, rideLean): la baldosa en la textura del clima
 uniform bool uWaves;
 uniform ivec2 uWaveK;
 ${CLIMATE}
 #define SWAY_MAX 3
 #define SWAY_FILL 5
-float rideLean(int vx, float vy) {
-  ivec2 c = ivec2(vx >> 1, int(floor((vy + 1.0 / 1024.0) / 2.0)));
+float rideLean(int vx, float vy, int n) {
+  int qx = (vx / n) * n, qy = int(floor((vy + 1.0 / 1024.0) / float(n))) * n;
+  ivec2 c = ivec2(qx >> 1, int(floor(float(qy) / 2.0)));
   ivec2 wc = (c + uWaveK) & 63;
   vec4 wv = texelFetch(uClimTab, ivec2(wc.x, wc.y + ${WAVE_ROW}), 0);
   float wind = climateAt(float(c.x * 2 + 1), float(c.y * 2 + 1)).b;
@@ -259,7 +260,7 @@ void swayAt(ivec2 p, out int code, out int shift, out int cls, out float depth) 
   if ((code & 127) == 0) return;
   if (m == 0) wy = texelFetch(uWorldY, p, 0).r;
   vec4 cl = climateAt(float(p.x), wy);
-  float lean = uWaves && (code & 512) != 0 ? rideLean(p.x, wy) : (code & 128) != 0 ? cl.g : cl.r;
+  float lean = uWaves && (code & 512) != 0 ? rideLean(p.x, wy, 1 << ((code >> 10) & 3)) : (code & 128) != 0 ? cl.g : cl.r;
   shift = clamp(int(floor(float(code & 127) / 32.0 * lean + 0.5)), -SWAY_MAX, SWAY_MAX);
 }
 ivec2 swaySource(ivec2 s) {

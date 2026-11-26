@@ -95,12 +95,14 @@ export function waveSlope(t: WaveTile, gx: number, gy: number, wind: number, ch:
   return t.data[o]! * wind + t.data[o + 2]!;
 }
 
-// Lo que flota (MaterialProps.afloat) sobre un punto de la vista (vx, vy: la y del plano, como climateCell): la inclinación
+// Lo que flota (MaterialProps.afloat) sobre un punto de la vista (vx, vy: la y del plano, como climateCell), en un trozo de
+// lado n (1, 2, 4 u 8: el punto se lleva a la esquina de su trozo, y todo el trozo lee lo mismo): la inclinación
 // del rizado en x de la celda de agua que tiene debajo, con el viento de esa celda (lo mismo que pinta el agua), por
 // RIDE_GAIN (8: con sway 1, unos 2 píxeles con viento fuerte; con 4 no pasaba de 1 y no se distinguía del aire). El rizado por el viento sale en múltiplos de 1 / 2^18 (1 / 1024 por 1 / 256) y, con la ganancia, de 1 / 2^15: exacta en float32, la CPU y la GPU dan el mismo píxel
 export const RIDE_GAIN = 8;
-export function rideLean(t: WaveTile, vx: number, vy: number): number {
-  const gx = Math.floor(vx / WAVE_CELL), gy = Math.floor((Math.fround(vy) + climateTie) / WAVE_CELL);
+export function rideLean(t: WaveTile, vx: number, vy: number, n = 1): number {
+  const qx = Math.floor(vx / n) * n, qy = Math.floor((Math.fround(vy) + climateTie) / n) * n;
+  const gx = Math.floor(qx / WAVE_CELL), gy = Math.floor(qy / WAVE_CELL);
   const wind = t.climate.data[climateCell(t.climate, gx * WAVE_CELL + 1, gy * WAVE_CELL + 1) + 2]!;
   return RIDE_GAIN * waveSlope(t, gx, gy, wind, 0);
 }

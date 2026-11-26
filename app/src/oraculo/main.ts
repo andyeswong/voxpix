@@ -151,7 +151,7 @@ function vegetate(w: World, at: [number, number], wind = false, algae = false, b
     }
     // Hojas en la superficie: un vóxel (o dos) sobre el agua, que se mece con el rizado de su celda
     if (afloat) {
-      m.palette = { ...m.palette, ramps: [...m.palette.ramps, { name: 'hoja-flotante', colors: ['#1c5a2a', '#3f8a3a', '#7ab84e'], material: 'follaje', props: { sway: 2, anchor: 'self', afloat: true, snow: false } }] };
+      m.palette = { ...m.palette, ramps: [...m.palette.ramps, { name: 'hoja-flotante', colors: ['#1c5a2a', '#3f8a3a', '#7ab84e'], material: 'follaje', props: { sway: 2, anchor: 'self', afloat: 4, snow: false } }] };
       const fl = m.palette.ramps.length - 1;
       for (let y = 0; y < m.depth; y++) for (let x = 0; x < m.width; x++) {
         if (!w.wet[y * m.width + x] || (x * 5 + y * 11) % 7 || m.get(x, y, w.waterTop[y * m.width + x]!)) continue;

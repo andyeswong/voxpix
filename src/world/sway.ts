@@ -15,6 +15,9 @@ export const SWAY_UNIT = 32;                // el código de un vóxel: cuánto 
 export const SWAY_AQUATIC = 128;            // y este bit si es de los de agua
 export const SWAY_BARE = 256;               // y este si no toma nieve (MaterialProps.snow)
 export const SWAY_AFLOAT = 512;             // y este si flota y se mece con el rizado (MaterialProps.afloat)
+export const SWAY_PATCH = 1024;             // y, por este, log2 del lado del trozo que se mueve entero (0..3: 1..8 vóxeles)
+// El lado del trozo de un código con SWAY_AFLOAT
+export const ridePatch = (code: number): number => 1 << ((code >> 10) & 3);
 export const SWAY_FILL = SWAY_MAX + 2;      // hasta dónde se busca con qué llenar el hueco que deja algo al correrse
 const WALK = 48;                            // vóxeles que se bajan (o suben) como mucho buscando la raíz
 
@@ -27,7 +30,7 @@ export function swayTable(p: Palette): SwayTable | null {
   const ms = p.ramps.map(rampMaterial);
   if (!ms.some((m) => m.sway > 0 || m.aquatic || !m.snow)) { cache.set(p, null); return null; }
   const n = MAX_RAMPS * MAX_TONES + 1;
-  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n), water: ms.some((m) => m.aquatic), bare: new Uint16Array(n), anyBare: ms.some((m) => !m.snow), afloat: new Uint16Array(n), anyAfloat: ms.some((m) => m.afloat && m.sway > 0) };
+  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n), water: ms.some((m) => m.aquatic), bare: new Uint16Array(n), anyBare: ms.some((m) => !m.snow), afloat: new Uint16Array(n), anyAfloat: ms.some((m) => m.afloat > 0 && m.sway > 0) };
   ms.forEach((m, i) => {
     const a = i * MAX_TONES + 1, b = a + MAX_TONES;
     t!.amount.fill(Math.max(0, Math.min(SWAY_MAX, m.sway)), a, b);
@@ -35,7 +38,7 @@ export function swayTable(p: Palette): SwayTable | null {
     t!.reach.fill(Math.max(0, m.reach), a, b);
     t!.aquatic.fill(m.aquatic ? SWAY_AQUATIC : 0, a, b);
     t!.bare.fill(m.snow ? 0 : SWAY_BARE, a, b);
-    t!.afloat.fill(m.afloat && m.sway > 0 ? SWAY_AFLOAT : 0, a, b);
+    t!.afloat.fill(m.afloat > 0 && m.sway > 0 ? SWAY_AFLOAT | SWAY_PATCH * Math.max(0, Math.min(3, Math.floor(Math.log2(m.afloat)))) : 0, a, b);
   });
   cache.set(p, t);
   return t;
@@ -93,7 +96,7 @@ export function swaySources(b: Baked, sec: SectionLayer | null, veil: Uint8Array
       code[i] = swayCode(tab, b.source, k);
       if (code[i]! & 127 && depth[i] !== Infinity) {
         const wy = worldYAt(u, P, depth[i]!);
-        shift[i] = swayShift(code[i]!, waves && code[i]! & SWAY_AFLOAT ? rideLean(waves, gx, wy) : climateLean(c, gx, wy, (code[i]! & SWAY_AQUATIC) !== 0));
+        shift[i] = swayShift(code[i]!, waves && code[i]! & SWAY_AFLOAT ? rideLean(waves, gx, wy, ridePatch(code[i]!)) : climateLean(c, gx, wy, (code[i]! & SWAY_AQUATIC) !== 0));
       }
     }
     for (let x = 0; x < vw; x++) {
