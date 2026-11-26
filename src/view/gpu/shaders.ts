@@ -8,6 +8,7 @@ import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
 import { CLOUD_DARK, SUN_Q } from '../../world/sunlight';
 import { SNOW_COLOR, SNOW_MIX } from '../../world/precipitation';
 import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
+import { RIDE_GAIN } from '../../world/waves';
 
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
@@ -231,9 +232,19 @@ uniform bool uCover;
 uniform vec4 uCoverP;
 const int SBAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 uniform bool uAquatic;                 // alguna rampa es de planta de agua: su luz lleva un 1 en el alfa (lo lee el agua)
+// Lo que flota (código 512) se mece con el rizado del agua de debajo (src/waves.ts, rideLean): la baldosa en la textura del clima
+uniform bool uWaves;
+uniform ivec2 uWaveK;
 ${CLIMATE}
 #define SWAY_MAX 3
 #define SWAY_FILL 5
+float rideLean(int vx, float vy) {
+  ivec2 c = ivec2(vx >> 1, int(floor((vy + 1.0 / 1024.0) / 2.0)));
+  ivec2 wc = (c + uWaveK) & 63;
+  vec4 wv = texelFetch(uClimTab, ivec2(wc.x, wc.y + ${WAVE_ROW}), 0);
+  float wind = climateAt(float(c.x * 2 + 1), float(c.y * 2 + 1)).b;
+  return ${RIDE_GAIN.toFixed(1)} * (wv.x * wind + wv.z);
+}
 // Un píxel de la imagen: su código, cuánto se corre, su clase (1 sustituido por el corte, 2 fuera) y su profundidad
 void swayAt(ivec2 p, out int code, out int shift, out int cls, out float depth) {
   code = 0; shift = 0; cls = 2; depth = 1e30;
@@ -248,7 +259,8 @@ void swayAt(ivec2 p, out int code, out int shift, out int cls, out float depth) 
   if ((code & 127) == 0) return;
   if (m == 0) wy = texelFetch(uWorldY, p, 0).r;
   vec4 cl = climateAt(float(p.x), wy);
-  shift = clamp(int(floor(float(code & 127) / 32.0 * ((code & 128) != 0 ? cl.g : cl.r) + 0.5)), -SWAY_MAX, SWAY_MAX);
+  float lean = uWaves && (code & 512) != 0 ? rideLean(p.x, wy) : (code & 128) != 0 ? cl.g : cl.r;
+  shift = clamp(int(floor(float(code & 127) / 32.0 * lean + 0.5)), -SWAY_MAX, SWAY_MAX);
 }
 ivec2 swaySource(ivec2 s) {
   int hc, hs, hk, c, sh, k;

@@ -4,7 +4,7 @@
 import { hash30, HASH_ONE } from '../worldgen/noise';
 import type { Baked } from './bake';
 import type { Weather } from './weather';
-import { climateStepTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
+import { climateStepTicks, viewOffset, climateCell, climateTie, type ClimateTable, type WeatherFrame } from './climate';
 
 export const WAVE_T = 64;
 export const WAVE_CELL = 2;                     // vóxeles por celda de agua (WATER_CELL)
@@ -93,4 +93,14 @@ function rainRings(out: Float32Array, seed: number, tick: number, rain: number, 
 export function waveSlope(t: WaveTile, gx: number, gy: number, wind: number, ch: 0 | 1): number {
   const o = (((gy + t.ky) & (WAVE_T - 1)) * WAVE_T + ((gx + t.kx) & (WAVE_T - 1))) * 4 + ch;
   return t.data[o]! * wind + t.data[o + 2]!;
+}
+
+// Lo que flota (MaterialProps.afloat) sobre un punto de la vista (vx, vy: la y del plano, como climateCell): la inclinación
+// del rizado en x de la celda de agua que tiene debajo, con el viento de esa celda (lo mismo que pinta el agua), por
+// RIDE_GAIN (8: con sway 1, unos 2 píxeles con viento fuerte; con 4 no pasaba de 1 y no se distinguía del aire). Sale en múltiplos de 1 / 2^17: exacta en float32, la CPU y la GPU dan el mismo píxel
+export const RIDE_GAIN = 8;
+export function rideLean(t: WaveTile, vx: number, vy: number): number {
+  const gx = Math.floor(vx / WAVE_CELL), gy = Math.floor((Math.fround(vy) + climateTie) / WAVE_CELL);
+  const wind = t.climate.data[climateCell(t.climate, gx * WAVE_CELL + 1, gy * WAVE_CELL + 1) + 2]!;
+  return RIDE_GAIN * waveSlope(t, gx, gy, wind, 0);
 }

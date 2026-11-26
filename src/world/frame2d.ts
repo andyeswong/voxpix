@@ -461,9 +461,10 @@ export function frame2DParts(state: RenderState, b: Baked, o: Frame2DOptions): {
   // (con ghost, en sus píxeles entra la segunda superficie: el velo de la de delante va al final, applyGhost)
   const front = o.section || o.sectionLayer ? sectionFor(b, o) : null, sec = sceneLayer(front);
   // El viento: de qué columna de la imagen sale cada píxel. Lo quieto se compone con un margen a los lados y se recoge
-  const clim = climateTable(b, o), from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh) : null;
+  // (lo que flota se mece con el rizado del agua: la baldosa antes que el vaivén)
+  const clim = climateTable(b, o), waves = clim && state.water ? waveTile(b, o.weather, clim) : null;
+  const from = clim ? swaySources(b, sec, front?.ghost?.on ?? null, clim, vx, vy, vw, vh, waves) : null;
   const sun = clim && o.lights ? sunLook(b, o.weather) : null;
-  const waves = clim && state.water ? waveTile(b, o.weather, clim) : null;
   const cover = clim ? coverLook(b, o.weather) : null;
   let fixed = staticParts(state, b, from ? { ...o, vx: vx - SWAY_FILL, vw: vw + 2 * SWAY_FILL } : o, sec, cover || sun ? { cover, sun, table: clim! } : null);
   if (from) fixed = gather(fixed, from, vx - SWAY_FILL, vw + 2 * SWAY_FILL, vw, vh);

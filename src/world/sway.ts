@@ -8,15 +8,17 @@ import type { StaticVoxels } from './state';
 import { unprojector, rowP, worldYAt } from './bake';
 import { secIdx, type SectionLayer } from './section';
 import { climateLean, type ClimateTable } from './climate';
+import { rideLean, type WaveTile } from './waves';
 
 export const SWAY_MAX = 3;                  // píxeles que se corre algo como mucho
 export const SWAY_UNIT = 32;                // el código de un vóxel: cuánto se mece en 1 / SWAY_UNIT de píxel
 export const SWAY_AQUATIC = 128;            // y este bit si es de los de agua
 export const SWAY_BARE = 256;               // y este si no toma nieve (MaterialProps.snow)
+export const SWAY_AFLOAT = 512;             // y este si flota y se mece con el rizado (MaterialProps.afloat)
 export const SWAY_FILL = SWAY_MAX + 2;      // hasta dónde se busca con qué llenar el hueco que deja algo al correrse
 const WALK = 48;                            // vóxeles que se bajan (o suben) como mucho buscando la raíz
 
-interface SwayTable { amount: Float32Array; anchor: Uint8Array; reach: Float32Array; aquatic: Uint8Array; bare: Uint16Array; water: boolean; anyBare: boolean }
+interface SwayTable { amount: Float32Array; anchor: Uint8Array; reach: Float32Array; aquatic: Uint8Array; bare: Uint16Array; afloat: Uint16Array; water: boolean; anyBare: boolean; anyAfloat: boolean }
 const cache = new WeakMap<Palette, SwayTable | null>();
 // Lo que se mece de una paleta, por valor de vóxel; null si nada
 export function swayTable(p: Palette): SwayTable | null {
@@ -25,7 +27,7 @@ export function swayTable(p: Palette): SwayTable | null {
   const ms = p.ramps.map(rampMaterial);
   if (!ms.some((m) => m.sway > 0 || m.aquatic || !m.snow)) { cache.set(p, null); return null; }
   const n = MAX_RAMPS * MAX_TONES + 1;
-  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n), water: ms.some((m) => m.aquatic), bare: new Uint16Array(n), anyBare: ms.some((m) => !m.snow) };
+  t = { amount: new Float32Array(n), anchor: new Uint8Array(n), reach: new Float32Array(n).fill(1), aquatic: new Uint8Array(n), water: ms.some((m) => m.aquatic), bare: new Uint16Array(n), anyBare: ms.some((m) => !m.snow), afloat: new Uint16Array(n), anyAfloat: ms.some((m) => m.afloat && m.sway > 0) };
   ms.forEach((m, i) => {
     const a = i * MAX_TONES + 1, b = a + MAX_TONES;
     t!.amount.fill(Math.max(0, Math.min(SWAY_MAX, m.sway)), a, b);
@@ -33,6 +35,7 @@ export function swayTable(p: Palette): SwayTable | null {
     t!.reach.fill(Math.max(0, m.reach), a, b);
     t!.aquatic.fill(m.aquatic ? SWAY_AQUATIC : 0, a, b);
     t!.bare.fill(m.snow ? 0 : SWAY_BARE, a, b);
+    t!.afloat.fill(m.afloat && m.sway > 0 ? SWAY_AFLOAT : 0, a, b);
   });
   cache.set(p, t);
   return t;
@@ -55,7 +58,7 @@ export function swayCode(t: SwayTable, s: Pick<StaticVoxels, 'get'>, k: number):
     if (own) { let up = 0; while (up < WALK && t.amount[s.get(x, y, z - dir * (up + 1))]! > 0) up++; reach = h + up; }
     f = Math.min(1, h / reach);
   }
-  return t.aquatic[v]! | t.bare[v]! | Math.floor(a * f * SWAY_UNIT + 0.5);
+  return t.aquatic[v]! | t.bare[v]! | t.afloat[v]! | Math.floor(a * f * SWAY_UNIT + 0.5);
 }
 
 // Cuánto se corre (en píxeles, a la derecha) un píxel con ese código y esa inclinación del aire
@@ -67,8 +70,9 @@ export function swayShift(code: number, lean: number): number {
 // De qué columna de la imagen sale cada píxel de la vista, o null si en la vista no se mece nada. Gana lo más cercano a
 // la cámara de lo que cae en el píxel. Si lo que había se corrió y no cae nada, el hueco se llena con el primer píxel
 // quieto y no más cercano del lado de donde viene; si no lo hay, se queda lo que había
-// (veil: los píxeles con velo del ghost de la sección, que no se mecen)
-export function swaySources(b: Baked, sec: SectionLayer | null, veil: Uint8Array | null, c: ClimateTable, vx: number, vy: number, vw: number, vh: number): Int32Array | null {
+// (veil: los píxeles con velo del ghost de la sección, que no se mecen; waves: el rizado del agua, con el que se mece lo que
+// flota; sin él, lo que flota va con el aire)
+export function swaySources(b: Baked, sec: SectionLayer | null, veil: Uint8Array | null, c: ClimateTable, vx: number, vy: number, vw: number, vh: number, waves: WaveTile | null = null): Int32Array | null {
   const tab = swayTable(b.source.palette);
   if (!tab || !c.sway) return null;
   const u = unprojector(b), M = SWAY_FILL, n = vw + 2 * M;
@@ -87,7 +91,10 @@ export function swaySources(b: Baked, sec: SectionLayer | null, veil: Uint8Array
       if (m === 1 && veil?.[q]) continue;
       const k = m ? sec!.pick[q]! : b.pick[gy * b.width + gx]!;
       code[i] = swayCode(tab, b.source, k);
-      if (code[i]! & 127 && depth[i] !== Infinity) shift[i] = swayShift(code[i]!, climateLean(c, gx, worldYAt(u, P, depth[i]!), (code[i]! & SWAY_AQUATIC) !== 0));
+      if (code[i]! & 127 && depth[i] !== Infinity) {
+        const wy = worldYAt(u, P, depth[i]!);
+        shift[i] = swayShift(code[i]!, waves && code[i]! & SWAY_AFLOAT ? rideLean(waves, gx, wy) : climateLean(c, gx, wy, (code[i]! & SWAY_AQUATIC) !== 0));
+      }
     }
     for (let x = 0; x < vw; x++) {
       const h = x + M;

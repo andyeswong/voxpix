@@ -405,6 +405,10 @@ export class GpuCompositor {
     gl.uniform3f(s.u.uAmbient, o.ambient[0], o.ambient[1], o.ambient[2]);
     this.setSun(s, sun, clim);
     gl.uniform1i(s.u.uSway, sway ? 1 : 0);
+    // (lo que flota se mece con el rizado: la escena lee la misma baldosa que el agua)
+    const ride = sway && !!waves && !!swayTable(b.source.palette)?.anyAfloat;
+    gl.uniform1i(s.u.uWaves, ride ? 1 : 0);
+    if (ride) gl.uniform2i(s.u.uWaveK, waves!.kx, waves!.ky);
     gl.uniform1i(s.u.uAquatic, swayTable(b.source.palette)?.water ? 1 : 0);
     if (clim) this.setClimate(s, clim);
     gl.uniform1i(s.u.uLights, o.lights ? 1 : 0);
@@ -1547,11 +1551,11 @@ interface BakedGpu {
 }
 
 // La cara con el código de su luz por detrás (+8 * código)
-// (Int8Array, o Int16Array si alguna rampa se mece, o Int32Array si alguna no toma nieve: entonces, además, + 128 * su código)
+// (Int8Array, o Int16Array si alguna rampa se mece, o Int32Array si alguna no toma nieve o flota: entonces, además, + 128 * su código)
 const voxelOf = (s: Baked['source'], k: number): number => { const r = Math.floor(k / KEY_SPAN); return s.get(Math.floor(r / KEY_SPAN) - KEY_OFF, (r % KEY_SPAN) - KEY_OFF, (k % KEY_SPAN) - KEY_OFF); };
 type FaceUp = Int8Array<ArrayBuffer> | Int16Array<ArrayBuffer> | Int32Array<ArrayBuffer>;
 const makeFaceUp = (b: Baked, vals: Float32Array): FaceUp | null =>
-  swayTable(b.source.palette)?.anyBare ? new Int32Array(b.width * b.height) : swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
+  swayTable(b.source.palette)?.anyBare || swayTable(b.source.palette)?.anyAfloat ? new Int32Array(b.width * b.height) : swayTable(b.source.palette) ? new Int16Array(b.width * b.height) : vals.some((v) => v > 0) ? new Int8Array(b.width * b.height) : null;
 function faceFormat(gl: WebGL2RenderingContext, f: FaceUp | null): { internal: number; type: number } {
   return f instanceof Int32Array ? { internal: gl.R32I, type: gl.INT } : f instanceof Int16Array ? { internal: gl.R16I, type: gl.SHORT } : { internal: gl.R8I, type: gl.BYTE };
 }

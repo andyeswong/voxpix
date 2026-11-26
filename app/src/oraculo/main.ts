@@ -100,6 +100,7 @@ interface Scenario {
   // El clima del cuadro (Frame2DOptions.weather): sus niveles y las opciones; con veg, sus rampas se mecen
   bare?: boolean;         // con veg y clima: la hierba y las flores no toman nieve (MaterialProps.snow)
   algas?: boolean;        // con veg y clima: plantas en el agua del lago (MaterialProps.aquatic)
+  flota?: boolean;        // con algas: hojas sueltas en la superficie del lago que se mecen con el rizado (MaterialProps.afloat)
   clima?: { levels: Partial<WeatherLevels>; frame?: Partial<WeatherFrame>; snow?: number; wet?: number };   // (snow, wet: lo ya acumulado)
   veg?: boolean;          // con vegetación (vegetate): follaje con luz horneada y dinámica, y sumergido en el lago
   glass?: boolean;        // con mamparas de vidrio (glaze) alrededor de la salida
@@ -123,7 +124,7 @@ function rt0FeetZ(state: WorldState, p: { x: number; y: number }): number { retu
 
 // Vegetación en un mundo generado: hierba, flores y arbustos sobre la hierba, hierba sumergida en
 // el fondo del lago, y un árbol con copa de follaje junto a una antorcha horneada (sombra a través de las hojas)
-function vegetate(w: World, at: [number, number], wind = false, algae = false, bare = false): void {
+function vegetate(w: World, at: [number, number], wind = false, algae = false, bare = false, afloat = false): void {
   const m = w.model;
   const names = ['hierba-alta', 'flor-roja', 'flor-amarilla', 'arbusto'];
   m.palette = { ...m.palette, ramps: [...m.palette.ramps, ...names.map((n) => structuredClone(FOLIAGE_RAMPS[n]!)), { name: 'hojas', colors: ['#14301f', '#1f4a2a', '#2f6b32', '#4f8f3c', '#86b84e'], kind: 'foliage' }] };
@@ -147,6 +148,17 @@ function vegetate(w: World, at: [number, number], wind = false, algae = false, b
       if (!w.wet[y * m.width + x] || (x * 7 + y * 13) % 9) continue;
       const f = m.floorAt(x, y), top = w.waterTop[y * m.width + x]! + ((x + y) % 4 === 0 ? 3 : -1);
       for (let z = f; z < top; z++) m.set(x, y, z, material(al, (x + z) % 3));
+    }
+    // Hojas en la superficie: un vóxel (o dos) sobre el agua, que se mece con el rizado de su celda
+    if (afloat) {
+      m.palette = { ...m.palette, ramps: [...m.palette.ramps, { name: 'hoja-flotante', colors: ['#1c5a2a', '#3f8a3a', '#7ab84e'], material: 'follaje', props: { sway: 2, anchor: 'self', afloat: true, snow: false } }] };
+      const fl = m.palette.ramps.length - 1;
+      for (let y = 0; y < m.depth; y++) for (let x = 0; x < m.width; x++) {
+        if (!w.wet[y * m.width + x] || (x * 5 + y * 11) % 7 || m.get(x, y, w.waterTop[y * m.width + x]!)) continue;
+        const z = w.waterTop[y * m.width + x]!;
+        m.set(x, y, z, material(fl, (x + y) % 3));
+        if (x + 1 < m.width && !m.get(x + 1, y, z) && w.wet[y * m.width + x + 1]) m.set(x + 1, y, z, material(fl, 1));
+      }
     }
   }
   // Nenúfares que flotan en el lago (los pisotones del escenario los mueven)
@@ -535,6 +547,13 @@ for (const q of [0, 1, 2, 3] as Quarter[]) {
   SCENARIOS.push({ name: `agua rizada, giro ${q}`, theme: 'medieval', veg: true, algas: true, pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, clima: { levels: { wind: [0.9, 0.35], gust: 0.6, rain: 0.8 }, frame: { waves: 1, fall: {} } } });
   SCENARIOS.push({ name: `agua rizada en mundo alto, giro ${q}`, theme: 'medieval', quarter: q, ticks: 120, highWater: {}, clima: { levels: { wind: [0.9, 0.35], gust: 1 }, frame: { waves: 1 } } });
 }
+// Lo que flota con el rizado (MaterialProps.afloat): la GPU lee la misma baldosa que la CPU
+for (const q of [0, 1, 2, 3] as Quarter[]) SCENARIOS.push({ name: `lo que flota en el agua rizada, giro ${q}`, theme: 'medieval', veg: true, algas: true, flota: true, pos: [172, 170], quarter: q, ticks: 200, stompEvery: 42, clima: { levels: { wind: [0.9, 0.35], gust: 0.6, rain: 0.8 }, frame: { waves: 1, fall: {}, still: 0.25 } } });
+SCENARIOS.push({ name: 'lo que flota en el agua rizada con corte', theme: 'medieval', veg: true, algas: true, flota: true, pos: [172, 170], ticks: 60, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } }, section: { width: 96, painter: true, z: 1, cross: 16 } });
+SCENARIOS.push({ name: 'lo que flota en el agua rizada, la ventana corrida', theme: 'medieval', veg: true, algas: true, flota: true, pos: [172, 170], ticks: 60, shift: 'ida', clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
+SCENARIOS.push({ name: 'lo que flota sin rizado (con el aire)', theme: 'medieval', veg: true, algas: true, flota: true, pos: [172, 170], ticks: 60, clima: { levels: { wind: [0.9, 0.35], gust: 0.6 } } });
+// (con el agua quieta del todo y la corriente baja no se corre ni un píxel: la lluvia sola la mueve, sin aire)
+SCENARIOS.push({ name: 'lo que flota con lluvia sin viento y la corriente baja', theme: 'medieval', veg: true, algas: true, flota: true, pos: [172, 170], ticks: 61, clima: { levels: { rain: 1 }, frame: { waves: 1, still: 0.25 } } });
 SCENARIOS.push({ name: 'agua rizada que brilla sola', theme: 'medieval', look: toxic, pos: [172, 170], ticks: 120, stompEvery: 42, clima: { levels: { wind: [0.5, -0.8], rain: 1 }, frame: { waves: 1 } } });
 SCENARIOS.push({ name: 'agua rizada con corte', theme: 'medieval', pos: [172, 170], ticks: 60, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } }, section: { width: 96, painter: true, z: 1, cross: 16 } });
 SCENARIOS.push({ name: 'agua rizada, sin luces', theme: 'medieval', pos: [172, 170], ticks: 60, lights: false, clima: { levels: { wind: [1, 0], rain: 1 }, frame: { waves: 1 } } });
@@ -676,7 +695,7 @@ async function run(): Promise<void> {
     if (sc.highWater) ({ world, state, spawn: highSpawn, lake } = highWaterWorld(!!sc.highWater.dig));
     if (sc.crop || sc.veg || sc.glass) {
       if (sc.crop) world = cropWorld(world, ...sc.crop);
-      if (sc.veg) vegetate(world, [204, 184], !!sc.clima, !!sc.algas, !!sc.bare);
+      if (sc.veg) vegetate(world, [204, 184], !!sc.clima, !!sc.algas, !!sc.bare, !!sc.flota);
       if (sc.glass) glaze(world, [layout.spawn.x + 30, world.depth - 1 - layout.spawn.y + 6]);
       state = new WorldState(world.model, world.lights, new WaterLayer(world), { seed: layout.seed, fountain: world.fountain });
       addWorldFloaters(state, world);

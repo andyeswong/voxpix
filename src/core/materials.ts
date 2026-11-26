@@ -36,6 +36,9 @@ export interface MaterialProps {
   anchor: 'self' | 'root' | 'top';
   reach: number;
   aquatic: boolean;
+  // afloat: lo que flota en el agua se mece con el rizado que tiene debajo (world/waves.ts, en fase con él) en vez de con el
+  // aire; sin rizado (sin viento ni lluvia, o con WeatherFrame.waves 0), con el aire como lo demás
+  afloat: boolean;
   snow: boolean;      // ¿la nieve del clima cuaja en sus caras de arriba? (WeatherFrame.cover); false: una flor, una hoja que flota
 }
 
@@ -43,7 +46,7 @@ export interface MaterialProps {
 export const VOXEL_M = 1 / 16;
 export const VOXEL_M3 = VOXEL_M ** 3;
 
-export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false, sway: 0, anchor: 'self', reach: 12, aquatic: false, snow: true };
+export const SOLID: Readonly<MaterialProps> = { light: 0, backlit: 0, bed: true, blocks: true, climb: true, emissive: false, reflect: 0, density: 2400, crush: false, ladder: false, sway: 0, anchor: 'self', reach: 12, aquatic: false, afloat: false, snow: true };
 
 // La lista de materiales. Añadir uno es añadir una fila; las propiedades que no se dicen son las del sólido.
 export const MATERIALS: Readonly<Record<string, Readonly<Partial<MaterialProps>>>> = {

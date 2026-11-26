@@ -28,6 +28,9 @@ export interface WeatherFrame {
   // Cuántas veces por segundo cambian la tabla del clima y las olas (tables, 12) y lo que cae (fall, 30): menos, más barato
   rate?: { tables?: number; fall?: number };
   waves?: number;                            // 0..1: cuánto rizan el agua el viento y la lluvia (0)
+  // 0..1: la corriente de lo de agua (MaterialProps.aquatic) con el agua quieta, en partes de la entera; crece hasta ella
+  // con el viento de la casilla o la lluvia (1: siempre entera, lo de siempre)
+  still?: number;
 }
 
 export const CLIMATE_W = 128, CLIMATE_H = 64;       // las casillas que caben en la tabla
@@ -49,8 +52,8 @@ export const climateStep = (f: WeatherFrame): number => { const n = climateStepT
 export const climateTie = 1 / 1024;
 
 // Los datos de los que sale una tabla (con los mismos, la misma)
-interface Want { tick: number; rev: number; weather: Weather; x0: number; y0: number; w: number; h: number; Kx: number; Ky: number; amount: number; cam: WeatherFrame['camera'] }
-const same = (a: Want, b: Want): boolean => a.tick === b.tick && a.rev === b.rev && a.weather === b.weather && a.x0 === b.x0 && a.y0 === b.y0 && a.w === b.w && a.h === b.h && a.Kx === b.Kx && a.Ky === b.Ky && a.amount === b.amount && a.cam === b.cam;
+interface Want { tick: number; rev: number; weather: Weather; x0: number; y0: number; w: number; h: number; Kx: number; Ky: number; amount: number; still: number; cam: WeatherFrame['camera'] }
+const same = (a: Want, b: Want): boolean => a.tick === b.tick && a.rev === b.rev && a.weather === b.weather && a.x0 === b.x0 && a.y0 === b.y0 && a.w === b.w && a.h === b.h && a.Kx === b.Kx && a.Ky === b.Ky && a.amount === b.amount && a.still === b.still && a.cam === b.cam;
 const GUST = new Float64Array(CLIMATE_W), CLOUD = new Float64Array(CLIMATE_W);
 // Una tabla a medias: se hace por filas (run), de una vez o por adelantado
 class Building {
@@ -67,6 +70,7 @@ class Building {
   }
   run(rows: number): void {
     const { want, data, ux, uy, lean, kx, ky } = this, { x0, y0, w, h, Kx, Ky, amount, cam, weather } = want;
+    const rain = weather.levels(want.tick).rain, still = want.still;
     const wholeX = (Kx - kx) / CLIMATE_CX, wholeY = (Ky - ky) / CLIMATE_CY, sec = want.tick / 60, turn = 2 * Math.PI;
     // (el giro de la vista al mundo, sin crear nada por casilla)
     const [ax, ay] = cam ? cam.dirToWorld(1, 0) : [1, 0], [bx, by] = cam ? cam.dirToWorld(0, 1) : [0, 1];
@@ -80,7 +84,8 @@ class Building {
       const s1 = Math.sin(turn * (sec * SWAY_HZ - along + jit)), s2 = Math.sin(turn * (sec * CURRENT_HZ - (wx + wy) / 90 + jit));
       const air = g * (0.5 * lean + 0.5 * s1);
       data[k] = Math.round(air * amount * Q) / Q;
-      data[k + 1] = Math.round((0.5 * s2 + 0.35 * air) * amount * Q) / Q;
+      const stir = still + (1 - still) * Math.min(1, g + rain);              // (still 1: 1, la corriente de siempre)
+      data[k + 1] = Math.round((0.5 * stir * s2 + 0.35 * air) * amount * Q) / Q;
       data[k + 2] = Math.round(g * Q) / Q;
       data[k + 3] = Math.round(CLOUD[i]! * Q) / Q;
      }
@@ -106,7 +111,7 @@ function wantOf(b: Baked, o: View, f: WeatherFrame, tick: number): Want {
   const a = b.options.oblique?.y ?? 1, O = b.options.originY;
   const yLo = (O - (o.vy + o.vh) - b.source.zMax - 1) / a - 4, yHi = (O - o.vy - b.source.zMin) / a + 4;
   const x0 = Math.floor((o.vx - 8 + kx) / CLIMATE_CX), y0 = Math.floor((yLo + ky) / CLIMATE_CY);
-  return { tick, rev: f.weather.revision, weather: f.weather, x0, y0, Kx, Ky, cam: f.camera ?? null, amount: Math.max(0, Math.min(1, f.sway ?? 1)),
+  return { tick, rev: f.weather.revision, weather: f.weather, x0, y0, Kx, Ky, cam: f.camera ?? null, amount: Math.max(0, Math.min(1, f.sway ?? 1)), still: Math.max(0, Math.min(1, f.still ?? 1)),
     w: Math.max(1, Math.min(CLIMATE_W, Math.floor((o.vx + o.vw + 8 + kx) / CLIMATE_CX) - x0 + 1)), h: Math.max(1, Math.min(CLIMATE_H, Math.floor((yHi + ky) / CLIMATE_CY) - y0 + 1)) };
 }
 const cache = new WeakMap<Baked, { want: Want; table: ClimateTable; next: Building | null }>();
