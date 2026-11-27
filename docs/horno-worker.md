@@ -1,13 +1,14 @@
 # El horno en un worker
 
 Estado: escrito (`src/world/horno.ts`, `src/world/horno-worker.ts`; pruebas en `test/horno.test.ts`). Los recuadros del
-rehorneado van al worker; el cielo y las luces, todavía no (abajo).
+rehorneado y su cielo van al worker; las luces, todavía no (abajo).
 
 ## Por qué
 
 Pintar los recuadros es ~95 % de la cola del hilo principal andando. En viva, a 1x durante 5 min, con worker la cola baja
-de ~266 a ~42 ms/s; lo que queda en el principal por recuadro es ~0,1 ms (recibir y publicar). Hoy el motor no trae
-worker: viva tiene el suyo (`app/src/viva/hornero.ts`), y quien usa el motor tiene que escribir el propio.
+de ~266 a ~42 ms/s; lo que queda en el principal por recuadro es ~0,1 ms (recibir y publicar). Antes de `BakeWorker` el
+motor no traía worker: viva tenía el suyo (`app/src/viva/hornero.ts`), y quien usaba el motor tenía que escribir el
+propio.
 
 Un worker escrito fuera del motor solo se entera de los cambios sustituyendo en la instancia métodos del source (`touch`,
 `shift`, `shiftJob`). Eso tiene dos problemas: cualquier cambio del motor en esos métodos lo rompe sin aviso, y tapa las
@@ -56,8 +57,9 @@ pedido se cancela.
 - **La sección (el corte)**: depende de la caja de corte y del objetivo, que cambian cada cuadro; se queda aquí como hoy.
 - **Publicar** lo que llega (`publishRect` con su máscara): ~0,1 ms por recuadro.
 - **El corrimiento** de la imagen (`shiftBakedJob`): ~20 ms por corrimiento, troceado en pasos. Sigue aquí.
-- **El cielo y las luces**, de momento. Son el siguiente paso: el trabajo `sky` y el `light` pedidos fuera como el
-  `rect`. Con worker, el cielo es ~2/3 de lo que queda en el principal.
+- **Las luces**, de momento: el trabajo `light` sigue aquí. El cielo (`sky`) ya va fuera (`46a37b9`): `BakeWorker`
+  manda antes los trozos que leen sus rayos (`skyReadChunks`) y el worker lo calcula en su espejo con `skyFromPick`, el
+  mismo cálculo que aquí. Antes de eso, con worker, el cielo era ~2/3 de lo que quedaba en el principal.
 
 Un recuadro que llega se comprueba con la misma regla que uno pintado aquí (núcleo cambiado, o un trozo que lee cambiado
 con algo publicado encima). Si no vale, se vuelve a pedir fuera con lo de ahora, hasta `REMOTE_RETRIES` (2) veces, y
@@ -70,7 +72,7 @@ principal ~23 % de los recuadros.
   ventana). El worker de viva (`?worker=1`) además los genera fuera (`prepareTrozo`); el del motor no. En viva, a 1x
   durante 5 min, eso son ~7 s de 300 en el principal con `?worker=2` contra ~0,1 con `?worker=1`. A un juego que escribe
   sus trozos con `fill` (con sus diferencias guardadas) no le cambia nada.
-- **El cielo y las luces**: el paso siguiente.
+- **Las luces**: el paso siguiente (el cielo ya va fuera).
 
 ## Migración de un juego que ya tiene su propio worker
 

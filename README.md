@@ -45,10 +45,12 @@ Más en [docs/ia.md](docs/ia.md).
 - [la API para agentes](docs/api-agentes.md) y [la de mundos](docs/api-mundos.md);
 - [IA](docs/ia.md);
 - [el render](docs/render.md);
-- [el motor del mundo](docs/motor.md);
+- [el motor del mundo](docs/motor.md) y [el horno en un worker](docs/horno-worker.md);
 - [la línea de comandos](docs/linea-de-comandos.md);
 - [las pruebas](docs/pruebas.md);
-- [los cambios](docs/cambios.md): lo último que ha entrado (mundos de bloques que se pican en partida, caminos por niveles, cielo, corte de vista, cola con plazo).
+- [los cambios](docs/cambios.md): lo último que ha entrado (un mundo que se genera al andar, el horneado en un worker,
+  la capa de sección, la interfaz para agentes y el clima; antes, mundos de bloques que se pican en partida, caminos
+  por niveles, cielo, corte de vista y cola con plazo).
 
 ## Capturas
 
@@ -136,7 +138,8 @@ Un GIF del modelo dando una vuelta (los de arriba salen de aquí; `--luz` lo ilu
 |---|---|
 | `src/core/` | El núcleo, sin dependencias: paleta por rampas, modelo disperso, render por software determinista, luz 3D por cara y deshacer por diferencias. |
 | `src/view/gpu/` | Lo mismo en WebGL2: `voxrender.ts` (el render y la luz del editor) y `compositor.ts` (el cuadro del mundo). |
-| `src/world/`, `src/lighting/`, `src/fluid/`, `src/anim/` | El motor del mundo 2.5D: horneado, luces dinámicas y sombras, agua, entidades, tinte de golpe, precarga de sprites y animación de andar (walk y rigs por partes); mundos de bloques, terreno por semilla, caminos, cielo, ciclo del día y guardar en bytes. |
+| `src/world/`, `src/lighting/`, `src/fluid/`, `src/anim/` | El motor del mundo 2.5D: horneado, luces dinámicas y sombras, agua, entidades, tinte de golpe, precarga de sprites y animación de andar (walk y rigs por partes); mundos de bloques, terreno por semilla, caminos, cielo, ciclo del día y guardar en bytes; la ventana viva que genera el mundo al andar (`live.ts`), el horneado en un worker (`horno.ts`), la capa de sección (`section.ts`) y el clima (`weather.ts`: viento, lluvia, nieve, nubes y sol). |
+| `src/agent/` | La interfaz para agentes: leer el mundo de bloques como texto y dar órdenes que contestan qué pasó. |
 | `src/runtime/` | El tick determinista (entrada, cuerpos con colisión, eventos, mundo) y el bucle de pasos fijos. |
 | `src/worldgen/`, `src/terrain/`, `src/samples/` | El generador de escenarios por teselas y sus temas de muestra (oficina, medieval, cyberpunk). |
 | `src/pxl/` | El puente con pxl: importar y exportar `.px.js`. |
@@ -173,7 +176,10 @@ En Vite, Vitest y `tsconfig`, un alias `@voxpix` -> `node_modules/voxpix/src` (y
 `world/state` (el mundo y sus entidades), `world/build` y `world/bake` (construir y hornear un escenario),
 `view/compositor` (el cuadro por GPU o CPU, con `prewarm`), `runtime/runtime` (el tick y el bucle fijo) y
 `worldgen` (mapas por semilla). Para un mundo de bloques que se pica en partida: `world/blocks`, `world/edit`,
-`world/terrain`, `world/paths` y `world/levelpaths`, `runtime/levels`, `world/save` y `lighting/daycycle`. La guía completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
+`world/terrain`, `world/paths` y `world/levelpaths`, `runtime/levels`, `world/save` y `lighting/daycycle`. Para un
+mundo que se genera al andar: `world/regiongen` y `world/live` (con `world/horno` para hornear en un worker). Además,
+`world/section` (el corte de frente), `world/weather` (el clima) y `agent/agent` (la interfaz para agentes). La guía
+completa, con un ejemplo, está en [docs/motor.md](docs/motor.md).
 
 ## Examples
 
