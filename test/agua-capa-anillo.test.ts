@@ -51,7 +51,7 @@ function copyShift(w: WaterLayer, dx: number, dy: number): void {
     return out;
   };
   const ground = mv(w.sim.ground, 0), solid = mv(w.sim.solid, 1);
-  w.importState({ depth: mv(st.depth, 0), fl: mv(st.fl, 0), fr: mv(st.fr, 0), ft: mv(st.ft, 0), fb: mv(st.fb, 0), awake: mv(st.awake, 0), basin: mv(st.basin!, 0) });
+  w.importState({ depth: mv(st.depth, 0), fl: mv(st.fl, 0), fr: mv(st.fr, 0), ft: mv(st.ft, 0), fb: mv(st.fb, 0), awake: mv(st.awake, 0), basin: mv(st.basin!, 0), rest: mv(st.rest!, NaN) });
   w.sim.ground.set(ground); w.sim.solid.set(solid);
 }
 

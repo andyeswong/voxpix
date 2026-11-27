@@ -5,7 +5,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { material } from '../src/core';
 import { StaticVoxels, WorldState } from '../src/world/state';
-import { WaterLayer } from '../src/world/water';
+import { WaterLayer, WATER_SHOW } from '../src/world/water';
 import { ShallowWater } from '../src/fluid/shallow';
 import { clearBox } from '../src/world/edit';
 import { buildWorld, buildWorldState, type World } from '../src/world/build';
@@ -30,7 +30,7 @@ function setup() {
   const water = new WaterLayer(world, { wallAbove: Infinity });
   const st = new WorldState(s, [], water, { seed: 5 });
   water.follow(st.watchChanges());
-  return { st, water };
+  return { st, water, s };
 }
 const rest = (st: WorldState, water: WaterLayer) => { for (let t = 0; t < 400 && (water.sim.visited || water.soakVisited || water.sim.activeCount); t++) st.step(); };
 
@@ -164,6 +164,59 @@ describe('agua en reposo', () => {
     // Lo que falta es lo que saltó al suelo seco al bajar el lago (lleno hasta el borde) y se empapó: nada más
     expect(v0 - v1).toBeLessThan(10);
   });
+
+  it('picar la orilla de un lago lleno hasta el borde, hoyo tras hoyo: el rebote no inunda la llanura de alrededor', () => {
+    const { st, water } = setup();
+    const sim = water.sim, n = water.gw * water.gh;
+    rest(st, water);
+    const basins = () => { let b = 0; for (let i = 0; i < n; i++) if (water.isBasin(i)) b++; return b; };
+    const films = () => { let f = 0; for (let i = 0; i < n; i++) if (!sim.solid[i] && sim.depth[i]! > 0 && sim.depth[i]! < WATER_SHOW) f++; return f; };
+    const b0 = basins();
+    // Ocho hoyos de 2 x 2 vóxeles hasta el fondo del lago, pegados a la orilla este y entre sí, a 18 pasos uno de otro
+    // (lo que tarda en picar un agente): cada hoyo se pica con el agua del anterior aún rebotando por encima del nivel
+    // del lago, que es el del suelo. Ese nivel de un momento no es el de la cuenca: la llanura a 40 no pasa a serlo
+    let bounce = -Infinity;
+    for (const [x, y] of [[40, 30], [40, 32], [42, 32], [40, 26], [42, 34], [40, 28], [44, 32], [44, 30]] as const) {
+      for (let gy = y / 2 - 1; gy <= y / 2 + 1; gy++) for (let gx = x / 2 - 1; gx <= x / 2 + 1; gx++) {
+        const i = sim.at(gx, gy);
+        if (water.isBasin(i) && sim.depth[i]! > 0.04) bounce = Math.max(bounce, sim.ground[i]! + sim.depth[i]!);
+      }
+      clearBox(st, { x0: x, y0: y, z0: BED, x1: x + 1, y1: y + 1, z1: 63 });
+      for (let t = 0; t < 18; t++) st.step();
+    }
+    expect(bounce).toBeGreaterThan(FLOOR + 0.1);                           // al picar, el agua de al lado pasa del suelo
+    for (let t = 0; t < 600; t++) st.step();
+    expect(basins() - b0).toBe(8);                                         // solo los ocho hoyos (con el nivel del momento, 880)
+    expect(films()).toBe(0);
+    expect(water.surfaceAt(44, 30)).toBeCloseTo(water.surfaceAt(30, 30), 2); // y los hoyos, al nivel del lago
+  });
+
+  // Lo mismo con un pisotón junto a la orilla: picar al lado mientras el lago aún rebota. El nivel de reposo del lago
+  // viene de su agua de partida, de lo cargado (guardado: vuelve quieto) o de la instantánea a la que se volvió (una de
+  // antes, sin él: la superficie al volver, con el lago en reposo)
+  for (const from of ['de partida', 'cargado', 'tras volver a una instantánea', 'tras volver a una instantánea sin nivel'] as const) {
+    it(`un pisotón en la orilla y picar al lado, con el lago ${from}: solo el hoyo pasa a ser cuenca`, () => {
+      const first = setup();
+      let { st, water } = first;
+      rest(st, water);
+      if (from === 'cargado') {
+        const saved = water.save(0, 0, W - 1, D - 1);
+        const w2 = new WaterLayer({ model: first.s, lights: [], width: W, depth: D, wet: new Uint8Array(W * D), waterTop: new Int16Array(W * D) } as unknown as World, { wallAbove: Infinity, unloaded: true, movable: true });
+        w2.load(0, 0, W - 1, D - 1, { saved });
+        st = new WorldState(first.s, [], w2, { seed: 5 }); w2.follow(st.watchChanges()); water = w2;
+      }
+      if (from === 'tras volver a una instantánea') water.importState(water.exportState());
+      if (from === 'tras volver a una instantánea sin nivel') { const { rest: _, ...old } = water.exportState(); water.importState(old); }
+      const n = water.gw * water.gh, basins = () => { let b = 0; for (let i = 0; i < n; i++) if (water.isBasin(i)) b++; return b; };
+      const b0 = basins();
+      st.events.disturb(38, 31, 3, 2);
+      for (let t = 0; t < 10; t++) st.step();
+      expect(water.surfaceAt(38, 30)).toBeGreaterThan(FLOOR + 1);         // la orilla, rebotando por encima del suelo
+      clearBox(st, { x0: 40, y0: 30, z0: BED, x1: 41, y1: 31, z1: 63 });
+      for (let t = 0; t < 300; t++) st.step();
+      expect(basins() - b0).toBe(1);                                       // (con la superficie del momento, 880)
+    });
+  }
 
   it('la huella de una partida con zanja, pisotones, salto a la orilla y agua en seco (fijada)', () => {
     const { st, water } = setup();

@@ -209,6 +209,8 @@ export class ShallowWater {
   // Cuántas celdas se están calculando (para medir)
   get activeCount(): number { return this.count; }
 
+  // Si la celda está despierta (moviéndose o recién movida): su superficie puede estar rebotando, no en reposo
+  isAwake(i: number): boolean { return this.awake[i]! > 0; }
   surface(i: number): number {
     return this.ground[i]! + this.depth[i]!;
   }

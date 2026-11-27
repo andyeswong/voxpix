@@ -111,8 +111,9 @@ export function takeWaterVoxels(s: StaticVoxels, x0: number, y0: number, x1: num
   };
 }
 
-// El estado del agua en la instantánea: el del simulador y las cuencas (opcional: las instantáneas de antes no lo traen)
-export type WaterState = ReturnType<ShallowWater['exportState']> & { basin?: Uint8Array };
+// El estado del agua en la instantánea: el del simulador, las cuencas y su nivel de reposo (opcionales: las instantáneas
+// de antes no los traen)
+export type WaterState = ReturnType<ShallowWater['exportState']> & { basin?: Uint8Array; rest?: Float32Array };
 
 export class WaterLayer {
   readonly sim: ShallowWater;
@@ -129,6 +130,12 @@ export class WaterLayer {
   groundVersion = 0;                               // sube al cambiar el fondo, las paredes o las cuencas
   readonly bornAsleep: boolean;                    // si nació dormida (WaterOptions.asleep, con el agua en reposo)
   private readonly basin0: Uint8Array;             // las cuencas del mundo de partida (las ganadas jugando no están)
+  // El nivel de reposo de cada celda de cuenca (NaN si no se sabe): la superficie la última vez que se leyó dormida, o la
+  // del agua de partida, o el nivel con el que se inundó. La cuenca se extiende con este nivel y no con la superficie del
+  // momento: el agua que entra en un hoyo recién picado rebota por encima del nivel del lago, y con ese nivel la llanura
+  // de alrededor (a ras del lago) pasaba entera a ser cuenca; como la cuenca no se empapa, el rebote quedaba en ella como
+  // una película para siempre
+  private readonly rest: Float32Array;
   private fountainIn: number[] = [];              // celdas donde cae el agua del cuenco
   // Las celdas mojadas fuera de cuenca (las que se empapan), en lista: así el empapado no recorre la rejilla. Entra
   // toda celda que pueda mojarse fuera de cuenca: las del paso (activeCells), pour, syncGround e importState. Quien
@@ -187,6 +194,7 @@ export class WaterLayer {
     this.stepTiles = new Int32Array(this.tilesX * this.tilesY);
     this.stepSeen = new Uint32Array(this.tilesX * this.tilesY);
     this.basin = new Uint8Array(this.gw * this.gh);
+    this.rest = new Float32Array(this.gw * this.gh).fill(NaN);
     const { wet, waterTop, width: W } = world;
     // Sin cargar (una ventana que se carga por trozos, load): todo seco y de pared
     if (opts.unloaded) this.sim.solid.fill(1);
@@ -240,6 +248,7 @@ export class WaterLayer {
     sim.ground[i] = g; sim.solid[i] = 0; sim.depth[i] = 0; this.basin[i] = 0;
     if (hole || g > this.wallAbove) sim.solid[i] = 1;
     else if (anyWet) { this.basin[i] = 1; if (top > g) sim.depth[i] = top - g; }
+    this.rest[i] = this.basin[i] ? g + sim.depth[i]! : NaN;
   }
 
   // LA VENTANA POR TROZOS: cargar el agua de un recuadro (vóxeles locales, extremos incluidos, en celdas enteras) que
@@ -272,6 +281,7 @@ export class WaterLayer {
           const i = sim.at(gx, gy);
           this.initCell(gx, gy, surface);
           if (saved && !sim.solid[i]) { const k = (gy - gy0) * saved.w + gx - gx0; this.basin[i] = saved.basin[k]!; sim.depth[i] = saved.depth[k]!; }
+          this.rest[i] = this.basin[i] && !sim.solid[i] ? sim.ground[i]! + sim.depth[i]! : NaN;   // (lo cargado nace quieto)
           sim.clearFlow(i);
           this.basin0[i] = this.basin[i]!;
           this.soakMaybe(i);
@@ -377,9 +387,9 @@ export class WaterLayer {
         const nx = gx + ox, ny = gy + oy;
         if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
         const j = sim.at(nx, ny);
-        if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, sim.ground[j]! + sim.depth[j]!);
+        if (this.basin[j] && !sim.solid[j] && sim.depth[j]! > 0.04) level = Math.max(level, this.restLevel(j));
       }
-      if (sim.ground[i]! < level) { this.basin[i] = 1; flood.push(i); floodLevel.push(level); }
+      if (sim.ground[i]! < level) { this.basin[i] = 1; this.rest[i] = level; flood.push(i); floodLevel.push(level); }
     }
     for (let k = 0; k < flood.length; k++) {
       const i = flood[k]!, level = floodLevel[k]!, [gx, gy] = sim.xy(i);
@@ -388,7 +398,7 @@ export class WaterLayer {
         if (nx < 0 || ny < 0 || nx >= this.gw || ny >= this.gh) continue;
         const j = sim.at(nx, ny);
         if (this.basin[j] || sim.solid[j] || !(sim.ground[j]! < level)) continue;
-        this.basin[j] = 1; flood.push(j); floodLevel.push(level);
+        this.basin[j] = 1; this.rest[j] = level; flood.push(j); floodLevel.push(level);
         this.changedCell(j);
       }
     }
@@ -489,6 +499,16 @@ export class WaterLayer {
     return { seq: this.logN, all: false, box: x0 <= x1 ? [x0, y0, x1, y1] : null };
   }
 
+  // El nivel de reposo de una celda de cuenca (rest): dormida, su superficie (y se apunta); despierta, el último que se
+  // le conoce, o su superficie si no se le conoce ninguno
+  private restLevel(j: number): number {
+    const r = this.rest[j]!;
+    if (this.sim.isAwake(j) && !Number.isNaN(r)) return r;
+    const s = this.sim.ground[j]! + this.sim.depth[j]!;
+    this.rest[j] = s;
+    return s;
+  }
+
   private soakMaybe(i: number): void {
     if (!this.inSoak[i] && !this.basin[i] && this.sim.depth[i]! > 0) { this.inSoak[i] = 1; this.soakList[this.nSoak++] = i; }
   }
@@ -514,7 +534,7 @@ export class WaterLayer {
   }
 
   // El estado del agua para la instantánea del mundo: el del simulador (profundidad, flujos, despiertas) y las cuencas
-  exportState(): WaterState { return { ...this.sim.exportState(), basin: this.sim.logical(this.basin) }; }
+  exportState(): WaterState { return { ...this.sim.exportState(), basin: this.sim.logical(this.basin), rest: this.sim.logical(this.rest) }; }
 
   // Vuelve a una instantánea (WorldState.restore, con los vóxeles ya restaurados). La profundidad, los flujos y las
   // despiertas guardadas son la verdad: no se tocan ni se despierta nada más. Las cuencas, las guardadas (una
@@ -536,6 +556,11 @@ export class WaterLayer {
         sim.solid[i] = hole || g > this.wallAbove ? 1 : 0;
       }
     }
+    // El nivel de reposo, el guardado; una instantánea de antes, sin él: la superficie de cada celda de cuenca al volver
+    // (como lo cargado)
+    const { sim } = this;
+    if (s.rest) this.rest.set(s.rest);
+    else for (let i = 0; i < this.rest.length; i++) this.rest[i] = this.basin[i] && !sim.solid[i] ? sim.ground[i]! + sim.depth[i]! : NaN;
     this.groundVersion++;
     this.changed(0, 0, this.gw - 1, this.gh - 1);
     this.widenRange();
@@ -557,7 +582,7 @@ export class WaterLayer {
     const cx = dx / CELL, cy = dy / CELL, { gw, gh, sim } = this;
     sim.shift(cx, cy);
     const bx = Math.max(-gw, Math.min(gw, cx)), by = Math.max(-gh, Math.min(gh, cy));
-    const clear = (x0: number, y0: number, x1: number, y1: number) => sim.runs(x0, y0, x1, y1, (a, z) => { this.basin.fill(0, a, z); this.basin0.fill(0, a, z); });
+    const clear = (x0: number, y0: number, x1: number, y1: number) => sim.runs(x0, y0, x1, y1, (a, z) => { this.basin.fill(0, a, z); this.basin0.fill(0, a, z); this.rest.fill(NaN, a, z); });
     if (bx > 0) clear(gw - bx, 0, gw - 1, gh - 1); else if (bx < 0) clear(0, 0, -bx - 1, gh - 1);
     if (by > 0) clear(0, gh - by, gw - 1, gh - 1); else if (by < 0) clear(0, 0, gw - 1, -by - 1);
     // (la fuente no se corre: es de los escenarios de una pieza)
