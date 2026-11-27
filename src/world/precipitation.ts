@@ -2,9 +2,9 @@
 // su columna (solo donde hay cielo de verdad encima), como puntos de efectos (los pinta quien pinta los efectos, igual en la
 // CPU y la GPU); y lo que dejan: nieve sobre las caras de arriba y lo mojado, más oscuro. Todo sale del tick y de la semilla:
 // no hay partículas guardadas, y no cambia ningún vóxel.
-import { FX_STRIDE, type FxSource } from '../core';
+import { FX_STRIDE, innerGapFor, type FxSource } from '../core';
 import type { Baked } from './bake';
-import { secIdx, sectionBorderAt, type SectionLayer } from './section';
+import { secIdx, sectionAt, sectionBorderAt, type SectionLayer } from './section';
 import { hash30, HASH_ONE } from '../worldgen/noise';
 import { rateTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
@@ -145,7 +145,9 @@ const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 // incline 0,5 cada fila salta 2 en y, y por la y solo se usaban dos filas de la Bayer, las dos con los umbrales bajos en las
 // mismas columnas (a rayas verticales mientras cuaja). Anclada al mundo: la fila de un punto es a * y + z (rowP) con la y del
 // plano del mundo girado (la de la vista más K), que no cambia al correrse la ventana ni al girar
-export interface CoverLook { snow: number; wetTop: number; wetSide: number; row: number }
+// gap: con un horneado con contorno interior (outline 'both'), su salto de profundidad en float32; si no, 0. Ese contorno se
+// pinta en el píxel de detrás de un salto, que guarda su cara (la de arriba del suelo): sin mirarlo, la nieve lo punteaba
+export interface CoverLook { snow: number; wetTop: number; wetSide: number; row: number; gap: number }
 export function coverLook(b: Baked, f: WeatherFrame | null | undefined): CoverLook | null {
   if (!f?.cover || !b.sky) return null;
   const c = f.weather.cover, q = (v: number) => Math.floor(v * 256 + 0.5) / 256;
@@ -153,19 +155,33 @@ export function coverLook(b: Baked, f: WeatherFrame | null | undefined): CoverLo
   if (!snow && !wetTop) return null;
   // (la fila sy de la imagen es O - sy - 0,5 = a * vy + z; más a * Ky, la del mundo. Entero por cuadro: igual en CPU y GPU)
   const a = b.options.oblique?.y ?? 1, K = Math.floor(b.options.originY + a * viewOffset(f)[1] + 0.5);
-  return { snow, wetTop, wetSide, row: ((K % 4) + 4) % 4 };
+  const gap = b.options.outline === 'both' ? Math.fround(b.options.innerGap ?? innerGapFor(b.options)) : 0;
+  return { snow, wetTop, wetSide, row: ((K % 4) + 4) % 4, gap };
 }
 // (bare: de una rampa que no toma nieve, MaterialProps.snow)
 // Pinta la nieve y lo mojado sobre el color de un píxel de lo quieto (px[i..i + 2]): su cara, su cielo (0..5), y su columna
 // y su fila en la imagen horneada. La misma cuenta, con enteros, que la GPU (FRAG_SCENE)
-export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, sy: number, bare = false): void {
+// (line: el píxel es contorno interior, coverLine: se moja, pero no toma nieve)
+export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, sy: number, bare = false, line = false): void {
   if (face < 0 || face === 5 || sky <= 0) return;
   const wet = (face === 4 ? c.wetTop : c.wetSide) * (sky / 5);
   if (wet > 0) { const k = 1 - Math.floor(wet * 256 + 0.5) / 256; for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! * k + 0.5); }
-  if (face !== 4 || !c.snow || bare) return;
+  if (face !== 4 || !c.snow || bare || line) return;
   const bx = (x + t.kx) & 3, by = (c.row - sy) & 3;
   if (BAYER[by * 4 + bx]! >= c.snow - (5 - sky) * 4) return;
   for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! + (SNOW_COLOR[ch]! - px[i + ch]!) * SNOW_MIX + 0.5);
+}
+// ¿Es contorno interior el píxel (sx, sy) de la imagen, de profundidad d? La regla del render (finishRender): algún vecino
+// de los 4 más cerca que d - gap. Cada vecino con la profundidad que se ve en él (la de la capa del corte si la sustituye).
+// La resta en float32, como la GPU (FRAG_SCENE): en un empate exacto puede no coincidir con el horneado (que restó en
+// double), pero la CPU y la GPU, siempre
+export function coverLine(b: Baked, sec: SectionLayer | null, sx: number, sy: number, d: number, gap: number): boolean {
+  const lim = Math.fround(d - gap), W = b.width, i = sy * W + sx, D = b.depth;
+  if (!sec) {
+    return (sy > 0 && D[i - W]! < lim) || (sx > 0 && D[i - 1]! < lim) || (sx < W - 1 && D[i + 1]! < lim) || (sy < b.height - 1 && D[i + W]! < lim);
+  }
+  const at = (nx: number, ny: number): number => { const si = sectionAt(sec, nx, ny); return si >= 0 ? sec.depth[si]! : D[ny * W + nx]!; };
+  return (sy > 0 && at(sx, sy - 1) < lim) || (sx > 0 && at(sx - 1, sy) < lim) || (sx < W - 1 && at(sx + 1, sy) < lim) || (sy < b.height - 1 && at(sx, sy + 1) < lim);
 }
 // Lo de dentro de un corte no lleva nieve ni se moja, salvo que su cielo sea el del mundo sin cortar (SectionCut.worldSky)
 export const coverInCut = (sec: SectionLayer | null): boolean => !!sec?.box?.worldSky;

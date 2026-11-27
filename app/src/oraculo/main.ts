@@ -90,7 +90,7 @@ interface Scenario {
   // cross: con la ventana en cruz (SectionCut.window) de ese radio y ese brazo, centrada en el cuerpo del jugador; true:
   // la de por defecto (brazo 24, radio 40). border: la cruz con su borde dibujado (withBorder) de ese grosor
   // (ghost: los vóxeles de la sección desde dz por encima de los pies del corte, semitransparentes con esa alpha)
-  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number; ghost?: { alpha: number; dz?: number; keepFacing?: boolean; seq?: boolean } };
+  section?: { width: number; painter?: boolean; torch?: boolean; z?: number; pit?: boolean; cross?: number | true; border?: number; worldSky?: boolean; ghost?: { alpha: number; dz?: number; keepFacing?: boolean; seq?: boolean } };
   // La ventana viva (shiftBaked): con antorchas fijas a los dos lados del borde del primer trozo de vóxeles, la GPU
   // dibuja, la imagen se corre un trozo (y la GPU la corre dentro de sí). 'ida': se compara ahí (la vista corrida con
   // ella); 'vuelta': se vuelve al sitio (lo que salió, otra vez desde una copia) y la vista tiene que ser byte a byte la
@@ -99,6 +99,7 @@ interface Scenario {
   crop?: [number, number, number, number];   // recorta el mundo a x0, y0, ancho, fondo (lados impares)
   // El clima del cuadro (Frame2DOptions.weather): sus niveles y las opciones; con veg, sus rampas se mecen
   bare?: boolean;         // con veg y clima: la hierba y las flores no toman nieve (MaterialProps.snow)
+  line?: string;          // horneado con outline 'both' y ese outlineColor (el contorno interior no toma nieve)
   algas?: boolean;        // con veg y clima: plantas en el agua del lago (MaterialProps.aquatic)
   flota?: boolean;        // con algas: hojas sueltas en la superficie del lago que se mecen con el rizado (MaterialProps.afloat)
   clima?: { levels: Partial<WeatherLevels>; frame?: Partial<WeatherFrame>; snow?: number; wet?: number };   // (snow, wet: lo ya acumulado)
@@ -542,6 +543,11 @@ SCENARIOS.push({ name: 'nieve con rampas que no la toman, la ventana corrida y v
 // (origin con y 5: el ancla de la trama no es la fila 0 de la imagen.) 5 y 10 dieciseisavos: con 4 u 8, las filas 0 y 2 de la Bayer (y la 1 y la 3) se ven iguales y una fila mal puesta no se nota
 for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `nieve cuajando a 0,3, giro ${q}`, theme: 'medieval', cave: true, pos: [196, 172], quarter: q, ticks: 64, clima: { levels: {}, frame: { cover: true, origin: [0, 5] }, snow: 0.3 } });
 SCENARIOS.push({ name: 'nieve cuajando a 0,6, la ventana corrida y vuelta', theme: 'medieval', veg: true, cave: true, pos: [196, 172], ticks: 64, shift: 'vuelta', clima: { levels: { wind: [0.6, 0.2] }, frame: { cover: true }, snow: 0.6 } });
+// Con contorno ('both', casi negro) y la nieve cuajando: el contorno interior se pinta en el píxel de detrás de un salto, que
+// guarda su cara de arriba; no toma nieve (si no, sale punteado). Con vegetación (troncos y matas) y con un corte con el
+// cielo del mundo (ahí los vecinos del contorno son los de la capa)
+for (const q of [0, 1] as Quarter[]) SCENARIOS.push({ name: `nieve cuajando con contorno, giro ${q}`, theme: 'medieval', veg: true, cave: true, line: '#0b0c10', pos: [196, 172], quarter: q, ticks: 64, clima: { levels: { wind: [0.6, 0.2] }, frame: { cover: true }, snow: 0.6 } });
+SCENARIOS.push({ name: 'nieve cuajando con contorno y corte', theme: 'medieval', veg: true, cave: true, line: '#0b0c10', pos: [196, 172], ticks: 64, clima: { levels: { wind: [0.6, 0.2] }, frame: { cover: true }, snow: 0.6 }, section: { width: 64, z: 1, worldSky: true } });
 SCENARIOS.push({ name: 'nieve con niebla sin luces', theme: 'medieval', cave: true, ticks: 64, lights: false, fog: true, clima: { levels: { snow: 1 }, frame: { fall: {}, cover: true }, snow: 0.7 } });
 SCENARIOS.push({ name: 'lluvia con fondo transparente', theme: 'medieval', cave: true, clearBg: true, ticks: 64, clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: { max: 1000 }, cover: true }, wet: 1 } });
 SCENARIOS.push({ name: 'lluvia con la ventana corrida y vuelta', theme: 'medieval', veg: true, cave: true, pos: [172, 170], ticks: 60, shift: 'vuelta', clima: { levels: { rain: 1, wind: [1, 0] }, frame: { fall: {}, cover: true }, wet: 1, snow: 0.4 } });
@@ -730,7 +736,7 @@ async function run(): Promise<void> {
     }
     if (sc.shift) for (const x of [8.5, 24.5]) state.lights.addFixed({ kind: 'torch', x, y: spawn.y + 0.5, z: 30 });
     const view = new WorldView(state, sc.quarter ?? 0, sc.highWater?.cut ? { cut: true } : {});
-    const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}) });
+    const b = bakeWorld(view.bakeable(), { topZ: sc.highWater ? 72 : TOPZ, incline: INCLINE, ...(sc.cave ? { sky: true } : {}), ...(sc.line ? { outline: 'both' as const, outlineColor: sc.line } : {}) });
     if (sc.highWater?.dig) (state.water as WaterLayer).follow(state.watchChanges());
     // (la subida por partes: run(-Infinity) hace una banda por llamada)
     let prep: { run(deadline: number): boolean } | null = null;
@@ -777,7 +783,7 @@ async function run(): Promise<void> {
       const gh = sc.section.ghost;
       const at = (dx: number, alpha = gh?.alpha ?? 0) => {
         const zc = sc.section!.z ?? p.z;
-        const cut = { ...sectionAround(view.camera, p.x + dx, p.y, zc, sc.section!.width), ...(gh ? { ghost: { z: zc + (gh.dz ?? 8), alpha, ...(gh.keepFacing ? { keepFacing: true } : {}) } } : {}) };
+        const cut = { ...sectionAround(view.camera, p.x + dx, p.y, zc, sc.section!.width), ...(sc.section!.worldSky ? { worldSky: true } : {}), ...(gh ? { ghost: { z: zc + (gh.dz ?? 8), alpha, ...(gh.keepFacing ? { keepFacing: true } : {}) } } : {}) };
         if (!arm) return cut;
         const [vx, vy] = view.camera.pointToView(p.x + dx, p.y), [wx, wy] = b.cam.project(vx, vy, p.z + 8);
         const border = sc.section!.border ? { color: '#ffd666', width: sc.section!.border } : null;

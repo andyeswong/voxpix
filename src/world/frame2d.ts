@@ -9,7 +9,7 @@ import type { WorldLight } from './build';
 import type { RenderState, Entity } from './state';
 import { withEffectLights, drawEffectsLayer, drawEffects } from './effects';
 import { climateTable, type ClimateTable, type WeatherFrame } from './climate';
-import { fallSource, coverLook, applyCover, coverInCut, type CoverLook } from './precipitation';
+import { fallSource, coverLook, applyCover, coverInCut, coverLine, type CoverLook } from './precipitation';
 import { waveTile } from './waves';
 import { sunLook, sunAmount, sunQ, type SunLook, type SunField } from './sunlight';
 import { swaySources, swayTable, aquaticMask, bareOf, SWAY_FILL } from './sway';
@@ -399,7 +399,10 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
       if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
       const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
       if (si >= 0 && sec!.mask[si] === 1 && !inCut) continue;
-      applyCover(view, t * 4, meteo.cover, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, gy, !!bare && bareOf(bare, b.source, si >= 0 ? sec!.pick[si]! : b.pick[q]!));
+      const face = si >= 0 ? sec!.face[si]! : b.face[q]!, c = meteo.cover;
+      // (el contorno interior, solo si haría falta: cara de arriba, con nieve y con 'both')
+      const line = face === 4 && c.snow > 0 && c.gap > 0 && coverLine(b, sec, gx, gy, depthBuf[t]!, c.gap);
+      applyCover(view, t * 4, c, meteo.table, face, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, gy, !!bare && bareOf(bare, b.source, si >= 0 ? sec!.pick[si]! : b.pick[q]!), line);
     }
   }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;

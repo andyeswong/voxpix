@@ -2077,7 +2077,9 @@ weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid
 - `cover`, con un horneado con `{ sky: true }`: nieve sobre las caras de arriba que ven el cielo (en trama mientras cuaja) y lo
   mojado más oscuro, según `weather.cover`. La trama es una Bayer de 4 x 4 por columnas y filas de la imagen, anclada al
   mundo (no se mueve al correrse la ventana): cada 4 x 4 de suelo abierto lleva justo la parte que toca, con cualquier
-  `incline`. Con menos cielo, cuaja más tarde. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
+  `incline`. Con menos cielo, cuaja más tarde. Con `outline: 'both'`, el contorno interior (que se pinta en el píxel de
+  detrás de un salto y guarda su cara) no toma nieve, sí se moja: la misma regla del render, con la resta en float32 en la
+  CPU y en la GPU. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
   salvo con `worldSky`.
 
 ### El agua con el clima
