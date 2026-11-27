@@ -1,5 +1,32 @@
 # Cambios
 
+## Notas de versión de trozos-z (de 860a60a a e6e839b)
+
+### Las plantas de agua con el oleaje
+- `fa791e6`: `MaterialProps.afloat`: una rampa que se mece y flota toma su vaivén de la ola de debajo
+  (`rideLean`), no del aire; sin ola (ni viento ni lluvia, o `waves: 0`), del aire como antes. CPU y GPU hacen las
+  mismas cuentas. `WeatherFrame.still`: la corriente de las plantas de agua con el agua quieta, como parte de la
+  entera (1 por defecto, la de antes).
+- `9327d19`: la lluvia solo se lee con `still` < 1, sin pedir niveles en cada tanda.
+- `8e7678f`: `afloat` es el lado (1, 2, 4 u 8 vóxeles) del trozo que se mueve entero: la ola se lee una vez por
+  trozo, y una hoja más ancha que una celda de agua ya no se rompe.
+- Lo que había no cambia: las 269 escenas del oráculo de 860a60a salen iguales byte a byte en CPU y GPU; 8 escenas
+  nuevas con hojas flotantes. Lo que cuesta, en un juego a 6x andando con olas (5 pasadas): la GPU, de +0,05 a
+  +0,07 ms por cuadro; los cuadros de más de 25 ms, dentro del ruido entre pasadas (tormenta 54 contra 55, viento 38
+  contra 41).
+
+### La vista del agente en color
+- `ea0d383`: `agentView`, `paintAgentView`, `agentViewSize` y `agentViewText` (`src/agent/agentview.ts`): las letras
+  de `describe`, cada una del color de su bloque, para enseñar al lado del juego lo que lee un agente. Lo que no ve
+  la cámara va apagado; las marcas, con su color; `seen` para quien calcula lo visible por su cuenta.
+- `e6e839b`: el agua de `WaterLayer` sale en `describe` con su letra (`~`, o `≈` si `~` ya es de un bloque; opción
+  `water`) y en la leyenda. `describe` con vista y `check({ visible })` miran solo el recuadro de la imagen por el que
+  pasa la zona pedida, con el mismo resultado que `visibleCells()`.
+- Lo que cuesta: en Node, con una imagen de 514 x 348, radio 7 y dos capas, `describe` con vista pasa de 16-17 a
+  1,6-1,8 ms y `check` de unos 16 a 0,04 ms; `visibleCells()` sigue en 8-10 ms. En un juego, en el navegador:
+  `describe` con vista, 4,3 ms a 1x y 19-25 ms a 6x; pintar el panel (unos 450 `fillText`), cerca de 1 ms a 1x y 7 ms
+  a 6x. El juego decide cada cuánto lo llama.
+
 ## Notas de versión de trozos-z (de 7c5369d a 860a60a)
 
 Lo que llega a master con trozos-z desde el 16 de noviembre: un mundo que se genera al andar, el horneado en un
@@ -92,8 +119,13 @@ juntos al final. El detalle de cada tema está en [motor.md](motor.md) y en [hor
   lluvia en el agua.
 - `3924cf4`, `26a7dbf`: el sol, una luz direccional con sombras de nubes que se mueven, también con la luz plana.
 - `9f85b90`, `541ac2a`, `538a523`: sin basura por cuadro, lo que cae a 30 Hz con caché, tasas configurables, el aspecto
-  de las gotas y rampas que no toman nieve. `a77cb24`: lluvia sobre la capa de sección.
+  de las gotas y rampas que no toman nieve. `a77cb24`: lo que cae ya no cae sobre los píxeles que sustituye la capa de
+  sección ni sobre su borde; y el clima más barato (su tabla en una textura propia, menos puntos por defecto).
 - `977cdaf`, `0930504`, `bb2e304`, `69189c9`, `2243792`: pruebas y escenas del oráculo con el clima.
+- Lo que cuesta, en el banco de la ventana viva (CPU a 6x, 384 x 216, agua, sección en cruz, `fall.max` 600), todo
+  encendido contra apagado: p95 del cuadro 26,9 contra 23,7 ms en una serie y 27,5 contra 25,4 en otra; p50, +0,1 a
+  +0,2 ms; componer en el hilo principal, de 1,6 a 3,2 ms de media. Apagado (`weather` sin dar), el cuadro es el de
+  siempre, byte a byte.
 
 ### Medir y lo que se probó
 - `app/viva.html` y `scripts/bench-viva.ts`: el banco de la ventana viva andando (corrimientos, anillo, giros,

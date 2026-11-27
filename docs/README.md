@@ -11,4 +11,4 @@
 | [El horno en un worker](horno-worker.md) | `BakeWorker`: pintar el rehorneado de la ventana viva (recuadros y cielo) en un worker, qué se queda en el hilo principal y cómo migrar un worker propio. |
 | [Línea de comandos](linea-de-comandos.md) | Renderizar, exportar e importar pxl y sacar GIFs desde la terminal. |
 | [Pruebas](pruebas.md) | Las pruebas, los oráculos de CPU contra GPU y las medidas de rendimiento. |
-| [Cambios](cambios.md) | Lo que ha entrado, por bloques: lo último, la ventana viva, el horno en un worker, la capa de sección, la interfaz para agentes y el clima; antes, mundos de bloques, picar en partida, caminos por niveles, cielo, corte de vista. Con costes y tolerancias. |
+| [Cambios](cambios.md) | Lo que ha entrado, por bloques: lo último, el oleaje de las plantas de agua y la vista del agente en color; antes, la ventana viva, el horno en un worker, la capa de sección, la interfaz para agentes y el clima; antes, mundos de bloques, picar en partida, caminos por niveles, cielo, corte de vista. Con costes y tolerancias. |

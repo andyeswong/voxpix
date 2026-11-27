@@ -48,8 +48,9 @@ Más en [docs/ia.md](docs/ia.md).
 - [el motor del mundo](docs/motor.md) y [el horno en un worker](docs/horno-worker.md);
 - [la línea de comandos](docs/linea-de-comandos.md);
 - [las pruebas](docs/pruebas.md);
-- [los cambios](docs/cambios.md): lo último que ha entrado (un mundo que se genera al andar, el horneado en un worker,
-  la capa de sección, la interfaz para agentes y el clima; antes, mundos de bloques que se pican en partida, caminos
+- [los cambios](docs/cambios.md): lo último que ha entrado (las plantas de agua con el oleaje y la vista del agente en
+  color; antes, un mundo que se genera al andar, el horneado en un worker, la capa de sección, la interfaz para agentes
+  y el clima; y antes, mundos de bloques que se pican en partida, caminos
   por niveles, cielo, corte de vista y cola con plazo).
 
 ## Capturas
