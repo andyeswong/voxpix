@@ -230,6 +230,7 @@ uniform bool uSway;
 // los lados; z: 1 si también dentro del corte
 uniform bool uCover;
 uniform vec4 uCoverP;
+uniform int uCoverRow;               // la fila de la trama de la nieve en la fila 0 de la imagen (CoverLook.row)
 const int SBAYER[16] = int[16](0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5);
 uniform bool uAquatic;                 // alguna rampa es de planta de agua: su luz lleva un 1 en el alfa (lo lee el agua)
 // Lo que flota (código 512, y en 1024 * 0..3 log2 del lado de su trozo) se mece con el rizado del agua de debajo (src/waves.ts, rideLean): la baldosa en la textura del clima
@@ -304,8 +305,7 @@ void main() {
       if (wet > 0.0) cb = floor(cb * (1.0 - floor(wet * 256.0 + 0.5) / 256.0) + 0.5);
       int bc = sm > 0 ? secSway(s) : fc >> 7;                 // (256: de una rampa que no toma nieve)
       if (ff == 4 && uCoverP.x > 0.0 && (bc & 256) == 0) {
-        float cy = sm > 0 ? sg.g : texelFetch(uWorldY, s, 0).r;
-        int bx = (s.x + int(uClimK.x)) & 3, by = int(floor(cy + uClimK.y + TIE)) & 3;
+        int bx = (s.x + int(uClimK.x)) & 3, by = (uCoverRow - s.y) & 3;
         if (SBAYER[by * 4 + bx] < int(uCoverP.x) - (5 - sk) * 4) cb = floor(cb + (vec3(${SNOW_COLOR.map((v) => v.toFixed(1)).join(', ')}) - cb) * ${SNOW_MIX} + 0.5);
       }
       col = cb / 255.0;

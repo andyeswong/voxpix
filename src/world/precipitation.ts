@@ -6,7 +6,7 @@ import { FX_STRIDE, type FxSource } from '../core';
 import type { Baked } from './bake';
 import { secIdx, sectionBorderAt, type SectionLayer } from './section';
 import { hash30, HASH_ONE } from '../worldgen/noise';
-import { climateTie, rateTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
+import { rateTicks, viewOffset, type ClimateTable, type WeatherFrame } from './climate';
 
 export const FALL_MAX = 350;                         // gotas o copos como mucho (WeatherFrame.fall.max)
 const RAIN = { speed: 230, height: 80, drift: 70, colors: [[154, 180, 216], [122, 148, 188]], points: 3, gap: 1.6 } as const;
@@ -140,23 +140,30 @@ export const SNOW_MIX = 7 / 8;
 export const WET_TOP = 0.34, WET_SIDE = 0.18;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 
-// La nieve (en dieciseisavos de trama) y lo que quita lo mojado a las caras de arriba y a las demás (en 1/256), o null
-export interface CoverLook { snow: number; wetTop: number; wetSide: number }
+// La nieve (en dieciseisavos de trama) y lo que quita lo mojado a las caras de arriba y a las demás (en 1/256), o null.
+// row: la fila de la trama de la fila 0 de la imagen (0..3). La trama va por filas de la imagen, no por la y del mundo: con
+// incline 0,5 cada fila salta 2 en y, y por la y solo se usaban dos filas de la Bayer, las dos con los umbrales bajos en las
+// mismas columnas (a rayas verticales mientras cuaja). Anclada al mundo: la fila de un punto es a * y + z (rowP) con la y del
+// plano del mundo girado (la de la vista más K), que no cambia al correrse la ventana ni al girar
+export interface CoverLook { snow: number; wetTop: number; wetSide: number; row: number }
 export function coverLook(b: Baked, f: WeatherFrame | null | undefined): CoverLook | null {
   if (!f?.cover || !b.sky) return null;
   const c = f.weather.cover, q = (v: number) => Math.floor(v * 256 + 0.5) / 256;
   const snow = Math.floor(c.snow * 16 + 0.5), wetTop = q(c.wet * WET_TOP), wetSide = q(c.wet * WET_SIDE);
-  return snow || wetTop ? { snow, wetTop, wetSide } : null;
+  if (!snow && !wetTop) return null;
+  // (la fila sy de la imagen es O - sy - 0,5 = a * vy + z; más a * Ky, la del mundo. Entero por cuadro: igual en CPU y GPU)
+  const a = b.options.oblique?.y ?? 1, K = Math.floor(b.options.originY + a * viewOffset(f)[1] + 0.5);
+  return { snow, wetTop, wetSide, row: ((K % 4) + 4) % 4 };
 }
 // (bare: de una rampa que no toma nieve, MaterialProps.snow)
-// Pinta la nieve y lo mojado sobre el color de un píxel de lo quieto (px[i..i + 2]): su cara, su cielo (0..5), su columna y su
-// y en la vista. La misma cuenta, con enteros, que la GPU (FRAG_SCENE)
-export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, wy: number, bare = false): void {
+// Pinta la nieve y lo mojado sobre el color de un píxel de lo quieto (px[i..i + 2]): su cara, su cielo (0..5), y su columna
+// y su fila en la imagen horneada. La misma cuenta, con enteros, que la GPU (FRAG_SCENE)
+export function applyCover(px: Uint8ClampedArray, i: number, c: CoverLook, t: ClimateTable, face: number, sky: number, x: number, sy: number, bare = false): void {
   if (face < 0 || face === 5 || sky <= 0) return;
   const wet = (face === 4 ? c.wetTop : c.wetSide) * (sky / 5);
   if (wet > 0) { const k = 1 - Math.floor(wet * 256 + 0.5) / 256; for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! * k + 0.5); }
   if (face !== 4 || !c.snow || bare) return;
-  const bx = (x + t.kx) & 3, by = Math.floor(Math.fround(wy) + t.ky + climateTie) & 3;
+  const bx = (x + t.kx) & 3, by = (c.row - sy) & 3;
   if (BAYER[by * 4 + bx]! >= c.snow - (5 - sky) * 4) return;
   for (let ch = 0; ch < 3; ch++) px[i + ch] = Math.floor(px[i + ch]! + (SNOW_COLOR[ch]! - px[i + ch]!) * SNOW_MIX + 0.5);
 }

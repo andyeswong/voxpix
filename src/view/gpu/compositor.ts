@@ -377,6 +377,7 @@ export class GpuCompositor {
     if (useSky) gl.uniform3fv(s.u.uSkyAmb, skyAmbient(o.ambient, o.cave!));
     gl.uniform1i(s.u.uCover, cover ? 1 : 0);
     if (cover) gl.uniform4f(s.u.uCoverP, cover.snow, cover.wetTop, cover.wetSide, coverInCut(sec) ? 1 : 0);
+    if (cover) gl.uniform1i(s.u.uCoverRow, cover.row);
     // El resalte de un objeto del escenario: la máscara del aro se sube solo cuando cambia (highlightMask la guarda)
     const hl = o.highlight ? highlightMask(b, o.highlight) : null;
     gl.uniform1i(s.u.uHl, hl ? 1 : 0);

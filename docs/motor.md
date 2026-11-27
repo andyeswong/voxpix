@@ -2075,7 +2075,9 @@ weather: { weather, tick, origin, camera, fall: { max: 350 }, cover: true, solid
   `max` es cuántas a la vez (350; con lluvia y nieve juntas se reparte). Con `WorldView.setCut` hay que dar `solid` (los
   vóxeles del mundo sin cortar): si no, lo cortado cuenta como cielo.
 - `cover`, con un horneado con `{ sky: true }`: nieve sobre las caras de arriba que ven el cielo (en trama mientras cuaja) y lo
-  mojado más oscuro, según `weather.cover`. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
+  mojado más oscuro, según `weather.cover`. La trama es una Bayer de 4 x 4 por columnas y filas de la imagen, anclada al
+  mundo (no se mueve al correrse la ventana): cada 4 x 4 de suelo abierto lleva justo la parte que toca, con cualquier
+  `incline`. Con menos cielo, cuaja más tarde. Es solo aspecto: no cambia ningún vóxel. Lo de dentro de un corte no lleva nada,
   salvo con `worldSky`.
 
 ### El agua con el clima

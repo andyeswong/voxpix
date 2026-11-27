@@ -393,13 +393,13 @@ function staticParts(state: RenderState, b: Baked, o: Frame2DOptions, sec: Secti
   }
   // La nieve y lo mojado, sobre el color
   if (meteo?.cover) {
-    const u = unprojector(b), inCut = coverInCut(sec), st = swayTable(b.source.palette), bare = st?.anyBare ? st : null;
-    for (let y = 0; y < vh; y++) for (let x = 0, P = rowP(u, vy + y); x < vw; x++) {
+    const inCut = coverInCut(sec), st = swayTable(b.source.palette), bare = st?.anyBare ? st : null;
+    for (let y = 0; y < vh; y++) for (let x = 0; x < vw; x++) {
       const t = y * vw + x, gx = vx + x, gy = vy + y;
       if (gx < 0 || gy < 0 || gx >= b.width || gy >= b.height || depthBuf[t] === Infinity) continue;
       const si = secIndex(sec, gx, gy), q = gy * b.width + gx;
       if (si >= 0 && sec!.mask[si] === 1 && !inCut) continue;
-      applyCover(view, t * 4, meteo.cover, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, worldYAt(u, P, depthBuf[t]!), !!bare && bareOf(bare, b.source, si >= 0 ? sec!.pick[si]! : b.pick[q]!));
+      applyCover(view, t * 4, meteo.cover, meteo.table, si >= 0 ? sec!.face[si]! : b.face[q]!, si >= 0 && sec!.sky ? sec!.sky[si]! : b.sky![q]!, gx, gy, !!bare && bareOf(bare, b.source, si >= 0 ? sec!.pick[si]! : b.pick[q]!));
     }
   }
   const total = o.lights ? lightView(b, vx, vy, vw, vh, ambient, o.time, o.cave) : null;
