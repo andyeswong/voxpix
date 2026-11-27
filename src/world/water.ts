@@ -29,6 +29,9 @@ const TILE_SHIFTS = 64;                           // corrimientos que guarda
 export const WATER_TILE = TILE;
 const CHANGE_LOG = 256;                           // ticks que guarda el registro de cambios (changesSince)
 export const WATER_CELL = CELL;
+// Desde qué profundidad (en vóxeles) se ve el agua de una celda: el render (aquí, en la GPU y en primera persona) no pinta
+// menos, y lo que lee un agente (AgentHost.describe) tampoco la cuenta. Por debajo quedan películas que no se ven
+export const WATER_SHOW = 0.04;
 const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5];
 const REFLECT = 0.38;                             // cuánto del reflejo se ve (de arriba, el agua refleja poco)
 const MARCH = 40;                                 // píxeles que sube como mucho el rayo reflejado (de 2 en 2, y afina al dar con algo)
@@ -618,7 +621,7 @@ export class WaterLayer {
     for (let gy = 0; gy < this.gh; gy++) for (let gx = 0; gx < this.gw; gx++) {
       const i = this.sim.at(gx, gy), o = gy * this.gw + gx;
       const d = this.sim.depth[i]!;
-      const wet = !this.sim.solid[i] && d >= 0.04;
+      const wet = !this.sim.solid[i] && d >= WATER_SHOW;
       surface[o] = wet ? this.sim.ground[i]! + d : NaN;
       depth[o] = wet ? d : 0;
     }
@@ -753,7 +756,7 @@ function deepness(sim: WaterGrid['sim'], gw: number, gh: number, gx: number, gy:
     const x = gx + dx, y = gy + dy;
     if (x < 0 || y < 0 || x >= gw || y >= gh) continue;
     const j = y * gw + x, dd = sim.depth[j]!;
-    if (sim.solid[j] || dd < 0.04) continue;
+    if (sim.solid[j] || dd < WATER_SHOW) continue;
     sum += dd; n++;
   }
   return Math.max(0, Math.min(1, (sum / n - DEEP_FROM) / (DEEP_TO - DEEP_FROM)));
@@ -802,7 +805,7 @@ export function drawWater(w: WaterGrid, b: Baked, view: Uint8ClampedArray, depth
   for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) {
     const i = gy * gw + gx;
     const d = sim.depth[i]!;
-    if (sim.solid[i] || d < 0.04) continue;
+    if (sim.solid[i] || d < WATER_SHOW) continue;
     const zs = sim.ground[i]! + d;
     const win = cut && gx * CELL >= cut.x0 && gx * CELL <= cut.x1 && gy * CELL >= cut.y0 && gy * CELL <= cut.y1 && zs >= cut.zMin ? cut.window ?? true : null;
     if (win === true) continue;

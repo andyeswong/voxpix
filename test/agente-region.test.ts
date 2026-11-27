@@ -9,7 +9,7 @@ import { BlockSet, BlockGrid } from '../src/world/blocks';
 import { bakeWorld } from '../src/world/bake';
 import { WorldView, type Quarter } from '../src/world/view';
 import { sectionAround, SectionPainter, crossWindow, type SectionLayer } from '../src/world/section';
-import { WaterLayer } from '../src/world/water';
+import { WaterLayer, WATER_SHOW } from '../src/world/water';
 import type { World } from '../src/world/build';
 import { AgentHost, type AgentLook, type Point } from '../src/agent/agent';
 import { agentView } from '../src/agent/agentview';
@@ -121,5 +121,42 @@ describe('el agua en describe', () => {
     expect(dry.layers[1]!.rows[3]).toBe('PP...PP');
     expect(dry.text).not.toContain('agua');
     expect(() => lake(undefined, 'P')).toThrow();
+  });
+
+  // La película que deja el simulador al tocar una orilla: milésimas de vóxel sobre el suelo seco. El render no la pinta
+  // (WATER_SHOW) y describe tampoco la cuenta; ni el pelo de agua de un lago que asoma por encima del techo de una celda
+  const view = (host: AgentHost) => host.describe({ at: { x: 3 * N + 1, y: 3 * N + 1, z: 2 * N }, radius: 3, below: 2, above: 1 });
+  function film(depth: number, lakeOver = 0) {
+    const { host } = lake(), sim = (host as unknown as { opts: { state: WorldState } }).opts.state.water!.sim;
+    let filmed = 0;
+    for (let i = 0; i < sim.depth.length; i++) {
+      if (sim.solid[i]) continue;
+      if (sim.depth[i]! > 1) sim.depth[i] = 3 * N - sim.ground[i]! + lakeOver;     // el lago, con la superficie a 24 + lakeOver
+      else if (sim.ground[i] === 3 * N) { sim.depth[i] = depth; filmed++; }       // la piedra de alrededor, con la película
+    }
+    expect(filmed).toBeGreaterThan(100);
+    return view(host);
+  }
+
+  it('una película de 0,001 sobre el suelo no es agua; el lago, igual que antes', () => {
+    const d = film(0.001);
+    expect(d.layers[0]!.bz).toBe(3);
+    expect(d.layers[0]!.rows.join('')).not.toContain('~');
+    expect(d.layers[1]!.rows).toEqual(['PPPPPPP', 'PPPPPPP', 'PP~~~PP', 'PP~~~PP', 'PP~~~PP', 'PPPPPPP', 'PPPPPPP']);
+  });
+
+  it('el umbral es el del render: justo por debajo de WATER_SHOW no hay agua, justo por encima sí', () => {
+    const under = film(WATER_SHOW * 0.75).layers[0]!.rows, over = film(WATER_SHOW * 1.25).layers[0]!.rows;
+    expect(under.join('')).not.toContain('~');
+    // por encima, la película se cuenta: la capa 3 sobre la piedra (todo menos el hueco del lago y el jugador) es agua
+    expect(over).toEqual(['~~~~~~@', '~~~~~~~', '~~...~~', '~~...~~', '~~...~~', '~~~~~~~', '~~~~~~~']);
+  });
+
+  it('un lago que asoma 0,02 por encima del techo de la celda: la celda de arriba no es agua', () => {
+    const d = film(0, 0.02);
+    expect(d.layers[0]!.rows.join('')).not.toContain('~');
+    expect(d.layers[1]!.rows[3]).toBe('PP~~~PP');
+    // con un vóxel por encima, sí
+    expect(film(0, 1).layers[0]!.rows[3]).toBe('..~~~..');
   });
 });

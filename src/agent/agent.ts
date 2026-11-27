@@ -17,7 +17,7 @@ import type { WorldState } from '../world/state';
 import type { BlockGrid } from '../world/blocks';
 import { pickVoxel } from '../world/blocks';
 import { unkey } from '../core';
-import { WATER_CELL } from '../world/water';
+import { WATER_CELL, WATER_SHOW } from '../world/water';
 import type { WorldView } from '../world/view';
 import type { Baked } from '../world/bake';
 import type { SectionLayer } from '../world/section';
@@ -350,8 +350,10 @@ export class AgentHost {
     return { center: c, x: X, y: Y, layers, legend, marks, visible: !!seen, ...(wet ? { water: this.waterCh! } : {}), text: lines.join('\n') };
   }
 
-  // Si hay agua de la capa de agua del mundo (state.water) en la celda: alguna de sus columnas de agua tiene agua entre su
-  // fondo y su superficie que pasa por las alturas de la celda
+  // Si hay agua de la capa de agua del mundo (state.water) en la celda: alguna de sus columnas de agua tiene, dentro de las
+  // alturas de la celda, al menos WATER_SHOW de agua (lo que el render ya pinta). Una película más fina que eso (la que el
+  // simulador deja al tocar una orilla) no se ve en pantalla y no cuenta; ni tampoco el pelo de agua que asoma por encima
+  // del techo de la celda de abajo
   private waterAt(bx: number, by: number, bz: number): boolean {
     const w = this.opts.state.water;
     if (!w || !this.waterCh) return false;
@@ -359,9 +361,9 @@ export class AgentHost {
     const xa = o.x + bx * N, ya = o.y + by * N;
     for (let y = Math.floor(ya / C) * C; y < ya + N; y += C) for (let x = Math.floor(xa / C) * C; x < xa + N; x += C) {
       const d = w.depthAt(Math.max(x, xa), Math.max(y, ya));
-      if (!(d > 0)) continue;
+      if (!(d >= WATER_SHOW)) continue;                     // (el solape nunca pasa de d: esto solo ahorra surfaceAt)
       const s = w.surfaceAt(Math.max(x, xa), Math.max(y, ya));
-      if (s > z0 && s - d < z1) return true;
+      if (Math.min(s, z1) - Math.max(s - d, z0) >= WATER_SHOW) return true;
     }
     return false;
   }

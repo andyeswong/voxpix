@@ -4,12 +4,14 @@
 //
 // Todas las texturas de la vista guardan la fila 0 arriba, como los arrays de la CPU: la fila de un fragmento es
 // int(gl_FragCoord.y). Solo el último paso, al pintar en el lienzo, da la vuelta.
-import { DEEP_FROM, DEEP_TO, DEEP_R } from '../../world/water';
+import { DEEP_FROM, DEEP_TO, DEEP_R, WATER_SHOW } from '../../world/water';
 import { CLOUD_DARK, SUN_Q } from '../../world/sunlight';
 import { SNOW_COLOR, SNOW_MIX } from '../../world/precipitation';
 import { CLEAR_BASE, CLEAR_STEP, CLEAR_MAX } from '../../world/waterlook';
 import { RIDE_GAIN } from '../../world/waves';
 
+// (un número de JS como float de GLSL: 1 tiene que ir como 1.0)
+const glf = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 export const MAX_LIGHTS = 32;      // luces del mundo por cuadro
 export const MAX_BAKED = 32;       // luces fijas horneadas
 export const MAX_CASTERS = 8;
@@ -483,7 +485,7 @@ void main() {
     ivec2 c = ivec2(gx, g);
     vec4 st = wStatic(c);
     float dd = wDepth(c);
-    if (st.g != 0.0 || dd < 0.04) continue;
+    if (st.g != 0.0 || dd < ${glf(WATER_SHOW)}) continue;
     float z = st.r + dd;
     if (uCut && gx * CELL >= uCutBox.x && gx * CELL <= uCutBox.y && g * CELL >= uCutBox.z && g * CELL <= uCutBox.w && z >= uCutZ && (!uCutWin || secWindow(ivec2(px, sy)))) continue;
     float north = float(g * CELL + CELL), south = float(g * CELL);
@@ -519,7 +521,7 @@ void main() {
     ivec2 cc = c + ivec2(ddx, ddy);
     if (cc.x < 0 || cc.y < 0 || cc.x >= uGrid.x || cc.y >= uGrid.y) continue;
     float dd = wDepth(cc);
-    if (wStatic(cc).g != 0.0 || dd < 0.04) continue;
+    if (wStatic(cc).g != 0.0 || dd < ${glf(WATER_SHOW)}) continue;
     dsum += dd; dn++;
   }
   float deepT = clamp((dsum / float(dn) - ${DEEP_FROM.toFixed(2)}) / ${(DEEP_TO - DEEP_FROM).toFixed(2)}, 0.0, 1.0);
